@@ -97,45 +97,46 @@ async fn diff_proptest_inner(seed: u64) {
     for (idx, step) in append_requests.iter().enumerate() {
         println!("{idx}: {step:?}");
     }
-    let (_mem_guard, db_mem_pool, db_mem_close) = Database::Memory.set_up().await;
-    let mem_conn = db_mem_pool.connection_test().await.unwrap();
-    let mem_log = ExecutionLogSanitized::from(
+    let (_sqlite_guard, sqlite_pool, db_sqlite_close) = Database::Sqlite.set_up().await;
+    let sqlite_conn = sqlite_pool.connection_test().await.unwrap();
+    let sqlite_log = ExecutionLogSanitized::from(
         create_and_append(
-            mem_conn.as_ref(),
+            sqlite_conn.as_ref(),
             execution_id.clone(),
             create_req.clone(),
             &append_requests,
         )
         .await,
     );
-    db_mem_close.close().await;
-    let (_sqlite_guard, sqlite_pool, db_sqlite_close) = Database::Sqlite.set_up().await;
-    let sqlite_conn = sqlite_pool.connection_test().await.unwrap();
-    let sqlite_log = ExecutionLogSanitized::from(
+    db_sqlite_close.close().await;
+
+    let (_postgres_guard, postgres_pool, db_postgres_close) = Database::Postgres.set_up().await;
+    let postgres_conn = postgres_pool.connection_test().await.unwrap();
+    let postgres_log = ExecutionLogSanitized::from(
         create_and_append(
-            sqlite_conn.as_ref(),
+            postgres_conn.as_ref(),
             execution_id,
             create_req,
             &append_requests,
         )
         .await,
     );
-    db_sqlite_close.close().await;
+    db_postgres_close.close().await;
     println!(
-        "Expected (mem):\n{expected}\nActual (sqlite):\n{actual}",
-        expected = serde_json::to_string(&mem_log).unwrap(),
-        actual = serde_json::to_string(&sqlite_log).unwrap()
+        "Expected (sqlite):\n{expected}\nActual (postgres):\n{actual}",
+        expected = serde_json::to_string(&sqlite_log).unwrap(),
+        actual = serde_json::to_string(&postgres_log).unwrap()
     );
-    assert_eq!(mem_log.pending_state, sqlite_log.pending_state);
-    assert_eq!(mem_log.events.len(), sqlite_log.events.len());
-    for i in 0..mem_log.events.len() {
+    assert_eq!(sqlite_log.pending_state, postgres_log.pending_state);
+    assert_eq!(sqlite_log.events.len(), postgres_log.events.len());
+    for i in 0..sqlite_log.events.len() {
         assert_eq!(
-            mem_log.events[i], sqlite_log.events[i],
+            sqlite_log.events[i], postgres_log.events[i],
             "Failed at {i}-th element"
         );
     }
-    assert_eq!(mem_log.events, sqlite_log.events);
-    assert_eq!(mem_log, sqlite_log,);
+    assert_eq!(sqlite_log.events, postgres_log.events);
+    assert_eq!(sqlite_log, postgres_log,);
 }
 
 async fn create_and_append(
@@ -276,9 +277,6 @@ async fn get_execution_event_should_not_break_json_order(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_execution_events_should_not_break_json_order(database: Database) {
-    if database == Database::Memory {
-        return; // external_api_conn not implemented for in-memory DB
-    }
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.external_api_conn().await.unwrap();

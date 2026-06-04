@@ -3114,7 +3114,7 @@ mod tests {
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
@@ -3211,7 +3211,7 @@ mod tests {
             }));
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         // Create an execution.
         let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
@@ -3338,7 +3338,7 @@ mod tests {
         };
 
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
@@ -3489,7 +3489,7 @@ mod tests {
     async fn schedule_event_should_be_processed() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
 
@@ -3551,7 +3551,7 @@ mod tests {
     async fn submit_stub_await() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
         let db_connection = db_connection.as_ref();
 
@@ -3754,7 +3754,7 @@ mod tests {
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
@@ -4051,7 +4051,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
@@ -4244,7 +4244,7 @@ mod tests {
     async fn join_next_try_all_processed_should_be_persisted() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.

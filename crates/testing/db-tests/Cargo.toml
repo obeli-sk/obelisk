@@ -9,11 +9,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-test = ["concepts/test", "db-mem/test", "db-sqlite/test", "db-postgres/test"]
+test = ["concepts/test", "db-sqlite/test", "db-postgres/test"]
 
 [dependencies]
 concepts.workspace = true
-db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 db-postgres.workspace = true
 test-utils.workspace = true

@@ -604,7 +604,6 @@ mod tests {
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
         TypeWrapperTopLevel,
     };
-    use db_mem::inmemory_dao::InMemoryPool;
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, LockingStrategy};
     use executor::worker::{WorkerContext, WorkerError, WorkerResultOk};
@@ -731,11 +730,15 @@ mod tests {
         )
     }
 
-    fn new_js_workflow_worker_with_return_type(
+    async fn new_js_workflow_worker_with_return_type(
         js_source: &str,
         user_ffqn: &FunctionFqn,
         return_type: ReturnTypeExtendable,
-    ) -> Arc<dyn Worker> {
+    ) -> (
+        Arc<dyn Worker>,
+        db_tests::DbGuard,
+        db_tests::DbPoolCloseableWrapper,
+    ) {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let cancel_registry = CancelRegistry::new();
         let clock_fn: Box<dyn ClockFn> = Now.clone_box();
@@ -784,20 +787,31 @@ mod tests {
             TestingFnRegistry::new_from_components(Vec::new());
         let linked = js_compiled.link(fn_registry).unwrap();
 
-        let db_pool = Arc::new(InMemoryPool::new());
+        let (guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
         let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn));
 
-        Arc::new(linked.into_worker(
-            DEPLOYMENT_ID_DUMMY,
-            db_pool,
-            deadline_factory,
-            cancel_registry,
-            None,
-        ))
+        (
+            Arc::new(linked.into_worker(
+                DEPLOYMENT_ID_DUMMY,
+                db_pool,
+                deadline_factory,
+                cancel_registry,
+                None,
+            )),
+            guard,
+            db_close,
+        )
     }
 
-    fn new_js_workflow_worker(js_source: &str, user_ffqn: &FunctionFqn) -> Arc<dyn Worker> {
-        new_js_workflow_worker_with_return_type(js_source, user_ffqn, default_return_type())
+    async fn new_js_workflow_worker(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+    ) -> (
+        Arc<dyn Worker>,
+        db_tests::DbGuard,
+        db_tests::DbPoolCloseableWrapper,
+    ) {
+        new_js_workflow_worker_with_return_type(js_source, user_ffqn, default_return_type()).await
     }
 
     /// Like `new_js_workflow_worker` but returns the Result from `link()` for testing error cases.
@@ -899,7 +913,7 @@ mod tests {
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, &ffqn);
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -919,7 +933,7 @@ mod tests {
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, &ffqn);
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
         let ctx = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
@@ -951,7 +965,7 @@ mod tests {
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, &ffqn);
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
         let ctx = make_worker_context(ffqn, &["World".to_string(), "Hello".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -971,7 +985,7 @@ mod tests {
             }
         "#;
 
-        let worker = new_js_workflow_worker(js_source, &ffqn);
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -1011,7 +1025,7 @@ mod tests {
             }
         ";
 
-        let worker = new_js_workflow_worker(js_source, &ffqn);
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
         let ctx = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
@@ -1963,7 +1977,8 @@ mod tests {
             wit_type: StrVariant::Static("result"),
         };
 
-        let worker = new_js_workflow_worker_with_return_type(js_source, &ffqn, return_type);
+        let (worker, _guard, _db_close) =
+            new_js_workflow_worker_with_return_type(js_source, &ffqn, return_type).await;
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -1990,7 +2005,8 @@ mod tests {
             wit_type: StrVariant::Static("result"),
         };
 
-        let worker = new_js_workflow_worker_with_return_type(js_source, &ffqn, return_type);
+        let (worker, _guard, _db_close) =
+            new_js_workflow_worker_with_return_type(js_source, &ffqn, return_type).await;
         let ctx = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -3020,7 +3036,7 @@ mod tests {
         }";
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "log-then-sleep");
         let sim_clock = SimClock::epoch();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
@@ -3113,7 +3129,7 @@ mod tests {
         }";
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "trimmed-log-prefix");
         let sim_clock = SimClock::epoch();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
@@ -3342,7 +3358,7 @@ mod tests {
         ";
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "pause-child");
         let sim_clock = SimClock::epoch();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
                 .await,
@@ -3477,7 +3493,7 @@ mod tests {
         ";
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "schedule-relative");
         let sim_clock = SimClock::epoch();
-        let db_pool: Arc<dyn DbPool> = Arc::new(InMemoryPool::new());
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
             crate::activity::activity_worker::test::compile_activity_stub(
                 test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,

@@ -105,7 +105,6 @@ console-subscriber = { workspace = true, optional = true }
 [dev-dependencies]
 test-utils.workspace = true
 concepts = { workspace = true, features = ["test"] }
-db-mem = { workspace = true, features = ["test"] }
 db-postgres = { workspace = true, features = ["test"] }
 db-sqlite = { workspace = true, features = ["test"] }
 wasm-workers = { workspace = true, features = ["test"] }
@@ -147,7 +146,6 @@ members = [
     "crates/bench",
     "crates/concepts",
     "crates/db-common",
-    "crates/db-mem",
     "crates/db-postgres",
     "crates/db-sqlite",
     "crates/executor",
@@ -206,7 +204,6 @@ boa-common = { path = "crates/boa-common" }
 webhook-js-runtime-builder = { path = "crates/webhook-js-runtime/builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.38.2" }
 db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version = "0.38.2" }
-db-mem = { package = "obeli-sk-db-mem", path = "crates/db-mem", version = "0.38.2" }
 db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", version = "0.38.2" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.38.2" }
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }

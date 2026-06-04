@@ -262,11 +262,6 @@ mod bench {
         fiboa_db(bencher, args, Database::Sqlite);
     }
 
-    #[divan::bench(args = [100, 200, 400, 800])]
-    fn fiboa_memory(bencher: divan::Bencher, args: u32) {
-        fiboa_db(bencher, args, Database::Memory);
-    }
-
     fn fiboa_db(bencher: divan::Bencher, iterations: u32, database: Database) {
         let tokio = Handle::current();
         let workspace_dir = PathBuf::from(

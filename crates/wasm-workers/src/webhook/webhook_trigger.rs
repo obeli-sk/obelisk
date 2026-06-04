@@ -2222,7 +2222,7 @@ pub(crate) mod tests {
         ) {
             test_utils::set_up();
             let fibo_webhook_harness =
-                SetUpFiboWebhook::new(Database::Memory, locking_strategy).await;
+                SetUpFiboWebhook::new(Database::Sqlite, locking_strategy).await;
             let server_addr = fibo_webhook_harness.server_addr.to_string();
             assert_eq!(
                 "fiboa(1, 0) = hardcoded: 1",
@@ -2314,7 +2314,7 @@ pub(crate) mod tests {
         ) {
             test_utils::set_up();
             let fibo_webhook_harness =
-                SetUpFiboWebhook::new(Database::Memory, locking_strategy).await;
+                SetUpFiboWebhook::new(Database::Sqlite, locking_strategy).await;
             // Check wrong URL
             let resp = reqwest::get(format!(
                 "http://{}/unknown",
@@ -2539,7 +2539,7 @@ pub(crate) mod tests {
             };
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (db_guard, db_pool, db_close) = Database::Memory.set_up().await;
+            let (db_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
 
             // Set up mock HTTP server that the webhook will try to call
             let mock_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2701,7 +2701,7 @@ pub(crate) mod tests {
             WatchGuard,
         ) {
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, _db_close) = db_tests::Database::Memory.set_up().await;
+            let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
             let fn_registry = TestingFnRegistry::new_from_components(vec![]);
             let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
             let (db_forwarder_sender, _) = mpsc::channel(1);
@@ -2848,7 +2848,7 @@ pub(crate) mod tests {
             let host_pattern =
                 HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods).unwrap();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool, _db_close) = db_tests::Database::Memory.set_up().await;
+            let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
             let fn_registry = TestingFnRegistry::new_from_components(vec![]);
             let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
             let (db_forwarder_sender, _) = mpsc::channel(1);
@@ -3209,7 +3209,7 @@ pub(crate) mod tests {
                 use executor::executor::LockingStrategy;
 
                 let sim_clock = SimClock::default();
-                let (_guard, db_pool, db_close) = db_tests::Database::Memory.set_up().await;
+                let (_guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
 
                 // Set up fibo activity worker
                 let activity_exec = new_activity_fibo(

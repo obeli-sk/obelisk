@@ -2876,10 +2876,6 @@ async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(d
 #[rstest]
 #[tokio::test]
 async fn test_backtrace(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3077,10 +3073,6 @@ async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(databa
 #[tokio::test]
 async fn list_responses_empty_should_return_empty_list(database: Database) {
     // Regression test
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3130,10 +3122,6 @@ async fn list_responses_empty_should_return_empty_list(database: Database) {
 #[tokio::test]
 async fn list_responses_wrong_id_returns_empty_list(database: Database) {
     // Regression test
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let db_connection = db_pool.connection_test().await.unwrap();
@@ -3162,10 +3150,6 @@ async fn list_responses_wrong_id_returns_empty_list(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn test_list_responses(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3287,10 +3271,6 @@ async fn test_list_responses(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn test_list_responses_pagination_direction(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3471,10 +3451,6 @@ async fn test_list_responses_pagination_direction(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn test_list_execution_events_pagination_direction(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3665,9 +3641,6 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn deployment_insert_and_get(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3705,9 +3678,6 @@ async fn deployment_insert_and_get(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn deployment_activate(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3750,9 +3720,6 @@ async fn deployment_activate(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn deployment_only_one_active_allowed(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3806,9 +3773,6 @@ async fn deployment_only_one_active_allowed(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn deployment_list(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3850,9 +3814,6 @@ async fn deployment_list(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_logs_with_show_derived(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -4139,11 +4100,10 @@ async fn create_paused_workflow(database: Database) {
     db_close.close().await;
 }
 
+#[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn list_executions_filters_by_versioned_package_name(
-    #[values(Database::Sqlite, Database::Postgres)] database: Database,
-) {
+async fn list_executions_filters_by_versioned_package_name(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;

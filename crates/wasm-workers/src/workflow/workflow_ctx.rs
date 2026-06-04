@@ -3185,7 +3185,7 @@ pub(crate) mod tests {
         for seed in get_seed() {
             let steps = generate_steps(seed);
             let closure = |steps, mut sim_clock, seed| async move {
-                let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+                let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
                 let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let res = execute_steps(steps, db_pool.clone(), &mut sim_clock, next_u128).await;
@@ -3208,7 +3208,7 @@ pub(crate) mod tests {
 
             println!("Run 1");
             let (execution_id, execution_log) = {
-                let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+                let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
                 let mut seedable_rng = StdRng::seed_from_u64(seed);
                 let next_u128 = || rand::Rng::random(&mut seedable_rng);
                 let (execution_id, execution_log) = execute_steps(
@@ -3223,7 +3223,7 @@ pub(crate) mod tests {
                 (execution_id, execution_log)
             };
             println!("Run 2");
-            let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+            let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
             let sim_clock = SimClock::epoch();
             let fn_registry = steps_to_registry(&steps);
             let workflow_exec = {
@@ -3359,7 +3359,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn creating_oneoff_and_generated_join_sets_with_same_name_should_work() {
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
         let steps = vec![
             WorkflowStep::JoinSetCreateNamed {
@@ -3380,7 +3380,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn submitting_two_delays_should_work() {
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "".into()).unwrap();
 
         let steps = vec![
@@ -3403,7 +3403,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn submitting_to_closed_join_set_should_be_permanent_execution_error() {
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let join_set_id = JoinSetId::new(concepts::JoinSetKind::Named, "foo".into()).unwrap();
         let steps = vec![
             WorkflowStep::JoinSetCreateNamed {
@@ -3449,7 +3449,7 @@ pub(crate) mod tests {
     async fn check_determinism_closing_multiple_join_sets() {
         const SUBMITS: usize = 10;
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = Database::Memory.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(Now.now());
         let db_connection = db_pool.connection_test().await.unwrap();
 

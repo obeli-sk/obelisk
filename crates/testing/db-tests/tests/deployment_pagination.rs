@@ -133,10 +133,6 @@ async fn finish_execution(
 #[rstest]
 #[tokio::test]
 async fn list_deployment_states_basic(database: Database) {
-    if database == Database::Memory {
-        // external_api_conn not implemented for in-memory DB
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -193,9 +189,6 @@ async fn list_deployment_states_basic(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_deployment_states_pagination_older_than(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -320,9 +313,6 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_deployment_states_pagination_newer_than(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -465,9 +455,6 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_deployment_states_with_different_execution_states(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -596,9 +583,6 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
 #[rstest]
 #[tokio::test]
 async fn list_deployment_states_including_cursor(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -713,9 +697,6 @@ async fn list_deployment_states_including_cursor(database: Database) {
 async fn list_deployment_states_older_then_newer_returns_all(database: Database) {
     // Simulates: user sees < 20 deployments, clicks Older (sees nothing),
     // then clicks Newer - should see all deployments again
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -838,9 +819,6 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
 #[rstest]
 #[tokio::test]
 async fn list_deployment_states_empty(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -870,9 +848,6 @@ async fn list_deployment_states_empty(database: Database) {
 #[rstest]
 #[tokio::test]
 async fn list_deployment_states_cursor_not_found(database: Database) {
-    if database == Database::Memory {
-        return;
-    }
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
