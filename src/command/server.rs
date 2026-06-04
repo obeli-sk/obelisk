@@ -514,7 +514,7 @@ async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
 ) -> Result<DbPoolCloseableContainer, anyhow::Error> {
-    Ok(match db_config_toml {
+    let result: DbPoolCloseableContainer = match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
             let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
@@ -552,7 +552,8 @@ async fn verify_db_schema(
             });
             Some((db_pool, db_close))
         }
-    })
+    };
+    Ok(result)
 }
 
 #[derive(Debug, Default, Clone)]
