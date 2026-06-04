@@ -377,6 +377,8 @@ pub enum ExecutionRequest {
     ComponentUpgraded {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity().component_digest))]
         component_digest: ComponentDigest,
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = DeploymentId::from_parts(0, 0)))]
+        deployment_id: DeploymentId,
         reason: ComponentUpgradeReason,
     },
     // Created by the executor holding the lock.

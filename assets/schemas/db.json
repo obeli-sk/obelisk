@@ -181,12 +181,16 @@
                 "component_digest": {
                   "type": "string"
                 },
+                "deployment_id": {
+                  "type": "string"
+                },
                 "reason": {
                   "$ref": "#/$defs/ComponentUpgradeReason"
                 }
               },
               "required": [
                 "component_digest",
+                "deployment_id",
                 "reason"
               ]
             }

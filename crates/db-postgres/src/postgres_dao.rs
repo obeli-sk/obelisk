@@ -689,6 +689,7 @@ async fn update_state_component_upgraded(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     component_digest: &ComponentDigest,
+    deployment_id: DeploymentId,
     appending_version: &Version,
 ) -> Result<AppendResponse, DbErrorWrite> {
     debug!("Updating t_state to component {component_digest}");
@@ -700,12 +701,15 @@ async fn update_state_component_upgraded(
             SET
                 corresponding_version = $1,
                 updated_at = CURRENT_TIMESTAMP,
-                component_id_input_digest = $2
-            WHERE execution_id = $3;
+                component_id_input_digest = $2,
+                deployment_id = $3,
+                incompatible_digest = NULL
+            WHERE execution_id = $4;
             ",
             &[
                 &i64::from(appending_version.0),
                 &component_digest.as_slice(),
+                &deployment_id.to_string(),
                 &execution_id.to_string(),
             ],
         )
@@ -2133,12 +2137,15 @@ async fn append(
         }
 
         ExecutionRequest::ComponentUpgraded {
-            component_digest, ..
+            component_digest,
+            deployment_id,
+            ..
         } => {
             let next_version = update_state_component_upgraded(
                 tx,
                 execution_id,
                 component_digest,
+                *deployment_id,
                 &appending_version,
             )
             .await?;
@@ -3058,6 +3065,7 @@ async fn upgrade_execution_component(
             created_at: Utc::now(),
             event: ExecutionRequest::ComponentUpgraded {
                 component_digest: new.clone(),
+                deployment_id: combined_state.execution_with_state.deployment_id,
                 reason,
             },
         },

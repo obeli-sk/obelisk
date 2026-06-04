@@ -968,10 +968,12 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
             }),
             ExecutionRequest::ComponentUpgraded {
                 component_digest,
+                deployment_id,
                 reason,
             } => grpc_gen::execution_event::Event::ComponentUpgraded(
                 grpc_gen::execution_event::ComponentUpgraded {
                     component_digest: Some(component_digest.into()),
+                    deployment_id: Some(deployment_id.into()),
                     reason: Some(match reason {
                         ComponentUpgradeReason::Auto => {
                             grpc_gen::execution_event::component_upgraded::Reason::Auto(
@@ -1121,6 +1123,10 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                     component_digest: upgraded
                         .component_digest
                         .argument_must_exist("component_digest")?
+                        .try_into()?,
+                    deployment_id: upgraded
+                        .deployment_id
+                        .argument_must_exist("deployment_id")?
                         .try_into()?,
                     reason: match upgraded.reason.argument_must_exist("reason")? {
                         grpc_gen::execution_event::component_upgraded::Reason::Auto(_) => {

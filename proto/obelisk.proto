@@ -417,6 +417,7 @@ message ExecutionEvent {
             Auto auto = 2;
             Manual manual = 3;
         }
+        DeploymentId deployment_id = 4;
     }
 
     message HistoryEvent {
