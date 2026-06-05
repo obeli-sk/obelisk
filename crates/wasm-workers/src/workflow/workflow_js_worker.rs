@@ -593,11 +593,11 @@ mod tests {
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest, Digest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
     use concepts::storage::{
-        CapturedDbWrite, ComponentUpgradeReason, CreateRequest, DbConnectionTest, DbPool,
-        DbPoolCloseable, ExecutionRequest, HistoryEvent, JoinSetRequest, JoinSetResponse, Locked,
-        LogEntry, LogInfoAppendRow, LogLevel, PendingState, PendingStateFinished,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStatePendingAt,
-        UnlockedReason, Version,
+        CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
+        DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, Locked, LogEntry, LogInfoAppendRow, LogLevel, PendingState,
+        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStatePendingAt, Version,
     };
     use concepts::time::{ClockFn, Now, TokioSleep};
     use concepts::{
@@ -2102,7 +2102,7 @@ mod tests {
         let has_unlocked = log
             .events
             .iter()
-            .any(|e| matches!(e.event, ExecutionRequest::Unlocked { .. }));
+            .any(|e| matches!(e.event, ExecutionRequest::Unlocked(_)));
         assert!(
             has_unlocked,
             "expected Unlocked event in execution log, got: {:?}",
@@ -2452,17 +2452,31 @@ mod tests {
         );
         assert_matches!(
             upgraded_pending_state.pending_state,
-            PendingState::PendingAt(..)
+            PendingState::BlockedByJoinSet(..)
         );
         let first_upgrade_log = db_connection.get(&execution_id).await.unwrap();
-        assert_eq!(11, first_upgrade_log.events.len());
+        assert_eq!(10, first_upgrade_log.events.len());
+        assert!(
+            first_upgrade_log
+                .events
+                .iter()
+                .all(|event| !matches!(event.event, ExecutionRequest::Unlocked(_))),
+            "blocked auto-upgrade must not append Unlocked: {:?}",
+            first_upgrade_log.events
+        );
         assert_matches!(
             &first_upgrade_log.events[5].event,
             ExecutionRequest::Locked(_)
         );
         assert_matches!(
             &first_upgrade_log.events[6].event,
-            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto, .. } => {
+            ExecutionRequest::ComponentUpgradeFinished {
+                component_digest,
+                outcome: ComponentUpgradeOutcome::Success {
+                    reason: ComponentUpgradeReason::Auto,
+                },
+                ..
+            } => {
                 assert_eq!(&first_upgrade_component_id.component_digest, component_digest);
             }
         );
@@ -2487,16 +2501,6 @@ mod tests {
                 event: HistoryEvent::JoinNext { .. }
             }
         );
-        assert_matches!(
-            &first_upgrade_log.events[10].event,
-            ExecutionRequest::Unlocked {
-                reason: UnlockedReason::Other { reason },
-                ..
-            } => {
-                assert_eq!("auto-upgrade succeeded", reason.as_ref());
-            }
-        );
-
         sim_clock.move_time_forward(Duration::from_millis(10));
         assert_eq!(
             1,
@@ -2513,20 +2517,328 @@ mod tests {
                 .len()
         );
         let second_upgrade_log = db_connection.get(&execution_id).await.unwrap();
-        assert_eq!(14, second_upgrade_log.events.len());
+        assert_eq!(13, second_upgrade_log.events.len());
+        assert!(
+            second_upgrade_log
+                .events
+                .iter()
+                .all(|event| !matches!(event.event, ExecutionRequest::Unlocked(_))),
+            "finished auto-upgrade must not append Unlocked: {:?}",
+            second_upgrade_log.events
+        );
         assert_matches!(
-            &second_upgrade_log.events[11].event,
+            &second_upgrade_log.events[10].event,
             ExecutionRequest::Locked(_)
         );
         assert_matches!(
-            &second_upgrade_log.events[12].event,
-            ExecutionRequest::ComponentUpgraded { component_digest, reason: ComponentUpgradeReason::Auto, .. } => {
+            &second_upgrade_log.events[11].event,
+            ExecutionRequest::ComponentUpgradeFinished {
+                component_digest,
+                outcome: ComponentUpgradeOutcome::Success {
+                    reason: ComponentUpgradeReason::Auto,
+                },
+                ..
+            } => {
                 assert_eq!(&second_upgrade_component_id.component_digest, component_digest);
             }
         );
         assert_matches!(
-            &second_upgrade_log.events[13].event,
+            &second_upgrade_log.events[12].event,
             ExecutionRequest::Finished { .. }
+        );
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_auto_locking_upgrade_failure_records_failed_outcome(database: Database) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-auto-locking-failure");
+        let original_js_source = r"
+        export default function test_auto_locking_failure(params) {
+            obelisk.sleep({ milliseconds: 10 });
+            return 'old';
+        }";
+        let failing_upgrade_js_source = r"
+        export default function test_auto_locking_failure(params) {
+            const js = obelisk.createJoinSet();
+            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            return 'new';
+        }";
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (original_worker, original_component_id, _original_runnable) =
+            compile_js_workflow_worker(
+                original_js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                fn_registry.clone(),
+                workflow_engine.clone(),
+            );
+        let (upgrade_worker, upgrade_component_id, _upgrade_runnable) = compile_js_workflow_worker(
+            failing_upgrade_js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry,
+            workflow_engine,
+        );
+        assert_ne!(
+            original_component_id.component_digest,
+            upgrade_component_id.component_digest
+        );
+
+        let original_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+            original_worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            LockingStrategy::Auto,
+            ExecutorId::from_parts(0, 9009),
+        );
+        let upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+            upgrade_worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            LockingStrategy::Auto,
+            ExecutorId::from_parts(0, 9010),
+        );
+
+        let execution_id = ExecutionId::from_parts(0, 9010);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: original_component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            1,
+            original_exec
+                .tick_test_await(sim_clock.now(), RunId::from_parts(0, 9009))
+                .await
+                .len()
+        );
+        sim_clock.move_time_forward(Duration::from_millis(10));
+        assert_eq!(
+            1,
+            expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
+                .await
+                .unwrap()
+                .expired_async_timers
+        );
+
+        assert_eq!(
+            1,
+            upgrade_exec
+                .tick_test_await(sim_clock.now(), RunId::from_parts(0, 9010))
+                .await
+                .len()
+        );
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(8, log.events.len());
+        assert_matches!(&log.events[0].event, ExecutionRequest::Created { .. });
+        assert_matches!(&log.events[1].event, ExecutionRequest::Locked(_));
+        assert_matches!(&log.events[5].event, ExecutionRequest::Locked(_));
+        assert_matches!(
+            &log.events[6].event,
+            ExecutionRequest::ComponentUpgradeFinished {
+                component_digest,
+                outcome: ComponentUpgradeOutcome::Failed { reason },
+                ..
+            } => {
+                assert_eq!(&upgrade_component_id.component_digest, component_digest);
+                assert!(
+                    !reason.as_ref().is_empty(),
+                    "unexpected failure reason: {reason}"
+                );
+            }
+        );
+        assert_matches!(
+            &log.events[7].event,
+            ExecutionRequest::Unlocked(unlocked) => {
+                assert_eq!("auto-upgrade failed", unlocked.reason.as_ref());
+            }
+        );
+        assert_matches!(log.pending_state, PendingState::PendingAt(..));
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_auto_locking_upgrade_through_stub_write_appends_unlocked(
+        database: Database,
+    ) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-auto-locking-stub");
+        let original_js_source = r"
+        export default function test_auto_locking_stub(params) {
+            return 'old';
+        }";
+        let stub_upgrade_js_source = r"
+        export default function test_auto_locking_stub(params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            obelisk.stub(execId, { 'ok': 'stubbed-by-upgrade' });
+            const response = js.joinNext();
+            if (!response.ok) throw 'stub failed';
+            return obelisk.getResult(execId);
+        }";
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (_original_worker, original_component_id, _original_runnable) =
+            compile_js_workflow_worker(
+                original_js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                fn_registry.clone(),
+                workflow_engine.clone(),
+            );
+        let (upgrade_worker, upgrade_component_id, _upgrade_runnable) = compile_js_workflow_worker(
+            stub_upgrade_js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry,
+            workflow_engine,
+        );
+        assert_ne!(
+            original_component_id.component_digest,
+            upgrade_component_id.component_digest
+        );
+
+        let upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+            upgrade_worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            LockingStrategy::Auto,
+            ExecutorId::from_parts(0, 9011),
+        );
+
+        let execution_id = ExecutionId::from_parts(0, 9011);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: original_component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            1,
+            upgrade_exec
+                .tick_test_await(sim_clock.now(), RunId::from_parts(0, 9011))
+                .await
+                .len()
+        );
+
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            upgrade_component_id.component_digest,
+            pending_state.component_digest
+        );
+        assert_matches!(pending_state.pending_state, PendingState::PendingAt(..));
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(6, log.events.len());
+        assert_eq!(
+            1,
+            log.responses.len(),
+            "stub write should append a response"
+        );
+        assert_matches!(&log.events[0].event, ExecutionRequest::Created { .. });
+        assert_matches!(&log.events[1].event, ExecutionRequest::Locked(_));
+        assert_matches!(
+            &log.events[2].event,
+            ExecutionRequest::ComponentUpgradeFinished {
+                component_digest,
+                outcome: ComponentUpgradeOutcome::Success {
+                    reason: ComponentUpgradeReason::Auto,
+                },
+                ..
+            } => {
+                assert_eq!(&upgrade_component_id.component_digest, component_digest);
+            }
+        );
+        assert_matches!(
+            &log.events[3].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetCreate { .. }
+            }
+        );
+        assert_matches!(
+            &log.events[4].event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::ChildExecutionRequest { .. },
+                    ..
+                }
+            }
+        );
+        assert_matches!(
+            &log.events[5].event,
+            ExecutionRequest::Unlocked(unlocked) => {
+                assert_eq!("auto-upgrade succeeded", unlocked.reason.as_ref());
+            }
+        );
+        assert_matches!(
+            &log.responses[0].event.event.event,
+            JoinSetResponse::ChildExecutionFinished { result, .. } => {
+                let ok = assert_matches!(result, SupportedFunctionReturnValue::Ok(Some(ok)) => ok);
+                assert_eq!(WastVal::String("stubbed-by-upgrade".into()), ok.value);
+            }
         );
 
         drop(db_connection);

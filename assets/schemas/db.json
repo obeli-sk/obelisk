@@ -147,24 +147,11 @@
           "additionalProperties": false
         },
         {
-          "description": "Returns execution to [`PendingState::PendingAt`] state at the specified time.\nThis can happen when:\n- executor is running out of resources like [`WorkerError::LimitReached`]\n- executor is being closed (shutdown or hot redeploy requested)\n- activity is paused\n- workflow made progress but then its lock expired\n- workflow attempted to auto-upgrade an execution and failed, recording its digest in `incompatible_digest`",
+          "description": "Releases a lock.\n\nState transition semantics:\n- [`PendingState::Locked`] becomes [`PendingState::PendingAt`] at\n  [`Unlocked::backoff_expires_at`]. The field name is kept for persisted JSON and gRPC\n  compatibility, but it is the next pending instant for every unlock reason.\n- [`PendingState::PendingAt`], [`PendingState::BlockedByJoinSet`],\n  [`PendingState::Paused`], and [`PendingState::Finished`] reject this event.",
           "type": "object",
           "properties": {
             "unlocked": {
-              "type": "object",
-              "properties": {
-                "backoff_expires_at": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "reason": {
-                  "$ref": "#/$defs/UnlockedReason"
-                }
-              },
-              "required": [
-                "backoff_expires_at",
-                "reason"
-              ]
+              "$ref": "#/$defs/Unlocked"
             }
           },
           "required": [
@@ -173,9 +160,10 @@
           "additionalProperties": false
         },
         {
+          "description": "Does not change `PendingState`.",
           "type": "object",
           "properties": {
-            "component_upgraded": {
+            "component_upgrade_finished": {
               "type": "object",
               "properties": {
                 "component_digest": {
@@ -184,19 +172,19 @@
                 "deployment_id": {
                   "type": "string"
                 },
-                "reason": {
-                  "$ref": "#/$defs/ComponentUpgradeReason"
+                "outcome": {
+                  "$ref": "#/$defs/ComponentUpgradeOutcome"
                 }
               },
               "required": [
                 "component_digest",
                 "deployment_id",
-                "reason"
+                "outcome"
               ]
             }
           },
           "required": [
-            "component_upgraded"
+            "component_upgrade_finished"
           ],
           "additionalProperties": false
         },
@@ -410,17 +398,34 @@
         "nanos"
       ]
     },
-    "UnlockedReason": {
+    "Unlocked": {
+      "type": "object",
+      "properties": {
+        "backoff_expires_at": {
+          "description": "Instant used when releasing a currently locked execution back to\n[`PendingState::PendingAt`]. This field keeps the released JSON and gRPC name.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "backoff_expires_at",
+        "reason"
+      ]
+    },
+    "ComponentUpgradeOutcome": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
             "reason": {
-              "type": "string"
+              "$ref": "#/$defs/ComponentUpgradeReason"
             },
             "type": {
               "type": "string",
-              "const": "other"
+              "const": "success"
             }
           },
           "required": [
@@ -431,26 +436,23 @@
         {
           "type": "object",
           "properties": {
-            "target_digest": {
-              "type": "string"
-            },
             "reason": {
               "type": "string"
             },
             "type": {
               "type": "string",
-              "const": "auto_upgrade_failed"
+              "const": "failed"
             }
           },
           "required": [
             "type",
-            "target_digest",
             "reason"
           ]
         }
       ]
     },
     "ComponentUpgradeReason": {
+      "description": "Reason for auditing only",
       "oneOf": [
         {
           "type": "object",

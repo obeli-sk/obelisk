@@ -11,7 +11,7 @@ use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionLog;
 use concepts::storage::ExpiredDelay;
-use concepts::storage::UnlockedReason;
+use concepts::storage::Unlocked;
 use concepts::time::ClockFn;
 use concepts::{
     FinishedExecutionFailure,
@@ -109,12 +109,10 @@ pub(crate) async fn tick(
                         created_at: executed_at,
                         primary_event: AppendRequest {
                             created_at: executed_at,
-                            event: ExecutionRequest::Unlocked {
+                            event: ExecutionRequest::Unlocked(Unlocked {
                                 backoff_expires_at: executed_at,
-                                reason: UnlockedReason::Other {
-                                    reason: "made progress".into(),
-                                },
-                            },
+                                reason: "made progress".into(),
+                            }),
                         },
                         execution_id: execution_id.clone(),
                         version: expired.next_version,

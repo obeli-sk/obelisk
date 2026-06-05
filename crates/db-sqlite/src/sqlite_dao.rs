@@ -9,12 +9,12 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
-        ComponentMetadataRecord, ComponentUpgradeReason, CreateRequest, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeploymentComponentDetail, DeploymentComponentRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ComponentMetadataRecord, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
+        DeploymentComponentRecord, DeploymentRecord, DeploymentState, DeploymentStatus,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
@@ -23,7 +23,7 @@ use concepts::{
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
         ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, UnlockedReason, Version, VersionType,
+        STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -474,17 +474,10 @@ fn deployment_component_detail_from_row(
     })
 }
 
-struct PendingAfterEventUpdate<'a> {
+struct PendingAfterEventUpdate {
     scheduled_at: DateTime<Utc>,
     intermittent_failure: bool,
     component_input_digest: ComponentDigest,
-    incompatible_digest_update: IncompatibleDigestUpdate<'a>,
-}
-
-#[derive(Clone, Copy)]
-enum IncompatibleDigestUpdate<'a> {
-    LeaveUnchanged,
-    Set(&'a ComponentDigest),
 }
 
 impl SqlitePool {
@@ -1088,29 +1081,11 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         appending_version: &Version,
-        update: PendingAfterEventUpdate<'_>,
+        update: PendingAfterEventUpdate,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
         let scheduled_at = update.scheduled_at;
         debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
-        let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![
-            (":execution_id", Box::new(execution_id.to_string())),
-            (":appending_version", Box::new(appending_version.0)),
-            (":pending_expires_finished", Box::new(scheduled_at)),
-            (":state", Box::new(STATE_PENDING_AT)),
-            (
-                ":intermittent_delta",
-                Box::new(i32::from(update.intermittent_failure)),
-            ),
-        ];
-        let incompatible_digest_assignment = match update.incompatible_digest_update {
-            IncompatibleDigestUpdate::LeaveUnchanged => String::new(),
-            IncompatibleDigestUpdate::Set(digest) => {
-                params.push((":incompatible_digest", Box::new(digest.clone())));
-                "incompatible_digest = :incompatible_digest,".to_string()
-            }
-        };
-        let sql = format!(
-            r"
+        let sql = r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
@@ -1118,7 +1093,6 @@ impl SqlitePool {
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
                     intermittent_event_count = intermittent_event_count + :intermittent_delta,
-                    {incompatible_digest_assignment}
 
                     max_retries = NULL,
                     retry_exp_backoff_millis = NULL,
@@ -1129,16 +1103,15 @@ impl SqlitePool {
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id;
-            " // `executor_id` and `run_id` are preserved for lock extension.
-        );
-        let mut stmt = tx.prepare_cached(&sql)?;
-        let params_refs: Vec<(&str, &dyn ToSql)> = params
-            .iter()
-            .map(|(name, value)| (*name, value.as_ref() as &dyn ToSql))
-            .collect();
-        let updated = stmt
-            .execute(params_refs.as_slice())
-            .map_err(DbErrorWrite::from)?;
+            "; // `executor_id` and `run_id` are preserved for lock extension.
+        let mut stmt = tx.prepare_cached(sql)?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id.to_string(),
+            ":appending_version": appending_version.0,
+            ":pending_expires_finished": scheduled_at,
+            ":state": STATE_PENDING_AT,
+            ":intermittent_delta": i32::from(update.intermittent_failure),
+        })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
         }
@@ -1156,7 +1129,7 @@ impl SqlitePool {
         ))
     }
 
-    fn update_state_component_upgraded(
+    fn update_state_component_upgrade_finished_success(
         tx: &Transaction,
         execution_id: &ExecutionId,
         component_digest: &ComponentDigest,
@@ -1181,6 +1154,34 @@ impl SqlitePool {
             ":appending_version": appending_version.0,
             ":component_digest": component_digest,
             ":deployment_id": deployment_id.to_string(),
+        })?;
+        if updated != 1 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(appending_version.increment())
+    }
+
+    fn update_state_component_upgrade_finished_failed(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        target_digest: &ComponentDigest,
+        appending_version: &Version,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        debug!("Marking component {target_digest} incompatible after upgrade failure");
+        let mut stmt = tx.prepare_cached(
+            r"
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    updated_at = CURRENT_TIMESTAMP,
+                    incompatible_digest = :target_digest
+                WHERE execution_id = :execution_id;
+            ",
+        )?;
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id.to_string(),
+            ":appending_version": appending_version.0,
+            ":target_digest": target_digest,
         })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
@@ -2133,50 +2134,89 @@ impl SqlitePool {
                         component_input_digest: combined_state
                             .execution_with_state
                             .component_digest,
-                        incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
                     },
                 )?;
                 return Ok((next_version, notifier));
             }
 
-            ExecutionRequest::Unlocked {
-                backoff_expires_at,
-                reason,
-            } => {
-                let incompatible_digest_update = match reason {
-                    UnlockedReason::AutoUpgradeFailed { target_digest, .. } => {
-                        IncompatibleDigestUpdate::Set(target_digest)
-                    }
-                    UnlockedReason::Other { .. } => IncompatibleDigestUpdate::LeaveUnchanged,
-                };
-                let (next_version, notifier) = Self::update_state_pending_after_event_appended(
-                    tx,
-                    execution_id,
-                    &appending_version,
-                    PendingAfterEventUpdate {
-                        scheduled_at: *backoff_expires_at,
-                        intermittent_failure: false,
-                        component_input_digest: combined_state
-                            .execution_with_state
-                            .component_digest,
-                        incompatible_digest_update,
-                    },
-                )?;
-                return Ok((next_version, notifier));
-            }
+            ExecutionRequest::Unlocked(unlocked) => match &combined_state
+                .execution_with_state
+                .pending_state
+            {
+                PendingState::PendingAt(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState {
+                            reason: "`Unlocked` cannot be appended to a pending execution".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        },
+                    ));
+                }
+                PendingState::Locked(_) => {
+                    let (next_version, notifier) = Self::update_state_pending_after_event_appended(
+                        tx,
+                        execution_id,
+                        &appending_version,
+                        PendingAfterEventUpdate {
+                            scheduled_at: unlocked.backoff_expires_at,
+                            intermittent_failure: false,
+                            component_input_digest: combined_state
+                                .execution_with_state
+                                .component_digest,
+                        },
+                    )?;
+                    return Ok((next_version, notifier));
+                }
+                PendingState::BlockedByJoinSet(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState {
+                            reason: "`Unlocked` cannot be appended to a blocked execution".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        },
+                    ));
+                }
+                PendingState::Paused(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState {
+                            reason: "`Unlocked` cannot be appended to a paused execution".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        },
+                    ));
+                }
+                PendingState::Finished(_) => {
+                    unreachable!("handled above");
+                }
+            },
 
-            ExecutionRequest::ComponentUpgraded {
+            ExecutionRequest::ComponentUpgradeFinished {
                 component_digest,
                 deployment_id,
-                ..
+                outcome,
             } => {
-                let next_version = Self::update_state_component_upgraded(
-                    tx,
-                    execution_id,
-                    component_digest,
-                    *deployment_id,
-                    &appending_version,
-                )?;
+                let next_version = match outcome {
+                    ComponentUpgradeOutcome::Success { .. } => {
+                        Self::update_state_component_upgrade_finished_success(
+                            tx,
+                            execution_id,
+                            component_digest,
+                            *deployment_id,
+                            &appending_version,
+                        )?
+                    }
+                    ComponentUpgradeOutcome::Failed { .. } => {
+                        Self::update_state_component_upgrade_finished_failed(
+                            tx,
+                            execution_id,
+                            component_digest,
+                            &appending_version,
+                        )?
+                    }
+                };
                 return Ok((next_version, AppendNotifier::default()));
             }
 
@@ -2335,7 +2375,6 @@ impl SqlitePool {
                             component_input_digest: combined_state
                                 .execution_with_state
                                 .component_digest,
-                            incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
                         },
                     )?;
                     return Ok((next_version, notifier));
@@ -3060,10 +3099,10 @@ impl SqlitePool {
             execution_id,
             AppendRequest {
                 created_at: Utc::now(),
-                event: ExecutionRequest::ComponentUpgraded {
+                event: ExecutionRequest::ComponentUpgradeFinished {
                     component_digest: new.clone(),
                     deployment_id: combined_state.execution_with_state.deployment_id,
-                    reason,
+                    outcome: ComponentUpgradeOutcome::Success { reason },
                 },
             },
             appending_version,
@@ -3536,10 +3575,10 @@ impl SqlitePool {
                 execution_id,
                 AppendRequest {
                     created_at: paused_at,
-                    event: ExecutionRequest::Unlocked {
-                        backoff_expires_at: paused_at,
-                        reason: StrVariant::Static("paused").into(),
-                    },
+                    event: ExecutionRequest::Unlocked(Unlocked {
+                        backoff_expires_at: paused_at, // does not matter, about to append `Paused` in same tx.
+                        reason: "paused".into(),
+                    }),
                 },
                 appending_version,
             )?;

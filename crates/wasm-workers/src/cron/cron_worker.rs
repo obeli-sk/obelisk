@@ -2,12 +2,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
-    AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
+    AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt, Unlocked,
 };
 use concepts::time::ClockFn;
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionMetadata, Name, Params,
-    StrVariant,
 };
 use executor::worker::{Worker, WorkerContext, WorkerResult, WorkerResultOk};
 use std::sync::Arc;
@@ -139,10 +138,10 @@ impl Worker for CronWorker {
                 debug!(next_fire = %next_fire, "Scheduling next tick");
                 AppendRequest {
                     created_at: now,
-                    event: ExecutionRequest::Unlocked {
+                    event: ExecutionRequest::Unlocked(Unlocked {
                         backoff_expires_at: next_fire,
-                        reason: StrVariant::Static("cron: waiting for next cron tick").into(),
-                    },
+                        reason: "cron".into(),
+                    }),
                 }
             }
         };
@@ -171,6 +170,7 @@ impl Worker for CronWorker {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use concepts::StrVariant;
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{
@@ -433,7 +433,7 @@ mod tests {
         ));
         assert!(matches!(
             schedule_log.events[3].event,
-            ExecutionRequest::Unlocked { .. }
+            ExecutionRequest::Unlocked(_)
         ));
 
         // Verify the child execution was created with correct FFQN

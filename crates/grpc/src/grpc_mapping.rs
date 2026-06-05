@@ -8,14 +8,15 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutorId, RunId},
     storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
-        CancelOutcome, CapturedDbWrite, ChildExecutionRequestError, ComponentUpgradeReason,
-        CreateRequest, DbErrorGeneric, DbErrorRead, DbErrorWrite, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState, HistoryEvent,
-        HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, LogEntry, LogEntryRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateLocked, PendingStatePendingAt, PersistKind, ScheduleRequestError, StubError,
-        UnlockedReason, Version, VersionParseError, http_client_trace::HttpClientTrace,
+        CancelOutcome, CapturedDbWrite, ChildExecutionRequestError, ComponentUpgradeOutcome,
+        ComponentUpgradeReason, CreateRequest, DbErrorGeneric, DbErrorRead, DbErrorWrite,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, LogEntry,
+        LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, PersistKind,
+        ScheduleRequestError, StubError, Unlocked, Version, VersionParseError,
+        http_client_trace::HttpClientTrace,
     },
 };
 use concepts::{JoinSetId, JoinSetKind};
@@ -959,30 +960,46 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                 retry_config: Some(retry_config.into()),
                 lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
             }),
-            ExecutionRequest::Unlocked {
-                backoff_expires_at,
-                reason,
-            } => grpc_gen::execution_event::Event::Unlocked(grpc_gen::execution_event::Unlocked {
-                backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
-                reason: reason.to_string(),
-            }),
-            ExecutionRequest::ComponentUpgraded {
+            ExecutionRequest::Unlocked(unlocked) => grpc_gen::execution_event::Event::Unlocked(
+                grpc_gen::execution_event::Unlocked {
+                    reason: unlocked.reason.to_string(),
+                    backoff_expires_at: Some(prost_wkt_types::Timestamp::from(
+                        unlocked.backoff_expires_at,
+                    )),
+                },
+            ),
+            ExecutionRequest::ComponentUpgradeFinished {
                 component_digest,
                 deployment_id,
-                reason,
-            } => grpc_gen::execution_event::Event::ComponentUpgraded(
-                grpc_gen::execution_event::ComponentUpgraded {
+                outcome,
+            } => grpc_gen::execution_event::Event::ComponentUpgradeFinished(
+                grpc_gen::execution_event::ComponentUpgradeFinished {
                     component_digest: Some(component_digest.into()),
                     deployment_id: Some(deployment_id.into()),
-                    reason: Some(match reason {
-                        ComponentUpgradeReason::Auto => {
-                            grpc_gen::execution_event::component_upgraded::Reason::Auto(
-                                grpc_gen::execution_event::component_upgraded::Auto {},
+                    outcome: Some(match outcome {
+                        ComponentUpgradeOutcome::Success { reason } => {
+                            grpc_gen::execution_event::component_upgrade_finished::Outcome::Success(
+                                grpc_gen::execution_event::component_upgrade_finished::Success {
+                                    reason: Some(match reason {
+                                        ComponentUpgradeReason::Auto => {
+                                            grpc_gen::execution_event::component_upgrade_finished::success::Reason::Auto(
+                                                grpc_gen::execution_event::component_upgrade_finished::Auto {},
+                                            )
+                                        }
+                                        ComponentUpgradeReason::Manual { force } => {
+                                            grpc_gen::execution_event::component_upgrade_finished::success::Reason::Manual(
+                                                grpc_gen::execution_event::component_upgrade_finished::Manual { force },
+                                            )
+                                        }
+                                    }),
+                                },
                             )
                         }
-                        ComponentUpgradeReason::Manual { force } => {
-                            grpc_gen::execution_event::component_upgraded::Reason::Manual(
-                                grpc_gen::execution_event::component_upgraded::Manual { force },
+                        ComponentUpgradeOutcome::Failed { reason } => {
+                            grpc_gen::execution_event::component_upgrade_finished::Outcome::Failed(
+                                grpc_gen::execution_event::component_upgrade_finished::Failed {
+                                    reason: reason.to_string(),
+                                },
                             )
                         }
                     }),
@@ -1109,17 +1126,17 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                     .argument_must_exist("retry_config")?
                     .try_into()?,
             }),
-            grpc_gen::execution_event::Event::Unlocked(unlocked) => ExecutionRequest::Unlocked {
-                backoff_expires_at: unlocked
-                    .backoff_expires_at
-                    .argument_must_exist("backoff_expires_at")?
-                    .into(),
-                reason: UnlockedReason::Other {
+            grpc_gen::execution_event::Event::Unlocked(unlocked) => {
+                ExecutionRequest::Unlocked(Unlocked {
+                    backoff_expires_at: unlocked
+                        .backoff_expires_at
+                        .argument_must_exist("backoff_expires_at")?
+                        .into(),
                     reason: StrVariant::from(unlocked.reason),
-                },
-            },
-            grpc_gen::execution_event::Event::ComponentUpgraded(upgraded) => {
-                ExecutionRequest::ComponentUpgraded {
+                })
+            }
+            grpc_gen::execution_event::Event::ComponentUpgradeFinished(upgraded) => {
+                ExecutionRequest::ComponentUpgradeFinished {
                     component_digest: upgraded
                         .component_digest
                         .argument_must_exist("component_digest")?
@@ -1128,13 +1145,22 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                         .deployment_id
                         .argument_must_exist("deployment_id")?
                         .try_into()?,
-                    reason: match upgraded.reason.argument_must_exist("reason")? {
-                        grpc_gen::execution_event::component_upgraded::Reason::Auto(_) => {
-                            ComponentUpgradeReason::Auto
+                    outcome: match upgraded.outcome.argument_must_exist("outcome")? {
+                        grpc_gen::execution_event::component_upgrade_finished::Outcome::Success(success) => {
+                            ComponentUpgradeOutcome::Success {
+                                reason: match success.reason.argument_must_exist("reason")? {
+                                    grpc_gen::execution_event::component_upgrade_finished::success::Reason::Auto(_) => {
+                                        ComponentUpgradeReason::Auto
+                                    }
+                                    grpc_gen::execution_event::component_upgrade_finished::success::Reason::Manual(manual) => {
+                                        ComponentUpgradeReason::Manual { force: manual.force }
+                                    }
+                                },
+                            }
                         }
-                        grpc_gen::execution_event::component_upgraded::Reason::Manual(manual) => {
-                            ComponentUpgradeReason::Manual {
-                                force: manual.force,
+                        grpc_gen::execution_event::component_upgrade_finished::Outcome::Failed(failed) => {
+                            ComponentUpgradeOutcome::Failed {
+                                reason: StrVariant::from(failed.reason),
                             }
                         }
                     },

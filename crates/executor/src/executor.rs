@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbErrorGeneric,
-    DbErrorWrite, DbExecutor, DbPool, ExecutionLog, LockedExecution,
+    DbErrorWrite, DbExecutor, DbPool, ExecutionLog, LockedExecution, Unlocked,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -669,10 +669,10 @@ impl ExecTask {
 
                 let (primary_event, child_finished, version) = match err {
                     WorkerError::ExecutorClosing(version) => {
-                        let primary_event = ExecutionRequest::Unlocked {
-                            backoff_expires_at: result_obtained_at, // continue right when new executor starts
+                        let primary_event = ExecutionRequest::Unlocked(Unlocked {
+                            backoff_expires_at: result_obtained_at,
                             reason: "executor closing".into(),
-                        };
+                        });
                         (primary_event, None, version)
                     }
                     WorkerError::TemporaryTimeout {
@@ -782,10 +782,10 @@ impl ExecTask {
                             "Limit reached: {reason}, unlocking after {unlock_expiry_on_limit_reached:?} at {expires_at}"
                         );
                         (
-                            ExecutionRequest::Unlocked {
+                            ExecutionRequest::Unlocked(Unlocked {
                                 backoff_expires_at: expires_at,
-                                reason: StrVariant::from(reason).into(),
-                            },
+                                reason: StrVariant::from(reason),
+                            }),
                             None,
                             new_version,
                         )
