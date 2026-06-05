@@ -150,7 +150,7 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
                 | ExecutionRequest::Locked(Locked { component_id, .. }) => {
                     component_id.component_digest = COMPONENT_DIGEST_DUMMY;
                 }
-                ExecutionRequest::ComponentUpgraded {
+                ExecutionRequest::ComponentUpgradeFinished {
                     component_digest, ..
                 } => {
                     *component_digest = COMPONENT_DIGEST_DUMMY;

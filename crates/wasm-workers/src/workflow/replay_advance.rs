@@ -199,21 +199,18 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             locked.lock_expires_at = DateTime::UNIX_EPOCH;
             ExecutionRequest::Locked(locked)
         }
-        ExecutionRequest::Unlocked {
-            backoff_expires_at: _,
-            reason,
-        } => ExecutionRequest::Unlocked {
-            backoff_expires_at: DateTime::UNIX_EPOCH,
-            reason,
-        },
-        ExecutionRequest::ComponentUpgraded {
+        ExecutionRequest::Unlocked(mut unlocked) => {
+            unlocked.backoff_expires_at = DateTime::UNIX_EPOCH;
+            ExecutionRequest::Unlocked(unlocked)
+        }
+        ExecutionRequest::ComponentUpgradeFinished {
             component_digest,
             deployment_id,
-            reason,
-        } => ExecutionRequest::ComponentUpgraded {
+            outcome,
+        } => ExecutionRequest::ComponentUpgradeFinished {
             component_digest,
             deployment_id,
-            reason,
+            outcome,
         },
         ExecutionRequest::TemporarilyFailed {
             backoff_expires_at: _,

@@ -360,26 +360,24 @@ pub enum ExecutionRequest {
         scheduled_by: Option<ExecutionId>,
     },
     Locked(Locked),
-    /// Returns execution to [`PendingState::PendingAt`] state at the specified time.
-    /// This can happen when:
-    /// - executor is running out of resources like [`WorkerError::LimitReached`]
-    /// - executor is being closed (shutdown or hot redeploy requested)
-    /// - activity is paused
-    /// - workflow made progress but then its lock expired
-    /// - workflow attempted to auto-upgrade an execution and failed, recording its digest in `incompatible_digest`
-    #[display("Unlocked(`{backoff_expires_at}`)")]
-    Unlocked {
-        backoff_expires_at: DateTime<Utc>,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = UnlockedReason::Other { reason: StrVariant::Static("reason") }))]
-        reason: UnlockedReason,
-    },
-    #[display("ComponentUpgraded({component_digest})")]
-    ComponentUpgraded {
+    /// Releases a lock.
+    ///
+    /// State transition semantics:
+    /// - [`PendingState::Locked`] becomes [`PendingState::PendingAt`] at
+    ///   [`Unlocked::backoff_expires_at`]. The field name is kept for persisted JSON and gRPC
+    ///   compatibility, but it is the next pending instant for every unlock reason.
+    /// - [`PendingState::PendingAt`], [`PendingState::BlockedByJoinSet`],
+    ///   [`PendingState::Paused`], and [`PendingState::Finished`] reject this event.
+    #[display("Unlocked({_0})")]
+    Unlocked(Unlocked),
+    /// Does not change `PendingState`.
+    #[display("ComponentUpgradeFinished({component_digest})")]
+    ComponentUpgradeFinished {
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity().component_digest))]
         component_digest: ComponentDigest,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = DeploymentId::from_parts(0, 0)))]
         deployment_id: DeploymentId,
-        reason: ComponentUpgradeReason,
+        outcome: ComponentUpgradeOutcome,
     },
     // Created by the executor holding the lock.
     // After expiry interpreted as pending.
@@ -419,24 +417,7 @@ pub enum ExecutionRequest {
     Unpaused,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, schemars::JsonSchema)]
-#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum UnlockedReason {
-    #[display("{reason}")]
-    Other {
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
-        reason: StrVariant,
-    },
-    #[display("auto-upgrade failed: {reason}")]
-    AutoUpgradeFailed {
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity().component_digest))]
-        target_digest: ComponentDigest,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
-        reason: StrVariant,
-    },
-}
-
+/// Reason for auditing only
 #[derive(
     Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -449,91 +430,32 @@ pub enum ComponentUpgradeReason {
     Manual { force: bool },
 }
 
-impl<'de> Deserialize<'de> for UnlockedReason {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        unlocked_reason_compat::deserialize(deserializer)
-    }
+#[derive(
+    Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[display("{reason}, pending at {backoff_expires_at}")]
+pub struct Unlocked {
+    /// Instant used when releasing a currently locked execution back to
+    /// [`PendingState::PendingAt`]. This field keeps the released JSON and gRPC name.
+    pub backoff_expires_at: DateTime<Utc>,
+    #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
+    pub reason: StrVariant,
 }
 
-mod unlocked_reason_compat {
-    use super::{ComponentDigest, StrVariant, UnlockedReason};
-    use serde::Deserialize;
-
-    // TODO: Delete this compatibility module with the next DB-breaking release.
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<UnlockedReason, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Compat::deserialize(deserializer).map(Into::into)
-    }
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Compat {
-        Current(Current),
-        Legacy(StrVariant),
-    }
-
-    #[derive(Deserialize)]
-    #[serde(tag = "type", rename_all = "snake_case")]
-    enum Current {
-        Other {
-            reason: StrVariant,
-        },
-        AutoUpgradeFailed {
-            target_digest: ComponentDigest,
-            reason: StrVariant,
-        },
-    }
-
-    impl From<Compat> for UnlockedReason {
-        fn from(value: Compat) -> Self {
-            match value {
-                Compat::Current(current) => current.into(),
-                Compat::Legacy(reason) => Self::Other { reason },
-            }
-        }
-    }
-
-    impl From<Current> for UnlockedReason {
-        fn from(value: Current) -> Self {
-            match value {
-                Current::Other { reason } => Self::Other { reason },
-                Current::AutoUpgradeFailed {
-                    target_digest,
-                    reason,
-                } => Self::AutoUpgradeFailed {
-                    target_digest,
-                    reason,
-                },
-            }
-        }
-    }
-}
-
-impl From<StrVariant> for UnlockedReason {
-    fn from(value: StrVariant) -> Self {
-        Self::Other { reason: value }
-    }
-}
-
-impl From<String> for UnlockedReason {
-    fn from(value: String) -> Self {
-        Self::Other {
-            reason: StrVariant::from(value),
-        }
-    }
-}
-
-impl From<&'static str> for UnlockedReason {
-    fn from(value: &'static str) -> Self {
-        Self::Other {
-            reason: StrVariant::Static(value),
-        }
-    }
+#[derive(
+    Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ComponentUpgradeOutcome {
+    #[display("success({reason})")]
+    Success { reason: ComponentUpgradeReason },
+    #[display("failed: {reason}")]
+    Failed {
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
+        reason: StrVariant,
+    },
 }
 
 impl ExecutionRequest {
@@ -551,8 +473,8 @@ impl ExecutionRequest {
         match self {
             ExecutionRequest::Created { .. } => "created",
             ExecutionRequest::Locked(_) => "locked",
-            ExecutionRequest::Unlocked { .. } => "unlocked",
-            ExecutionRequest::ComponentUpgraded { .. } => "component_upgraded",
+            ExecutionRequest::Unlocked(_) => "unlocked",
+            ExecutionRequest::ComponentUpgradeFinished { .. } => "component_upgrade_finished",
             ExecutionRequest::TemporarilyFailed { .. } => "temporarily_failed",
             ExecutionRequest::TemporarilyTimedOut { .. } => "temporarily_timed_out",
             ExecutionRequest::Finished { .. } => "finished",
@@ -1575,8 +1497,8 @@ pub trait DbExternalApi: DbConnection {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead>;
 
     /// Pause an execution. Only pending executions can be paused.
-    /// If the execution is currently locked, implementations must release the lock first
-    /// and then record the paused state.
+    /// If the execution is an activity and is currently in `PendingState::Locked`, implementations must
+    /// append `ExecutionRequest::Unlocked` to avoid affecting failed attempt count, before appending `ExecutionRequest::Paused`.
     async fn pause_execution(
         &self,
         execution_id: &ExecutionId,
@@ -2693,10 +2615,8 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
-    use super::UnlockedReason;
     use crate::ExecutionFailureKind;
     use crate::JoinSetId;
-    use crate::StrVariant;
     use crate::SupportedFunctionReturnValue;
     use chrono::DateTime;
     use chrono::Datelike;
@@ -2736,38 +2656,6 @@ mod tests {
         let ser = serde_json::to_string(&expected).unwrap();
         let actual: PendingStateFinished = serde_json::from_str(&ser).unwrap();
         assert_eq!(expected, actual);
-    }
-
-    #[test]
-    fn unlocked_reason_should_deserialize_legacy_string() {
-        let actual: UnlockedReason = serde_json::from_str(r#""executor closing""#).unwrap();
-        assert_eq!(
-            UnlockedReason::Other {
-                reason: StrVariant::Static("executor closing"),
-            },
-            actual
-        );
-    }
-
-    #[test]
-    fn unlocked_reason_other_should_serialize_current_tagged_shape() {
-        let actual = serde_json::to_string(&UnlockedReason::Other {
-            reason: StrVariant::Static("executor closing"),
-        })
-        .unwrap();
-        assert_eq!(r#"{"type":"other","reason":"executor closing"}"#, actual);
-    }
-
-    #[test]
-    fn unlocked_reason_should_deserialize_current_tagged_shape() {
-        let actual: UnlockedReason =
-            serde_json::from_str(r#"{"type":"other","reason":"executor closing"}"#).unwrap();
-        assert_eq!(
-            UnlockedReason::Other {
-                reason: StrVariant::Static("executor closing"),
-            },
-            actual
-        );
     }
 
     #[test]

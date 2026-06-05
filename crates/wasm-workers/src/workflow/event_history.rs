@@ -104,7 +104,7 @@ pub(crate) enum ApplyError {
     #[error("executor closing")]
     ExecutorClosing,
     #[error("replay interrupt")]
-    ReplayWaitingForResponse, // TODO: Rename to ReplayInterrupt
+    ReplayWaitingForResponse, // TODO: Rename to ReplayStubDbFlush
 }
 
 #[derive(Debug, Clone, thiserror::Error)]

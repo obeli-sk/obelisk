@@ -171,11 +171,10 @@ fn normalize_timestamps(
         ExecutionRequest::Locked(locked) => {
             locked.lock_expires_at = arbitrary_valid_datetime(unstructured)?;
         }
-        ExecutionRequest::Unlocked {
-            backoff_expires_at,
-            reason: _,
+        ExecutionRequest::Unlocked(unlocked) => {
+            unlocked.backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
         }
-        | ExecutionRequest::TemporarilyFailed {
+        ExecutionRequest::TemporarilyFailed {
             backoff_expires_at,
             reason: _,
             detail: _,
@@ -190,10 +189,10 @@ fn normalize_timestamps(
         ExecutionRequest::HistoryEvent { event } => {
             normalize_history_event_timestamps(event, unstructured)?;
         }
-        ExecutionRequest::ComponentUpgraded {
+        ExecutionRequest::ComponentUpgradeFinished {
             component_digest: _,
             deployment_id: _,
-            reason: _,
+            outcome: _,
         }
         | ExecutionRequest::Finished {
             retval: _,

@@ -9,12 +9,12 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
-        ComponentMetadataRecord, ComponentUpgradeReason, CreateRequest, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
-        DbPool, DbPoolCloseable, DeploymentComponentDetail, DeploymentComponentRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ComponentMetadataRecord, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
+        DeploymentComponentRecord, DeploymentRecord, DeploymentState, DeploymentStatus,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
@@ -23,7 +23,7 @@ use concepts::{
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
         ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, UnlockedReason, Version, VersionType, WasmBacktrace,
+        STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -604,17 +604,10 @@ async fn update_state_pending_after_response_appended(
     })
 }
 
-struct PendingAfterEventUpdate<'a> {
+struct PendingAfterEventUpdate {
     scheduled_at: DateTime<Utc>,
     intermittent_failure: bool,
     component_input_digest: ComponentDigest,
-    incompatible_digest_update: IncompatibleDigestUpdate<'a>,
-}
-
-#[derive(Clone, Copy)]
-enum IncompatibleDigestUpdate<'a> {
-    LeaveUnchanged,
-    Set(&'a ComponentDigest),
 }
 
 #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, scheduled_at = %update.scheduled_at, %appending_version))]
@@ -622,28 +615,13 @@ async fn update_state_pending_after_event_appended(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     appending_version: &Version,
-    update: PendingAfterEventUpdate<'_>,
+    update: PendingAfterEventUpdate,
 ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
     let scheduled_at = update.scheduled_at;
     debug!("Setting t_state to Pending(`{scheduled_at:?}`) after event appended");
 
     let intermittent_delta = i64::from(update.intermittent_failure); // 0 or 1
-    let mut params: Vec<Box<dyn ToSql + Send + Sync>> = vec![
-        Box::new(i64::from(appending_version.0)), // $1
-        Box::new(scheduled_at),                   // $2
-        Box::new(STATE_PENDING_AT),               // $3
-        Box::new(intermittent_delta),             // $4
-        Box::new(execution_id.to_string()),       // $5
-    ];
-    let incompatible_digest_assignment = match update.incompatible_digest_update {
-        IncompatibleDigestUpdate::LeaveUnchanged => String::new(),
-        IncompatibleDigestUpdate::Set(digest) => {
-            params.push(Box::new(digest.to_vec()));
-            format!("incompatible_digest = ${},", params.len())
-        }
-    };
-    let sql = format!(
-        r"
+    let sql = r"
             UPDATE t_state
             SET
                 corresponding_version = $1,
@@ -651,7 +629,6 @@ async fn update_state_pending_after_event_appended(
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
                 intermittent_event_count = intermittent_event_count + $4,
-                {incompatible_digest_assignment}
 
                 max_retries = NULL,
                 retry_exp_backoff_millis = NULL,
@@ -662,10 +639,19 @@ async fn update_state_pending_after_event_appended(
 
                 result_kind = NULL
             WHERE execution_id = $5;
-            "
-    );
-    let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_ref() as _).collect();
-    let updated = tx.execute(&sql, &params_refs).await?;
+            ";
+    let updated = tx
+        .execute(
+            sql,
+            &[
+                &i64::from(appending_version.0),
+                &scheduled_at,
+                &STATE_PENDING_AT,
+                &intermittent_delta,
+                &execution_id.to_string(),
+            ],
+        )
+        .await?;
 
     if updated != 1 {
         return Err(DbErrorWrite::NotFound);
@@ -685,7 +671,7 @@ async fn update_state_pending_after_event_appended(
     ))
 }
 
-async fn update_state_component_upgraded(
+async fn update_state_component_upgrade_finished_success(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     component_digest: &ComponentDigest,
@@ -718,6 +704,59 @@ async fn update_state_component_upgraded(
     if updated != 1 {
         return Err(DbErrorWrite::NotFound);
     }
+    Ok(appending_version.increment())
+}
+
+async fn update_state_unlocked_from_locked(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    component_digest: ComponentDigest,
+    scheduled_at: DateTime<Utc>,
+    appending_version: &Version,
+) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
+    update_state_pending_after_event_appended(
+        tx,
+        execution_id,
+        appending_version,
+        PendingAfterEventUpdate {
+            scheduled_at,
+            intermittent_failure: false,
+            component_input_digest: component_digest,
+        },
+    )
+    .await
+}
+
+async fn update_state_component_upgrade_finished_failed(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    target_digest: &ComponentDigest,
+    appending_version: &Version,
+) -> Result<AppendResponse, DbErrorWrite> {
+    debug!("Marking component {target_digest} incompatible after upgrade failure");
+
+    let updated = tx
+        .execute(
+            r"
+            UPDATE t_state
+            SET
+                corresponding_version = $1,
+                updated_at = CURRENT_TIMESTAMP,
+                incompatible_digest = $2
+            WHERE execution_id = $3;
+            ",
+            &[
+                &i64::from(appending_version.0),
+                &target_digest.as_slice(),
+                &execution_id.to_string(),
+            ],
+        )
+        .await?;
+
+    if updated != 1 {
+        return Err(DbErrorWrite::NotFound);
+    }
+
     Ok(appending_version.increment())
 }
 
@@ -2104,53 +2143,88 @@ async fn append(
                     scheduled_at: *backoff_expires_at,
                     intermittent_failure: true,
                     component_input_digest: combined_state.execution_with_state.component_digest,
-                    incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
                 },
             )
             .await?;
             return Ok((next_version, notifier));
         }
 
-        ExecutionRequest::Unlocked {
-            backoff_expires_at,
-            reason,
-        } => {
-            let incompatible_digest_update = match reason {
-                UnlockedReason::AutoUpgradeFailed { target_digest, .. } => {
-                    IncompatibleDigestUpdate::Set(target_digest)
+        ExecutionRequest::Unlocked(unlocked) => {
+            match &combined_state.execution_with_state.pending_state {
+                PendingState::PendingAt(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState {
+                            reason: "`Unlocked` cannot be appended to a pending execution".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        },
+                    ));
                 }
-                UnlockedReason::Other { .. } => IncompatibleDigestUpdate::LeaveUnchanged,
-            };
-            let (next_version, notifier) = update_state_pending_after_event_appended(
-                tx,
-                execution_id,
-                &appending_version,
-                PendingAfterEventUpdate {
-                    scheduled_at: *backoff_expires_at,
-                    intermittent_failure: false,
-                    component_input_digest: combined_state.execution_with_state.component_digest,
-                    incompatible_digest_update,
-                },
-            )
-            .await?;
-            return Ok((next_version, notifier));
+                PendingState::Locked(_) => {
+                    let (next_version, notifier) = update_state_unlocked_from_locked(
+                        tx,
+                        execution_id,
+                        combined_state.execution_with_state.component_digest,
+                        unlocked.backoff_expires_at,
+                        &appending_version,
+                    )
+                    .await?;
+                    return Ok((next_version, notifier));
+                }
+                PendingState::BlockedByJoinSet(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState {
+                            reason: "`Unlocked` cannot be appended to a blocked execution".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        },
+                    ));
+                }
+                PendingState::Paused(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState {
+                            reason: "`Unlocked` cannot be appended to a paused execution".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        },
+                    ));
+                }
+                PendingState::Finished(_) => {
+                    unreachable!("handled above");
+                }
+            }
         }
 
-        ExecutionRequest::ComponentUpgraded {
+        ExecutionRequest::ComponentUpgradeFinished {
             component_digest,
             deployment_id,
-            ..
-        } => {
-            let next_version = update_state_component_upgraded(
-                tx,
-                execution_id,
-                component_digest,
-                *deployment_id,
-                &appending_version,
-            )
-            .await?;
-            return Ok((next_version, AppendNotifier::default()));
-        }
+            outcome,
+        } => match outcome {
+            ComponentUpgradeOutcome::Success { .. } => {
+                let next_version = update_state_component_upgrade_finished_success(
+                    tx,
+                    execution_id,
+                    component_digest,
+                    *deployment_id,
+                    &appending_version,
+                )
+                .await?;
+                return Ok((next_version, AppendNotifier::default()));
+            }
+            ComponentUpgradeOutcome::Failed { .. } => {
+                let next_version = update_state_component_upgrade_finished_failed(
+                    tx,
+                    execution_id,
+                    component_digest,
+                    &appending_version,
+                )
+                .await?;
+                return Ok((next_version, AppendNotifier::default()));
+            }
+        },
 
         ExecutionRequest::Paused => {
             match &combined_state.execution_with_state.pending_state {
@@ -2313,7 +2387,6 @@ async fn append(
                         component_input_digest: combined_state
                             .execution_with_state
                             .component_digest,
-                        incompatible_digest_update: IncompatibleDigestUpdate::LeaveUnchanged,
                     },
                 )
                 .await?;
@@ -3063,10 +3136,10 @@ async fn upgrade_execution_component(
         execution_id,
         AppendRequest {
             created_at: Utc::now(),
-            event: ExecutionRequest::ComponentUpgraded {
+            event: ExecutionRequest::ComponentUpgradeFinished {
                 component_digest: new.clone(),
                 deployment_id: combined_state.execution_with_state.deployment_id,
-                reason,
+                outcome: ComponentUpgradeOutcome::Success { reason },
             },
         },
         appending_version,
@@ -4780,10 +4853,10 @@ impl DbExternalApi for PostgresConnection {
                 execution_id,
                 AppendRequest {
                     created_at: paused_at,
-                    event: ExecutionRequest::Unlocked {
+                    event: ExecutionRequest::Unlocked(Unlocked {
                         backoff_expires_at: paused_at,
-                        reason: StrVariant::Static("paused").into(),
-                    },
+                        reason: "paused".into(),
+                    }),
                 },
                 appending_version,
             )

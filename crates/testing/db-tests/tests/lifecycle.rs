@@ -8,7 +8,7 @@ use concepts::storage::{
     FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter,
     LockedBy, LockedExecution, Pagination, PendingState, PendingStateBlockedByJoinSet,
     PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
-    Version, VersionType, WasmBacktrace,
+    Unlocked, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent, ListExecutionsFilter};
@@ -350,10 +350,10 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         let created_at = sim_clock.now();
         info!(now = %created_at, "unlock");
         let req = AppendRequest {
-            event: ExecutionRequest::Unlocked {
+            event: ExecutionRequest::Unlocked(Unlocked {
                 backoff_expires_at,
-                reason: StrVariant::Static("reason").into(),
-            },
+                reason: StrVariant::Static("reason"),
+            }),
             created_at,
         };
         db_connection
@@ -1767,6 +1767,166 @@ async fn create_join_set(
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn cannot_append_unlocked_to_blocked_execution(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    let lock_expiry = Duration::from_millis(100);
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + lock_expiry,
+        RunId::generate(),
+    )
+    .await;
+
+    let join_set_id = JoinSetId::new(JoinSetKind::Named, "blocked".into()).unwrap();
+    create_join_set(
+        &execution_id,
+        &mut version,
+        join_set_id.clone(),
+        sim_clock.now(),
+        db_connection.as_ref(),
+    )
+    .await;
+
+    version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id,
+                        run_expires_at: sim_clock.now() + lock_expiry,
+                        closing: false,
+                        requested_ffqn: Some(SOME_FFQN),
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .append(
+            execution_id,
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unlocked(Unlocked {
+                    backoff_expires_at: sim_clock.now(),
+                    reason: "should fail".into(),
+                }),
+            },
+        )
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason
+    );
+    assert_eq!(
+        "`Unlocked` cannot be appended to a blocked execution",
+        reason.to_string()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_append_unlocked_to_paused_execution(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    let version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .append(
+            execution_id,
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Unlocked(Unlocked {
+                    backoff_expires_at: sim_clock.now(),
+                    reason: "should fail".into(),
+                }),
+            },
+        )
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason
+    );
+    assert_eq!(
+        "`Unlocked` cannot be appended to a paused execution",
+        reason.to_string()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn test_append_response_with_same_delay_id_twice_should_fail(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
@@ -2241,14 +2401,13 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
         PendingState::Paused(PendingStatePaused::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
     assert_eq!(paused_at, paused_pending_at.0);
     assert_eq!(Some(found_locked_by.clone()), paused_pending_at.1);
-    let (backoff_expires_at, reason) = assert_matches!(
+    let reason = assert_matches!(
         &log.events[2].event,
-        ExecutionRequest::Unlocked {
-            backoff_expires_at,
-            reason,
-        } => (*backoff_expires_at, reason)
+        ExecutionRequest::Unlocked(Unlocked { backoff_expires_at, reason }) => {
+            assert_eq!(&paused_at, backoff_expires_at);
+            reason
+        }
     );
-    assert_eq!(paused_at, backoff_expires_at);
     assert_eq!("paused", reason.to_string());
     assert_matches!(log.events[3].event, ExecutionRequest::Paused);
 
@@ -2463,16 +2622,17 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
         .await
         .unwrap();
 
+    let created_at = sim_clock.now();
     version = db_connection
         .append(
             execution_id.clone(),
             version,
             AppendRequest {
-                created_at: sim_clock.now(),
-                event: ExecutionRequest::Unlocked {
-                    backoff_expires_at: sim_clock.now(),
-                    reason: StrVariant::Static("paused").into(),
-                },
+                created_at,
+                event: ExecutionRequest::Unlocked(Unlocked {
+                    backoff_expires_at: created_at,
+                    reason: "paused".into(),
+                }),
             },
         )
         .await

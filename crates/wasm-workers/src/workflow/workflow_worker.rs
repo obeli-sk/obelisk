@@ -15,12 +15,13 @@ use crate::workflow::replay_db_proxy::{
 };
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
-    AppendRequest, CapturedDbWrite, ComponentUpgradeReason, DbConnection, DbErrorWrite, DbPool,
-    ExecutionLog, ExecutionRequest, Locked, UnlockedReason, Version,
+    AppendRequest, CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason, DbConnection,
+    DbErrorWrite, DbPool, ExecutionLog, ExecutionRequest, Locked, Unlocked, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -393,7 +394,7 @@ enum WorkerResultRefactored {
     DbError(DbErrorWrite),
     LockExpired(WorkflowCtx),
     ExecutorClosing(WorkflowCtx),
-    ReplayWaitingForResponse(WorkflowCtx),
+    ReplayWaitingForResponse(WorkflowCtx), // TODO: Rename to ReplayStubDbFlush
 }
 
 type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
@@ -465,7 +466,7 @@ struct PrepareFuncFinished {
     params: Arc<[Val]>,
 }
 
-struct ReplayWaitingForResponse;
+struct ReplayWaitingForResponse; // TODO: Rename to ReplayStubDbFlush
 
 impl WorkflowWorker {
     pub(crate) async fn capture_replay_writes_from_log(
@@ -518,6 +519,15 @@ impl WorkflowWorker {
 
         self.replay_internal(ctx, replay_db_connection, replay_kind)
             .await
+            .map(|(writes, replay_end)| {
+                (
+                    writes,
+                    match replay_end {
+                        ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
+                        _ => None,
+                    },
+                )
+            })
     }
 
     pub(crate) async fn advance_from_log(
@@ -973,26 +983,36 @@ impl WorkflowWorker {
     /// It can assume it is the only writer to its own and its children's execution log.
     /// In the worst case, e.g. on a race with an external stub response writer, the advance will
     /// fail, and the new replay will have to be issued.
-    pub(crate) async fn replay_internal(
+    async fn replay_internal(
         &self,
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
         replay_kind: ReplayKind,
-    ) -> Result<(Vec<InternalCapturedWrite>, Option<FatalError>), ReplayInternalError> {
-        let (retval, replay_db_connection, fatal_error) = match self
+    ) -> Result<(Vec<InternalCapturedWrite>, ReplayPendingState), ReplayInternalError> {
+        let (retval, replay_db_connection, replay_outcome) = match self
             .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
         {
             Ok((Either::Left(WorkerResultOk::RunFinished(RunFinished { retval, .. })), db)) => {
-                Ok((Some(retval), db, None))
+                Ok((Some(retval), db, ReplayPendingState::Finished))
             }
-            Ok((_, db)) => Ok((None, db, None)), // replay interrupted or db updated (both have writes) or execution is waiting
+            Ok((Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher), db)) => {
+                Ok((None, db, ReplayPendingState::Blocked))
+            }
+            Ok((Either::Right(ReplayWaitingForResponse), db)) => {
+                // Only first phase of stubbing leaves the execution in `PendingState::Locked`
+                Ok((None, db, ReplayPendingState::Locked))
+            }
             Err(WorkflowError::FatalError { err, db_connection }) => {
                 debug!("Replay finished with fatal error: {err:?}");
                 let retval = SupportedFunctionReturnValue::ExecutionFailure(
                     FinishedExecutionFailure::from(&err),
                 );
-                Ok((Some(retval), db_connection, Some(err)))
+                Ok((
+                    Some(retval),
+                    db_connection,
+                    ReplayPendingState::FinishedWithFailure(err),
+                ))
             }
             Err(WorkflowError::LimitReached { reason, version }) => {
                 Err(ReplayInternalError::LimitReached { reason, version })
@@ -1018,6 +1038,10 @@ impl WorkflowWorker {
         if replay_kind == ReplayKind::Unfinished
             && let Some(retval) = retval
         {
+            assert_matches!(
+                replay_outcome,
+                ReplayPendingState::Finished | ReplayPendingState::FinishedWithFailure(_)
+            );
             debug!("Replay finished returning a value: {retval:?}");
             // Capture the Finished event that the executor would write.
             let version = replay_db_connection.version().clone();
@@ -1031,7 +1055,7 @@ impl WorkflowWorker {
                 parent,
             });
         }
-        Ok((replay_db_connection.into_writes(), fatal_error))
+        Ok((replay_db_connection.into_writes(), replay_outcome))
     }
 
     // Returns the same `db_connection` it was supplied.
@@ -1403,7 +1427,7 @@ impl WorkflowWorker {
             ..ctx
         };
 
-        let (mut fresh_replay, fatal_error) = self
+        let (mut fresh_replay, replay_pending_state) = self
             .replay_internal(replay_ctx, replay_db_connection, ReplayKind::Unfinished)
             .await
             .map_err(|err| match err {
@@ -1420,27 +1444,73 @@ impl WorkflowWorker {
                 }
             })?;
 
-        // Although not all fatal errors are caused by nondeterminism detected, auto upgrade will not persist any of them.
-        if let Some(fatal_error) = fatal_error {
+        // Explicit replay/advance may persist this fatal replay outcome as `Finished`.
+        // Auto-upgrade is implicit, so it only marks this component digest incompatible
+        // and leaves the execution available for manual replay/advance later.
+        if let ReplayPendingState::FinishedWithFailure(fatal_error) = replay_pending_state {
             // Set ignore_component_digest to avoid needless locks in the future.
+            let created_at = self.clock_fn.now();
             db_conn
-                .append(
-                    execution_id,
-                    version,
-                    AppendRequest {
-                        created_at: self.clock_fn.now(),
-                        event: ExecutionRequest::Unlocked {
-                            backoff_expires_at: self.clock_fn.now(),
-                            reason: UnlockedReason::AutoUpgradeFailed {
-                                target_digest: self.config.component_id.component_digest.clone(),
-                                reason: StrVariant::from(fatal_error.to_string()),
+                .append_batch(
+                    created_at,
+                    vec![
+                        AppendRequest {
+                            created_at,
+                            event: ExecutionRequest::ComponentUpgradeFinished {
+                                component_digest: self.config.component_id.component_digest.clone(),
+                                deployment_id: self.deployment_id,
+                                outcome: ComponentUpgradeOutcome::Failed {
+                                    reason: StrVariant::from(fatal_error.to_string()),
+                                },
                             },
                         },
-                    },
+                        AppendRequest {
+                            created_at,
+                            event: ExecutionRequest::Unlocked(Unlocked {
+                                backoff_expires_at: created_at,
+                                reason: "auto-upgrade failed".into(),
+                            }),
+                        },
+                    ],
+                    execution_id,
+                    version,
                 )
                 .await
                 .map_err(WorkerError::DbError)?;
             return Ok(()); // NOK but db already updated
+        }
+
+        if fresh_replay.is_empty() {
+            warn!("Auto upgrade failed - empty writes returned by replay"); // Unsure what the next pending state would be.
+            let created_at = self.clock_fn.now();
+            db_conn
+                .append_batch(
+                    created_at,
+                    vec![
+                        AppendRequest {
+                            created_at,
+                            event: ExecutionRequest::ComponentUpgradeFinished {
+                                component_digest: self.config.component_id.component_digest.clone(),
+                                deployment_id: self.deployment_id,
+                                outcome: ComponentUpgradeOutcome::Failed {
+                                    reason: "auto-upgrade replay produced no writes".into(),
+                                },
+                            },
+                        },
+                        AppendRequest {
+                            created_at,
+                            event: ExecutionRequest::Unlocked(Unlocked {
+                                backoff_expires_at: created_at,
+                                reason: "auto-upgrade failed".into(),
+                            }),
+                        },
+                    ],
+                    execution_id,
+                    version,
+                )
+                .await
+                .map_err(WorkerError::DbError)?;
+            return Ok(());
         }
 
         let version = db_conn
@@ -1449,59 +1519,56 @@ impl WorkflowWorker {
                 version,
                 AppendRequest {
                     created_at: self.clock_fn.now(),
-                    event: ExecutionRequest::ComponentUpgraded {
+                    event: ExecutionRequest::ComponentUpgradeFinished {
                         component_digest: new_digest,
                         deployment_id: self.deployment_id,
-                        reason: ComponentUpgradeReason::Auto,
+                        outcome: ComponentUpgradeOutcome::Success {
+                            reason: ComponentUpgradeReason::Auto,
+                        },
                     },
                 },
             )
             .await
             .map_err(WorkerError::DbError)?;
 
-        let unlock_version = {
-            if let Some(last) = fresh_replay.last() {
-                let finished = matches!(last.write, CapturedDbWrite::AppendFinished { .. });
-                bump_versions_for_execution(&mut fresh_replay, &execution_id);
-                let version = apply_writes(
-                    db_conn.as_ref(),
-                    &self.cancel_registry,
-                    self.logs_storage_config
-                        .as_ref()
-                        .map(|config| &config.log_sender),
-                    fresh_replay,
-                    version,
-                )
-                .await
-                .map_err(WorkerError::DbError)?;
-                if finished {
-                    None // Do not send Unlocked evend if execution is going to be finished.
-                } else {
-                    Some(version)
-                }
-            } else {
-                // No captured events = blocked
-                Some(version)
+        // accomodate for already appended `ExecutionRequest::ComponentUpgradeFinished`
+        bump_versions_for_execution(&mut fresh_replay, &execution_id);
+        let version = apply_writes(
+            db_conn.as_ref(),
+            &self.cancel_registry,
+            self.logs_storage_config
+                .as_ref()
+                .map(|config| &config.log_sender),
+            fresh_replay,
+            version,
+        )
+        .await
+        .map_err(WorkerError::DbError)?;
+        match replay_pending_state {
+            ReplayPendingState::Finished => {
+                debug!("Auto upgrade replay finished the execution");
             }
-        };
-
-        if let Some(unlock_version) = unlock_version {
-            db_conn
-                .append(
-                    execution_id,
-                    unlock_version,
-                    AppendRequest {
-                        created_at: self.clock_fn.now(),
-                        event: ExecutionRequest::Unlocked {
-                            backoff_expires_at: self.clock_fn.now(),
-                            reason: UnlockedReason::Other {
+            ReplayPendingState::Blocked => {
+                debug!("Auto upgrade replay blocked the execution");
+            }
+            ReplayPendingState::Locked => {
+                let created_at = self.clock_fn.now();
+                db_conn
+                    .append(
+                        execution_id,
+                        version,
+                        AppendRequest {
+                            created_at,
+                            event: ExecutionRequest::Unlocked(Unlocked {
+                                backoff_expires_at: created_at,
                                 reason: "auto-upgrade succeeded".into(),
-                            },
+                            }),
                         },
-                    },
-                )
-                .await
-                .map_err(WorkerError::DbError)?;
+                    )
+                    .await
+                    .map_err(WorkerError::DbError)?;
+            }
+            ReplayPendingState::FinishedWithFailure(_) => unreachable!("handled above"),
         }
         info!("Execution auto-upgraded");
         Ok(())
@@ -1549,6 +1616,14 @@ impl Worker for WorkflowWorker {
             }
         })
     }
+}
+
+#[derive(Debug)]
+enum ReplayPendingState {
+    Locked,
+    Blocked,
+    Finished,
+    FinishedWithFailure(FatalError),
 }
 
 #[cfg(any(test, feature = "test"))]

@@ -406,16 +406,25 @@ message ExecutionEvent {
     message Unpaused {
     }
 
-    message ComponentUpgraded {
+    message ComponentUpgradeFinished {
         message Auto {
         }
         message Manual {
             bool force = 1;
         }
+        message Success {
+            oneof reason {
+                Auto auto = 1;
+                Manual manual = 2;
+            }
+        }
+        message Failed {
+            string reason = 1;
+        }
         ContentDigest component_digest = 1;
-        oneof reason {
-            Auto auto = 2;
-            Manual manual = 3;
+        oneof outcome {
+            Success success = 2;
+            Failed failed = 3;
         }
         DeploymentId deployment_id = 4;
     }
@@ -608,7 +617,7 @@ message ExecutionEvent {
         HistoryEvent history_variant = 9;
         Paused paused = 11;
         Unpaused unpaused = 12;
-        ComponentUpgraded component_upgraded = 13;
+        ComponentUpgradeFinished component_upgrade_finished = 13;
     }
 
     optional uint32 backtrace_id = 10;
