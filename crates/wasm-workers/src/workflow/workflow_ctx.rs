@@ -136,7 +136,7 @@ impl From<ApplyError> for WorkflowFunctionError {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
             ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
-            ApplyError::ReplayWaitingForResponse => WorkflowFunctionError::ReplayInterrupt,
+            ApplyError::ReplayInterrupt => WorkflowFunctionError::ReplayInterrupt,
         }
     }
 }

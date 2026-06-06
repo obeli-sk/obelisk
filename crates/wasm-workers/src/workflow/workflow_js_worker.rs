@@ -4,14 +4,13 @@
 //! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
-use super::workflow_worker::{
-    AdvanceResponse, ReplayError, WorkflowWorker, WorkflowWorkerCompiled,
-};
+use super::workflow_worker::{WorkflowWorker, WorkflowWorkerCompiled};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
+use crate::workflow::replay_advance::{AdvanceError, ReplayAdvanceable, ReplayResponse};
+use crate::workflow::replay_advance::{AdvanceResponse, ReplayError};
 use crate::workflow::replay_db_proxy::InternalCapturedWrite;
-use crate::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::http_client_trace::HttpClientTrace;
@@ -462,9 +461,9 @@ impl WorkflowJsWorker {
             &self.resolved_imports,
         );
 
-        let (captured_writes, mut fatal_error) = self
+        let (captured_writes, mut fatal_error, _db_conn) = self
             .inner
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
             .await?;
         // Remove side effects, unwrapping user retval or fatal error.
         let captured_writes: Vec<_> = captured_writes
@@ -527,7 +526,7 @@ impl WorkflowJsWorker {
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
         if requested.captured_writes.is_empty() {
-            return Err(crate::workflow::workflow_worker::AdvanceError::NoWrites);
+            return Err(AdvanceError::NoWrites);
         }
         if let Some(expected_version) = requested.starting_version()
             && log.next_version != *expected_version
@@ -549,9 +548,9 @@ impl WorkflowJsWorker {
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (mut fresh_replay, _fatal_error) = self
+        let (mut fresh_replay, _fatal_error, db_conn) = self
             .inner
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
             .await
             .map_err(AdvanceError::from)?;
         if let Some(InternalCapturedWrite {
@@ -567,7 +566,7 @@ impl WorkflowJsWorker {
             *retval = retval_transformed;
         }
         Ok(WorkflowWorker::advance_from_log(
-            &*db_conn,
+            db_conn.as_ref(),
             &self.inner.cancel_registry,
             log_forwarder_sender,
             requested,
