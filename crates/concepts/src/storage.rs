@@ -916,6 +916,8 @@ pub enum DbErrorWriteNonRetriable {
         source: Option<Arc<dyn std::error::Error + Send + Sync>>,
         loc: &'static Location<'static>,
     },
+    #[error("illegal state: `Unlocked` cannot be appended in state {0}")]
+    UnlockedCannotBeAppended(&'static str),
     #[error("version conflict: expected: {expected}, got: {requested}")]
     VersionConflict {
         expected: Version,

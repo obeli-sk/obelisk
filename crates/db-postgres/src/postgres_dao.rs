@@ -2153,12 +2153,7 @@ async fn append(
             match &combined_state.execution_with_state.pending_state {
                 PendingState::PendingAt(_) => {
                     return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState {
-                            reason: "`Unlocked` cannot be appended to a pending execution".into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        },
+                        DbErrorWriteNonRetriable::UnlockedCannotBeAppended("pending"),
                     ));
                 }
                 PendingState::Locked(_) => {
@@ -2174,22 +2169,12 @@ async fn append(
                 }
                 PendingState::BlockedByJoinSet(_) => {
                     return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState {
-                            reason: "`Unlocked` cannot be appended to a blocked execution".into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        },
+                        DbErrorWriteNonRetriable::UnlockedCannotBeAppended("blocked"),
                     ));
                 }
                 PendingState::Paused(_) => {
                     return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState {
-                            reason: "`Unlocked` cannot be appended to a paused execution".into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        },
+                        DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
                     ));
                 }
                 PendingState::Finished(_) => {

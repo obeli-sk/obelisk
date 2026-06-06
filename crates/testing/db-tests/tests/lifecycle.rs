@@ -1845,13 +1845,9 @@ async fn cannot_append_unlocked_to_blocked_execution(database: Database) {
         )
         .await
         .unwrap_err();
-    let reason = assert_matches!(
+    assert_matches!(
         err,
-        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason
-    );
-    assert_eq!(
-        "`Unlocked` cannot be appended to a blocked execution",
-        reason.to_string()
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::UnlockedCannotBeAppended(_))
     );
 
     drop(db_connection);
@@ -1911,13 +1907,9 @@ async fn cannot_append_unlocked_to_paused_execution(database: Database) {
         )
         .await
         .unwrap_err();
-    let reason = assert_matches!(
+    assert_matches!(
         err,
-        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason
-    );
-    assert_eq!(
-        "`Unlocked` cannot be appended to a paused execution",
-        reason.to_string()
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::UnlockedCannotBeAppended(_))
     );
 
     drop(db_connection);

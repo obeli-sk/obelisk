@@ -6,7 +6,8 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
     AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbErrorGeneric,
-    DbErrorWrite, DbExecutor, DbPool, ExecutionLog, LockedExecution, Unlocked,
+    DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, ExecutionLog, LockedExecution,
+    Unlocked,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -878,9 +879,18 @@ impl Append {
                 .append_batch_respond_to_parent(events, response, self.created_at)
                 .await?;
         } else {
-            db_exec
+            let res = db_exec
                 .append(self.execution_id, self.version, self.primary_event)
-                .await?;
+                .await;
+            match res {
+                Ok(_)
+                | Err(DbErrorWrite::NonRetriable(
+                    DbErrorWriteNonRetriable::UnlockedCannotBeAppended(_),
+                )) => {
+                    // Ignore unsuccessful `Unlocked`
+                }
+                Err(err) => return Err(err),
+            }
         }
         Ok(())
     }

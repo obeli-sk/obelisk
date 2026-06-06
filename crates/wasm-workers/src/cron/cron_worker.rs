@@ -136,6 +136,7 @@ impl Worker for CronWorker {
             },
             Some(next_fire) => {
                 debug!(next_fire = %next_fire, "Scheduling next tick");
+                // Unlocked transition must be valid - execution was just locked
                 AppendRequest {
                     created_at: now,
                     event: ExecutionRequest::Unlocked(Unlocked {

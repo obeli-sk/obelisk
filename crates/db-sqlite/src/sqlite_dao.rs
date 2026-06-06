@@ -2139,59 +2139,44 @@ impl SqlitePool {
                 return Ok((next_version, notifier));
             }
 
-            ExecutionRequest::Unlocked(unlocked) => match &combined_state
-                .execution_with_state
-                .pending_state
-            {
-                PendingState::PendingAt(_) => {
-                    return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState {
-                            reason: "`Unlocked` cannot be appended to a pending execution".into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        },
-                    ));
+            ExecutionRequest::Unlocked(unlocked) => {
+                match &combined_state.execution_with_state.pending_state {
+                    PendingState::PendingAt(_) => {
+                        return Err(DbErrorWrite::NonRetriable(
+                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("pending"),
+                        ));
+                    }
+                    PendingState::Locked(_) => {
+                        let (next_version, notifier) =
+                            Self::update_state_pending_after_event_appended(
+                                tx,
+                                execution_id,
+                                &appending_version,
+                                PendingAfterEventUpdate {
+                                    scheduled_at: unlocked.backoff_expires_at,
+                                    intermittent_failure: false,
+                                    component_input_digest: combined_state
+                                        .execution_with_state
+                                        .component_digest,
+                                },
+                            )?;
+                        return Ok((next_version, notifier));
+                    }
+                    PendingState::BlockedByJoinSet(_) => {
+                        return Err(DbErrorWrite::NonRetriable(
+                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("blocked"),
+                        ));
+                    }
+                    PendingState::Paused(_) => {
+                        return Err(DbErrorWrite::NonRetriable(
+                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
+                        ));
+                    }
+                    PendingState::Finished(_) => {
+                        unreachable!("handled above");
+                    }
                 }
-                PendingState::Locked(_) => {
-                    let (next_version, notifier) = Self::update_state_pending_after_event_appended(
-                        tx,
-                        execution_id,
-                        &appending_version,
-                        PendingAfterEventUpdate {
-                            scheduled_at: unlocked.backoff_expires_at,
-                            intermittent_failure: false,
-                            component_input_digest: combined_state
-                                .execution_with_state
-                                .component_digest,
-                        },
-                    )?;
-                    return Ok((next_version, notifier));
-                }
-                PendingState::BlockedByJoinSet(_) => {
-                    return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState {
-                            reason: "`Unlocked` cannot be appended to a blocked execution".into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        },
-                    ));
-                }
-                PendingState::Paused(_) => {
-                    return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState {
-                            reason: "`Unlocked` cannot be appended to a paused execution".into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        },
-                    ));
-                }
-                PendingState::Finished(_) => {
-                    unreachable!("handled above");
-                }
-            },
+            }
 
             ExecutionRequest::ComponentUpgradeFinished {
                 component_digest,
