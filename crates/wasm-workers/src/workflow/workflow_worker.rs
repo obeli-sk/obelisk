@@ -1313,6 +1313,7 @@ impl WorkflowWorker {
                                 },
                             },
                         },
+                        // Unlocked transition must be valid - execution was just locked
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
@@ -1346,6 +1347,7 @@ impl WorkflowWorker {
                                 },
                             },
                         },
+                        // Unlocked transition must be valid - execution was just locked
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
