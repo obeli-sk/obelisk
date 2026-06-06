@@ -104,7 +104,7 @@ pub(crate) enum ApplyError {
     #[error("executor closing")]
     ExecutorClosing,
     #[error("replay interrupt")]
-    ReplayWaitingForResponse, // TODO: Rename to ReplayStubDbFlush
+    ReplayInterrupt,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -118,7 +118,7 @@ impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
     fn from(value: DbErrorWriteOrReplayInterrupt) -> Self {
         match value {
             DbErrorWriteOrReplayInterrupt::DbError(err) => ApplyError::DbError(err),
-            DbErrorWriteOrReplayInterrupt::ReplayInterrupt => ApplyError::ReplayWaitingForResponse,
+            DbErrorWriteOrReplayInterrupt::ReplayInterrupt => ApplyError::ReplayInterrupt,
         }
     }
 }
@@ -319,7 +319,7 @@ impl EventHistory {
             FindMatchingResponse::NotFound => {} // continue
             FindMatchingResponse::FoundRequestButNotResponse { .. } => {
                 assert!(self.replaying_unfinished_execution);
-                return Err(ApplyError::ReplayWaitingForResponse);
+                return Err(ApplyError::ReplayInterrupt);
             }
         }
 

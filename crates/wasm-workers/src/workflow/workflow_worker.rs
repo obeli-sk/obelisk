@@ -394,7 +394,7 @@ enum WorkerResultRefactored {
     DbError(DbErrorWrite),
     LockExpired(WorkflowCtx),
     ExecutorClosing(WorkflowCtx),
-    ReplayWaitingForResponse(WorkflowCtx), // TODO: Rename to ReplayStubDbFlush
+    ReplayInterrupt(WorkflowCtx),
 }
 
 type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
@@ -466,7 +466,7 @@ struct PrepareFuncFinished {
     params: Arc<[Val]>,
 }
 
-struct ReplayWaitingForResponse; // TODO: Rename to ReplayStubDbFlush
+struct ReplayInterrupt;
 
 impl WorkflowWorker {
     pub(crate) async fn capture_replay_writes_from_log(
@@ -789,7 +789,7 @@ impl WorkflowWorker {
         assigned_fuel: Option<u64>,
     ) -> Result<
         (
-            Either<WorkerResultOk, ReplayWaitingForResponse>,
+            Either<WorkerResultOk, ReplayInterrupt>,
             Box<dyn WorkflowDbConnection>,
         ),
         WorkflowError,
@@ -865,10 +865,9 @@ impl WorkflowWorker {
                     workflow_ctx.db_connection.version().clone(),
                 ))
             }
-            WorkerResultRefactored::ReplayWaitingForResponse(workflow_ctx) => Ok((
-                Either::Right(ReplayWaitingForResponse),
-                workflow_ctx.db_connection,
-            )),
+            WorkerResultRefactored::ReplayInterrupt(workflow_ctx) => {
+                Ok((Either::Right(ReplayInterrupt), workflow_ctx.db_connection))
+            }
         }
     }
 
@@ -936,7 +935,7 @@ impl WorkflowWorker {
                         WorkerResultRefactored::ExecutorClosing(workflow_ctx)
                     }
                     WorkerPartialResult::ReplayWaitingForResponse => {
-                        WorkerResultRefactored::ReplayWaitingForResponse(workflow_ctx)
+                        WorkerResultRefactored::ReplayInterrupt(workflow_ctx)
                     }
                 }
             }
@@ -956,7 +955,7 @@ impl WorkflowWorker {
 
     async fn close_join_sets(
         workflow_ctx: &mut WorkflowCtx,
-    ) -> Result<Either<CloseJoinSetOk, ReplayWaitingForResponse>, JoinSetCloseError> {
+    ) -> Result<Either<CloseJoinSetOk, ReplayInterrupt>, JoinSetCloseError> {
         match workflow_ctx.join_sets_close_on_finish().await {
             Ok(()) => Ok(Either::Left(CloseJoinSetOk::Ok)),
             Err(ApplyError::InterruptDbUpdated) => {
@@ -972,9 +971,7 @@ impl WorkflowWorker {
             Err(ApplyError::ExecutorClosing) => Err(JoinSetCloseError::ExecutorClosing(
                 workflow_ctx.db_connection.version().clone(),
             )),
-            Err(ApplyError::ReplayWaitingForResponse) => {
-                Ok(Either::Right(ReplayWaitingForResponse))
-            }
+            Err(ApplyError::ReplayInterrupt) => Ok(Either::Right(ReplayInterrupt)),
         }
     }
 
@@ -999,7 +996,7 @@ impl WorkflowWorker {
             Ok((Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher), db)) => {
                 Ok((None, db, ReplayPendingState::Blocked))
             }
-            Ok((Either::Right(ReplayWaitingForResponse), db)) => {
+            Ok((Either::Right(ReplayInterrupt), db)) => {
                 // Only first phase of stubbing leaves the execution in `PendingState::Locked`
                 Ok((None, db, ReplayPendingState::Locked))
             }
@@ -1066,7 +1063,7 @@ impl WorkflowWorker {
         is_replay: Option<ReplayKind>,
     ) -> Result<
         (
-            Either<WorkerResultOk, ReplayWaitingForResponse>,
+            Either<WorkerResultOk, ReplayInterrupt>,
             Box<dyn WorkflowDbConnection>,
         ),
         WorkflowError,
