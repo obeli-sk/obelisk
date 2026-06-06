@@ -470,6 +470,19 @@ struct PrepareFuncFinished {
 
 struct ReplayInterrupt;
 
+struct WorkflowWorkerView<'a> {
+    deployment_id: DeploymentId,
+    config: &'a WorkflowConfig,
+    engine: &'a Engine,
+    clock_fn: Box<dyn ClockFn>,
+    exported_ffqn_to_index: &'a hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
+    instance_pre: &'a InstancePre<WorkflowCtx>,
+    fn_registry: Arc<dyn FunctionRegistry>,
+    cancel_registry: CancelRegistry,
+    deadline_factory: &'a dyn DeadlineTrackerFactory,
+    logs_storage_config: Option<LogStrageConfig>,
+}
+
 impl WorkflowWorker {
     pub(crate) async fn capture_replay_writes_from_log(
         &self,
@@ -477,7 +490,7 @@ impl WorkflowWorker {
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
-        real_connection: Box<dyn DbConnection>,
+        db_conn: Box<dyn DbConnection>,
     ) -> Result<
         (
             Vec<InternalCapturedWrite>,
@@ -524,7 +537,7 @@ impl WorkflowWorker {
             replay_kind,
             execution_id,
             log.next_version,
-            real_connection,
+            db_conn,
             parent,
         )
         .await
@@ -592,14 +605,13 @@ impl WorkflowWorker {
     }
 
     async fn prepare_func(
-        &self,
         ctx: WorkerContext,
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
+        view: WorkflowWorkerView<'_>,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
-        assert_eq!(self.config.component_id, ctx.locked_event.component_id);
-
-        let deadline_tracker = match self
+        assert_eq!(view.config.component_id, ctx.locked_event.component_id);
+        let deadline_tracker = match view
             .deadline_factory
             .create(ctx.locked_event.lock_expires_at, ctx.executor_close_watcher)
         {
@@ -615,29 +627,29 @@ impl WorkflowWorker {
 
         let seed = ctx.execution_id.random_seed();
         let workflow_ctx = WorkflowCtx::new(
-            self.deployment_id,
+            view.deployment_id,
             db_connection,
             ctx.event_history,
             ctx.responses,
             seed,
-            self.clock_fn.clone_box(),
-            self.config.join_next_blocking_strategy,
+            view.clock_fn,
+            view.config.join_next_blocking_strategy,
             ctx.worker_span,
-            self.config.backtrace_persist,
+            view.config.backtrace_persist,
             deadline_tracker,
-            self.fn_registry.clone(),
-            self.cancel_registry.clone(),
+            view.fn_registry,
+            view.cancel_registry,
             ctx.locked_event,
-            self.config.lock_extension,
-            self.config.subscription_interruption,
-            self.logs_storage_config.clone(),
+            view.config.lock_extension,
+            view.config.subscription_interruption,
+            view.logs_storage_config,
             is_replay,
         );
 
-        let mut store = Store::new(&self.engine, workflow_ctx);
+        let mut store = Store::new(view.engine, workflow_ctx);
 
         // Set fuel.
-        if let Some(fuel) = self.config.fuel {
+        if let Some(fuel) = view.config.fuel {
             store
                 .set_fuel(fuel)
                 .expect("engine must have `consume_fuel` enabled");
@@ -664,7 +676,7 @@ impl WorkflowWorker {
             }
         });
 
-        let instance = match self.instance_pre.instantiate_async(&mut store).await {
+        let instance = match view.instance_pre.instantiate_async(&mut store).await {
             Ok(instance) => instance,
             Err(err) => {
                 let reason = err.to_string();
@@ -684,13 +696,13 @@ impl WorkflowWorker {
         };
 
         let func = {
-            let Some(fn_export_index) = self.exported_ffqn_to_index.get(&ctx.ffqn) else {
+            let Some(fn_export_index) = view.exported_ffqn_to_index.get(&ctx.ffqn) else {
                 let db_connection = store.into_data().db_connection;
                 return Err(WorkflowError::FatalError {
                     err: FatalError::CannotInstantiate {
                         reason: format!(
                             "function {} not found in exports of {}",
-                            ctx.ffqn, self.config.component_id
+                            ctx.ffqn, view.config.component_id
                         ),
                         detail: None,
                     },
@@ -1006,46 +1018,60 @@ impl WorkflowWorker {
         ),
         ReplayInternalError,
     > {
+        let mut replay_config = self.config.clone();
+        replay_config.join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
+        let view = WorkflowWorkerView {
+            deployment_id: self.deployment_id,
+            config: &replay_config,
+            engine: &self.engine,
+            clock_fn: self.clock_fn.clone_box(),
+            exported_ffqn_to_index: &self.exported_ffqn_to_index,
+            instance_pre: &self.instance_pre,
+            fn_registry: self.fn_registry.clone(),
+            cancel_registry: self.cancel_registry.clone(),
+            deadline_factory: self.deadline_factory.as_ref(),
+            logs_storage_config: self.logs_storage_config.clone(),
+        };
         let replay_db_connection =
             ReplayWorkflowDbConnection::new(execution_id, version, real_connection, parent);
-        let (retval, replay_db_connection, replay_outcome) = match self
-            .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
-            .await
-        {
-            Ok((Either::Left(WorkerResultOk::RunFinished(RunFinished { retval, .. })), db)) => {
-                Ok((Some(retval), db, ReplayPendingState::Finished))
-            }
-            Ok((Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher), db)) => {
-                Ok((None, db, ReplayPendingState::Blocked))
-            }
-            Ok((Either::Right(ReplayInterrupt), db)) => {
-                // Only first phase of stubbing leaves the execution in `PendingState::Locked`
-                Ok((None, db, ReplayPendingState::Locked))
-            }
-            Err(WorkflowError::FatalError { err, db_connection }) => {
-                debug!("Replay finished with fatal error: {err:?}");
-                let retval = SupportedFunctionReturnValue::ExecutionFailure(
-                    FinishedExecutionFailure::from(&err),
-                );
-                Ok((
-                    Some(retval),
-                    db_connection,
-                    ReplayPendingState::FinishedWithFailure(err),
-                ))
-            }
-            Err(WorkflowError::LimitReached { reason, version }) => {
-                Err(ReplayInternalError::LimitReached { reason, version })
-            }
-            Err(WorkflowError::DbError(db_error_write)) => {
-                Err(ReplayInternalError::DbError(db_error_write))
-            }
-            Err(WorkflowError::LockExpired(version)) => {
-                Err(ReplayInternalError::LockExpired(version))
-            }
-            Err(WorkflowError::ExecutorClosing(version)) => {
-                Err(ReplayInternalError::ExecutorClosing(version))
-            }
-        }?;
+        let (retval, replay_db_connection, replay_outcome) =
+            match Self::run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind), view)
+                .await
+            {
+                Ok((Either::Left(WorkerResultOk::RunFinished(RunFinished { retval, .. })), db)) => {
+                    Ok((Some(retval), db, ReplayPendingState::Finished))
+                }
+                Ok((Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher), db)) => {
+                    Ok((None, db, ReplayPendingState::Blocked))
+                }
+                Ok((Either::Right(ReplayInterrupt), db)) => {
+                    // Only first phase of stubbing leaves the execution in `PendingState::Locked`
+                    Ok((None, db, ReplayPendingState::Locked))
+                }
+                Err(WorkflowError::FatalError { err, db_connection }) => {
+                    debug!("Replay finished with fatal error: {err:?}");
+                    let retval = SupportedFunctionReturnValue::ExecutionFailure(
+                        FinishedExecutionFailure::from(&err),
+                    );
+                    Ok((
+                        Some(retval),
+                        db_connection,
+                        ReplayPendingState::FinishedWithFailure(err),
+                    ))
+                }
+                Err(WorkflowError::LimitReached { reason, version }) => {
+                    Err(ReplayInternalError::LimitReached { reason, version })
+                }
+                Err(WorkflowError::DbError(db_error_write)) => {
+                    Err(ReplayInternalError::DbError(db_error_write))
+                }
+                Err(WorkflowError::LockExpired(version)) => {
+                    Err(ReplayInternalError::LockExpired(version))
+                }
+                Err(WorkflowError::ExecutorClosing(version)) => {
+                    Err(ReplayInternalError::ExecutorClosing(version))
+                }
+            }?;
 
         let Ok(mut replay_db_connection) = replay_db_connection
             .as_any()
@@ -1080,10 +1106,10 @@ impl WorkflowWorker {
 
     // Returns the same `db_connection` it was supplied.
     async fn run_internal(
-        &self,
         ctx: WorkerContext,
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
+        view: WorkflowWorkerView<'_>,
     ) -> Result<
         (
             Either<WorkerResultOk, ReplayInterrupt>,
@@ -1098,7 +1124,8 @@ impl WorkflowWorker {
         }
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
-        let prepare_finished = self.prepare_func(ctx, db_connection, is_replay).await?;
+        let fuel = view.config.fuel;
+        let prepare_finished = Self::prepare_func(ctx, db_connection, is_replay, view).await?;
         Self::call_func_convert_result(
             prepare_finished.store,
             prepare_finished.func,
@@ -1106,7 +1133,7 @@ impl WorkflowWorker {
             prepare_finished.params,
             &worker_span,
             execution_deadline,
-            self.config.fuel,
+            fuel,
         )
         .await
     }
@@ -1230,15 +1257,15 @@ enum CloseJoinSetOk {
 
 impl WorkflowWorker {
     async fn auto_upgrade_locked(&self, ctx: WorkerContext) -> Result<(), WorkerError> {
+        info!("Auto-upgrading execution");
         let new_digest = self.config.component_id.component_digest.clone();
         let execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
         let parent = ctx.parent.clone();
         let replay_ctx = WorkerContext {
-            can_be_retried: true,
+            can_be_retried: true, // avoid a warning in log
             ..ctx
         };
-
         let (mut fresh_replay, replay_pending_state, db_conn) = self
             .replay_internal(
                 replay_ctx,
@@ -1419,13 +1446,25 @@ impl Worker for WorkflowWorker {
         worker_span.in_scope(|| {
             info!("Execution run started",);
         });
-        let res = self
-            .run_internal(
-                ctx,
-                db_connection,
-                None, // is_replay
-            )
-            .await;
+        let view = WorkflowWorkerView {
+            deployment_id: self.deployment_id,
+            config: &self.config,
+            engine: &self.engine,
+            clock_fn: self.clock_fn.clone_box(),
+            exported_ffqn_to_index: &self.exported_ffqn_to_index,
+            instance_pre: &self.instance_pre,
+            fn_registry: self.fn_registry.clone(),
+            cancel_registry: self.cancel_registry.clone(),
+            deadline_factory: self.deadline_factory.as_ref(),
+            logs_storage_config: self.logs_storage_config.clone(),
+        };
+        let res = Self::run_internal(
+            ctx,
+            db_connection,
+            None, // is_replay
+            view,
+        )
+        .await;
         worker_span.in_scope(|| match res {
             Ok((Either::Left(ok), _)) => {
                 info!("Execution run finished");
