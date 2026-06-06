@@ -1,13 +1,13 @@
-cargo-edit-upgrade 0.13.10
+cargo-edit-upgrade 0.13.11
 cargo-insta 1.47.2
-cargo-nextest 0.9.136
+cargo-nextest 0.9.137
 litecli litecli, version 1.17.1
 nixpkgs-fmt 1.3.0
 pkg-config 0.29.2
 libprotoc 34.1
 rustc 1.96.0 (ac68faa20 2026-05-25)
-wasm-tools 1.249.0
-wasmtime 44.0.1
+wasm-tools 1.250.0
+wasmtime 45.0.0
 cargo-zigbuild 0.22.3
 litestream v0.5.11
 ldd (GNU libc) 2.42
