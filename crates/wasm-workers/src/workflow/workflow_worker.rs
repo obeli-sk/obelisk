@@ -28,7 +28,7 @@ use concepts::storage::{
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
     ComponentId, ExecutionId, ExecutionMetadata, FinishedExecutionFailure, FunctionFqn,
-    FunctionMetadata, PackageIfcFns, Params, ResultParsingError, StrVariant, TrapKind,
+    FunctionMetadata, JoinSetId, PackageIfcFns, Params, ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
@@ -495,22 +495,17 @@ impl WorkflowWorker {
 
         let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
         let parent = log.parent();
-        let replay_db_connection = ReplayWorkflowDbConnection::new(
-            execution_id.clone(),
-            log.next_version.clone(),
-            real_connection,
-            parent.clone(),
-        );
+
         let ctx = WorkerContext {
-            execution_id,
+            execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty(),
             component_digest: self.config.component_id.component_digest.clone(),
             ffqn,
             params,
             event_history: log.event_history().collect(),
             responses: log.responses,
-            parent,
-            version: log.next_version,
+            parent: parent.clone(),
+            version: log.next_version.clone(),
             can_be_retried: true, // Avoid retryability warnings during replay/advance.
             worker_span: Span::current(),
             locked_event: Locked {
@@ -524,18 +519,25 @@ impl WorkflowWorker {
             executor_close_watcher,
         };
 
-        self.replay_internal(ctx, replay_db_connection, replay_kind)
-            .await
-            .map(|(writes, replay_end, db_conn)| {
-                (
-                    writes,
-                    match replay_end {
-                        ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
-                        _ => None,
-                    },
-                    db_conn,
-                )
-            })
+        self.replay_internal(
+            ctx,
+            replay_kind,
+            execution_id,
+            log.next_version,
+            real_connection,
+            parent,
+        )
+        .await
+        .map(|(writes, replay_end, db_conn)| {
+            (
+                writes,
+                match replay_end {
+                    ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
+                    _ => None,
+                },
+                db_conn,
+            )
+        })
     }
 
     pub(crate) async fn advance_from_log(
@@ -991,8 +993,11 @@ impl WorkflowWorker {
     async fn replay_internal(
         &self,
         ctx: WorkerContext,
-        replay_db_connection: ReplayWorkflowDbConnection,
         replay_kind: ReplayKind,
+        execution_id: ExecutionId,
+        version: Version,
+        real_connection: Box<dyn DbConnection>,
+        parent: Option<(ExecutionId, JoinSetId)>,
     ) -> Result<
         (
             Vec<InternalCapturedWrite>,
@@ -1001,6 +1006,8 @@ impl WorkflowWorker {
         ),
         ReplayInternalError,
     > {
+        let replay_db_connection =
+            ReplayWorkflowDbConnection::new(execution_id, version, real_connection, parent);
         let (retval, replay_db_connection, replay_outcome) = match self
             .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
@@ -1227,22 +1234,23 @@ impl WorkflowWorker {
         let execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
         let parent = ctx.parent.clone();
-        let replay_db_connection = ReplayWorkflowDbConnection::new(
-            execution_id.clone(),
-            version.clone(),
-            self.db_pool
-                .connection()
-                .await
-                .map_err(|err| WorkerError::DbError(err.into()))?,
-            parent,
-        );
         let replay_ctx = WorkerContext {
             can_be_retried: true,
             ..ctx
         };
 
         let (mut fresh_replay, replay_pending_state, db_conn) = self
-            .replay_internal(replay_ctx, replay_db_connection, ReplayKind::Unfinished)
+            .replay_internal(
+                replay_ctx,
+                ReplayKind::Unfinished,
+                execution_id.clone(),
+                version.clone(),
+                self.db_pool
+                    .connection()
+                    .await
+                    .map_err(|err| WorkerError::DbError(err.into()))?,
+                parent,
+            )
             .await
             .map_err(|err| match err {
                 ReplayInternalError::DbError(db_err) => WorkerError::DbError(db_err),
