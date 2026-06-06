@@ -4,14 +4,13 @@
 //! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
-use super::workflow_worker::{
-    AdvanceResponse, ReplayError, WorkflowWorker, WorkflowWorkerCompiled,
-};
+use super::workflow_worker::{WorkflowWorker, WorkflowWorkerCompiled};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
+use crate::workflow::replay_advance::{AdvanceError, ReplayAdvanceable, ReplayResponse};
+use crate::workflow::replay_advance::{AdvanceResponse, ReplayError};
 use crate::workflow::replay_db_proxy::InternalCapturedWrite;
-use crate::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::http_client_trace::HttpClientTrace;
@@ -527,7 +526,7 @@ impl WorkflowJsWorker {
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
         if requested.captured_writes.is_empty() {
-            return Err(crate::workflow::workflow_worker::AdvanceError::NoWrites);
+            return Err(AdvanceError::NoWrites);
         }
         if let Some(expected_version) = requested.starting_version()
             && log.next_version != *expected_version

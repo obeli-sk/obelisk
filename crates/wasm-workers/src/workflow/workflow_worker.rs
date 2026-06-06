@@ -1,8 +1,6 @@
 use super::deadline_tracker::DeadlineTrackerFactory;
 use super::event_history::ApplyError;
-use super::replay_advance::{
-    merge_requested_overrides_into_fresh_prefix, requested_write_matches_fresh_replay,
-};
+use super::replay_advance::merge_requested_overrides_into_fresh_prefix;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
@@ -10,6 +8,10 @@ use crate::workflow::caching_db_connection::{
     CachingBuffer, CachingDbConnection, WorkflowDbConnection,
 };
 use crate::workflow::deadline_tracker::EpochCallbackError;
+pub use crate::workflow::replay_advance::{
+    AdvanceError, ReplayAdvanceable, ReplayError, ReplayResponse,
+};
+use crate::workflow::replay_advance::{AdvanceFromLogError, AdvanceResponse, ReplayInternalError};
 use crate::workflow::replay_db_proxy::{
     InternalCapturedWrite, ReplayWorkflowDbConnection, apply_writes, bump_versions_for_execution,
 };
@@ -1203,200 +1205,6 @@ impl WorkflowWorker {
 enum CloseJoinSetOk {
     Ok,
     DbUpdatedByWorkerOrWatcher,
-}
-
-/// Replay outcome for a workflow execution.
-#[derive(Debug, Clone)]
-#[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
-pub enum ReplayResponse {
-    /// Execution can be advanced by one or more captured writes.
-    Advanceable(ReplayAdvanceable),
-    /// Execution is already finished.
-    Finished {
-        result: SupportedFunctionReturnValue,
-    },
-    /// Replay did not capture any writes and the execution is not finished.
-    Blocked,
-}
-
-/// Preview writes captured by replay that can be supplied to `advance`.
-#[derive(Debug, Clone)]
-#[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
-pub struct ReplayAdvanceable {
-    /// Write operations that the workflow would produce next,
-    /// including the Finished event if the workflow completes.
-    pub captured_writes: Vec<CapturedDbWrite>,
-}
-
-// TODO: Move to `replay_advance`
-impl ReplayAdvanceable {
-    /// Extract the starting version from the first captured write that targets
-    /// the current execution. `AppendStubResponse` is skipped because it
-    /// targets the child execution, not the parent.
-    pub(crate) fn starting_version(&self) -> Option<&Version> {
-        self.captured_writes.iter().find_map(|w| match w {
-            CapturedDbWrite::Append { version, .. }
-            | CapturedDbWrite::AppendBatch { version, .. }
-            | CapturedDbWrite::AppendBatchCreateNewExecution { version, .. }
-            | CapturedDbWrite::AppendFinished { version, .. } => Some(version),
-            CapturedDbWrite::AppendStubResponse { .. } => None,
-        })
-    }
-
-    fn is_prefix_of(&self, fresh_replay: &[CapturedDbWrite]) -> bool {
-        self.captured_writes.len() <= fresh_replay.len()
-            && self
-                .captured_writes
-                .iter()
-                .zip(fresh_replay)
-                .all(|(requested, fresh)| requested_write_matches_fresh_replay(requested, fresh))
-    }
-
-    pub(crate) fn get_return_value(&self) -> Option<&SupportedFunctionReturnValue> {
-        if let Some(CapturedDbWrite::AppendFinished { retval, .. }) = self.captured_writes.last() {
-            return Some(retval);
-        }
-        None
-    }
-
-    #[cfg(test)]
-    pub(crate) fn history_events(&self) -> Vec<&concepts::storage::HistoryEvent> {
-        self.captured_writes
-            .iter()
-            .flat_map(|w| {
-                let requests: &[concepts::storage::AppendRequest] = match w {
-                    CapturedDbWrite::Append { req, .. } => std::slice::from_ref(req),
-                    CapturedDbWrite::AppendBatch { batch, .. }
-                    | CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
-                    CapturedDbWrite::AppendStubResponse { events, .. } => &events.batch,
-                    CapturedDbWrite::AppendFinished { .. } => &[],
-                };
-                requests.iter().filter_map(|req| {
-                    if let concepts::storage::ExecutionRequest::HistoryEvent { event } = &req.event
-                    {
-                        Some(event)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn truncate_to(&self, len: usize) -> Self {
-        let mut captured_writes = self.captured_writes.clone();
-        captured_writes.truncate(len);
-        Self { captured_writes }
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.captured_writes.is_empty()
-    }
-}
-
-/// Result of advancing a paused workflow execution.
-#[derive(Debug, Clone)]
-pub struct AdvanceResponse {
-    pub finished: Option<SupportedFunctionReturnValue>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AdvanceError {
-    #[error("no writes supplied")]
-    NoWrites,
-    #[error("version mismatch: expected {expected}")]
-    VersionMismatch { expected: Version },
-    #[error("replay mismatch")]
-    ReplayMismatch,
-    #[error(transparent)]
-    DbError(#[from] DbErrorWrite),
-    // Errors from ReplayInternalError
-    #[error("limit reached: {reason}")]
-    LimitReached { reason: String, version: Version },
-    #[error("executor closing")]
-    ExecutorClosing,
-}
-impl From<ReplayInternalError> for AdvanceError {
-    fn from(value: ReplayInternalError) -> Self {
-        match value {
-            ReplayInternalError::DbError(err) => Self::DbError(err),
-            ReplayInternalError::LimitReached { reason, version } => {
-                Self::LimitReached { reason, version }
-            }
-            ReplayInternalError::LockExpired(_) => {
-                unreachable!(
-                    "advance() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
-                )
-            }
-            ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum AdvanceFromLogError {
-    #[error("replay mismatch")]
-    ReplayMismatch,
-    #[error(transparent)]
-    DbError(#[from] DbErrorWrite),
-}
-impl From<AdvanceFromLogError> for AdvanceError {
-    fn from(value: AdvanceFromLogError) -> Self {
-        match value {
-            AdvanceFromLogError::DbError(db_err) => AdvanceError::DbError(db_err),
-            AdvanceFromLogError::ReplayMismatch => AdvanceError::ReplayMismatch,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ReplayError {
-    #[error(transparent)]
-    DbError(#[from] DbErrorWrite),
-    // Transient error
-    #[error("limit reached: {reason}")]
-    LimitReached { reason: String, version: Version },
-    // Transient error
-    #[error("executor closing")]
-    ExecutorClosing,
-    /// Replay failed.
-    /// `captured_writes` is non-empty iff execution has not finished yet, and therefore can be advanced to an execution error.
-    #[error("fatal error: {err}")]
-    ReplayFailed {
-        err: FatalError,
-        captured_writes: Vec<CapturedDbWrite>,
-    },
-}
-
-// Does not contain `FatalError`
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ReplayInternalError {
-    #[error(transparent)]
-    DbError(#[from] DbErrorWrite),
-    #[error("limit reached: {reason}")]
-    LimitReached { reason: String, version: Version },
-    #[error("lock expired")]
-    LockExpired(Version),
-    #[error("executor closing")]
-    ExecutorClosing(Version),
-}
-impl From<ReplayInternalError> for ReplayError {
-    fn from(value: ReplayInternalError) -> Self {
-        match value {
-            ReplayInternalError::DbError(db_error_write) => Self::DbError(db_error_write),
-            ReplayInternalError::LimitReached { reason, version } => {
-                Self::LimitReached { reason, version }
-            }
-            ReplayInternalError::LockExpired(_) => {
-                unreachable!(
-                    "replay() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
-                )
-            }
-            ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
-        }
-    }
 }
 
 impl WorkflowWorker {
