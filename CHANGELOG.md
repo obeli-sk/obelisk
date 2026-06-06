@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.3](https://github.com/obeli-sk/obelisk/compare/v0.38.2...v0.38.3)
+
+This release adds the `auto` locking strategy and makes it the default for workflows. With this strategy, in-progress executions of a workflow
+are automatically replayed and upgraded to the current version right after redeployment.
+
+### Added
+
+- *(grpc,webapi,pg,sqlite)* Implement `auto` locking strategy - ([c88ce2a](https://github.com/obeli-sk/obelisk/commit/c88ce2a13f74260fcb528779ae099079554eeac0))
+
+### Fixed
+
+- *(cli)* Disable WebUI in `generate wit-deps` to aviod panicing - ([8cf254e](https://github.com/obeli-sk/obelisk/commit/8cf254e6fa716c79aa54e5cac424f736660febd1))
+
+### Changed
+
+- *(workflow)* Associate execution with current deployment on upgrade - ([a20d4b9](https://github.com/obeli-sk/obelisk/commit/a20d4b993bd2ce7f1a7bf93b00555769ee64b878))
+- *(workflow,grpc,webapi)* Record auto-upgrade outcome in history - ([cd7ac97](https://github.com/obeli-sk/obelisk/commit/cd7ac97c5c393f26605b6d822711f7a74e2c0c0c))
+
+### Removed
+
+- *(test)* Remove in-memory database - ([5ebdaaf](https://github.com/obeli-sk/obelisk/commit/5ebdaafecbea066e2dd1d9c700e6928eba5a490f))
+
+
 ## [0.38.2](https://github.com/obeli-sk/obelisk/compare/v0.38.1...v0.38.2)
 
 ### Fixed

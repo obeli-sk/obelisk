@@ -105,7 +105,9 @@
                 pname = "obelisk";
                 inherit version;
                 src = ./.;
-                cargoHash = "sha256-LBcbhwSZEN5/uv6FNBMXCwgB0uDJMcRwC7o1iuM/81M=";
+                cargoLock = {
+                  lockFile = ./Cargo.lock;
+                };
 
                 nativeBuildInputs = with pkgs; [
                   (rust-bin.fromRustupToolchainFile rustToolchainToml)
@@ -179,7 +181,6 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
-                grpcurl
                 jq
                 litecli
                 nixd
@@ -188,7 +189,6 @@
                 protobuf
                 release-plz
                 wasm-tools
-                wasmtime.out
               ];
           };
           devShells.cargo-zigbuild = pkgs.mkShell {
