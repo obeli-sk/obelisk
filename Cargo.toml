@@ -242,7 +242,7 @@ base64 = "0.22.1"
 bytes = "1.11.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
-chrono = { version = "0.4.44", features = ["arbitrary", "serde"] }
+chrono = { version = "0.4.45", features = ["arbitrary", "serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
 config = { version = "0.15.23", default-features = false, features = [
     "toml",
@@ -316,7 +316,7 @@ secrecy = "0.10.3"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
-serde_with = "3.20.0"
+serde_with = "3.21.0"
 hmac = "0.12.1"
 sha2 = "0.10.9"
 strum = { version = "0.28.0", features = ["derive"] }
