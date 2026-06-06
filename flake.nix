@@ -179,7 +179,6 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
-                grpcurl
                 jq
                 litecli
                 nixd
@@ -188,7 +187,6 @@
                 protobuf
                 release-plz
                 wasm-tools
-                wasmtime.out
               ];
           };
           devShells.cargo-zigbuild = pkgs.mkShell {
