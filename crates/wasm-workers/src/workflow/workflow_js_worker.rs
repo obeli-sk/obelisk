@@ -461,9 +461,9 @@ impl WorkflowJsWorker {
             &self.resolved_imports,
         );
 
-        let (captured_writes, mut fatal_error) = self
+        let (captured_writes, mut fatal_error, _db_conn) = self
             .inner
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
             .await?;
         // Remove side effects, unwrapping user retval or fatal error.
         let captured_writes: Vec<_> = captured_writes
@@ -548,9 +548,9 @@ impl WorkflowJsWorker {
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (mut fresh_replay, _fatal_error) = self
+        let (mut fresh_replay, _fatal_error, db_conn) = self
             .inner
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
             .await
             .map_err(AdvanceError::from)?;
         if let Some(InternalCapturedWrite {
@@ -566,7 +566,7 @@ impl WorkflowJsWorker {
             *retval = retval_transformed;
         }
         Ok(WorkflowWorker::advance_from_log(
-            &*db_conn,
+            db_conn.as_ref(),
             &self.inner.cancel_registry,
             log_forwarder_sender,
             requested,

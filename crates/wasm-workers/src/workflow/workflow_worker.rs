@@ -477,7 +477,15 @@ impl WorkflowWorker {
         log: ExecutionLog,
         ffqn: FunctionFqn,
         params: Params,
-    ) -> Result<(Vec<InternalCapturedWrite>, Option<FatalError>), ReplayInternalError> {
+        real_connection: Box<dyn DbConnection>,
+    ) -> Result<
+        (
+            Vec<InternalCapturedWrite>,
+            Option<FatalError>,
+            Box<dyn DbConnection>,
+        ),
+        ReplayInternalError,
+    > {
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -490,10 +498,7 @@ impl WorkflowWorker {
         let replay_db_connection = ReplayWorkflowDbConnection::new(
             execution_id.clone(),
             log.next_version.clone(),
-            self.db_pool
-                .connection()
-                .await
-                .map_err(DbErrorWrite::from)?,
+            real_connection,
             parent.clone(),
         );
         let ctx = WorkerContext {
@@ -521,13 +526,14 @@ impl WorkflowWorker {
 
         self.replay_internal(ctx, replay_db_connection, replay_kind)
             .await
-            .map(|(writes, replay_end)| {
+            .map(|(writes, replay_end, db_conn)| {
                 (
                     writes,
                     match replay_end {
                         ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
                         _ => None,
                     },
+                    db_conn,
                 )
             })
     }
@@ -987,7 +993,14 @@ impl WorkflowWorker {
         ctx: WorkerContext,
         replay_db_connection: ReplayWorkflowDbConnection,
         replay_kind: ReplayKind,
-    ) -> Result<(Vec<InternalCapturedWrite>, ReplayPendingState), ReplayInternalError> {
+    ) -> Result<
+        (
+            Vec<InternalCapturedWrite>,
+            ReplayPendingState,
+            Box<dyn DbConnection>,
+        ),
+        ReplayInternalError,
+    > {
         let (retval, replay_db_connection, replay_outcome) = match self
             .run_internal(ctx, Box::new(replay_db_connection), Some(replay_kind))
             .await
@@ -1054,7 +1067,8 @@ impl WorkflowWorker {
                 parent,
             });
         }
-        Ok((replay_db_connection.into_writes(), replay_outcome))
+        let (writes, real_connection) = replay_db_connection.into_parts();
+        Ok((writes, replay_outcome, real_connection))
     }
 
     // Returns the same `db_connection` it was supplied.
@@ -1108,8 +1122,8 @@ impl WorkflowWorker {
         let already_finished_result = log.as_finished_result();
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
-        let (captured_writes, fatal_error) = self
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+        let (captured_writes, fatal_error, _db_conn) = self
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
             .await?;
         // Remove side effects
         let captured_writes: Vec<_> = captured_writes
@@ -1185,12 +1199,12 @@ impl WorkflowWorker {
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (fresh_replay, _fatal_error) = self
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params)
+        let (fresh_replay, _fatal_error, db_conn) = self
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
             .await?;
 
         Ok(Self::advance_from_log(
-            &*db_conn,
+            db_conn.as_ref(),
             &self.cancel_registry,
             log_forwarder_sender,
             requested,
@@ -1209,11 +1223,6 @@ enum CloseJoinSetOk {
 
 impl WorkflowWorker {
     async fn auto_upgrade_locked(&self, ctx: WorkerContext) -> Result<(), WorkerError> {
-        let db_conn = self
-            .db_pool
-            .connection()
-            .await
-            .map_err(|err| WorkerError::DbError(err.into()))?;
         let new_digest = self.config.component_id.component_digest.clone();
         let execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
@@ -1232,7 +1241,7 @@ impl WorkflowWorker {
             ..ctx
         };
 
-        let (mut fresh_replay, replay_pending_state) = self
+        let (mut fresh_replay, replay_pending_state, db_conn) = self
             .replay_internal(replay_ctx, replay_db_connection, ReplayKind::Unfinished)
             .await
             .map_err(|err| match err {

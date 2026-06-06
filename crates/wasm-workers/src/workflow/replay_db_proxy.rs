@@ -343,8 +343,8 @@ impl ReplayWorkflowDbConnection {
             parent,
         }
     }
-    pub(crate) fn into_writes(self) -> Vec<InternalCapturedWrite> {
-        self.collector.into_writes()
+    pub(crate) fn into_parts(self) -> (Vec<InternalCapturedWrite>, Box<dyn DbConnection>) {
+        (self.collector.into_writes(), self.real_connection)
     }
 
     /// Push a captured write and advance the version.
