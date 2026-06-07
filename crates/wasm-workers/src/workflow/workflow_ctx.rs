@@ -1407,7 +1407,7 @@ impl WorkflowCtx {
                             Ok(id) => id,
                             Err(err) => {
                                 let msg = format!("schedule-json: invalid execution ID: {err}");
-                                host.error(msg.clone());
+                                host.error(msg.clone()).await;
                                 return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
                             }
                         };
@@ -1418,7 +1418,7 @@ impl WorkflowCtx {
                             Ok(ffqn) => ffqn,
                             Err(err) => {
                                 let msg = format!("schedule-json: invalid function name: {err}");
-                                host.error(msg.clone());
+                                host.error(msg.clone()).await;
                                 return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
                             }
                         };
@@ -1453,7 +1453,7 @@ impl WorkflowCtx {
                             Err(err) => {
                                 use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
                                 let msg = format!("call-json: invalid function name: {err}");
-                                host.error(msg.clone());
+                                host.error(msg.clone()).await;
                                 return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
                             }
                         };
@@ -2368,12 +2368,12 @@ pub(crate) mod workflow_support {
                 Ok(serde_json::Value::Array(params)) => params,
                 Ok(_other) => {
                     let msg = "schedule-json: params must be a json array".to_string();
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
                 Err(err) => {
                     let msg = format!("schedule-json: cannot parse params as JSON array: {err}");
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
             };
@@ -2396,11 +2396,13 @@ pub(crate) mod workflow_support {
             match result {
                 Ok(()) => Ok(Ok(())),
                 Err(ScheduleRequestError::FunctionNotFound) => {
-                    self.error("schedule-json: function not found".to_string());
+                    self.error("schedule-json: function not found".to_string())
+                        .await;
                     Ok(Err(ScheduleJsonError::FunctionNotFound))
                 }
                 Err(ScheduleRequestError::TypeCheckError(msg)) => {
-                    self.error(format!("schedule-json: type check error: {msg}"));
+                    self.error(format!("schedule-json: type check error: {msg}"))
+                        .await;
                     Ok(Err(ScheduleJsonError::TypeCheckError(msg)))
                 }
             }
@@ -2581,12 +2583,12 @@ pub(crate) mod workflow_support {
                 Ok(ExecutionId::TopLevel(_)) => {
                     let msg = "stub-json: execution-id must be a derived (child) execution ID, not a top-level one"
                         .to_string();
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Ok(Err(StubJsonError::ExecutionIdParsingError(msg)));
                 }
                 Err(err) => {
                     let msg = format!("stub-json: cannot parse execution-id: {err}");
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Ok(Err(StubJsonError::ExecutionIdParsingError(msg)));
                 }
             };
@@ -2635,12 +2637,12 @@ pub(crate) mod workflow_support {
                 Ok(serde_json::Value::Array(params)) => params,
                 Ok(_other) => {
                     let msg = "call-json: params must be a json array".to_string();
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
                 Err(err) => {
                     let msg = format!("call-json: cannot parse params as JSON array: {err}");
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
             };
@@ -2653,11 +2655,13 @@ pub(crate) mod workflow_support {
                     params,
                 } => (fn_component_id, params),
                 SubmitChildIntent::Err(ChildExecutionRequestError::FunctionNotFound) => {
-                    self.error(format!("call-json: function not found: {target_ffqn}"));
+                    self.error(format!("call-json: function not found: {target_ffqn}"))
+                        .await;
                     return Ok(Err(ScheduleJsonError::FunctionNotFound));
                 }
                 SubmitChildIntent::Err(ChildExecutionRequestError::TypeCheckError(msg)) => {
-                    self.error(format!("call-json: type check error: {msg}"));
+                    self.error(format!("call-json: type check error: {msg}"))
+                        .await;
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
             };
@@ -2757,7 +2761,7 @@ fn capture_replay_application_log(ctx: &mut WorkflowCtx, level: LogLevel, messag
 }
 
 impl log_activities::obelisk::log::log::Host for WorkflowCtx {
-    fn trace(&mut self, message: String) {
+    async fn trace(&mut self, message: String) {
         if capture_replay_application_log(self, LogLevel::Trace, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Trace, &message);
         } else {
@@ -2765,7 +2769,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
         }
     }
 
-    fn debug(&mut self, message: String) {
+    async fn debug(&mut self, message: String) {
         if capture_replay_application_log(self, LogLevel::Debug, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Debug, &message);
         } else {
@@ -2773,7 +2777,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
         }
     }
 
-    fn info(&mut self, message: String) {
+    async fn info(&mut self, message: String) {
         if capture_replay_application_log(self, LogLevel::Info, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Info, &message);
         } else {
@@ -2781,7 +2785,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
         }
     }
 
-    fn warn(&mut self, message: String) {
+    async fn warn(&mut self, message: String) {
         if capture_replay_application_log(self, LogLevel::Warn, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Warn, &message);
         } else {
@@ -2789,7 +2793,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
         }
     }
 
-    fn error(&mut self, message: String) {
+    async fn error(&mut self, message: String) {
         if capture_replay_application_log(self, LogLevel::Error, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Error, &message);
         } else {
