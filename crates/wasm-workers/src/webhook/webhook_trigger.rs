@@ -709,7 +709,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             Ok(id) => id,
             Err(err) => {
                 let msg = format!("schedule-json: invalid execution ID: {err}");
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::FfqnParsingError(msg).into());
             }
         };
@@ -720,7 +720,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
                 Ok(ffqn) => ffqn,
                 Err(err) => {
                     let msg = format!("schedule-json: invalid function name: {err}");
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Err(ScheduleJsonError::FfqnParsingError(msg).into());
                 }
             };
@@ -728,7 +728,8 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         // Look up function in registry
         let Some((fn_metadata, component_id)) = self.fn_registry.get_by_exported_function(&ffqn)
         else {
-            self.error("schedule-json: function not found".to_string());
+            self.error("schedule-json: function not found".to_string())
+                .await;
             return Err(ScheduleJsonError::FunctionNotFound.into());
         };
 
@@ -737,12 +738,12 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             Ok(serde_json::Value::Array(arr)) => arr,
             Ok(_) => {
                 let msg = "schedule-json: params must be a JSON array".to_string();
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
             Err(err) => {
                 let msg = format!("schedule-json: cannot parse params as JSON: {err}");
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
@@ -758,7 +759,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             Ok(params) => params,
             Err(err) => {
                 let msg = format!("schedule-json: params type checking failed: {err}");
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
@@ -770,7 +771,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             Ok(dt) => dt,
             Err(err) => {
                 let msg = format!("schedule-json: invalid schedule-at: {err}");
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
@@ -860,7 +861,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
                 Ok(ffqn) => ffqn,
                 Err(err) => {
                     let msg = format!("call-json: invalid function name: {err}");
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Err(ScheduleJsonError::FfqnParsingError(msg).into());
                 }
             };
@@ -868,7 +869,8 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         // Look up function in registry
         let Some((fn_metadata, component_id)) = self.fn_registry.get_by_exported_function(&ffqn)
         else {
-            self.error("call-json: function not found".to_string());
+            self.error("call-json: function not found".to_string())
+                .await;
             return Err(ScheduleJsonError::FunctionNotFound.into());
         };
 
@@ -877,12 +879,12 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             Ok(serde_json::Value::Array(arr)) => arr,
             Ok(_) => {
                 let msg = "call-json: params must be a JSON array".to_string();
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
             Err(err) => {
                 let msg = format!("call-json: cannot parse params as JSON: {err}");
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
@@ -898,7 +900,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             Ok(params) => params,
             Err(err) => {
                 let msg = format!("call-json: params type checking failed: {err}");
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
@@ -1043,7 +1045,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             Ok(id) => id,
             Err(err) => {
                 let msg = format!("get-status: cannot parse execution ID: {err}");
-                self.error(msg.clone());
+                self.error(msg.clone()).await;
                 return Err(GetStatusError::ExecutionIdParsingError(msg).into());
             }
         };
@@ -1110,7 +1112,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
                 Ok(id) => id,
                 Err(err) => {
                     let msg = format!("get: cannot parse execution ID: {err}");
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Err(GetError::ExecutionIdParsingError(msg).into());
                 }
             };
@@ -1161,7 +1163,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
                 Ok(id) => id,
                 Err(err) => {
                     let msg = format!("try-get: cannot parse execution ID: {err}");
-                    self.error(msg.clone());
+                    self.error(msg.clone()).await;
                     return Err(TryGetError::ExecutionIdParsingError(msg).into());
                 }
             };
@@ -1181,7 +1183,8 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         {
             Ok(state) => state,
             Err(DbErrorRead::NotFound) => {
-                self.error(format!("try-get: execution not found: {}", execution_id.id));
+                self.error(format!("try-get: execution not found: {}", execution_id.id))
+                    .await;
                 return Err(TryGetError::NotFound.into());
             }
             Err(err) => {
@@ -1256,6 +1259,21 @@ impl WebhookEndpointCtx {
         let version = conn.create(create_request).await?;
         self.version = Some(version.clone());
         Ok(version)
+    }
+
+    // Best-effort: ensure the top-level execution row exists so `t_log` rows aren't orphaned.
+    // Failures are tracing-only. Skips the DB roundtrip when the log level is below the
+    // configured min_level (no row would be appended anyway).
+    async fn ensure_execution_row_for_log(&mut self, level: LogLevel) {
+        if self.version.is_none()
+            && let Some(config) = &self.component_logger.logs_storage_config
+            && (level as u8) >= (config.min_level as u8)
+        {
+            let res = self.get_version_or_create().await;
+            if let Err(err) = res {
+                debug!("Cannot persist log: failed to create execution row: {err:?}");
+            }
+        }
     }
 
     /// Create a new `OneOff` join set and return its ID along with a child execution ID.
@@ -1754,23 +1772,28 @@ impl WebhookEndpointCtx {
 }
 
 impl log_activities::obelisk::log::log::Host for WebhookEndpointCtx {
-    fn trace(&mut self, message: String) {
+    async fn trace(&mut self, message: String) {
+        self.ensure_execution_row_for_log(LogLevel::Trace).await;
         self.component_logger.log(LogLevel::Trace, message);
     }
 
-    fn debug(&mut self, message: String) {
+    async fn debug(&mut self, message: String) {
+        self.ensure_execution_row_for_log(LogLevel::Debug).await;
         self.component_logger.log(LogLevel::Debug, message);
     }
 
-    fn info(&mut self, message: String) {
+    async fn info(&mut self, message: String) {
+        self.ensure_execution_row_for_log(LogLevel::Info).await;
         self.component_logger.log(LogLevel::Info, message);
     }
 
-    fn warn(&mut self, message: String) {
+    async fn warn(&mut self, message: String) {
+        self.ensure_execution_row_for_log(LogLevel::Warn).await;
         self.component_logger.log(LogLevel::Warn, message);
     }
 
-    fn error(&mut self, message: String) {
+    async fn error(&mut self, message: String) {
+        self.ensure_execution_row_for_log(LogLevel::Error).await;
         self.component_logger.log(LogLevel::Error, message);
     }
 }

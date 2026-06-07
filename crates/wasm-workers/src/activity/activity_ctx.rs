@@ -115,23 +115,23 @@ pub(crate) fn store(
 }
 
 impl log_activities::obelisk::log::log::Host for ActivityCtx {
-    fn trace(&mut self, message: String) {
+    async fn trace(&mut self, message: String) {
         self.component_logger.log(LogLevel::Trace, message);
     }
 
-    fn debug(&mut self, message: String) {
+    async fn debug(&mut self, message: String) {
         self.component_logger.log(LogLevel::Debug, message);
     }
 
-    fn info(&mut self, message: String) {
+    async fn info(&mut self, message: String) {
         self.component_logger.log(LogLevel::Info, message);
     }
 
-    fn warn(&mut self, message: String) {
+    async fn warn(&mut self, message: String) {
         self.component_logger.log(LogLevel::Warn, message);
     }
 
-    fn error(&mut self, message: String) {
+    async fn error(&mut self, message: String) {
         self.component_logger.log(LogLevel::Error, message);
     }
 }

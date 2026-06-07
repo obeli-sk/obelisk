@@ -64,5 +64,9 @@ pub(crate) mod log_activities {
                         import obelisk:log/log@1.0.0;
                     }",
         world: "any:any/bindings",
+        imports: {
+            // Async so webhook impl can lazily create its execution row before appending the log.
+            "obelisk:log/log@1.0.0": async,
+        },
     });
 }
