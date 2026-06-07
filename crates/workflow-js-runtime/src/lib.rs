@@ -9,7 +9,9 @@ mod stub_getrandom {
 
     #[unsafe(no_mangle)]
     unsafe extern "Rust" fn __getrandom_v03_custom(dest: *mut u8, len: usize) -> Result<(), Error> {
-        // Fill with zeros for deterministic behavior
+        // Fill with zeros for deterministic behavior.
+        // SAFETY: `dest` and `len` come from the getrandom v0.3 custom backend contract,
+        // which guarantees `dest` is a valid writable buffer of `len` bytes.
         unsafe { core::ptr::write_bytes(dest, 0, len) };
         Ok(())
     }

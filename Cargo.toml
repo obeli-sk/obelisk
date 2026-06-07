@@ -407,6 +407,17 @@ tracing-opentelemetry = "0.32"
 clippy.all = { level = "deny", priority = -1 }
 # lower the priority to allow overriding later
 clippy.dbg_macro = "deny"
+clippy.todo = "deny"
+clippy.unimplemented = "deny"
+clippy.unused_result_ok = "deny"
+clippy.undocumented_unsafe_blocks = "deny"
+clippy.multiple_unsafe_ops_per_block = "deny"
+clippy.infallible_try_from = "deny"
+clippy.mem_forget = "deny"
+clippy.rc_mutex = "deny"
+clippy.debug_assert_with_mut_call = "deny"
+clippy.unchecked_time_subtraction = "deny"
+clippy.float_cmp_const = "deny"
 # lower the priority to allow overriding later
 clippy.pedantic = { level = "deny", priority = -1 }
 # lower the priority to allow overriding later

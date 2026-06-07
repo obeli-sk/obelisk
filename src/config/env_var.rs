@@ -140,10 +140,9 @@ mod tests {
     #[test]
     fn multiple_interpolations() {
         // SAFETY: test-only, no concurrent access to these env vars.
-        unsafe {
-            std::env::set_var("TEST_ENV_VAR_A", "aaa");
-            std::env::set_var("TEST_ENV_VAR_B", "bbb");
-        }
+        unsafe { std::env::set_var("TEST_ENV_VAR_A", "aaa") };
+        // SAFETY: test-only, no concurrent access to these env vars.
+        unsafe { std::env::set_var("TEST_ENV_VAR_B", "bbb") };
         assert_eq!(
             interpolate_env_vars_inner("${TEST_ENV_VAR_A}-${TEST_ENV_VAR_B}").unwrap(),
             "aaa-bbb"
