@@ -89,7 +89,9 @@ pub fn register_import_modules(
             // suffix-match calls below are infallible by construction.
             let proxy = if let Some(base_specifier) = &schedule_base {
                 let base_fn = wit_name.strip_suffix("-schedule").unwrap_or_else(|| {
-                    unreachable!("host-resolved schedule import `{wit_name}` must end with `-schedule`")
+                    unreachable!(
+                        "host-resolved schedule import `{wit_name}` must end with `-schedule`"
+                    )
                 });
                 create_proxy(
                     ProxyKind::Schedule {

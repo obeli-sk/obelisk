@@ -18,7 +18,8 @@ use concepts::storage::{CapturedDbWrite, DbPool, Version};
 use concepts::{
     ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn,
     FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterType, Params,
-    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue,
+    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
+    SupportedFunctionReturnValue,
 };
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,

@@ -105,9 +105,7 @@ fn extract_and_verify<'a>(
             let js_name = interner
                 .resolve_expect(sym)
                 .utf8()
-                .ok_or_else(|| {
-                    format!("imported name from `{specifier}` is not valid UTF-8")
-                })?;
+                .ok_or_else(|| format!("imported name from `{specifier}` is not valid UTF-8"))?;
             verify_named_import(js_name, ifc)?;
         }
 

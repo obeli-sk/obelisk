@@ -328,8 +328,8 @@ impl WebhookEndpointCompiled {
                         )
                     })
                     .collect();
-                let json = serde_json::to_string(&tupled)
-                    .expect("resolved imports must be serializable");
+                let json =
+                    serde_json::to_string(&tupled).expect("resolved imports must be serializable");
                 Some(Arc::from(json))
             }
         } else {
