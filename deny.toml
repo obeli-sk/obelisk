@@ -95,4 +95,7 @@ skip = [
 ignore = [
     # paste is unmaintained; also pulled in by utoipa-axum so unavoidable
     { id = "RUSTSEC-2024-0436" },
+    # proc-macro-error2 is unmaintained; pulled in by getset through
+    # oci-spec/oci-client, with no maintained release available yet
+    { id = "RUSTSEC-2026-0173" },
 ]
