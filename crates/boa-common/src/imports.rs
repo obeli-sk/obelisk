@@ -84,9 +84,13 @@ pub fn register_import_modules(
         // SyntheticModuleInitializer to retrieve during evaluation.
         let exports_obj = JsObject::with_null_proto();
         for (js_name, wit_name) in funcs {
+            // The host has already verified every `wit_name` against the
+            // package suffix in `wasm-workers::js_imports`, so the strip /
+            // suffix-match calls below are infallible by construction.
             let proxy = if let Some(base_specifier) = &schedule_base {
-                // Schedule proxy: strip `-schedule` from wit_name to get base function name
-                let base_fn = wit_name.strip_suffix("-schedule").unwrap_or(wit_name);
+                let base_fn = wit_name.strip_suffix("-schedule").unwrap_or_else(|| {
+                    unreachable!("host-resolved schedule import `{wit_name}` must end with `-schedule`")
+                });
                 create_proxy(
                     ProxyKind::Schedule {
                         interface_name: base_specifier,
@@ -95,7 +99,6 @@ pub fn register_import_modules(
                     context,
                 )
             } else if let Some(base_specifier) = &ext_base {
-                // Extension proxy: determine type from wit_name suffix
                 if let Some(base_fn) = wit_name.strip_suffix("-submit") {
                     create_proxy(
                         ProxyKind::ExtSubmit {
@@ -109,18 +112,15 @@ pub fn register_import_modules(
                 } else if wit_name.ends_with("-get") {
                     create_proxy(ProxyKind::ExtGet, context)
                 } else {
-                    // Unknown ext suffix — fall back to direct call on base specifier
-                    create_proxy(
-                        ProxyKind::DirectCall {
-                            interface_name: base_specifier,
-                            function_name: wit_name,
-                        },
-                        context,
+                    unreachable!(
+                        "host-resolved ext import `{wit_name}` must end with \
+                         `-submit`, `-await-next`, or `-get`"
                     )
                 }
             } else if let Some(base_specifier) = &stub_base {
-                // Stub proxy: strip `-stub` from wit_name to get base function name
-                let base_fn = wit_name.strip_suffix("-stub").unwrap_or(wit_name);
+                let base_fn = wit_name.strip_suffix("-stub").unwrap_or_else(|| {
+                    unreachable!("host-resolved stub import `{wit_name}` must end with `-stub`")
+                });
                 create_proxy(
                     ProxyKind::Stub {
                         interface_name: base_specifier,

@@ -17,8 +17,8 @@ use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{CapturedDbWrite, DbPool, Version};
 use concepts::{
     ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, PackageIfcFns, ParameterType, Params, ResultParsingError,
-    ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterType, Params,
+    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue,
 };
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
@@ -119,8 +119,8 @@ pub struct WorkflowJsWorkerLinked {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
-    resolved_imports: HashMap<String, Vec<(String, String)>>,
+    /// Resolved imports: interface FQN → imported functions.
+    resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
 impl WorkflowJsWorkerLinked {
@@ -158,18 +158,18 @@ pub struct WorkflowJsWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
-    resolved_imports: HashMap<String, Vec<(String, String)>>,
+    /// Resolved imports: interface FQN → imported functions.
+    resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
-use crate::js_imports::resolve_js_imports;
+use crate::js_imports::{NamedFnImport, resolve_js_imports};
 
 impl WorkflowJsWorker {
     fn boa_invocation(
         params: &Params,
         js_source: String,
         js_file_name: Option<String>,
-        resolved_imports: &HashMap<String, Vec<(String, String)>>,
+        resolved_imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
     ) -> (FunctionFqn, Params) {
         let json_params = params
             .as_json_values()
@@ -190,7 +190,7 @@ impl WorkflowJsWorker {
             .map(|(ifc_fqn, funcs)| {
                 let funcs_json: Vec<serde_json::Value> = funcs
                     .iter()
-                    .map(|(js_name, wit_name)| {
+                    .map(|NamedFnImport { js_name, wit_name }| {
                         serde_json::json!({
                             "js_name": js_name,
                             "wit_name": wit_name,
@@ -198,7 +198,7 @@ impl WorkflowJsWorker {
                     })
                     .collect();
                 serde_json::json!({
-                    "ifc_fqn": ifc_fqn,
+                    "ifc_fqn": ifc_fqn.to_string(),
                     "functions": funcs_json,
                 })
             })

@@ -307,15 +307,29 @@ impl WebhookEndpointCompiled {
 
         // Resolve JS imports against the function registry before linking and
         // serialize the result once — the runtime reads it from an env var, so
-        // there's no point doing the work per request.
+        // there's no point doing the work per request. The webhook runtime
+        // currently consumes pairs as `[js_name, wit_name]` tuples, so we
+        // flatten `NamedFnImport` to that shape at the boundary.
         let resolved_imports_json = if let Some(js_config) = &self.config.js_config {
             let resolved = crate::js_imports::resolve_js_imports(&js_config.source, fn_registry)
                 .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
             if resolved.is_empty() {
                 None
             } else {
-                let json =
-                    serde_json::to_string(&resolved).expect("resolved imports must be serializable");
+                let tupled: std::collections::HashMap<&IfcFqnName, Vec<(&str, &str)>> = resolved
+                    .iter()
+                    .map(|(ifc_fqn, funcs)| {
+                        (
+                            ifc_fqn,
+                            funcs
+                                .iter()
+                                .map(|f| (f.js_name.as_str(), f.wit_name.as_str()))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                let json = serde_json::to_string(&tupled)
+                    .expect("resolved imports must be serializable");
                 Some(Arc::from(json))
             }
         } else {
