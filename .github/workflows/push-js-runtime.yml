@@ -45,8 +45,8 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           nix_conf: |
-            extra-substituters = https://cache.garnix.io
-            extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g
+            extra-substituters = https://obeli-sk.cachix.org
+            extra-trusted-public-keys = obeli-sk.cachix.org-1:31iM9GWSEhAXvvuTWQ7CvAcwvgRzsuJ9yJghywSd3Jw=
 
       - name: Populate the nix store
         run: nix develop --command echo

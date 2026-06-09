@@ -47,18 +47,18 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Populate the nix store without Obelisk # Workaround for slow garnix cache
+      - name: Populate the nix store without Obelisk # pull base deps from cache.nixos.org first
         run: |
           nix develop --command echo
-      - name: Add garnix cache
+      - name: Add cachix cache
         run: |
-          echo "extra-substituters = https://cache.garnix.io" >> ~/.config/nix/nix.conf
-          echo "extra-trusted-public-keys = cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g" >> ~/.config/nix/nix.conf
+          echo "extra-substituters = https://obeli-sk.cachix.org" >> ~/.config/nix/nix.conf
+          echo "extra-trusted-public-keys = obeli-sk.cachix.org-1:31iM9GWSEhAXvvuTWQ7CvAcwvgRzsuJ9yJghywSd3Jw=" >> ~/.config/nix/nix.conf
 
       - name: Create temp directory
         run: mkdir temp
 
-      - name: Build the binary
+      - name: nix nun obelisk
         working-directory: temp
         run: |
           full_target="github:obeli-sk/obelisk/${TAG}#${{ matrix.target }}"
