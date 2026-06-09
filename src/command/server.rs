@@ -2817,7 +2817,6 @@ async fn compile_and_link(
                                 js_config: Some(WebhookEndpointJsConfig {
                                     source: webhook_js.js_source,
                                     file_name: webhook_js.js_file_name.clone(),
-                                    resolved_imports: std::collections::HashMap::new(),
                                 }),
                                 config_section_hint: webhook_js.config_section_hint,
                             };

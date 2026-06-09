@@ -98,24 +98,17 @@ async fn execute_async(
     // Get the default export function from the ES module
     let default_fn = match get_default_export(js_code, &context, executor).await {
         Ok(func) => func,
-        Err(EsmError::ParseError(msg)) => {
-            host_fn_error(&format!("module parse error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmError::LoadError(msg)) => {
-            host_fn_error(&format!("module load error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmError::LinkError(msg)) => {
-            host_fn_error(&format!("module link error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmError::EvalError(msg)) => {
-            host_fn_error(&format!("module eval error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmError::NoDefaultExport | EsmError::DefaultNotCallable) => {
-            return Err(JsRuntimeError::NoDefaultExport);
+        Err(err) => {
+            let msg = match err {
+                EsmError::ParseError(msg) => format!("module parse error: {msg}"),
+                EsmError::LoadError(msg) => format!("module load error: {msg}"),
+                EsmError::LinkError(msg) => format!("module link error: {msg}"),
+                EsmError::EvalError(msg) => format!("module eval error: {msg}"),
+                EsmError::NoDefaultExport => "no default export".to_string(),
+                EsmError::DefaultNotCallable => "default export is not callable".to_string(),
+            };
+            host_fn_error(&msg);
+            return Err(JsRuntimeError::CannotInstantiate(msg));
         }
     };
 

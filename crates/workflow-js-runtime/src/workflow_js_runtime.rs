@@ -120,7 +120,9 @@
 //! ```
 
 use crate::deterministic_executor::DeterministicJobExecutor;
-use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::JsRuntimeError;
+use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::{
+    JsRuntimeError, ResolvedInterfaceImports,
+};
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
 use crate::generated::obelisk::types::execution::{ExecutionId, Function, ResponseId};
@@ -572,14 +574,26 @@ pub fn execute(
     js_code: &str,
     params_json: &[String],
     js_file_name: Option<String>,
-    resolved_imports: Vec<(String, Vec<(String, String)>)>,
+    resolved_imports: Vec<ResolvedInterfaceImports>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
     if let Some(js_file_name) = js_file_name {
         JS_FILE_NAME.with(|s| *s.borrow_mut() = js_file_name);
     }
 
-    // Convert resolved imports from host into the HashMap format expected by register_import_modules.
-    let imports: HashMap<String, Vec<(String, String)>> = resolved_imports.into_iter().collect();
+    // Flatten typed records into the (specifier → [(js_name, wit_name)]) map
+    // that `register_import_modules` expects.
+    let imports: HashMap<String, Vec<(String, String)>> = resolved_imports
+        .into_iter()
+        .map(|ifc| {
+            (
+                ifc.ifc_fqn,
+                ifc.functions
+                    .into_iter()
+                    .map(|f| (f.js_name, f.wit_name))
+                    .collect(),
+            )
+        })
+        .collect();
     let executor = Rc::new(DeterministicJobExecutor::default());
     let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
@@ -612,24 +626,19 @@ pub fn execute(
     // Get the default export function from the ES module
     let default_fn = match get_default_export_workflow(js_code, &mut context) {
         Ok(func) => func,
-        Err(EsmErrorWorkflow::ParseError(msg)) => {
-            obelisk_log::error(&format!("module parse error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmErrorWorkflow::LoadError(msg)) => {
-            obelisk_log::error(&format!("module load error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmErrorWorkflow::LinkError(msg)) => {
-            obelisk_log::error(&format!("module link error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmErrorWorkflow::EvalError(msg)) => {
-            obelisk_log::error(&format!("module eval error: {msg}"));
-            return Err(JsRuntimeError::ModuleParseError(msg));
-        }
-        Err(EsmErrorWorkflow::NoDefaultExport | EsmErrorWorkflow::DefaultNotCallable) => {
-            return Err(JsRuntimeError::NoDefaultExport);
+        Err(err) => {
+            let msg = match err {
+                EsmErrorWorkflow::ParseError(msg) => format!("module parse error: {msg}"),
+                EsmErrorWorkflow::LoadError(msg) => format!("module load error: {msg}"),
+                EsmErrorWorkflow::LinkError(msg) => format!("module link error: {msg}"),
+                EsmErrorWorkflow::EvalError(msg) => format!("module eval error: {msg}"),
+                EsmErrorWorkflow::NoDefaultExport => "no default export".to_string(),
+                EsmErrorWorkflow::DefaultNotCallable => {
+                    "default export is not callable".to_string()
+                }
+            };
+            obelisk_log::error(&msg);
+            return Err(JsRuntimeError::CannotInstantiate(msg));
         }
     };
 

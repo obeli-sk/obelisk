@@ -251,18 +251,18 @@ impl Worker for ActivityJsWorker {
                             version,
                         ))
                     }
-                    "module_parse_error" | "no_default_export" => {
-                        let detail = payload.as_ref().and_then(|p| {
-                            if let WastVal::String(s) = p.as_ref() {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        });
+                    "cannot_instantiate" => {
+                        let reason = if let Some(payload) = payload
+                            && let WastVal::String(s) = payload.as_ref()
+                        {
+                            s.clone()
+                        } else {
+                            unreachable!("cannot-instantiate carries a string payload")
+                        };
                         Err(WorkerError::FatalError(
                             FatalError::CannotInstantiate {
-                                reason: format!("js-runtime-error: {name}"),
-                                detail,
+                                reason,
+                                detail: None,
                             },
                             version,
                         ))
@@ -746,7 +746,7 @@ mod tests {
                 FatalError::CannotInstantiate { reason, detail: _ },
                 _version,
             ) => {
-                assert!(reason.contains("no_default_export"), "reason: {reason}");
+                assert!(reason.contains("no default export"), "reason: {reason}");
             }
         );
     }
@@ -771,7 +771,7 @@ mod tests {
                 FatalError::CannotInstantiate { reason, detail: _ },
                 _version,
             ) => {
-                assert!(reason.contains("module_parse_error"), "reason: {reason}");
+                assert!(reason.contains("module parse error"), "reason: {reason}");
             }
         );
     }

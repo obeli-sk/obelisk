@@ -25,7 +25,9 @@ mod deterministic_executor;
 mod workflow_js_runtime;
 
 use generated::export;
-use generated::exports::obelisk_workflow::workflow_js_runtime::execute::{Guest, JsRuntimeError};
+use generated::exports::obelisk_workflow::workflow_js_runtime::execute::{
+    Guest, JsRuntimeError, ResolvedInterfaceImports,
+};
 
 pub struct Component;
 export!(Component with_types_in generated);
@@ -35,7 +37,7 @@ impl Guest for Component {
         js_code: String,
         params_json: Vec<String>,
         js_file_name: Option<String>,
-        resolved_imports: Vec<(String, Vec<(String, String)>)>,
+        resolved_imports: Vec<ResolvedInterfaceImports>,
     ) -> Result<Result<String, String>, JsRuntimeError> {
         workflow_js_runtime::execute(&js_code, &params_json, js_file_name, resolved_imports)
     }
