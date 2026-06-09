@@ -30,6 +30,7 @@ use test_utils::ExecutionLogSanitized;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
+use tracing::warn;
 use val_json::wast_val::WastValWithType;
 
 #[tokio::test]
@@ -122,6 +123,7 @@ async fn diff_proptest_inner(seed: u64) {
         )
         .await,
     );
+    drop(postgres_conn);
     db_postgres_close.close().await;
     println!(
         "Expected (sqlite):\n{expected}\nActual (postgres):\n{actual}",
@@ -144,11 +146,17 @@ fn arbitrary_valid_append_request(
     unstructured: &mut arbitrary::Unstructured<'_>,
 ) -> arbitrary::Result<AppendRequest> {
     let mut req = AppendRequest {
-        event: unstructured.arbitrary()?,
+        event: postgres_compatible(&unstructured.arbitrary()?),
         created_at: Now.now(),
     };
     normalize_timestamps(&mut req, unstructured)?;
     Ok(req)
+}
+
+fn postgres_compatible(event: &ExecutionRequest) -> ExecutionRequest {
+    let serialized = serde_json::to_string(&event).expect("ExecutionRequest must serialize");
+    serde_json::from_str(&serialized.replace("\\u0000", ""))
+        .expect("sanitized ExecutionRequest must deserialize")
 }
 
 fn normalize_timestamps(
@@ -300,7 +308,7 @@ async fn create_and_append(
             .await;
         match res {
             Ok(new_version) => version = new_version,
-            Err(err) => println!("Ignoring {err:?}"),
+            Err(err) => warn!("Ignoring {err:?}"),
         }
     }
     db_connection.get(&execution_id).await.unwrap()
