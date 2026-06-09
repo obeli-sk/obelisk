@@ -34,7 +34,6 @@ use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use log_activities::obelisk::log::log::Host;
 use route_recognizer::{Match, Router};
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -306,13 +305,36 @@ impl WebhookEndpointCompiled {
             }
         }
 
-        // Resolve JS imports against the function registry before linking.
-        let mut config = self.config;
-        if let Some(js_config) = &mut config.js_config {
-            js_config.resolved_imports =
-                crate::js_imports::resolve_js_imports(&js_config.source, fn_registry)
-                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
-        }
+        // Resolve JS imports against the function registry before linking and
+        // serialize the result once — the runtime reads it from an env var, so
+        // there's no point doing the work per request. The webhook runtime
+        // currently consumes pairs as `[js_name, wit_name]` tuples, so we
+        // flatten `NamedFnImport` to that shape at the boundary.
+        let resolved_imports_json = if let Some(js_config) = &self.config.js_config {
+            let resolved = crate::js_imports::resolve_js_imports(&js_config.source, fn_registry)
+                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+            if resolved.is_empty() {
+                None
+            } else {
+                let tupled: std::collections::HashMap<&IfcFqnName, Vec<(&str, &str)>> = resolved
+                    .iter()
+                    .map(|(ifc_fqn, funcs)| {
+                        (
+                            ifc_fqn,
+                            funcs
+                                .iter()
+                                .map(|f| (f.js_name.as_str(), f.wit_name.as_str()))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                let json =
+                    serde_json::to_string(&tupled).expect("resolved imports must be serializable");
+                Some(Arc::from(json))
+            }
+        } else {
+            None
+        };
 
         // Pre-instantiate to catch missing imports
         let proxy_pre = linker
@@ -325,8 +347,9 @@ impl WebhookEndpointCompiled {
         })?);
 
         Ok(WebhookEndpointInstanceLinked {
-            config: Arc::new(config),
+            config: Arc::new(self.config),
             proxy_pre,
+            resolved_imports_json,
         })
     }
 }
@@ -336,6 +359,9 @@ pub struct WebhookEndpointInstanceLinked {
     #[debug(skip)]
     proxy_pre: Arc<ProxyPre<WebhookEndpointCtx>>,
     config: Arc<WebhookEndpointConfig>,
+    /// Set on JS webhooks; serialized `HashMap<String, Vec<(String, String)>>` passed
+    /// to the runtime via the `__OBELISK_RESOLVED_IMPORTS__` env var.
+    resolved_imports_json: Option<Arc<str>>,
 }
 impl WebhookEndpointInstanceLinked {
     #[must_use]
@@ -548,9 +574,6 @@ pub struct WebhookEndpointConfig {
 pub struct WebhookEndpointJsConfig {
     pub source: String,
     pub file_name: String,
-    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
-    /// Serialized as JSON and passed to the runtime via `__OBELISK_RESOLVED_IMPORTS__`.
-    pub resolved_imports: HashMap<String, Vec<(String, String)>>,
 }
 
 struct WebhookEndpointCtx {
@@ -1585,6 +1608,7 @@ impl WebhookEndpointCtx {
     fn new<'a>(
         deployment_id: DeploymentId,
         config: &Arc<WebhookEndpointConfig>,
+        resolved_imports_json: Option<&'a str>,
         engine: &Engine,
         clock_fn: Box<dyn ClockFn>,
         sleep: Arc<dyn Sleep>,
@@ -1627,10 +1651,8 @@ impl WebhookEndpointCtx {
         if let Some(js_config) = &config.js_config {
             wasi_ctx.env("__OBELISK_JS_SOURCE__", &js_config.source);
             wasi_ctx.env("__OBELISK_JS_FILE_NAME__", &js_config.file_name);
-            if !js_config.resolved_imports.is_empty() {
-                let imports_json = serde_json::to_string(&js_config.resolved_imports)
-                    .expect("resolved imports must be serializable");
-                wasi_ctx.env("__OBELISK_RESOLVED_IMPORTS__", &imports_json);
+            if let Some(resolved_imports_json) = resolved_imports_json {
+                wasi_ctx.env("__OBELISK_RESOLVED_IMPORTS__", resolved_imports_json);
             }
         }
 
@@ -1926,6 +1948,7 @@ impl RequestHandler {
             let mut store = WebhookEndpointCtx::new(
                 self.deployment_id,
                 &found_instance.config,
+                instance_match.handler().resolved_imports_json.as_deref(),
                 &self.engine,
                 self.clock_fn,
                 self.sleep,
@@ -2700,7 +2723,6 @@ pub(crate) mod tests {
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
         use concepts::time::{ClockFn, TokioSleep};
         use concepts::{ComponentId, ComponentType, StrVariant};
-        use std::collections::HashMap;
         use std::net::SocketAddr;
         use std::sync::Arc;
         use test_utils::sim_clock::SimClock;
@@ -2752,7 +2774,6 @@ pub(crate) mod tests {
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
                             file_name: String::new(),
-                            resolved_imports: HashMap::new(),
                         }),
                         config_section_hint:
                             crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
@@ -2903,7 +2924,6 @@ pub(crate) mod tests {
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
                             file_name: String::new(),
-                            resolved_imports: HashMap::new(),
                         }),
                         config_section_hint:
                             crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
@@ -3279,7 +3299,6 @@ pub(crate) mod tests {
                             js_config: Some(WebhookEndpointJsConfig {
                                 source: js_source.to_string(),
                                 file_name: String::new(),
-                                resolved_imports: HashMap::new(),
                             }),
                             config_section_hint:
                                 crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,

@@ -17,8 +17,9 @@ use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{CapturedDbWrite, DbPool, Version};
 use concepts::{
     ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, PackageIfcFns, ParameterType, Params, ResultParsingError,
-    ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterType, Params,
+    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
+    SupportedFunctionReturnValue,
 };
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
@@ -27,7 +28,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
-use val_json::type_wrapper::TypeWrapper;
+use val_json::type_wrapper::{TypeKey, TypeWrapper, indexmap::IndexMap};
 use val_json::wast_val::{WastVal, WastValWithType};
 
 /// Compiled JS workflow. Holds the compiled Boa WASM component + JS source + user FFQN.
@@ -119,8 +120,8 @@ pub struct WorkflowJsWorkerLinked {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
-    resolved_imports: HashMap<String, Vec<(String, String)>>,
+    /// Resolved imports: interface FQN → imported functions.
+    resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
 impl WorkflowJsWorkerLinked {
@@ -158,18 +159,18 @@ pub struct WorkflowJsWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: specifier → [(`js_name`, `wit_name`)].
-    resolved_imports: HashMap<String, Vec<(String, String)>>,
+    /// Resolved imports: interface FQN → imported functions.
+    resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
-use crate::js_imports::resolve_js_imports;
+use crate::js_imports::{NamedFnImport, resolve_js_imports};
 
 impl WorkflowJsWorker {
     fn boa_invocation(
         params: &Params,
         js_source: String,
         js_file_name: Option<String>,
-        resolved_imports: &HashMap<String, Vec<(String, String)>>,
+        resolved_imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
     ) -> (FunctionFqn, Params) {
         let json_params = params
             .as_json_values()
@@ -183,23 +184,24 @@ impl WorkflowJsWorker {
             })
             .collect();
 
-        // Serialize resolved imports as list<tuple<string, list<tuple<string, string>>>>
+        // Serialize resolved imports as list<resolved-interface-imports>, where
+        // each entry is a record { ifc-fqn, functions: list<named-fn-import> }.
         let imports_json: Vec<serde_json::Value> = resolved_imports
             .iter()
-            .map(|(specifier, funcs)| {
+            .map(|(ifc_fqn, funcs)| {
                 let funcs_json: Vec<serde_json::Value> = funcs
                     .iter()
-                    .map(|(js_name, wit_name)| {
-                        serde_json::Value::Array(vec![
-                            serde_json::Value::String(js_name.clone()),
-                            serde_json::Value::String(wit_name.clone()),
-                        ])
+                    .map(|NamedFnImport { js_name, wit_name }| {
+                        serde_json::json!({
+                            "js_name": js_name,
+                            "wit_name": wit_name,
+                        })
                     })
                     .collect();
-                serde_json::Value::Array(vec![
-                    serde_json::Value::String(specifier.clone()),
-                    serde_json::Value::Array(funcs_json),
-                ])
+                serde_json::json!({
+                    "ifc_fqn": ifc_fqn.to_string(),
+                    "functions": funcs_json,
+                })
             })
             .collect();
 
@@ -211,19 +213,24 @@ impl WorkflowJsWorker {
             js_file_name.map_or(serde_json::Value::Null, serde_json::Value::String),
             serde_json::Value::Array(imports_json),
         ]);
+        let named_fn_import_ty = TypeWrapper::Record(IndexMap::from([
+            (TypeKey::new_kebab("js-name"), TypeWrapper::String),
+            (TypeKey::new_kebab("wit-name"), TypeWrapper::String),
+        ]));
+        let resolved_interface_imports_ty = TypeWrapper::Record(IndexMap::from([
+            (TypeKey::new_kebab("ifc-fqn"), TypeWrapper::String),
+            (
+                TypeKey::new_kebab("functions"),
+                TypeWrapper::List(Box::new(named_fn_import_ty)),
+            ),
+        ]));
         let params = Params::from_json_values(
             boa_params,
             [
                 &TypeWrapper::String,
                 &TypeWrapper::List(Box::new(TypeWrapper::String)),
                 &TypeWrapper::Option(Box::new(TypeWrapper::String)),
-                &TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
-                    TypeWrapper::String,
-                    TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
-                        TypeWrapper::String,
-                        TypeWrapper::String,
-                    ])))),
-                ])))),
+                &TypeWrapper::List(Box::new(resolved_interface_imports_ty)),
             ]
             .into_iter(),
         )
@@ -365,18 +372,18 @@ fn transform_to_outer_result(
                         version,
                     ))
                 }
-                "module_parse_error" | "no_default_export" => {
-                    let detail = payload.as_ref().and_then(|p| {
-                        if let WastVal::String(s) = p.as_ref() {
-                            Some(s.clone())
-                        } else {
-                            None
-                        }
-                    });
+                "cannot_instantiate" => {
+                    let reason = if let Some(payload) = payload
+                        && let WastVal::String(s) = payload.as_ref()
+                    {
+                        s.clone()
+                    } else {
+                        unreachable!("cannot-instantiate carries a string payload")
+                    };
                     Err((
                         FatalError::CannotInstantiate {
-                            reason: format!("js-runtime-error: {name}"),
-                            detail,
+                            reason,
+                            detail: None,
                         },
                         version,
                     ))
@@ -1034,7 +1041,7 @@ mod tests {
                 FatalError::CannotInstantiate { reason, detail: _ },
                 _version,
             ) => {
-                assert!(reason.contains("no_default_export"), "reason: {reason}");
+                assert!(reason.contains("no default export"), "reason: {reason}");
             }
         );
     }
