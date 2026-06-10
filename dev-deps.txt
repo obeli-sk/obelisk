@@ -8,5 +8,5 @@ libprotoc 34.1
 rustc 1.96.0 (ac68faa20 2026-05-25)
 wasm-tools 1.250.0
 cargo-zigbuild 0.22.3
-litestream v0.5.11
+litestream v0.5.12
 ldd (GNU libc) 2.42
