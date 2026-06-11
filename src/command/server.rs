@@ -2145,6 +2145,32 @@ impl DeploymentVerified {
         Ok(())
     }
 
+    fn verify_no_webui_server_bindings(
+        deployment: &DeploymentCanonical,
+    ) -> Result<(), anyhow::Error> {
+        let mut offending_webhooks = deployment
+            .webhooks_wasm
+            .iter()
+            .filter(|webhook| &**webhook.http_server == HTTP_SERVER_NAME_WEBUI)
+            .map(|webhook| &webhook.common.name)
+            .chain(
+                deployment
+                    .webhooks_js
+                    .iter()
+                    .filter(|webhook| &**webhook.http_server == HTTP_SERVER_NAME_WEBUI)
+                    .map(|webhook| &webhook.name),
+            )
+            .peekable();
+        if offending_webhooks.peek().is_some() {
+            bail!(
+                "the `{HTTP_SERVER_NAME_WEBUI}` http_server is reserved for the web UI; \
+                     the following webhook(s) must not attach to it: {:?}",
+                offending_webhooks.collect::<Vec<_>>()
+            );
+        }
+        Ok(())
+    }
+
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
@@ -2171,6 +2197,8 @@ impl DeploymentVerified {
         {
             bail!("Each `http_server` must have a unique name");
         }
+        Self::verify_no_webui_server_bindings(&deployment)?;
+
         if let Some(api_listening_addr) = api_addr_if_webui_enabled {
             let target_url = format!("http://{api_listening_addr}");
             deployment
