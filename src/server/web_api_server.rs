@@ -262,7 +262,11 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         (status = 200, description = "Generated execution ID", body = String)
     )
 )]
-async fn execution_id_generate(_: State<Arc<WebApiState>>, accept: AcceptHeader) -> Response {
+async fn execution_id_generate(
+    _: State<Arc<WebApiState>>,
+    accept: TextDefaultAcceptHeader,
+) -> Response {
+    let accept = accept.into();
     let id = ExecutionId::generate();
     match accept {
         AcceptHeader::Json => pretty_json_response(StatusCode::OK, &id),
@@ -2982,7 +2986,8 @@ mod deployment {
     use crate::{
         command::server::SwitchDeploymentAction,
         server::web_api_server::{
-            AcceptHeader, ErrorWrapper, HttpResponse, WebApiState, pretty_json_response,
+            AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
+            pretty_json_response,
         },
     };
     use axum::{
@@ -3139,8 +3144,9 @@ mod deployment {
     )]
     pub(crate) async fn get_current_deployment_id(
         state: State<Arc<WebApiState>>,
-        accept: AcceptHeader,
+        accept: TextDefaultAcceptHeader,
     ) -> Result<Response, HttpResponse> {
+        let accept = accept.into();
         let deployment_id = state.deployment_ctx.read().await.deployment_id;
         Ok(match accept {
             AcceptHeader::Json => pretty_json_response(StatusCode::OK, &deployment_id),
@@ -3554,8 +3560,9 @@ mod backtrace {
         Path(execution_id): Path<ExecutionId>,
         state: State<Arc<WebApiState>>,
         Query(params): Query<BacktraceSourceParams>,
-        accept: AcceptHeader,
+        accept: TextDefaultAcceptHeader,
     ) -> Result<Response, HttpResponse> {
+        let accept = accept.into();
         let filter = parse_version(params.version, accept)?;
 
         let conn = state
@@ -3587,11 +3594,29 @@ mod backtrace {
 
 #[derive(AcceptExtractor, Clone, Copy, Default)]
 pub(crate) enum AcceptHeader {
+    #[accept(mediatype = "application/json")]
+    #[default]
+    Json,
+    #[accept(mediatype = "text/plain")]
+    Text,
+}
+
+#[derive(AcceptExtractor, Clone, Copy, Default)]
+pub(crate) enum TextDefaultAcceptHeader {
+    #[accept(mediatype = "application/json")]
+    Json,
     #[accept(mediatype = "text/plain")]
     #[default]
     Text,
-    #[accept(mediatype = "application/json")]
-    Json,
+}
+
+impl From<TextDefaultAcceptHeader> for AcceptHeader {
+    fn from(value: TextDefaultAcceptHeader) -> Self {
+        match value {
+            TextDefaultAcceptHeader::Json => Self::Json,
+            TextDefaultAcceptHeader::Text => Self::Text,
+        }
+    }
 }
 
 struct ErrorWrapper<E>(E, AcceptHeader);
