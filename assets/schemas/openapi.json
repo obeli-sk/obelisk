@@ -308,6 +308,15 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "include_derived",
+            "in": "query",
+            "description": "Count child executions in the summary buckets as well",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1949,7 +1958,10 @@
           "pending",
           "scheduled",
           "blocked",
-          "finished"
+          "paused",
+          "finished_ok",
+          "finished_error",
+          "finished_execution_failure"
         ],
         "properties": {
           "blocked": {
@@ -1968,10 +1980,22 @@
             "description": "Deployment identifier",
             "example": "Dep_01JKXYZ123456789ABCDEFGHIJ"
           },
-          "finished": {
+          "finished_error": {
             "type": "integer",
             "format": "int32",
-            "description": "Number of finished executions",
+            "description": "Number of executions finished with the `err` variant of the result type",
+            "minimum": 0
+          },
+          "finished_execution_failure": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of executions finished with an execution failure",
+            "minimum": 0
+          },
+          "finished_ok": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of executions finished successfully",
             "minimum": 0
           },
           "last_active_at": {
@@ -1986,6 +2010,12 @@
             "type": "integer",
             "format": "int32",
             "description": "Number of locked executions",
+            "minimum": 0
+          },
+          "paused": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of paused executions, regardless of the underlying state",
             "minimum": 0
           },
           "pending": {

@@ -1988,7 +1988,7 @@ impl RequestHandler {
                         .wasi_http_incoming_handler()
                         .call_handle(&mut store, req, out)
                         .await
-                        .inspect_err(|err| debug!("Webhook instance returned error: {err:?}"));
+                        .inspect_err(|err| debug!("Webhook instance finished with error: {err:?}"));
                     let ctx = store.into_data();
                     ctx.close(result, assigned_fuel).await
                 }

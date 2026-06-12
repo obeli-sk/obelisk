@@ -90,6 +90,7 @@ impl args::Deployment {
                     .list_deployments(grpc_gen::ListDeploymentsRequest {
                         pagination: None,
                         include_config_json: false,
+                        include_derived: false,
                     })
                     .await?
                     .into_inner();

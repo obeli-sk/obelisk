@@ -39,7 +39,7 @@ use concepts::storage::PersistedFunctionMetadata;
 use concepts::storage::PersistedParameterType;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
-use concepts::storage::{FunctionNameFilter, ListExecutionsFilter};
+use concepts::storage::{ExecutionStateFilter, FunctionNameFilter, ListExecutionsFilter};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use grpc::TonicRespResult;
@@ -412,6 +412,30 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     ) -> TonicRespResult<grpc_gen::ListExecutionsResponse> {
         let request = request.into_inner();
 
+        let state_filters = {
+            use grpc_gen::list_executions_request::ExecutionStateFilter as ProtoStateFilter;
+            // All time-carrying filters must share the same `now`,
+            // see `ListExecutionsFilter::state_filters`.
+            let now = Utc::now();
+            request
+                .state_filters()
+                .filter_map(|proto_filter| match proto_filter {
+                    ProtoStateFilter::Unspecified => None,
+                    ProtoStateFilter::Locked => Some(ExecutionStateFilter::Locked),
+                    ProtoStateFilter::Pending => Some(ExecutionStateFilter::Pending { now }),
+                    ProtoStateFilter::Scheduled => Some(ExecutionStateFilter::Scheduled { now }),
+                    ProtoStateFilter::Blocked => Some(ExecutionStateFilter::Blocked),
+                    ProtoStateFilter::Paused => Some(ExecutionStateFilter::Paused),
+                    ProtoStateFilter::Finished => Some(ExecutionStateFilter::Finished),
+                    ProtoStateFilter::FinishedOk => Some(ExecutionStateFilter::FinishedOk),
+                    ProtoStateFilter::FinishedError => Some(ExecutionStateFilter::FinishedError),
+                    ProtoStateFilter::FinishedExecutionFailure => {
+                        Some(ExecutionStateFilter::FinishedExecutionFailure)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
         let pagination =
             request
                 .pagination
@@ -456,6 +480,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .deployment_id
                 .map(DeploymentId::try_from)
                 .transpose()?,
+            state_filters,
         };
         let conn = self
             .db_pool
@@ -1582,10 +1607,11 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .map_err(map_to_status)?;
 
         let include_config_json = request.include_config_json;
+        let include_derived = request.include_derived;
         let pagination = convert_deployment_pagination(&request)?;
 
         let summaries = conn
-            .list_deployment_states(Utc::now(), pagination, include_config_json)
+            .list_deployment_states(Utc::now(), pagination, include_config_json, include_derived)
             .await
             .to_status()?;
 
@@ -1737,7 +1763,10 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
         pending: dep.pending,
         scheduled: dep.scheduled,
         blocked: dep.blocked,
-        finished: dep.finished,
+        paused: dep.paused,
+        finished_ok: dep.finished_ok,
+        finished_error: dep.finished_error,
+        finished_execution_failure: dep.finished_execution_failure,
     }
 }
 
@@ -1760,6 +1789,7 @@ mod tests {
                 },
             )),
             include_config_json: true,
+            include_derived: false,
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
@@ -1792,6 +1822,7 @@ mod tests {
                 },
             )),
             include_config_json: true, // TODO test
+            include_derived: false,
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
@@ -1817,6 +1848,7 @@ mod tests {
         let request = grpc_gen::ListDeploymentsRequest {
             pagination: None,
             include_config_json: true, // TODO test
+            include_derived: false,
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();
@@ -1846,6 +1878,7 @@ mod tests {
                 },
             )),
             include_config_json: true, // TODO test
+            include_derived: false,
         };
 
         let pagination = convert_deployment_pagination(&request).unwrap();

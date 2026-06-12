@@ -63,6 +63,26 @@ message ListExecutionsRequest {
             string function_name = 3;
         }
     }
+    // Filter by the current execution state, using the same buckets as `DeploymentSummary`.
+    enum ExecutionStateFilter {
+        EXECUTION_STATE_FILTER_UNSPECIFIED = 0;
+        EXECUTION_STATE_FILTER_LOCKED = 1;
+        // `PendingAt` with the scheduled time in the past.
+        EXECUTION_STATE_FILTER_PENDING = 2;
+        // `PendingAt` with the scheduled time in the future.
+        EXECUTION_STATE_FILTER_SCHEDULED = 3;
+        EXECUTION_STATE_FILTER_BLOCKED = 4;
+        // Finished with any result.
+        EXECUTION_STATE_FILTER_FINISHED = 5;
+        // Paused regardless of the underlying state (locked, pending or blocked).
+        EXECUTION_STATE_FILTER_PAUSED = 9;
+        // Finished successfully.
+        EXECUTION_STATE_FILTER_FINISHED_OK = 6;
+        // Finished with the `err` variant of its result type.
+        EXECUTION_STATE_FILTER_FINISHED_ERROR = 7;
+        // Execution failure: trap, timeout, nondeterminism, cancellation etc.
+        EXECUTION_STATE_FILTER_FINISHED_EXECUTION_FAILURE = 8;
+    }
     message Cursor {
         oneof cursor {
             ExecutionId execution_id = 1;
@@ -95,6 +115,8 @@ message ListExecutionsRequest {
     optional ContentDigest component_digest = 7;
     optional DeploymentId deployment_id = 8;
     ExecutionFunctionFilter function_filter = 9;
+    // Match executions in any of the given states (logical OR). Empty list matches all.
+    repeated ExecutionStateFilter state_filters = 10;
 }
 
 message ExecutionSummary {
@@ -1002,6 +1024,9 @@ message ListDeploymentsRequest {
         OlderThan older_than = 2;
     };
     bool include_config_json = 3;
+    // Count child executions in the `DeploymentSummary` buckets as well;
+    // by default only top-level executions are counted.
+    bool include_derived = 4;
 }
 
 enum DeploymentStatus {
@@ -1019,13 +1044,23 @@ message Deployment {
     optional string config_json = 5;
 }
 
+// Execution counts use disjoint buckets: a paused execution is counted only in
+// `paused`, not in `locked`/`pending`/`scheduled`/`blocked`.
 message DeploymentSummary {
+    reserved 6; // formerly `finished`, now broken down by result kind
     Deployment deployment = 1;
     uint32 locked = 2;
     uint32 pending = 3;
     uint32 scheduled = 4;
     uint32 blocked = 5;
-    uint32 finished = 6;
+    // Paused regardless of the underlying state (locked, pending or blocked).
+    uint32 paused = 10;
+    // Finished successfully.
+    uint32 finished_ok = 7;
+    // Finished with the `err` variant of the result type.
+    uint32 finished_error = 8;
+    // Execution failure: trap, timeout, nondeterminism, cancellation etc.
+    uint32 finished_execution_failure = 9;
 }
 
 message ListDeploymentsResponse {
