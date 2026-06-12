@@ -3087,6 +3087,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap 2.14.0",
  "insta",
+ "obeli-sk-deployment-config",
  "obeli-sk-val-json",
  "opentelemetry",
  "rand 0.9.4",
@@ -3174,6 +3175,24 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-error",
+]
+
+[[package]]
+name = "obeli-sk-deployment-config"
+version = "0.38.3"
+dependencies = [
+ "arbitrary",
+ "const_format",
+ "derive_more",
+ "hashbrown 0.16.1",
+ "rusqlite",
+ "schemars 1.2.1",
+ "serde",
+ "serde_with",
+ "strum 0.28.0",
+ "thiserror 2.0.18",
+ "tokio-postgres",
+ "tracing",
 ]
 
 [[package]]
@@ -3328,6 +3347,7 @@ dependencies = [
  "obeli-sk-boa-engine",
  "obeli-sk-concepts",
  "obeli-sk-db-sqlite",
+ "obeli-sk-deployment-config",
  "obeli-sk-executor",
  "obeli-sk-utils",
  "obeli-sk-val-json",
@@ -3406,6 +3426,7 @@ dependencies = [
  "obeli-sk-concepts",
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
+ "obeli-sk-deployment-config",
  "obeli-sk-executor",
  "obeli-sk-grpc",
  "obeli-sk-utils",

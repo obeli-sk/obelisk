@@ -85,7 +85,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "type": "string"
+          "$ref": "#/$defs/ComponentLocationToml"
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
@@ -157,6 +157,10 @@
     },
     "ConfigName": {
       "description": "Activity, Webhook, Workflow or a Http server",
+      "type": "string"
+    },
+    "ComponentLocationToml": {
+      "description": "Location of a WASM component.\nThe OCI reference is kept as a string (without the `oci://` prefix); it is\nvalidated and normalized by the obelisk server before canonicalization.",
       "type": "string"
     },
     "ExecConfigToml": {
@@ -446,7 +450,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "type": "string"
+          "$ref": "#/$defs/ComponentLocationToml"
         }
       },
       "additionalProperties": false,
@@ -524,7 +528,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "type": "string"
+          "$ref": "#/$defs/ComponentLocationToml"
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
@@ -877,7 +881,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "type": "string"
+          "$ref": "#/$defs/ComponentLocationToml"
         }
       },
       "additionalProperties": false,
@@ -1014,7 +1018,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "type": "string"
+          "$ref": "#/$defs/ComponentLocationToml"
         },
         "http_server": {
           "$ref": "#/$defs/ConfigName",

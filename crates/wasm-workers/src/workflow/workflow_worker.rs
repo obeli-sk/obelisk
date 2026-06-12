@@ -54,7 +54,8 @@ pub enum JoinNextBlockingStrategy {
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
     Await { non_blocking_event_batching: u32 },
 }
-pub const DEFAULT_NON_BLOCKING_EVENT_BATCHING: u32 = 100;
+
+pub use deployment_config::config::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
 
 #[derive(Clone, Debug)]
 pub struct WorkflowConfig {

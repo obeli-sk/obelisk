@@ -1,4 +1,4 @@
-use crate::StrVariant;
+use crate::naming::StrVariant;
 use ::serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Write as _},

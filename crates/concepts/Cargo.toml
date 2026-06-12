@@ -10,6 +10,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+deployment-config.workspace = true
 val-json = { workspace = true, features = ["wasmtime"] }
 
 arbitrary.workspace = true
@@ -47,9 +48,9 @@ insta.workspace = true
 rstest.workspace = true
 
 [features]
-test = []
-rusqlite = ["dep:rusqlite"]
-postgres = ["dep:tokio-postgres", "dep:deadpool-postgres"]
+test = ["deployment-config/test"]
+rusqlite = ["dep:rusqlite", "deployment-config/rusqlite"]
+postgres = ["dep:tokio-postgres", "dep:deadpool-postgres", "deployment-config/postgres"]
 
 [lints]
 workspace = true

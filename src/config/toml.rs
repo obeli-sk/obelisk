@@ -14,8 +14,8 @@ use concepts::ContentDigest;
 use concepts::ReturnType;
 use concepts::component_id::Digest;
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, InvalidNameError, StrVariant,
-    check_name, component_id::ComponentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
+    ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, StrVariant,
+    component_id::ComponentDigest, prefixed_ulid::ExecutorId, storage::LogLevel,
 };
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
@@ -23,7 +23,7 @@ use hashbrown::HashMap;
 use log::{LoggingConfig, LoggingStyle};
 use schemars::JsonSchema;
 use secrecy::SecretString;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use sha2::{Digest as _, Sha256};
 use std::fmt::Display;
@@ -50,6 +50,21 @@ use wasm_workers::{
     },
 };
 use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
+
+pub(crate) use deployment_config::config::{
+    ActivityExecComponentConfigCanonical, ActivityExternalComponentConfigCanonical,
+    ActivityExternalFileConfigToml, ActivityJsComponentConfigCanonical,
+    ActivityStubComponentConfigCanonical, ActivityStubExtInlineConfigCanonical,
+    ActivityStubFileConfigToml, ActivityWasmComponentConfigToml, AllowedHostToml,
+    BlockingStrategyConfigToml, ComponentBacktraceConfigCanonical, ComponentCommon,
+    ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentCanonical, DurationConfig,
+    DurationConfigOptional, ExecConfigToml, ExecSecretsToml, ExecSourceCanonical,
+    InflightSemaphore, JsLocationCanonical, JsParamToml, LockingStrategy, LogLevelToml,
+    MethodsInput, MethodsInputStar, OCI_SCHEMA_PREFIX, ReplaceIn, Unlimited,
+    WorkflowJsComponentConfigCanonical, WorkflowWasmComponentConfigCanonical,
+    default_lock_extension, default_max_output_bytes, default_max_retries,
+    default_retry_exp_backoff,
+};
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
@@ -125,6 +140,7 @@ impl DeploymentToml {
         deployment_dir: &std::path::Path,
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
         self.expand_deployment_dir_prefix(deployment_dir);
+        self.normalize_oci_locations()?;
 
         // Build the name→type index and check for duplicates.
         let mut component_names_to_types = hashbrown::HashMap::new();
@@ -132,27 +148,27 @@ impl DeploymentToml {
         let iter = self
             .activities_wasm
             .iter()
-            .map(|c| (c.common.name.0.as_ref(), TomlComponentType::ActivityWasm))
+            .map(|c| (c.common.name.as_str(), TomlComponentType::ActivityWasm))
             .chain(
                 self.workflows_wasm
                     .iter()
-                    .map(|c| (c.common.name.0.as_ref(), TomlComponentType::WorkflowWasm)),
+                    .map(|c| (c.common.name.as_str(), TomlComponentType::WorkflowWasm)),
             )
             .chain(self.webhooks_wasm.iter().map(|c| {
                 (
-                    c.common.name.0.as_ref(),
+                    c.common.name.as_str(),
                     TomlComponentType::WebhookEndpointWasm,
                 )
             }))
             .chain(
                 self.webhooks_js
                     .iter()
-                    .map(|c| (c.name.0.as_ref(), TomlComponentType::WebhookEndpointJs)),
+                    .map(|c| (c.name.as_str(), TomlComponentType::WebhookEndpointJs)),
             )
             .chain(
                 self.crons
                     .iter()
-                    .map(|c| (c.name.0.as_ref(), TomlComponentType::Cron)),
+                    .map(|c| (c.name.as_str(), TomlComponentType::Cron)),
             );
 
         for (name, component_type) in iter {
@@ -293,6 +309,39 @@ impl DeploymentToml {
                 *s = deployment_dir.join(suffix).to_string_lossy().into_owned();
             }
         }
+    }
+
+    /// Validate and normalize OCI references of WASM components so that the canonical
+    /// form matches the previous `oci_client::Reference`-based serialization.
+    fn normalize_oci_locations(&mut self) -> Result<(), anyhow::Error> {
+        fn normalize(loc: &mut ComponentLocationToml) -> Result<(), anyhow::Error> {
+            if let ComponentLocationToml::Oci(image) = loc {
+                let reference = oci_client::Reference::from_str(image)
+                    .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
+                *image = reference.to_string();
+            }
+            Ok(())
+        }
+        for c in &mut self.activities_wasm {
+            normalize(&mut c.common.location)?;
+        }
+        for c in &mut self.activities_stub {
+            if let ActivityStubComponentConfigToml::File(c) = c {
+                normalize(&mut c.common.location)?;
+            }
+        }
+        for c in &mut self.activities_external {
+            if let ActivityExternalComponentConfigToml::File(c) = c {
+                normalize(&mut c.common.location)?;
+            }
+        }
+        for c in &mut self.workflows_wasm {
+            normalize(&mut c.common.location)?;
+        }
+        for c in &mut self.webhooks_wasm {
+            normalize(&mut c.common.location)?;
+        }
+        Ok(())
     }
 
     /// Expand `${DEPLOYMENT_DIR}` prefixes in all local file paths.
@@ -734,20 +783,19 @@ pub(crate) struct ComponentCommonVerified {
     pub(crate) location: ComponentLocationToml,
 }
 
-#[derive(
-    Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr, serde_with::SerializeDisplay,
-)]
-#[serde(rename_all = "snake_case")]
-#[schemars(with = "String")]
-pub(crate) enum ComponentLocationToml {
-    Path(String), // String because it can contain path prefix - $DEPLOYMENT_DIR/
-    Oci(oci_client::Reference),
+pub(crate) trait ComponentLocationFetchExt {
+    async fn fetch(
+        &self,
+        wasm_cache_dir: &Path,
+        metadata_dir: &Path,
+    ) -> Result<(ContentDigest, PathBuf), anyhow::Error>;
 }
-impl ComponentLocationToml {
+
+impl ComponentLocationFetchExt for ComponentLocationToml {
     /// Fetch wasm file and calculate its content digest.
     ///
     /// Read wasm file either from local fs, or pull from an OCI registry and cache it.
-    pub(crate) async fn fetch(
+    async fn fetch(
         &self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
@@ -769,8 +817,10 @@ impl ComponentLocationToml {
                 (actual_digest, wasm_path)
             }
             ComponentLocationToml::Oci(image) => {
+                let image = oci_client::Reference::from_str(image)
+                    .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
                 let (digest, path, _, _) =
-                    oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
+                    oci::pull_to_cache_dir(&image, wasm_cache_dir, metadata_dir)
                         .await
                         .context("try cleaning the cache directory with `--clean-cache`")?;
                 (digest, path)
@@ -779,21 +829,6 @@ impl ComponentLocationToml {
         let stopwatch = stopwatch.elapsed();
         debug!("Fetching done in {stopwatch:?}");
         Ok((actual_digest, path))
-    }
-}
-pub(crate) const OCI_SCHEMA_PREFIX: &str = "oci://";
-impl FromStr for ComponentLocationToml {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(location) = s.strip_prefix(OCI_SCHEMA_PREFIX) {
-            Ok(ComponentLocationToml::Oci(
-                oci_client::Reference::from_str(location)
-                    .map_err(|e| anyhow::anyhow!("invalid OCI reference: {e}"))?,
-            ))
-        } else {
-            Ok(ComponentLocationToml::Path(s.to_string()))
-        }
     }
 }
 
@@ -839,15 +874,6 @@ impl HasOptionalNameAndFfqn for ActivityStubExtInlineConfigToml {
     }
 }
 
-impl std::fmt::Display for ComponentLocationToml {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ComponentLocationToml::Path(p) => write!(f, "{p}"),
-            ComponentLocationToml::Oci(r) => write!(f, "{OCI_SCHEMA_PREFIX}{r}"),
-        }
-    }
-}
-
 /// Location of a JavaScript source file.
 /// Supports local file paths and OCI registry references (`oci://...`).
 /// On-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.
@@ -880,60 +906,15 @@ impl FromStr for JsLocationToml {
     }
 }
 
-/// Activity, Webhook, Workflow or a Http server
-#[derive(
-    Debug,
-    Clone,
-    Hash,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    derive_more::Into,
-    JsonSchema,
-    derive_more::Deref,
-)]
-#[display("{_0}")]
-pub struct ConfigName(#[schemars(with = "String")] StrVariant);
-impl ConfigName {
-    pub fn new(name: StrVariant) -> Result<Self, InvalidNameError<ConfigName>> {
-        Ok(Self(check_name(name, "_.-")?))
-    }
-}
-impl<'de> Deserialize<'de> for ConfigName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let name = String::deserialize(deserializer)?;
-        ConfigName::new(StrVariant::from(name)).map_err(serde::de::Error::custom)
-    }
+pub(crate) trait ComponentCommonFetchExt {
+    async fn fetch(
+        self,
+        wasm_cache_dir: &Path,
+        metadata_dir: &Path,
+    ) -> Result<(ComponentCommonVerified, ContentDigest, PathBuf), anyhow::Error>;
 }
 
-impl serde::Serialize for ConfigName {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(s)
-    }
-}
-
-impl ConfigName {
-    /// Derive a `ConfigName` from a `FunctionFqn` using the short form `{ifc_name}.{function_name}`.
-    pub(crate) fn from_ffqn(ffqn: &FunctionFqn) -> Self {
-        let ifc_name = ffqn.ifc_fqn.ifc_name();
-        let function_name: &str = &ffqn.function_name;
-        // WIT identifiers are kebab-case ([a-z0-9-]), so the derived name
-        // contains only [a-z0-9-.] — always valid for ConfigName.
-        Self(StrVariant::from(format!("{ifc_name}.{function_name}")))
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ComponentCommon {
-    pub(crate) name: ConfigName,
-    pub(crate) location: ComponentLocationToml,
-}
-
-impl ComponentCommon {
+impl ComponentCommonFetchExt for ComponentCommon {
     async fn fetch(
         self,
         wasm_cache_dir: &Path,
@@ -949,68 +930,27 @@ impl ComponentCommon {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum LockingStrategy {
-    /// Select all exported FFQNs
-    ByFfqns,
-    /// Select by component digest
-    ByComponentDigest,
-    /// Only applicable for workflows: Same as `ByFffqns`, with automatic upgrade
-    Auto,
-}
-impl From<LockingStrategy> for executor::executor::LockingStrategy {
-    fn from(value: LockingStrategy) -> Self {
-        match value {
-            LockingStrategy::ByFfqns => executor::executor::LockingStrategy::ByFfqns,
-            LockingStrategy::ByComponentDigest => {
-                executor::executor::LockingStrategy::ByComponentDigest
-            }
-            LockingStrategy::Auto => executor::executor::LockingStrategy::Auto,
+fn locking_strategy_into_executor(value: LockingStrategy) -> executor::executor::LockingStrategy {
+    match value {
+        LockingStrategy::ByFfqns => executor::executor::LockingStrategy::ByFfqns,
+        LockingStrategy::ByComponentDigest => {
+            executor::executor::LockingStrategy::ByComponentDigest
         }
-    }
-}
-impl From<executor::executor::LockingStrategy> for LockingStrategy {
-    fn from(value: executor::executor::LockingStrategy) -> Self {
-        match value {
-            executor::executor::LockingStrategy::ByFfqns => LockingStrategy::ByFfqns,
-            executor::executor::LockingStrategy::ByComponentDigest => {
-                LockingStrategy::ByComponentDigest
-            }
-            executor::executor::LockingStrategy::Auto => LockingStrategy::Auto,
-        }
+        LockingStrategy::Auto => executor::executor::LockingStrategy::Auto,
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ExecConfigToml {
-    #[serde(default = "default_batch_size")]
-    batch_size: u32,
-    #[serde(default = "default_lock_expiry")]
-    pub(crate) lock_expiry: DurationConfig,
-    #[serde(default = "default_tick_sleep")]
-    tick_sleep: DurationConfig,
-    #[serde(default)]
-    locking_strategy: Option<LockingStrategy>,
-    #[serde(default)]
-    instance_limiter: InflightSemaphore,
+pub(crate) trait ExecConfigTomlExt {
+    fn into_exec_exec_config(
+        self,
+        component_id: ComponentId,
+        task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
+        retry_config: ComponentRetryConfig,
+    ) -> Result<executor::executor::ExecConfig, anyhow::Error>;
 }
 
-impl Default for ExecConfigToml {
-    fn default() -> Self {
-        Self {
-            batch_size: default_batch_size(),
-            lock_expiry: default_lock_expiry(),
-            tick_sleep: default_tick_sleep(),
-            locking_strategy: None,
-            instance_limiter: InflightSemaphore::default(),
-        }
-    }
-}
-
-impl ExecConfigToml {
-    pub(crate) fn into_exec_exec_config(
+impl ExecConfigTomlExt for ExecConfigToml {
+    fn into_exec_exec_config(
         self,
         component_id: ComponentId,
         task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
@@ -1048,7 +988,7 @@ fn locking_strategy(
     {
         bail!("Locking strategy `auto` is only available for workflows");
     }
-    Ok(locking_strategy_override.map(executor::executor::LockingStrategy::from).unwrap_or_else(||
+    Ok(locking_strategy_override.map(locking_strategy_into_executor).unwrap_or_else(||
     match component_type {
         ComponentType::Activity => executor::executor::LockingStrategy::ByFfqns,
         ComponentType::Workflow => executor::executor::LockingStrategy::Auto,
@@ -1058,49 +998,12 @@ fn locking_strategy(
     }))
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivityWasmComponentConfigToml {
-    #[serde(flatten)]
-    pub(crate) common: ComponentCommon,
-    /// Override the auto-computed component digest used for locking.
-    /// If set, this value is used instead of the content digest of the WASM file.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) component_digest: Option<ComponentDigest>,
-    #[serde(default)]
-    pub(crate) exec: ExecConfigToml,
-    #[serde(default = "default_max_retries")]
-    pub(crate) max_retries: u32,
-    #[serde(default = "default_retry_exp_backoff")]
-    pub(crate) retry_exp_backoff: DurationConfig,
-    #[serde(default)]
-    pub(crate) forward_stdout: ComponentStdOutputToml,
-    #[serde(default)]
-    pub(crate) forward_stderr: ComponentStdOutputToml,
-    #[serde(default)]
-    pub(crate) env_vars: Vec<EnvVarConfig>,
-    #[serde(default)]
-    pub(crate) logs_store_min_level: LogLevelToml,
-    /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
-    #[serde(default, rename = "allowed_host")]
-    pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+pub(crate) trait LogLevelTomlExt {
+    fn into_log_level(self) -> Option<LogLevel>;
 }
-
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum LogLevelToml {
-    Off,
-    Trace,
-    #[default]
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-impl From<LogLevelToml> for Option<LogLevel> {
-    fn from(value: LogLevelToml) -> Self {
-        match value {
+impl LogLevelTomlExt for LogLevelToml {
+    fn into_log_level(self) -> Option<LogLevel> {
+        match self {
             LogLevelToml::Off => None,
             LogLevelToml::Trace => Some(LogLevel::Trace),
             LogLevelToml::Debug => Some(LogLevel::Debug),
@@ -1109,89 +1012,6 @@ impl From<LogLevelToml> for Option<LogLevel> {
             LogLevelToml::Error => Some(LogLevel::Error),
         }
     }
-}
-
-/// Where in the outgoing request placeholders are replaced.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ReplaceIn {
-    Headers,
-    Body,
-    Params,
-}
-
-/// Input for method restrictions in TOML configuration.
-/// Supports both `methods = "*"` and `methods = ["GET", "POST"]` syntax.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(untagged)]
-pub(crate) enum MethodsInput {
-    /// All methods allowed (from `methods = "*"`).
-    Star(MethodsInputStar),
-    /// Specific methods list (from `methods = ["GET", "POST"]`).
-    List(Vec<String>),
-}
-
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
-pub(crate) struct MethodsInputStar(
-    #[serde(
-        deserialize_with = "deserialize_star",
-        serialize_with = "serialize_star"
-    )]
-    (),
-);
-
-fn deserialize_star<'de, D>(deserializer: D) -> Result<(), D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    if s == "*" {
-        Ok(())
-    } else {
-        Err(serde::de::Error::custom(format!(
-            "expected \"*\", got \"{s}\""
-        )))
-    }
-}
-
-fn serialize_star<S: serde::Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_str("*")
-}
-
-/// An allowed outgoing HTTP host with optional method restrictions and secrets.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AllowedHostToml {
-    /// Host pattern (e.g. `"api.example.com"`, `"*.example.com"`, `"http://localhost:8080"`).
-    pub pattern: String,
-    /// Allowed HTTP methods.
-    /// - Omit to allow nothing (warning emitted).
-    /// - `methods = "*"` or `methods = ["*"]` to allow all methods.
-    /// - `methods = ["GET", "POST"]` to allow specific methods.
-    /// - `methods = []` to allow nothing (warning emitted).
-    pub methods: Option<MethodsInput>,
-    /// Optional secrets for this host.
-    #[serde(default)]
-    pub secrets: Option<AllowedHostSecretsToml>,
-}
-
-/// Secrets configuration for an allowed host.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AllowedHostSecretsToml {
-    /// Env vars using the same syntax as top-level `env_vars`.
-    pub env_vars: Vec<EnvVarConfig>,
-    /// Where in the request to perform replacement.
-    /// Default: empty (no replacement — deny by default).
-    #[serde(default)]
-    pub replace_in: Vec<ReplaceIn>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivityStubFileConfigToml {
-    #[serde(flatten)]
-    pub(crate) common: ComponentCommon,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -1215,49 +1035,12 @@ pub(crate) enum ActivityStubComponentConfigToml {
     Inline(ActivityStubExtInlineConfigToml),
 }
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivityExternalFileConfigToml {
-    #[serde(flatten)]
-    pub(crate) common: ComponentCommon,
-    /// Override the auto-computed component digest used for locking.
-    /// If set, this value is used instead of the content digest of the WASM file.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) component_digest: Option<ComponentDigest>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
 pub(crate) enum ActivityExternalComponentConfigToml {
     File(ActivityExternalFileConfigToml),
     Inline(ActivityStubExtInlineConfigToml),
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivityStubExtInlineConfigCanonical {
-    pub(crate) name: ConfigName,
-    #[schemars(with = "String")]
-    pub(crate) ffqn: FunctionFqn,
-    #[serde(default)]
-    pub(crate) params: Option<Vec<JsParamToml>>,
-    #[serde(default)]
-    pub(crate) return_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(untagged)]
-pub(crate) enum ActivityStubComponentConfigCanonical {
-    File(ActivityStubFileConfigToml),
-    Inline(ActivityStubExtInlineConfigCanonical),
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(untagged)]
-pub(crate) enum ActivityExternalComponentConfigCanonical {
-    File(ActivityExternalFileConfigToml),
-    Inline(ActivityStubExtInlineConfigCanonical),
-}
 #[derive(Debug)]
 pub(crate) struct ActivityStubExtConfigVerified {
     pub(crate) wasm_path: PathBuf,
@@ -1278,16 +1061,17 @@ pub(crate) enum ActivityStubConfigVerified {
     Inline(ActivityStubExtInlineConfigVerified),
 }
 
-impl ActivityStubComponentConfigCanonical {
-    fn name_str(&self) -> &str {
-        match self {
-            Self::File(f) => f.common.name.0.as_ref(),
-            Self::Inline(i) => i.name.0.as_ref(),
-        }
-    }
+pub(crate) trait ActivityStubComponentConfigCanonicalExt {
+    async fn fetch_and_verify(
+        self,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+    ) -> Result<ActivityStubConfigVerified, anyhow::Error>;
+}
 
+impl ActivityStubComponentConfigCanonicalExt for ActivityStubComponentConfigCanonical {
     #[instrument(skip_all, fields(component_name = self.name_str(), component_id))]
-    pub(crate) async fn fetch_and_verify(
+    async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -1385,16 +1169,17 @@ pub(crate) enum ActivityExternalConfigVerified {
     Inline(ActivityStubExtInlineConfigVerified),
 }
 
-impl ActivityExternalComponentConfigCanonical {
-    fn name_str(&self) -> &str {
-        match self {
-            Self::File(f) => f.common.name.0.as_ref(),
-            Self::Inline(i) => i.name.0.as_ref(),
-        }
-    }
+pub(crate) trait ActivityExternalComponentConfigCanonicalExt {
+    async fn fetch_and_verify(
+        self,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+    ) -> Result<ActivityExternalConfigVerified, anyhow::Error>;
+}
 
+impl ActivityExternalComponentConfigCanonicalExt for ActivityExternalComponentConfigCanonical {
     #[instrument(skip_all, fields(component_name = self.name_str(), component_id))]
-    pub(crate) async fn fetch_and_verify(
+    async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -1504,9 +1289,20 @@ impl ActivityWasmConfigVerified {
     }
 }
 
-impl ActivityWasmComponentConfigToml {
-    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
-    pub(crate) async fn fetch_and_verify(
+pub(crate) trait ActivityWasmComponentConfigTomlExt {
+    async fn fetch_and_verify(
+        self,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+        ignore_missing_env_vars: bool,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+    ) -> Result<ActivityWasmConfigVerified, anyhow::Error>;
+}
+
+impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
+    #[instrument(skip_all, fields(component_name = self.common.name.as_str()))]
+    async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -1533,8 +1329,8 @@ impl ActivityWasmComponentConfigToml {
         )?;
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
-            forward_stdout: self.forward_stdout.into(),
-            forward_stderr: self.forward_stderr.into(),
+            forward_stdout: self.forward_stdout.into_std_output_config(),
+            forward_stderr: self.forward_stderr.into_std_output_config(),
             env_vars,
             fuel,
             allowed_hosts,
@@ -1552,7 +1348,7 @@ impl ActivityWasmComponentConfigToml {
                 global_executor_instance_limiter,
                 retry_config,
             )?,
-            logs_store_min_level: self.logs_store_min_level.into(),
+            logs_store_min_level: self.logs_store_min_level.into_log_level(),
         })
     }
 }
@@ -1609,47 +1405,6 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default)]
     pub(crate) return_type: Option<String>,
 }
-/// A parameter declaration for a JS activity function.
-#[derive(Debug, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct JsParamToml {
-    /// Parameter name (used in WIT metadata).
-    /// Stored in kebab-case for WIT compatibility.
-    pub(crate) name: String,
-    /// WIT type string, e.g. `string`, `u32`, `list<string>`, `option<u64>`.
-    #[serde(rename = "type")]
-    pub(crate) wit_type: String,
-}
-impl<'de> Deserialize<'de> for JsParamToml {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Raw {
-            name: String,
-            #[serde(rename = "type")]
-            wit_type: String,
-        }
-        let raw = Raw::deserialize(deserializer)?;
-        let name = if raw.name.contains('_') {
-            let kebab = raw.name.replace('_', "-");
-            warn!(
-                "param name `{}` contains '_', converting to kebab-case: `{kebab}`",
-                raw.name
-            );
-            kebab
-        } else {
-            raw.name
-        };
-        Ok(JsParamToml {
-            name,
-            wit_type: raw.wit_type,
-        })
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct ActivityJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS activities
@@ -1674,30 +1429,6 @@ impl ActivityJsConfigVerified {
 }
 
 // --- activity_exec config ---
-
-/// Secret entry: resolved from environment variables at startup.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SecretEnvVarToml {
-    /// Name used to reference this secret in the `secrets.stdin` function.
-    pub(crate) name: String,
-    /// Value supporting `${VAR}` interpolation from host environment.
-    #[serde(default)]
-    pub(crate) value: String,
-}
-
-/// Secrets configuration for exec activities.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ExecSecretsToml {
-    /// Secret entries resolved from environment variables.
-    #[serde(default)]
-    pub(crate) env_vars: Vec<SecretEnvVarToml>,
-}
-
-const fn default_max_output_bytes() -> u64 {
-    4096
-}
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -1754,15 +1485,6 @@ pub(crate) struct ActivityExecComponentConfigToml {
     pub(crate) secrets: Option<ExecSecretsToml>,
 }
 
-/// Canonical exec source.
-/// Local file paths are resolved to `content` before canonicalization.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ExecSourceCanonical {
-    Content(String),
-    Oci { image: String },
-}
-
 #[derive(Debug)]
 pub(crate) struct ResolvedExecProgram {
     pub(crate) program: ExecProgram,
@@ -1777,31 +1499,22 @@ fn parse_exec_program_oci_reference(image: &str) -> anyhow::Result<oci_client::R
         .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))
 }
 
-/// Canonical form of `ActivityExecComponentConfigToml`.
-#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivityExecComponentConfigCanonical {
-    pub(crate) name: ConfigName,
-    pub(crate) source: ExecSourceCanonical,
-    pub(crate) content_digest: Option<ContentDigest>,
-    pub(crate) ffqn: FunctionFqn,
-    pub(crate) params: Vec<JsParamToml>,
-    pub(crate) return_type: Option<String>,
-    pub(crate) component_digest: Option<ComponentDigest>,
-    pub(crate) exec: ExecConfigToml,
-    pub(crate) max_retries: u32,
-    pub(crate) retry_exp_backoff: DurationConfig,
-    pub(crate) forward_stdout: ComponentStdOutputToml,
-    pub(crate) forward_stderr: ComponentStdOutputToml,
-    pub(crate) logs_store_min_level: LogLevelToml,
-    pub(crate) env_vars: Vec<EnvVarConfig>,
-    pub(crate) max_output_bytes: u64,
-    pub(crate) secrets: Option<ExecSecretsToml>,
+pub(crate) trait ActivityExecComponentConfigCanonicalExt {
+    async fn resolve(
+        &self,
+        wasm_cache_dir: &std::path::Path,
+    ) -> anyhow::Result<ResolvedExecProgram>;
+    fn fetch_and_verify(
+        self,
+        resolved_program: ResolvedExecProgram,
+        ignore_missing_env_vars: bool,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Result<ActivityExecConfigVerified, anyhow::Error>;
 }
 
-impl ActivityExecComponentConfigCanonical {
+impl ActivityExecComponentConfigCanonicalExt for ActivityExecComponentConfigCanonical {
     /// Resolve the canonical program to a form the worker can execute.
-    pub(crate) async fn resolve(
+    async fn resolve(
         &self,
         wasm_cache_dir: &std::path::Path,
     ) -> anyhow::Result<ResolvedExecProgram> {
@@ -1846,8 +1559,8 @@ impl ActivityExecComponentConfigCanonical {
         }
     }
 
-    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
-    pub(crate) fn fetch_and_verify(
+    #[instrument(skip_all, fields(component_name = self.name.as_str()))]
+    fn fetch_and_verify(
         self,
         resolved_program: ResolvedExecProgram,
         ignore_missing_env_vars: bool,
@@ -1933,8 +1646,8 @@ impl ActivityExecComponentConfigCanonical {
             return_type,
             env_vars,
             max_output_bytes: self.max_output_bytes,
-            forward_stdout: self.forward_stdout.into(),
-            forward_stderr: self.forward_stderr.into(),
+            forward_stdout: self.forward_stdout.into_std_output_config(),
+            forward_stderr: self.forward_stderr.into_std_output_config(),
             secrets: resolved_secrets,
             component_id: component_id.clone(),
             exec_config: self.exec.into_exec_exec_config(
@@ -1942,7 +1655,7 @@ impl ActivityExecComponentConfigCanonical {
                 global_executor_instance_limiter,
                 retry_config,
             )?,
-            logs_store_min_level: self.logs_store_min_level.into(),
+            logs_store_min_level: self.logs_store_min_level.into_log_level(),
         })
     }
 }
@@ -2075,42 +1788,16 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
     pub(crate) logs_store_min_level: LogLevelToml,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, PartialEq)]
-#[serde(untagged)] // Try variants without needing a specific outer tag
-pub(crate) enum BlockingStrategyConfigToml {
-    // Try the more specific map format first
-    Tagged(BlockingStrategyConfigCustomized),
-    // If it's not the map format, try the simple string format
-    Simple(BlockingStrategyConfigSimple),
+pub(crate) trait BlockingStrategyConfigTomlExt {
+    fn into_blocking_strategy(self) -> JoinNextBlockingStrategy;
 }
-impl Default for BlockingStrategyConfigToml {
-    fn default() -> Self {
-        Self::Simple(BlockingStrategyConfigSimple::default())
-    }
-}
-// Enum to handle the tagged map case ({ kind = "await", ... })
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")] // Expects a map with "kind" field
-pub(crate) enum BlockingStrategyConfigCustomized {
-    Await(BlockingStrategyAwaitConfig),
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BlockingStrategyAwaitConfig {
-    #[serde(default = "default_non_blocking_event_batching")]
-    non_blocking_event_batching: u32,
-}
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, Default, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum BlockingStrategyConfigSimple {
-    Interrupt,
-    #[default]
-    Await,
-}
-impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
-    fn from(input: BlockingStrategyConfigToml) -> Self {
-        match input {
+impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
+    fn into_blocking_strategy(self) -> JoinNextBlockingStrategy {
+        use deployment_config::config::{
+            BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
+            BlockingStrategyConfigSimple,
+        };
+        match self {
             BlockingStrategyConfigToml::Tagged(BlockingStrategyConfigCustomized::Await(
                 BlockingStrategyAwaitConfig {
                     non_blocking_event_batching,
@@ -2129,6 +1816,7 @@ impl From<BlockingStrategyConfigToml> for JoinNextBlockingStrategy {
         }
     }
 }
+
 /// Location of a WASM backtrace source file.
 /// On-disk format only; resolved to `ComponentBacktraceConfigCanonical` before transmission
 /// and hash computation.
@@ -2149,28 +1837,24 @@ pub(crate) struct ComponentBacktraceConfig {
     #[schemars(with = "std::collections::HashMap<String, String>")]
     pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceLocation>,
 }
-/// Canonical JS location — no local file paths.
-/// Used for hash computation, wire format in deployment submission, and DB storage.
-#[derive(Debug, Clone, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum JsLocationCanonical {
-    #[schemars(with = "String")]
-    Content { content: String, file_name: String },
-    /// OCI-sourced JS.
-    #[schemars(with = "String")]
-    Oci { image: String },
-}
-
 pub(crate) struct JsContent {
     pub(crate) source: String,
     pub(crate) file_name: String,
 }
 
-impl JsLocationCanonical {
+pub(crate) trait JsLocationCanonicalExt {
+    async fn get_content(
+        &self,
+        wasm_cache_dir: &Path,
+        expected_digest: Option<&ContentDigest>,
+    ) -> anyhow::Result<JsContent>;
+}
+
+impl JsLocationCanonicalExt for JsLocationCanonical {
     /// Return the JS source content and file name.
     /// For `Content`, returns them directly (validating digest if provided).
     /// For `Oci`, pulls from the registry (or cache) under `wasm_cache_dir/js/`.
-    pub(crate) async fn get_content(
+    async fn get_content(
         &self,
         wasm_cache_dir: &Path,
         expected_digest: Option<&ContentDigest>,
@@ -2245,45 +1929,22 @@ impl WorkflowConfigVerified {
     }
 }
 
-// Canonical component config types
-// Used for wire format, hash computation, and DB storage.
+// Canonical component config types live in the `deployment-config` crate.
 
-#[derive(schemars::JsonSchema, Debug, Default, Clone, Serialize, Deserialize)]
-pub(crate) struct ComponentBacktraceConfigCanonical {
-    #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub(crate) frame_files_to_sources: HashMap<String, String>,
+pub(crate) trait ActivityJsComponentConfigCanonicalExt {
+    async fn fetch_and_verify(
+        self,
+        wasm_path: Arc<Path>,
+        wasm_cache_dir: Arc<Path>,
+        ignore_missing_env_vars: bool,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+    ) -> Result<ActivityJsConfigVerified, anyhow::Error>;
 }
 
-impl ComponentBacktraceConfigCanonical {
-    pub(crate) fn into_frame_files(self) -> FrameFilesToSourceContent {
-        self.frame_files_to_sources
-    }
-}
-
-/// Canonical form of `ActivityJsComponentConfigToml`.
-#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivityJsComponentConfigCanonical {
-    pub(crate) name: ConfigName,
-    pub(crate) location: JsLocationCanonical,
-    pub(crate) content_digest: Option<ContentDigest>,
-    pub(crate) component_digest: Option<ComponentDigest>,
-    pub(crate) ffqn: FunctionFqn,
-    pub(crate) params: Vec<JsParamToml>,
-    pub(crate) exec: ExecConfigToml,
-    pub(crate) max_retries: u32,
-    pub(crate) retry_exp_backoff: DurationConfig,
-    pub(crate) forward_stdout: ComponentStdOutputToml,
-    pub(crate) forward_stderr: ComponentStdOutputToml,
-    pub(crate) logs_store_min_level: LogLevelToml,
-    pub(crate) env_vars: Vec<EnvVarConfig>,
-    pub(crate) allowed_hosts: Vec<AllowedHostToml>,
-    pub(crate) return_type: Option<String>,
-}
-
-impl ActivityJsComponentConfigCanonical {
-    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
-    pub(crate) async fn fetch_and_verify(
+impl ActivityJsComponentConfigCanonicalExt for ActivityJsComponentConfigCanonical {
+    #[instrument(skip_all, fields(component_name = self.name.as_str()))]
+    async fn fetch_and_verify(
         self,
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
@@ -2348,8 +2009,8 @@ impl ActivityJsComponentConfigCanonical {
         validate_no_env_collision(&env_vars, &allowed_hosts)?;
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
-            forward_stdout: self.forward_stdout.into(),
-            forward_stderr: self.forward_stderr.into(),
+            forward_stdout: self.forward_stdout.into_std_output_config(),
+            forward_stderr: self.forward_stderr.into_std_output_config(),
             env_vars,
             fuel,
             allowed_hosts,
@@ -2372,29 +2033,26 @@ impl ActivityJsComponentConfigCanonical {
                 global_executor_instance_limiter,
                 retry_config,
             )?,
-            logs_store_min_level: self.logs_store_min_level.into(),
+            logs_store_min_level: self.logs_store_min_level.into_log_level(),
         })
     }
 }
 
-/// Canonical form of `WorkflowWasmComponentConfigToml`.
-#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowWasmComponentConfigCanonical {
-    pub(crate) common: ComponentCommon,
-    pub(crate) component_digest: Option<ComponentDigest>,
-    pub(crate) exec: ExecConfigToml,
-    pub(crate) retry_exp_backoff: DurationConfig,
-    pub(crate) blocking_strategy: BlockingStrategyConfigToml,
-    pub(crate) backtrace: ComponentBacktraceConfigCanonical,
-    pub(crate) stub_wasi: bool,
-    pub(crate) lock_extension: bool,
-    pub(crate) logs_store_min_level: LogLevelToml,
+pub(crate) trait WorkflowWasmComponentConfigCanonicalExt {
+    async fn fetch_and_verify(
+        self,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+        global_backtrace_persist: bool,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+        subscription_interruption: Option<Duration>,
+    ) -> Result<WorkflowConfigVerified, anyhow::Error>;
 }
 
-impl WorkflowWasmComponentConfigCanonical {
-    #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()))]
-    pub(crate) async fn fetch_and_verify(
+impl WorkflowWasmComponentConfigCanonicalExt for WorkflowWasmComponentConfigCanonical {
+    #[instrument(skip_all, fields(component_name = self.common.name.as_str()))]
+    async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -2407,7 +2065,7 @@ impl WorkflowWasmComponentConfigCanonical {
         if retry_exp_backoff == Duration::ZERO {
             bail!(
                 "invalid `retry_exp_backoff` setting for workflow `{}` - duration must not be zero",
-                self.common.name.0
+                self.common.name
             );
         }
         let (common, content_digest, wasm_path) =
@@ -2429,7 +2087,7 @@ impl WorkflowWasmComponentConfigCanonical {
         )?;
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.blocking_strategy.into(),
+            join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
             backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
             fuel,
@@ -2450,32 +2108,23 @@ impl WorkflowWasmComponentConfigCanonical {
                 retry_config,
             )?,
             frame_files_to_sources,
-            logs_store_min_level: self.logs_store_min_level.into(),
+            logs_store_min_level: self.logs_store_min_level.into_log_level(),
         })
     }
 }
 
-/// Canonical form of `WorkflowJsComponentConfigToml`.
-#[derive(schemars::JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowJsComponentConfigCanonical {
-    pub(crate) name: ConfigName,
-    pub(crate) location: JsLocationCanonical,
-    pub(crate) content_digest: Option<ContentDigest>,
-    pub(crate) component_digest: Option<ComponentDigest>,
-    pub(crate) ffqn: FunctionFqn,
-    pub(crate) params: Vec<JsParamToml>,
-    pub(crate) exec: ExecConfigToml,
-    pub(crate) retry_exp_backoff: DurationConfig,
-    pub(crate) blocking_strategy: BlockingStrategyConfigToml,
-    pub(crate) logs_store_min_level: LogLevelToml,
-    pub(crate) return_type: Option<String>,
-    pub(crate) lock_extension: bool,
+pub(crate) trait WorkflowJsComponentConfigCanonicalExt {
+    async fn fetch_and_verify(
+        self,
+        wasm_path: Arc<Path>,
+        wasm_cache_dir: Arc<Path>,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Result<WorkflowJsConfigVerified, anyhow::Error>;
 }
 
-impl WorkflowJsComponentConfigCanonical {
-    #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
-    pub(crate) async fn fetch_and_verify(
+impl WorkflowJsComponentConfigCanonicalExt for WorkflowJsComponentConfigCanonical {
+    #[instrument(skip_all, fields(component_name = self.name.as_str()))]
+    async fn fetch_and_verify(
         self,
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
@@ -2535,7 +2184,7 @@ impl WorkflowJsComponentConfigCanonical {
         )?;
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.blocking_strategy.into(),
+            join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
             backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
@@ -2559,26 +2208,9 @@ impl WorkflowJsComponentConfigCanonical {
                 global_executor_instance_limiter,
                 retry_config,
             )?,
-            logs_store_min_level: self.logs_store_min_level.into(),
+            logs_store_min_level: self.logs_store_min_level.into_log_level(),
         })
     }
-}
-
-/// Canonical deployment configuration — no local file paths.
-/// Used for hash computation, wire format, and DB storage.
-#[derive(Debug, Deserialize, Serialize, Default, Clone, schemars::JsonSchema)]
-pub(crate) struct DeploymentCanonical {
-    pub(crate) activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-    pub(crate) activities_stub: Vec<ActivityStubComponentConfigCanonical>,
-    pub(crate) activities_external: Vec<ActivityExternalComponentConfigCanonical>,
-    pub(crate) activities_js: Vec<ActivityJsComponentConfigCanonical>,
-    pub(crate) activities_exec: Vec<ActivityExecComponentConfigCanonical>,
-    pub(crate) workflows_wasm: Vec<WorkflowWasmComponentConfigCanonical>,
-    pub(crate) workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
-    pub(crate) webhooks_wasm: Vec<webhook::WebhookWasmComponentConfigCanonical>,
-    pub(crate) webhooks_js: Vec<webhook::WebhookJsComponentConfigCanonical>,
-    #[serde(default)]
-    pub(crate) crons: Vec<CronComponentConfigToml>,
 }
 
 /// Resolve a `DeploymentToml` to `DeploymentCanonical` by reading all local JS and backtrace
@@ -2928,45 +2560,6 @@ pub(crate) mod otlp {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DurationConfig {
-    Milliseconds(u64),
-    Seconds(u64),
-    Minutes(u64),
-    Hours(u64),
-}
-impl From<DurationConfig> for Duration {
-    fn from(value: DurationConfig) -> Self {
-        match value {
-            DurationConfig::Milliseconds(millis) => Duration::from_millis(millis),
-            DurationConfig::Seconds(secs) => Duration::from_secs(secs),
-            DurationConfig::Minutes(mins) => Duration::from_secs(mins * 60),
-            DurationConfig::Hours(hrs) => Duration::from_secs(hrs * 60 * 60),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DurationConfigOptional {
-    None,
-    Milliseconds(u64),
-    Seconds(u64),
-    Minutes(u64),
-    Hours(u64),
-}
-impl From<DurationConfigOptional> for Option<Duration> {
-    fn from(value: DurationConfigOptional) -> Self {
-        match value {
-            DurationConfigOptional::None => None,
-            DurationConfigOptional::Milliseconds(millis) => Some(Duration::from_millis(millis)),
-            DurationConfigOptional::Seconds(secs) => Some(Duration::from_secs(secs)),
-            DurationConfigOptional::Minutes(mins) => Some(Duration::from_secs(mins * 60)),
-            DurationConfigOptional::Hours(hrs) => Some(Duration::from_secs(hrs * 60 * 60)),
-        }
-    }
-}
 pub(crate) mod log {
     use crate::config::toml::default_console_enabled;
 
@@ -3122,18 +2715,12 @@ pub(crate) mod log {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ComponentStdOutputToml {
-    None,
-    Stdout,
-    Stderr,
-    #[default]
-    Db,
+pub(crate) trait ComponentStdOutputTomlExt {
+    fn into_std_output_config(self) -> Option<StdOutputConfig>;
 }
-impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {
-    fn from(value: ComponentStdOutputToml) -> Self {
-        match value {
+impl ComponentStdOutputTomlExt for ComponentStdOutputToml {
+    fn into_std_output_config(self) -> Option<StdOutputConfig> {
+        match self {
             ComponentStdOutputToml::None => None,
             ComponentStdOutputToml::Stdout => Some(StdOutputConfig::Stdout),
             ComponentStdOutputToml::Stderr => Some(StdOutputConfig::Stderr),
@@ -3144,20 +2731,22 @@ impl From<ComponentStdOutputToml> for Option<StdOutputConfig> {
 
 pub(crate) mod webhook {
     use super::{
-        AllowedHostToml, ComponentBacktraceConfig, ComponentBacktraceConfigCanonical,
-        ComponentCommon, ComponentStdOutputToml, ConfigName, JsContent, JsLocationCanonical,
-        JsLocationToml, resolve_allowed_hosts, resolve_env_vars_plaintext,
-        validate_no_env_collision,
+        AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentCommonFetchExt,
+        ComponentStdOutputToml, ComponentStdOutputTomlExt, ConfigName, JsContent,
+        JsLocationCanonicalExt, JsLocationToml, LogLevelTomlExt, resolve_allowed_hosts,
+        resolve_env_vars_plaintext, validate_no_env_collision,
     };
-    use crate::{
-        command::server::FrameFilesToSourceContent,
-        config::{env_var::EnvVarConfig, toml::LogLevelToml},
-    };
+    use crate::command::server::FrameFilesToSourceContent;
+    use crate::config::{env_var::EnvVarConfig, toml::LogLevelToml};
     use anyhow::Context;
     use concepts::{
         ComponentId, ComponentType, ContentDigest, StrVariant,
         component_id::{ComponentDigest, Digest},
         storage::LogLevel,
+    };
+    pub(crate) use deployment_config::config::webhook::{
+        WebhookJsComponentConfigCanonical, WebhookRoute, WebhookRouteDetail,
+        WebhookWasmComponentConfigCanonical, default_external_server_name,
     };
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -3181,10 +2770,6 @@ pub(crate) mod webhook {
         pub(crate) listening_addr: SocketAddr,
     }
 
-    fn default_external_server_name() -> ConfigName {
-        ConfigName::new(StrVariant::Static("external")).expect("valid name")
-    }
-
     #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookWasmComponentConfigToml {
@@ -3206,28 +2791,6 @@ pub(crate) mod webhook {
         /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
         #[serde(default, rename = "allowed_host")]
         pub(crate) allowed_hosts: Vec<AllowedHostToml>,
-    }
-
-    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-    #[serde(untagged)]
-    pub(crate) enum WebhookRoute {
-        String(String),
-        WebhookRouteDetail(WebhookRouteDetail),
-    }
-
-    impl Default for WebhookRoute {
-        fn default() -> Self {
-            WebhookRoute::String(String::new())
-        }
-    }
-
-    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-    #[serde(deny_unknown_fields)]
-    pub(crate) struct WebhookRouteDetail {
-        // Empty means all methods.
-        #[serde(default)]
-        pub(crate) methods: Vec<String>,
-        pub(crate) route: String,
     }
 
     #[derive(Debug)]
@@ -3331,32 +2894,19 @@ pub(crate) mod webhook {
         }
     }
 
-    /// Canonical form of `WebhookWasmComponentConfigToml`.
-    #[derive(Debug, Deserialize, Serialize, Clone, schemars::JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub(crate) struct WebhookWasmComponentConfigCanonical {
-        #[serde(flatten)]
-        pub(crate) common: ComponentCommon,
-        #[serde(default = "default_external_server_name")]
-        pub(crate) http_server: ConfigName,
-        pub(crate) routes: Vec<WebhookRoute>,
-        #[serde(default)]
-        pub(crate) forward_stdout: ComponentStdOutputToml,
-        #[serde(default)]
-        pub(crate) forward_stderr: ComponentStdOutputToml,
-        #[serde(default)]
-        pub(crate) env_vars: Vec<EnvVarConfig>,
-        #[serde(default)]
-        pub(crate) backtrace: ComponentBacktraceConfigCanonical,
-        #[serde(default)]
-        pub(crate) logs_store_min_level: LogLevelToml,
-        #[serde(default, rename = "allowed_host")]
-        pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+    pub(crate) trait WebhookWasmComponentConfigCanonicalExt {
+        async fn fetch_and_verify(
+            self,
+            wasm_cache_dir: Arc<Path>,
+            metadata_dir: Arc<Path>,
+            ignore_missing_env_vars: bool,
+            subscription_interruption: Option<Duration>,
+        ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error>;
     }
 
-    impl WebhookWasmComponentConfigCanonical {
-        #[instrument(skip_all, fields(component_name = self.common.name.0.as_ref()), err)]
-        pub(crate) async fn fetch_and_verify(
+    impl WebhookWasmComponentConfigCanonicalExt for WebhookWasmComponentConfigCanonical {
+        #[instrument(skip_all, fields(component_name = self.common.name.as_str()), err)]
+        async fn fetch_and_verify(
             self,
             wasm_cache_dir: Arc<Path>,
             metadata_dir: Arc<Path>,
@@ -3384,12 +2934,12 @@ pub(crate) mod webhook {
                         .into_iter()
                         .map(WebhookRouteVerified::try_from)
                         .collect::<Result<Vec<_>, _>>()?,
-                    forward_stdout: self.forward_stdout.into(),
-                    forward_stderr: self.forward_stderr.into(),
+                    forward_stdout: self.forward_stdout.into_std_output_config(),
+                    forward_stderr: self.forward_stderr.into_std_output_config(),
                     env_vars,
                     frame_files_to_sources,
                     subscription_interruption,
-                    logs_store_min_level: self.logs_store_min_level.into(),
+                    logs_store_min_level: self.logs_store_min_level.into_log_level(),
                     allowed_hosts,
                     config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                 },
@@ -3397,32 +2947,18 @@ pub(crate) mod webhook {
         }
     }
 
-    /// Canonical form of `WebhookJsComponentConfigToml`.
-    #[derive(Debug, Deserialize, Serialize, Clone, schemars::JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub(crate) struct WebhookJsComponentConfigCanonical {
-        pub(crate) name: ConfigName,
-        pub(crate) location: JsLocationCanonical,
-        #[serde(default)]
-        pub(crate) content_digest: Option<ContentDigest>,
-        #[serde(default = "default_external_server_name")]
-        pub(crate) http_server: ConfigName,
-        pub(crate) routes: Vec<WebhookRoute>,
-        #[serde(default)]
-        pub(crate) forward_stdout: ComponentStdOutputToml,
-        #[serde(default)]
-        pub(crate) forward_stderr: ComponentStdOutputToml,
-        #[serde(default)]
-        pub(crate) logs_store_min_level: LogLevelToml,
-        #[serde(default)]
-        pub(crate) env_vars: Vec<EnvVarConfig>,
-        #[serde(default, rename = "allowed_host")]
-        pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+    pub(crate) trait WebhookJsComponentConfigCanonicalExt {
+        async fn fetch_and_verify(
+            self,
+            wasm_path: Arc<Path>,
+            wasm_cache_dir: Arc<Path>,
+            ignore_missing_env_vars: bool,
+        ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error>;
     }
 
-    impl WebhookJsComponentConfigCanonical {
-        #[instrument(skip_all, fields(component_name = self.name.0.as_ref()))]
-        pub(crate) async fn fetch_and_verify(
+    impl WebhookJsComponentConfigCanonicalExt for WebhookJsComponentConfigCanonical {
+        #[instrument(skip_all, fields(component_name = self.name.as_str()))]
+        async fn fetch_and_verify(
             self,
             wasm_path: Arc<Path>,
             wasm_cache_dir: Arc<Path>,
@@ -3459,10 +2995,10 @@ pub(crate) mod webhook {
                         .into_iter()
                         .map(WebhookRouteVerified::try_from)
                         .collect::<Result<Vec<_>, _>>()?,
-                    forward_stdout: self.forward_stdout.into(),
-                    forward_stderr: self.forward_stderr.into(),
+                    forward_stdout: self.forward_stdout.into_std_output_config(),
+                    forward_stderr: self.forward_stderr.into_std_output_config(),
                     env_vars,
-                    logs_store_min_level: self.logs_store_min_level.into(),
+                    logs_store_min_level: self.logs_store_min_level.into_log_level(),
                     allowed_hosts,
                     config_section_hint: ConfigSectionHint::WebhookEndpointJs,
                 },
@@ -3491,28 +3027,11 @@ impl<T> From<ValueOrUnlimited<T>> for Option<T> {
     }
 }
 
-// TODO: Unify with ValueOrUnlimited
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy)]
-#[serde(untagged)]
-pub(crate) enum InflightSemaphore {
-    Unlimited(Unlimited),
-    Some(u32),
+pub(crate) trait InflightSemaphoreExt {
+    fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>>;
 }
-impl Default for InflightSemaphore {
-    fn default() -> Self {
-        Self::Unlimited(Unlimited::Unlimited)
-    }
-}
-
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Unlimited {
-    #[default]
-    Unlimited,
-}
-
-impl InflightSemaphore {
-    pub(crate) fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>> {
+impl InflightSemaphoreExt for InflightSemaphore {
+    fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>> {
         match self {
             InflightSemaphore::Unlimited(_) => None,
             InflightSemaphore::Some(permits) => Some(Arc::new(tokio::sync::Semaphore::new(
@@ -3522,7 +3041,7 @@ impl InflightSemaphore {
     }
 }
 
-// TODO: Move to env_var module
+// TODO: Move to env_var module// TODO: Move to env_var module
 fn resolve_env_vars_plaintext(
     env_vars: Vec<EnvVarConfig>,
     ignore_missing: bool,
@@ -3736,34 +3255,6 @@ const fn default_codegen_enabled() -> bool {
     true
 }
 
-const fn default_max_retries() -> u32 {
-    5
-}
-
-const fn default_retry_exp_backoff() -> DurationConfig {
-    DurationConfig::Milliseconds(100)
-}
-
-const fn default_non_blocking_event_batching() -> u32 {
-    DEFAULT_NON_BLOCKING_EVENT_BATCHING
-}
-
-const fn default_batch_size() -> u32 {
-    5
-}
-
-const fn default_lock_expiry() -> DurationConfig {
-    DurationConfig::Seconds(1)
-}
-
-const fn default_tick_sleep() -> DurationConfig {
-    DurationConfig::Milliseconds(200)
-}
-
-const fn default_lock_extension() -> bool {
-    true
-}
-
 const fn default_subscription_interruption() -> DurationConfigOptional {
     DurationConfigOptional::Seconds(1)
 }
@@ -3797,25 +3288,7 @@ fn default_cancel_watcher_tick_sleep() -> DurationConfig {
 pub(crate) mod cron {
     use super::*;
 
-    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-    #[serde(deny_unknown_fields)]
-    pub(crate) struct CronComponentConfigToml {
-        pub(crate) name: ConfigName,
-        /// Fully qualified function name of the target to invoke on each schedule tick.
-        #[schemars(with = "String")]
-        pub(crate) ffqn: FunctionFqn,
-        /// JSON-encoded parameters to pass to the target function.
-        #[serde(default = "default_schedule_params")]
-        pub(crate) params: String,
-        /// Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.
-        pub(crate) schedule: String,
-        #[serde(default)]
-        pub(crate) exec: ExecConfigToml,
-    }
-
-    fn default_schedule_params() -> String {
-        "[]".to_string()
-    }
+    pub(crate) use deployment_config::config::cron::CronComponentConfigToml;
 
     #[derive(Debug)]
     pub(crate) struct CronConfigVerified {
@@ -3826,9 +3299,13 @@ pub(crate) mod cron {
         pub(crate) exec_config: executor::executor::ExecConfig,
     }
 
-    impl CronComponentConfigToml {
-        pub(crate) fn verify(self) -> Result<CronConfigVerified, anyhow::Error> {
-            let name = self.name.0.to_string();
+    pub(crate) trait CronComponentConfigTomlExt {
+        fn verify(self) -> Result<CronConfigVerified, anyhow::Error>;
+    }
+
+    impl CronComponentConfigTomlExt for CronComponentConfigToml {
+        fn verify(self) -> Result<CronConfigVerified, anyhow::Error> {
+            let name = self.name.to_string();
             let cron_schedule = if self.schedule == "@once" {
                 CronOrOnce::Once
             } else {
@@ -3885,6 +3362,10 @@ pub(crate) mod cron {
 mod tests {
     mod blocking_strategy {
         use super::super::*;
+        use deployment_config::config::{
+            BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
+            BlockingStrategyConfigSimple, default_non_blocking_event_batching,
+        };
         use serde::Deserialize;
 
         // Helper struct to deserialize into
@@ -3909,7 +3390,7 @@ strategy = "interrupt"
 
             // Verify From impl result
             assert_eq!(
-                JoinNextBlockingStrategy::from(actual.strategy),
+                actual.strategy.into_blocking_strategy(),
                 JoinNextBlockingStrategy::Interrupt
             );
         }
@@ -3929,7 +3410,7 @@ strategy = "await"
 
             // Verify From impl result (uses default batching)
             assert_eq!(
-                JoinNextBlockingStrategy::from(actual.strategy),
+                actual.strategy.into_blocking_strategy(),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
                 }
@@ -3954,7 +3435,7 @@ strategy = { kind = "await" }
 
             // Verify From impl result (uses default batching)
             assert_eq!(
-                JoinNextBlockingStrategy::from(actual.strategy),
+                actual.strategy.into_blocking_strategy(),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
                 }
@@ -3979,7 +3460,7 @@ strategy = { kind = "await", non_blocking_event_batching = 99 }
 
             // Verify From impl result (uses custom batching)
             assert_eq!(
-                JoinNextBlockingStrategy::from(actual.strategy),
+                actual.strategy.into_blocking_strategy(),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 99
                 }
@@ -4100,6 +3581,7 @@ name = "my_stub"
     }
 
     mod activity_exec {
+        use deployment_config::config::SecretEnvVarToml;
         use wasm_workers::activity::activity_exec_worker::ExecProgram;
 
         use super::super::*;
