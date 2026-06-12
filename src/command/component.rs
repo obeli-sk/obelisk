@@ -789,8 +789,9 @@ fn print_wit_type(wit_type: &grpc_gen::WitType) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::toml::{AllowedHostSecretsToml, AllowedHostToml, MethodsInput, ReplaceIn};
+    use crate::config::toml::{AllowedHostToml, MethodsInput, ReplaceIn};
     use crate::oci::ComponentMetadataAnnotation;
+    use deployment_config::config::AllowedHostSecretsToml;
 
     fn make_metadata_activity() -> ComponentMetadataAnnotation {
         ComponentMetadataAnnotation::ActivityWasm {

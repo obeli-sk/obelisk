@@ -1,12 +1,9 @@
-use crate::{
-    component_id::ComponentDigest,
-    storage::{
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
-        DbErrorWriteNonRetriable,
-    },
+use crate::storage::{
+    DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+    DbErrorWriteNonRetriable,
 };
 use std::{panic::Location, sync::Arc};
-use tokio_postgres::{error::SqlState, types::ToSql};
+use tokio_postgres::error::SqlState;
 use tracing_error::SpanTrace;
 
 impl From<tokio_postgres::Error> for DbErrorGeneric {
@@ -74,28 +71,5 @@ impl From<deadpool_postgres::PoolError> for DbErrorGeneric {
             deadpool_postgres::PoolError::Closed => DbErrorGeneric::Close,
             err => DbErrorGeneric::from(err),
         }
-    }
-}
-
-impl ToSql for ComponentDigest {
-    fn to_sql(
-        &self,
-        ty: &tokio_postgres::types::Type,
-        out: &mut tokio_postgres::types::private::BytesMut,
-    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>>
-    where
-        Self: Sized,
-    {
-        self.as_slice().to_sql(ty, out)
-    }
-
-    tokio_postgres::types::accepts!(BYTEA);
-
-    fn to_sql_checked(
-        &self,
-        ty: &tokio_postgres::types::Type,
-        out: &mut tokio_postgres::types::private::BytesMut,
-    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        self.as_slice().to_sql_checked(ty, out)
     }
 }
