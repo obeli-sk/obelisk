@@ -840,7 +840,7 @@ pub(crate) mod tests {
                 => (reason, detail, *backoff_expires_at, http_client_traces)
             );
             assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
-            assert_eq!("activity returned error", reason.deref());
+            assert_eq!("activity finished with error", reason.deref());
             assert!(
                 detail.contains(expected_err_contains),
                 "Unexpected detail: {detail}, expected to contain: {expected_err_contains}"

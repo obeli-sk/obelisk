@@ -616,7 +616,7 @@ impl ExecTask {
                 debug!("Retrying ActivityReturnedError after {duration:?} at {expires_at}");
                 let primary_event = ExecutionRequest::TemporarilyFailed {
                     backoff_expires_at: expires_at,
-                    reason: StrVariant::Static("activity returned error"),
+                    reason: StrVariant::Static("activity finished with error"),
                     detail: Some(detail),
                     http_client_traces,
                 };
