@@ -2,8 +2,10 @@
 
 mod combined_state;
 mod notifiers;
+mod state_filter;
 mod subscribers;
 
 pub use combined_state::{CombinedState, CombinedStateDTO};
 pub use notifiers::{AppendNotifier, NotifierExecutionFinished, NotifierPendingAt};
+pub use state_filter::{state_filter_to_sql, state_filters_now};
 pub use subscribers::PendingFfqnSubscribersHolder;

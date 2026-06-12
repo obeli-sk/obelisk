@@ -40,6 +40,10 @@ pub const STATE_PENDING_AT: &str = "pending_at";
 pub const STATE_BLOCKED_BY_JOIN_SET: &str = "blocked_by_join_set";
 pub const STATE_LOCKED: &str = "locked";
 pub const STATE_FINISHED: &str = "finished";
+// JSON encodings of `PendingStateFinishedResultKind` as stored in the `result_kind` column,
+// pinned by `result_kind_json_constants_match_serde`.
+pub const RESULT_KIND_JSON_OK: &str = r#""ok""#;
+pub const RESULT_KIND_JSON_ERROR: &str = r#"{"err":"error"}"#;
 pub const HISTORY_EVENT_TYPE_JOIN_NEXT: &str = "join_next"; // Serialization tag of `HistoryEvent::JoinNext`
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -1314,6 +1318,35 @@ pub struct ListExecutionsFilter {
     pub execution_id_prefix: Option<String>,
     pub component_digest: Option<ComponentDigest>,
     pub deployment_id: Option<DeploymentId>,
+    /// Match executions in any of the given states (logical OR). Empty list matches all.
+    /// All [`ExecutionStateFilter::Pending`] / [`ExecutionStateFilter::Scheduled`] entries
+    /// must carry the same `now`.
+    pub state_filters: Vec<ExecutionStateFilter>,
+}
+
+/// Filter executions by their current state, using the same buckets as the deployment summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionStateFilter {
+    Locked,
+    /// [`PendingState::PendingAt`] with the scheduled time at or before `now`.
+    Pending {
+        now: DateTime<Utc>,
+    },
+    /// [`PendingState::PendingAt`] with the scheduled time after `now`.
+    Scheduled {
+        now: DateTime<Utc>,
+    },
+    Blocked,
+    /// Paused regardless of the underlying state (locked, pending or blocked).
+    Paused,
+    /// Finished with any result.
+    Finished,
+    /// Finished successfully.
+    FinishedOk,
+    /// Finished with the `err` variant of the result type.
+    FinishedError,
+    /// Execution failure: trap, timeout, nondeterminism, cancellation etc.
+    FinishedExecutionFailure,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1461,6 +1494,7 @@ pub trait DbExternalApi: DbConnection {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_config_json: bool,
+        include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 
     /// Insert a new deployment. The record must have `status == Inactive` and
@@ -1540,7 +1574,11 @@ pub struct DeploymentState {
     // In `PendingAt` state, scheduled into the future
     pub scheduled: u32,
     pub blocked: u32,
-    pub finished: u32,
+    // Paused regardless of the underlying state (locked, pending or blocked).
+    pub paused: u32,
+    pub finished_ok: u32,
+    pub finished_error: u32,
+    pub finished_execution_failure: u32,
     /// None if not requested from db.
     pub config_json: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -2641,6 +2679,21 @@ mod tests {
         let ser = serde_json::to_string(&expected).unwrap();
         let actual: PendingStateFinishedResultKind = serde_json::from_str(&ser).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn result_kind_json_constants_match_serde() {
+        assert_eq!(
+            crate::storage::RESULT_KIND_JSON_OK,
+            serde_json::to_string(&PendingStateFinishedResultKind::Ok).unwrap()
+        );
+        assert_eq!(
+            crate::storage::RESULT_KIND_JSON_ERROR,
+            serde_json::to_string(&PendingStateFinishedResultKind::Err(
+                PendingStateFinishedError::Error
+            ))
+            .unwrap()
+        );
     }
 
     #[rstest(result_kind => [

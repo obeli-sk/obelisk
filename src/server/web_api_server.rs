@@ -579,6 +579,7 @@ async fn executions_list(
         execution_id_prefix: params.execution_id_prefix,
         component_digest: params.component_digest,
         deployment_id: params.deployment_id,
+        state_filters: Vec::new(),
     };
 
     let executions = conn
@@ -3045,8 +3046,14 @@ mod deployment {
         pub scheduled: u32,
         /// Number of blocked executions
         pub blocked: u32,
-        /// Number of finished executions
-        pub finished: u32,
+        /// Number of paused executions, regardless of the underlying state
+        pub paused: u32,
+        /// Number of executions finished successfully
+        pub finished_ok: u32,
+        /// Number of executions finished with the `err` variant of the result type
+        pub finished_error: u32,
+        /// Number of executions finished with an execution failure
+        pub finished_execution_failure: u32,
     }
 
     impl DeploymentStateSer {
@@ -3060,7 +3067,10 @@ mod deployment {
                 pending: deployment_state.pending,
                 scheduled: deployment_state.scheduled,
                 blocked: deployment_state.blocked,
-                finished: deployment_state.finished,
+                paused: deployment_state.paused,
+                finished_ok: deployment_state.finished_ok,
+                finished_error: deployment_state.finished_error,
+                finished_execution_failure: deployment_state.finished_execution_failure,
             }
         }
     }
@@ -3076,6 +3086,9 @@ mod deployment {
         /// Include the cursor item in results
         #[serde(default)]
         including_cursor: bool,
+        /// Count child executions in the summary buckets as well
+        #[serde(default)]
+        include_derived: bool,
     }
 
     /// List deployments
@@ -3107,7 +3120,7 @@ mod deployment {
             including_cursor: params.including_cursor,
         };
         let states = conn
-            .list_deployment_states(Utc::now(), pagination, false)
+            .list_deployment_states(Utc::now(), pagination, false, params.include_derived)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
@@ -3123,8 +3136,17 @@ mod deployment {
                 for s in states {
                     writeln!(
                         &mut output,
-                        "{} locked={} pending={} scheduled={} blocked={} finished={}",
-                        s.deployment_id, s.locked, s.pending, s.scheduled, s.blocked, s.finished,
+                        "{} locked={} pending={} scheduled={} blocked={} paused={} \
+                        finished_ok={} finished_error={} finished_execution_failure={}",
+                        s.deployment_id,
+                        s.locked,
+                        s.pending,
+                        s.scheduled,
+                        s.blocked,
+                        s.paused,
+                        s.finished_ok,
+                        s.finished_error,
+                        s.finished_execution_failure,
                     )
                     .expect("writing to string");
                 }

@@ -21,15 +21,16 @@ use concepts::{
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
-        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version, VersionType,
+        PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
+        RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
+        VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
 use db_common::{
     AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
-    PendingFfqnSubscribersHolder,
+    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use hashbrown::HashMap;
 use rusqlite::{
@@ -1625,6 +1626,27 @@ impl SqlitePool {
                 .to_sql()
                 .expect("DeploymentId conversion never fails");
             statement_mod.params.push((":deployment_id", deployment_id));
+        }
+
+        let state_filter_now_temporary;
+        if !filter.state_filters.is_empty() {
+            let conditions: Vec<String> = filter
+                .state_filters
+                .iter()
+                .map(|state_filter| state_filter_to_sql(state_filter, ":state_filter_now", ""))
+                .collect();
+            statement_mod
+                .where_vec
+                .push(format!("({})", conditions.join(" OR ")));
+            if let Some(now) = state_filters_now(&filter.state_filters) {
+                state_filter_now_temporary = now;
+                statement_mod.params.push((
+                    ":state_filter_now",
+                    state_filter_now_temporary
+                        .to_sql()
+                        .expect("DateTime conversion never fails"),
+                ));
+            }
         }
 
         let where_str = if statement_mod.where_vec.is_empty() {
@@ -3272,6 +3294,7 @@ impl SqlitePool {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_config_json: bool,
+        include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let config_json_col = if include_config_json {
@@ -3283,17 +3306,26 @@ impl SqlitePool {
             r"
         SELECT
             d.deployment_id,
-            COALESCE(SUM(s.state = '{STATE_LOCKED}'), 0) AS locked,
-            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished <= :now), 0) AS pending,
-            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.pending_expires_finished > :now), 0) AS scheduled,
-            COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}'), 0) AS blocked,
-            COALESCE(SUM(s.state = '{STATE_FINISHED}'), 0) AS finished,
+            COALESCE(SUM(s.state = '{STATE_LOCKED}' AND s.is_paused = false), 0) AS locked,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished <= :now), 0) AS pending,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished > :now), 0) AS scheduled,
+            COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.is_paused = false), 0) AS blocked,
+            COALESCE(SUM(s.is_paused = true), 0) AS paused,
+            COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_OK}'), 0) AS finished_ok,
+            COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_ERROR}'), 0) AS finished_error,
+            COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind IS NOT NULL
+                AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}', '{RESULT_KIND_JSON_ERROR}')), 0) AS finished_execution_failure,
             {config_json_col},
             d.created_at,
             d.last_active_at,
             d.status
         FROM t_deployment d
-        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id"
+        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id{join_top_level}",
+            join_top_level = if include_derived {
+                ""
+            } else {
+                " AND s.is_top_level = true"
+            }
         );
 
         params.push((":now", Box::new(current_time)));
@@ -3352,7 +3384,10 @@ impl SqlitePool {
                         pending: row.get("pending")?,
                         scheduled: row.get("scheduled")?,
                         blocked: row.get("blocked")?,
-                        finished: row.get("finished")?,
+                        paused: row.get("paused")?,
+                        finished_ok: row.get("finished_ok")?,
+                        finished_error: row.get("finished_error")?,
+                        finished_execution_failure: row.get("finished_execution_failure")?,
                         config_json: row.get("config_json")?,
                         created_at: row.get("created_at")?,
                         last_active_at: row.get("last_active_at")?,
@@ -4505,10 +4540,17 @@ impl DbExternalApi for SqlitePool {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_config_json: bool,
+        include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         self.transaction(
             move |tx| {
-                Self::list_deployment_states(tx, current_time, pagination, include_config_json)
+                Self::list_deployment_states(
+                    tx,
+                    current_time,
+                    pagination,
+                    include_config_json,
+                    include_derived,
+                )
             },
             TxType::Other, // read only
             "list_deployment_states",

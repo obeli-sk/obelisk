@@ -21,14 +21,15 @@ use concepts::{
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMergedPause, ResponseCursor,
-        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
+        PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
+        RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
+        VersionType, WasmBacktrace,
     },
 };
 use db_common::{
     AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
-    PendingFfqnSubscribersHolder,
+    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
@@ -1218,6 +1219,17 @@ async fn list_executions(
         let placeholder = qb.add_param(deployment_id.to_string());
         qb.add_where(format!("deployment_id = {placeholder}"));
     }
+    if !filter.state_filters.is_empty() {
+        let now_placeholder = state_filters_now(&filter.state_filters)
+            .map(|now| qb.add_param(now))
+            .unwrap_or_default();
+        let conditions: Vec<String> = filter
+            .state_filters
+            .iter()
+            .map(|state_filter| state_filter_to_sql(state_filter, &now_placeholder, "::jsonb"))
+            .collect();
+        qb.add_where(format!("({})", conditions.join(" OR ")));
+    }
 
     let where_str = if qb.where_clauses.is_empty() {
         String::new()
@@ -1631,6 +1643,7 @@ async fn list_deployment_states(
     current_time: DateTime<Utc>,
     pagination: Pagination<Option<DeploymentId>>,
     include_config_json: bool,
+    include_derived: bool,
 ) -> Result<Vec<DeploymentState>, DbErrorRead> {
     // Helper for numbered params ($1, $2, ...)
     let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
@@ -1653,28 +1666,51 @@ async fn list_deployment_states(
         SELECT
             d.deployment_id,
 
-            COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}') AS locked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}' AND s.is_paused = false) AS locked,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_PENDING_AT}'
+                  AND s.is_paused = false
                   AND s.pending_expires_finished <= {p_now}
             ) AS pending,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_PENDING_AT}'
+                  AND s.is_paused = false
                   AND s.pending_expires_finished > {p_now}
             ) AS scheduled,
 
-            COUNT(*) FILTER (WHERE s.state = '{STATE_BLOCKED_BY_JOIN_SET}') AS blocked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.is_paused = false) AS blocked,
 
-            COUNT(*) FILTER (WHERE s.state = '{STATE_FINISHED}') AS finished,
+            COUNT(*) FILTER (WHERE s.is_paused = true) AS paused,
+
+            COUNT(*) FILTER (
+                WHERE s.state = '{STATE_FINISHED}'
+                  AND s.result_kind = '{RESULT_KIND_JSON_OK}'::jsonb
+            ) AS finished_ok,
+
+            COUNT(*) FILTER (
+                WHERE s.state = '{STATE_FINISHED}'
+                  AND s.result_kind = '{RESULT_KIND_JSON_ERROR}'::jsonb
+            ) AS finished_error,
+
+            COUNT(*) FILTER (
+                WHERE s.state = '{STATE_FINISHED}'
+                  AND s.result_kind IS NOT NULL
+                  AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}'::jsonb, '{RESULT_KIND_JSON_ERROR}'::jsonb)
+            ) AS finished_execution_failure,
 
             {config_json_col},
             d.created_at,
             d.last_active_at,
             d.status
         FROM t_deployment d
-        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id"
+        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id{join_top_level}",
+        join_top_level = if include_derived {
+            ""
+        } else {
+            " AND s.is_top_level = true"
+        }
     );
 
     // Pagination
@@ -1736,8 +1772,16 @@ async fn list_deployment_states(
                 .expect("count is never negative"),
             blocked: u32::try_from(get::<i64, _>(&row, "blocked")?)
                 .expect("count is never negative"),
-            finished: u32::try_from(get::<i64, _>(&row, "finished")?)
+            paused: u32::try_from(get::<i64, _>(&row, "paused")?).expect("count is never negative"),
+            finished_ok: u32::try_from(get::<i64, _>(&row, "finished_ok")?)
                 .expect("count is never negative"),
+            finished_error: u32::try_from(get::<i64, _>(&row, "finished_error")?)
+                .expect("count is never negative"),
+            finished_execution_failure: u32::try_from(get::<i64, _>(
+                &row,
+                "finished_execution_failure",
+            )?)
+            .expect("count is never negative"),
             config_json: get::<Option<String>, _>(&row, "config_json")?,
             created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
             last_active_at: get::<Option<DateTime<Utc>>, _>(&row, "last_active_at")?,
@@ -4598,11 +4642,18 @@ impl DbExternalApi for PostgresConnection {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_config_json: bool,
+        include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        let deployments =
-            list_deployment_states(&tx, current_time, pagination, include_config_json).await?;
+        let deployments = list_deployment_states(
+            &tx,
+            current_time,
+            pagination,
+            include_config_json,
+            include_derived,
+        )
+        .await?;
         tx.commit().await?;
         Ok(deployments)
     }

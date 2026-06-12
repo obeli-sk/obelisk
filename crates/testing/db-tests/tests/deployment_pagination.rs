@@ -161,6 +161,7 @@ async fn list_deployment_states_basic(database: Database) {
             sim_clock.now(),
             pagination,
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -177,7 +178,7 @@ async fn list_deployment_states_basic(database: Database) {
         assert_eq!(0, deployment.locked);
         assert_eq!(0, deployment.scheduled);
         assert_eq!(0, deployment.blocked);
-        assert_eq!(0, deployment.finished);
+        assert_eq!(0, deployment.finished_ok);
     }
 
     drop(api_conn);
@@ -216,6 +217,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -236,6 +238,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -256,6 +259,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -276,6 +280,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -340,6 +345,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -356,6 +362,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 including_cursor: true,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -378,6 +385,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -398,6 +406,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -418,6 +427,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -534,6 +544,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -548,17 +559,17 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
     let pending_state = find_deployment(deployment_pending);
     assert_eq!(1, pending_state.pending);
     assert_eq!(0, pending_state.locked);
-    assert_eq!(0, pending_state.finished);
+    assert_eq!(0, pending_state.finished_ok);
 
     let locked_state = find_deployment(deployment_locked);
     assert_eq!(0, locked_state.pending);
     assert_eq!(1, locked_state.locked);
-    assert_eq!(0, locked_state.finished);
+    assert_eq!(0, locked_state.finished_ok);
 
     let finished_state = find_deployment(deployment_finished);
     assert_eq!(0, finished_state.pending);
     assert_eq!(0, finished_state.locked);
-    assert_eq!(1, finished_state.finished);
+    assert_eq!(1, finished_state.finished_ok);
 
     let mixed_state = find_deployment(deployment_mixed);
     assert_eq!(
@@ -570,7 +581,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
         "expected 1 locked in mixed deployment"
     );
     assert_eq!(
-        1, mixed_state.finished,
+        1, mixed_state.finished_ok,
         "expected 1 finished in mixed deployment"
     );
 
@@ -607,6 +618,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -622,6 +634,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 including_cursor: true,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -640,6 +653,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -658,6 +672,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 including_cursor: true,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -676,6 +691,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -720,6 +736,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -753,6 +770,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -773,6 +791,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 including_cursor: true,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -834,6 +853,7 @@ async fn list_deployment_states_empty(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
@@ -874,6 +894,7 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
                 including_cursor: false,
             },
             false, // include_config_json
+            false, // include_derived
         )
         .await
         .unwrap();
