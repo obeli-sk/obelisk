@@ -2542,10 +2542,10 @@
             "type": "object",
             "description": "Error result (WIT result's error variant)",
             "required": [
-              "error"
+              "err"
             ],
             "properties": {
-              "error": {
+              "err": {
                 "type": [
                   "object",
                   "null"
