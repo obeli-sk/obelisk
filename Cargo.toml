@@ -278,13 +278,13 @@ futures-util = "0.3.32"
 getrandom = "0.4"
 hashbrown = { version = "0.16.1", features = ["serde"] }
 hdrhistogram = { version = "7.5.4", default-features = false }
-http = "1.4.1"
+http = "1.4.2"
 http-body-util = "0.1"
 hyper = "1.10.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
 indexmap = { version = "2.14", features = ["serde"] }
-insta = { version = "1.47.2", features = ["json"] }
+insta = { version = "1.48.0", features = ["json"] }
 itertools = "0.14"
 jsonwebtoken = { version = "10", default-features = false }
 lazy_static = "1.5"
@@ -292,7 +292,7 @@ libc = "0.2.186"
 oci-client = { version = "0.16.1", default-features = false }
 oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
-prost = "0.14.3"
+prost = "0.14.4"
 prost-wkt-types = "0.7"
 quote = "1"
 rand = "0.9"
@@ -326,7 +326,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"
 thiserror = "2.0"
-tokio-postgres = { version = "0.7.17", features = ["with-chrono-0_4", "with-serde_json-1"] }
+tokio-postgres = { version = "0.7.18", features = ["with-chrono-0_4", "with-serde_json-1"] }
 tokio = { version = "1", features = [
     "fs",
     "io-util",
@@ -385,7 +385,7 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.7", def
 # boa_runtime = { git = "https://github.com/obeli-sk/boa", package = "boa_runtime", rev = "9b145317", default-features = false, features = ["fetch"] }
 
 # testing components
-wasip2 = "1.0.3"
+wasip2 = "1.0.4"
 wit-bindgen = "0.57.1"
 wit-bindgen-rust = "0.57.1"
 wstd = "0.6.5"
