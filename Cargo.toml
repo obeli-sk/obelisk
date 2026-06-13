@@ -136,7 +136,6 @@ default = ["otlp"]
 workspace = true
 
 [workspace]
-resolver = "2"
 exclude = ["boa"]
 members = [
     "crates/activity-js-runtime",
