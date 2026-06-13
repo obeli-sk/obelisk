@@ -5,23 +5,23 @@ expression: wit
 package root:component;
 
 world root {
-    import wasi:io/poll@0.2.9;
-    import wasi:clocks/monotonic-clock@0.2.9;
-    import wasi:io/error@0.2.9;
-    import wasi:io/streams@0.2.9;
-    import wasi:cli/stdout@0.2.9;
-    import wasi:cli/stderr@0.2.9;
-    import wasi:cli/stdin@0.2.9;
-    import wasi:http/types@0.2.9;
-    import wasi:http/outgoing-handler@0.2.9;
-    import wasi:cli/environment@0.2.9;
-    import wasi:cli/exit@0.2.9;
-    import wasi:cli/terminal-input@0.2.9;
-    import wasi:cli/terminal-output@0.2.9;
-    import wasi:cli/terminal-stdin@0.2.9;
-    import wasi:cli/terminal-stdout@0.2.9;
-    import wasi:cli/terminal-stderr@0.2.9;
-    import wasi:random/insecure-seed@0.2.9;
+    import wasi:io/poll@0.2.12;
+    import wasi:clocks/monotonic-clock@0.2.12;
+    import wasi:io/error@0.2.12;
+    import wasi:io/streams@0.2.12;
+    import wasi:cli/stdout@0.2.12;
+    import wasi:cli/stderr@0.2.12;
+    import wasi:cli/stdin@0.2.12;
+    import wasi:http/types@0.2.12;
+    import wasi:http/outgoing-handler@0.2.12;
+    import wasi:cli/environment@0.2.12;
+    import wasi:cli/exit@0.2.12;
+    import wasi:cli/terminal-input@0.2.12;
+    import wasi:cli/terminal-output@0.2.12;
+    import wasi:cli/terminal-stdin@0.2.12;
+    import wasi:cli/terminal-stdout@0.2.12;
+    import wasi:cli/terminal-stderr@0.2.12;
+    import wasi:random/insecure-seed@0.2.12;
 
     export testing:http/http-get;
     export testing:http/http-post;
@@ -211,7 +211,7 @@ package obelisk:types@4.2.0 {
 }
 
 
-package wasi:io@0.2.9 {
+package wasi:io@0.2.12 {
     interface poll {
         resource pollable {
             ready: func() -> bool;
@@ -250,9 +250,9 @@ package wasi:io@0.2.9 {
 }
 
 
-package wasi:clocks@0.2.9 {
+package wasi:clocks@0.2.12 {
     interface monotonic-clock {
-        use wasi:io/poll@0.2.9.{pollable};
+        use wasi:io/poll@0.2.12.{pollable};
 
         type duration = u64;
 
@@ -261,19 +261,19 @@ package wasi:clocks@0.2.9 {
 }
 
 
-package wasi:cli@0.2.9 {
+package wasi:cli@0.2.12 {
     interface stdout {
-        use wasi:io/streams@0.2.9.{output-stream};
+        use wasi:io/streams@0.2.12.{output-stream};
 
         get-stdout: func() -> output-stream;
     }
     interface stderr {
-        use wasi:io/streams@0.2.9.{output-stream};
+        use wasi:io/streams@0.2.12.{output-stream};
 
         get-stderr: func() -> output-stream;
     }
     interface stdin {
-        use wasi:io/streams@0.2.9.{input-stream};
+        use wasi:io/streams@0.2.12.{input-stream};
 
         get-stdin: func() -> input-stream;
     }
@@ -307,12 +307,12 @@ package wasi:cli@0.2.9 {
 }
 
 
-package wasi:http@0.2.9 {
+package wasi:http@0.2.12 {
     interface types {
-        use wasi:io/streams@0.2.9.{input-stream};
-        use wasi:clocks/monotonic-clock@0.2.9.{duration};
-        use wasi:io/streams@0.2.9.{output-stream};
-        use wasi:io/poll@0.2.9.{pollable};
+        use wasi:io/streams@0.2.12.{input-stream};
+        use wasi:clocks/monotonic-clock@0.2.12.{duration};
+        use wasi:io/streams@0.2.12.{output-stream};
+        use wasi:io/poll@0.2.12.{pollable};
 
         resource outgoing-body {
             write: func() -> result<output-stream>;
@@ -464,7 +464,7 @@ package wasi:http@0.2.9 {
 }
 
 
-package wasi:random@0.2.9 {
+package wasi:random@0.2.12 {
     interface insecure-seed {
         insecure-seed: func() -> tuple<u64, u64>;
     }
