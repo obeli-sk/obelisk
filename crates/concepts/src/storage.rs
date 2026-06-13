@@ -1388,7 +1388,7 @@ pub trait DbExternalApi: DbConnection {
 
     /// Store a source file associated with a component digest.
     /// `frame_key` is either an exact frame symbol path or a suffix (with leading `/`)
-    /// when `is_suffix` is true. Idempotent — repeated calls for the same key are ignored.
+    /// when `is_suffix` is true. Repeated calls replace the source mapped to the same key.
     async fn upsert_source_file(
         &self,
         component_digest: &ComponentDigest,

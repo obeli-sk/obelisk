@@ -3164,6 +3164,51 @@ async fn test_backtrace(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn source_file_upsert_replaces_existing_mapping(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let component_digest = ComponentId::dummy_activity().component_digest;
+
+    api_conn
+        .upsert_source_file(&component_digest, "exact.rs", false, "old exact")
+        .await
+        .unwrap();
+    api_conn
+        .upsert_source_file(&component_digest, "/src/suffix.rs", true, "old suffix")
+        .await
+        .unwrap();
+    api_conn
+        .upsert_source_file(&component_digest, "exact.rs", false, "new exact")
+        .await
+        .unwrap();
+    api_conn
+        .upsert_source_file(&component_digest, "/src/suffix.rs", true, "new suffix")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        Some("new exact".to_string()),
+        api_conn
+            .get_source_file(&component_digest, "exact.rs")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        Some("new suffix".to_string()),
+        api_conn
+            .get_source_file(&component_digest, "/workspace/src/suffix.rs")
+            .await
+            .unwrap()
+    );
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
