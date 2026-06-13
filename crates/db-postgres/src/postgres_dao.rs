@@ -4359,7 +4359,8 @@ impl DbExternalApi for PostgresConnection {
             "INSERT INTO t_component_source \
              (component_digest, frame_key, is_suffix, content_hash) \
              VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (component_digest, frame_key, is_suffix) DO NOTHING",
+             ON CONFLICT (component_digest, frame_key, is_suffix) \
+             DO UPDATE SET content_hash = EXCLUDED.content_hash",
             &[
                 &component_digest.as_slice(),
                 &frame_key,

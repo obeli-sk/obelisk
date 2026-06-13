@@ -4190,9 +4190,11 @@ impl DbExternalApi for SqlitePool {
                     ":content": content,
                 })?;
                 tx.prepare(
-                    "INSERT OR IGNORE INTO t_component_source \
+                    "INSERT INTO t_component_source \
                      (component_digest, frame_key, is_suffix, content_hash) \
-                     VALUES (:component_digest, :frame_key, :is_suffix, :content_hash)",
+                     VALUES (:component_digest, :frame_key, :is_suffix, :content_hash) \
+                     ON CONFLICT (component_digest, frame_key, is_suffix) \
+                     DO UPDATE SET content_hash = excluded.content_hash",
                 )?
                 .execute(named_params! {
                     ":component_digest": component_digest,
