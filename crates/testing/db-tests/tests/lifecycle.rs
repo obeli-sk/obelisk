@@ -13,7 +13,7 @@ use concepts::storage::{
 use concepts::storage::{DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent, ListExecutionsFilter};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent, LogFilter};
-use concepts::storage::{LogEntry, LogInfoAppendRow};
+use concepts::storage::{LogCursor, LogEntry, LogInfoAppendRow};
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::{ComponentId, Params, StrVariant, SupportedFunctionReturnValue};
@@ -4124,7 +4124,7 @@ async fn list_logs_with_show_derived(database: Database) {
             LogFilter::show_logs(Vec::new()),
             Pagination::OlderThan {
                 length: 10,
-                cursor: sim_clock.now(),
+                cursor: LogCursor(i64::MAX),
                 including_cursor: false,
             },
         )
@@ -4145,7 +4145,7 @@ async fn list_logs_with_show_derived(database: Database) {
             LogFilter::show_logs(Vec::new()),
             Pagination::OlderThan {
                 length: 10,
-                cursor: sim_clock.now(),
+                cursor: LogCursor(i64::MAX),
                 including_cursor: false,
             },
         )
@@ -4182,7 +4182,7 @@ async fn list_logs_with_show_derived(database: Database) {
             LogFilter::show_logs(Vec::new()),
             Pagination::OlderThan {
                 length: 1,
-                cursor: sim_clock.now(),
+                cursor: LogCursor(i64::MAX),
                 including_cursor: false,
             },
         )
@@ -4211,6 +4211,105 @@ async fn list_logs_with_show_derived(database: Database) {
         &result.items[0].log_entry,
         LogEntry::Log { message, .. } if message == "child log"
     );
+
+    drop(db_connection);
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn list_logs_paginates_equal_timestamps(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    let created_at = sim_clock.now();
+    for message in ["first", "second", "third"] {
+        db_connection
+            .append_log(LogInfoAppendRow {
+                execution_id: execution_id.clone(),
+                run_id: RunId::generate(),
+                log_entry: LogEntry::Log {
+                    created_at,
+                    level: concepts::storage::LogLevel::Info,
+                    message: message.to_string(),
+                },
+            })
+            .await
+            .unwrap();
+    }
+
+    let mut pagination = Pagination::NewerThan {
+        length: 1,
+        cursor: LogCursor(i64::MIN),
+        including_cursor: false,
+    };
+    let mut messages = Vec::new();
+    for _ in 0..3 {
+        let result = api_conn
+            .list_logs(
+                &execution_id,
+                false,
+                LogFilter::show_logs(Vec::new()),
+                pagination,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.items.len(), 1);
+        let LogEntry::Log { message, .. } = &result.items[0].log_entry else {
+            panic!("expected log entry");
+        };
+        messages.push(message.clone());
+        pagination = result.next_page;
+    }
+    assert_eq!(messages, ["first", "second", "third"]);
+
+    let mut pagination = Pagination::OlderThan {
+        length: 1,
+        cursor: LogCursor(i64::MAX),
+        including_cursor: false,
+    };
+    let mut messages = Vec::new();
+    for _ in 0..3 {
+        let result = api_conn
+            .list_logs(
+                &execution_id,
+                false,
+                LogFilter::show_logs(Vec::new()),
+                pagination,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.items.len(), 1);
+        let LogEntry::Log { message, .. } = &result.items[0].log_entry else {
+            panic!("expected log entry");
+        };
+        messages.push(message.clone());
+        pagination = result.prev_page.unwrap();
+    }
+    assert_eq!(messages, ["third", "second", "first"]);
 
     drop(db_connection);
     drop(api_conn);

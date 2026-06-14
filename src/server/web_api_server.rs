@@ -836,7 +836,7 @@ mod logs {
     use chrono::{DateTime, Utc};
     use concepts::{
         prefixed_ulid::RunId,
-        storage::{LogEntry, LogEntryRow, LogFilter, LogLevel, LogStreamType},
+        storage::{LogCursor, LogEntry, LogEntryRow, LogFilter, LogLevel, LogStreamType},
     };
     use std::fmt::Display;
 
@@ -866,8 +866,10 @@ mod logs {
         show_run_id: bool,
 
         // pagination
-        /// Cursor for pagination (`DateTime`, opaque)
-        cursor: Option<DateTime<Utc>>,
+        /// Opaque cursor for pagination. RFC 3339 timestamps are accepted for compatibility.
+        cursor: Option<String>,
+        /// Only include entries created after this timestamp.
+        after: Option<DateTime<Utc>>,
         /// Number of entries to return
         length: Option<u16>,
         /// Include the cursor item in results
@@ -923,7 +925,7 @@ mod logs {
     /// Log entry row with cursor
     #[derive(Serialize, ToSchema)]
     pub(crate) struct LogEntryRowSer {
-        /// Cursor position (`DateTime`, opaque)
+        /// Opaque cursor position
         pub cursor: String,
         /// Run ID that produced this log
         #[schema(value_type = String)]
@@ -957,7 +959,8 @@ mod logs {
     impl From<LogEntryRow> for LogEntryRowSer {
         fn from(row: LogEntryRow) -> Self {
             Self {
-                cursor: row.cursor.to_rfc3339(),
+                cursor: BASE64_STANDARD
+                    .encode(serde_json::to_vec(&row.cursor).expect("log cursor must serialize")),
                 run_id: row.run_id,
                 execution_id: row.execution_id.to_string(),
                 info: match row.log_entry {
@@ -1066,6 +1069,31 @@ mod logs {
         const DEFAULT_LENGTH: u16 = 20;
         const MAX_LENGTH_INCLUSIVE: u16 = 200;
 
+        let (cursor, legacy_after) = match params.cursor.as_deref() {
+            Some(cursor) => {
+                let opaque = BASE64_STANDARD
+                    .decode(cursor)
+                    .ok()
+                    .and_then(|decoded| serde_json::from_slice::<LogCursor>(&decoded).ok());
+                let legacy_after = DateTime::parse_from_rfc3339(cursor)
+                    .ok()
+                    .map(|created_at| created_at.with_timezone(&Utc));
+                if opaque.is_none() && legacy_after.is_none() {
+                    return Err(HttpResponse {
+                        status: StatusCode::BAD_REQUEST,
+                        message: "invalid log cursor".to_string(),
+                        accept,
+                    });
+                }
+                (opaque, legacy_after)
+            }
+            None => (None, None),
+        };
+
+        let (legacy_after, legacy_before) = match params.direction {
+            PaginationDirectionSortedFromOldest::Newer => (legacy_after, None),
+            PaginationDirectionSortedFromOldest::Older => (None, legacy_after),
+        };
         let filter = match (params.show_logs, params.show_streams) {
             (true, true) => LogFilter::show_combined(
                 params.level.into_iter().map(Into::into).collect(),
@@ -1084,19 +1112,20 @@ mod logs {
                     accept,
                 });
             }
-        };
+        }
+        .with_created_bounds(params.after.or(legacy_after), legacy_before);
 
         let length = MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH));
 
         let pagination = match params.direction {
             PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
                 length,
-                cursor: params.cursor.unwrap_or_else(Utc::now),
+                cursor: cursor.unwrap_or(LogCursor(i64::MAX)),
                 including_cursor: params.including_cursor,
             },
             PaginationDirectionSortedFromOldest::Newer => Pagination::NewerThan {
                 length,
-                cursor: params.cursor.unwrap_or(DateTime::<Utc>::UNIX_EPOCH),
+                cursor: cursor.unwrap_or(LogCursor(i64::MIN)),
                 including_cursor: params.including_cursor,
             },
         };
