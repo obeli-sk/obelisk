@@ -1437,6 +1437,7 @@ async fn fetch_logs(
     logs_url: &str,
     opts: &LogsOpts,
     cursor: Option<&str>,
+    after: Option<&str>,
     direction: &str,
 ) -> anyhow::Result<String> {
     let mut req = client
@@ -1451,6 +1452,9 @@ async fn fetch_logs(
         req = req
             .query(&[("cursor", c)])
             .query(&[("including_cursor", "false")]);
+    }
+    if let Some(after) = after {
+        req = req.query(&[("after", after)]);
     }
     let resp = req.send().await.context("failed to send logs request")?;
     let resp_status = resp.status();
@@ -1470,7 +1474,7 @@ async fn execution_logs_cmd(
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
-    let body = fetch_logs(&client, &logs_url, opts, after.as_deref(), "newer").await?;
+    let body = fetch_logs(&client, &logs_url, opts, None, after.as_deref(), "newer").await?;
     print_log_items(&body, json, opts.show_run_id, opts.show_derived)?;
     Ok(())
 }
@@ -1485,10 +1489,18 @@ async fn follow_logs(
     let client = reqwest::Client::new();
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
     let status_url = format!("{api_url}/v1/executions/{execution_id}/status");
-    let mut cursor: Option<String> = initial_after;
+    let mut cursor: Option<String> = None;
 
     loop {
-        let body = fetch_logs(&client, &logs_url, opts, cursor.as_deref(), "newer").await?;
+        let body = fetch_logs(
+            &client,
+            &logs_url,
+            opts,
+            cursor.as_deref(),
+            initial_after.as_deref(),
+            "newer",
+        )
+        .await?;
         let new_cursor = print_log_items(&body, json, opts.show_run_id, opts.show_derived)?;
         let has_items = new_cursor.is_some();
         if let Some(c) = new_cursor {

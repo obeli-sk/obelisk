@@ -1074,7 +1074,16 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "Cursor for pagination (`DateTime`, opaque)",
+            "description": "Opaque cursor for pagination. RFC 3339 timestamps are accepted for compatibility.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Only include entries created after this timestamp.",
             "required": false,
             "schema": {
               "type": "string",
@@ -2297,7 +2306,7 @@
             "properties": {
               "cursor": {
                 "type": "string",
-                "description": "Cursor position (`DateTime`, opaque)"
+                "description": "Opaque cursor position"
               },
               "execution_id": {
                 "type": "string",

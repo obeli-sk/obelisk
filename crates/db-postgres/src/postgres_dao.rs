@@ -19,8 +19,8 @@ use concepts::{
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
+        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
         RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
@@ -1450,7 +1450,7 @@ async fn list_logs_tx(
     execution_id: &ExecutionId,
     show_derived: bool,
     filter: &LogFilter,
-    pagination: &Pagination<DateTime<Utc>>,
+    pagination: &Pagination<LogCursor>,
 ) -> Result<ListLogsResponse, DbErrorRead> {
     let mut param_index = 1;
     let exec_id_str = execution_id.to_string();
@@ -1518,24 +1518,30 @@ async fn list_logs_tx(
         (None, None) => unreachable!("guarded by constructor"),
     }
 
+    let created_after = filter.created_after();
+    if let Some(created_after) = &created_after {
+        let placeholder = param_index;
+        write!(&mut query, " AND created_at > ${placeholder}").expect("writing to string");
+        params.push(created_after);
+        param_index += 1;
+    }
+    let created_before = filter.created_before();
+    if let Some(created_before) = &created_before {
+        let placeholder = param_index;
+        write!(&mut query, " AND created_at < ${placeholder}").expect("writing to string");
+        params.push(created_before);
+        param_index += 1;
+    }
+
     // Pagination
-    write!(
-        &mut query,
-        " AND created_at {} ${param_index}",
-        pagination.rel()
-    )
-    .expect("writing to string");
-    let cursor_val = pagination.cursor();
-    params.push(cursor_val);
+    let cursor = pagination.cursor();
+    write!(&mut query, " AND id {} ${param_index}", pagination.rel()).expect("writing to string");
+    params.push(&cursor.0);
     param_index += 1;
 
     // Ordering and limit
     let dir = if pagination.is_desc() { "DESC" } else { "ASC" };
-    write!(
-        &mut query,
-        " ORDER BY created_at {dir}, id {dir} LIMIT ${param_index}",
-    )
-    .expect("writing to string");
+    write!(&mut query, " ORDER BY id {dir} LIMIT ${param_index}").expect("writing to string");
     let length_val: i64 = i64::from(pagination.length());
     params.push(&length_val);
 
@@ -1597,7 +1603,7 @@ async fn list_logs_tx(
         };
 
         items.push(LogEntryRow {
-            cursor: created_at,
+            cursor: LogCursor(get(&row, "id")?),
             run_id,
             log_entry,
             execution_id,
@@ -1618,7 +1624,7 @@ async fn list_logs_tx(
                 // no prev results, let's start from beginning
                 Pagination::NewerThan {
                     length: pagination.length(),
-                    cursor: DateTime::<Utc>::UNIX_EPOCH,
+                    cursor: LogCursor(i64::MIN),
                     including_cursor: false,
                 }
             }),
@@ -1628,7 +1634,7 @@ async fn list_logs_tx(
                 cursor: item.cursor,
                 including_cursor: false,
             }),
-            None if pagination.is_asc() && pagination.cursor() > &DateTime::<Utc>::UNIX_EPOCH => {
+            None if pagination.is_asc() && pagination.cursor() != &LogCursor(i64::MIN) => {
                 // asked for a next page that does not exists (yet).
                 Some(pagination.invert())
             }
@@ -4628,7 +4634,7 @@ impl DbExternalApi for PostgresConnection {
         execution_id: &ExecutionId,
         show_derived: bool,
         filter: LogFilter,
-        pagination: Pagination<DateTime<Utc>>,
+        pagination: Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;

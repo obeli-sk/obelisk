@@ -19,8 +19,8 @@ use concepts::{
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
+        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
         RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
@@ -3122,7 +3122,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         show_derived: bool,
         filter: &LogFilter,
-        pagination: &Pagination<DateTime<Utc>>,
+        pagination: &Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let length = pagination.length();
         let exec_id_str = execution_id.to_string();
@@ -3137,12 +3137,20 @@ impl SqlitePool {
              WHERE execution_id {exec_id_filter}",
         );
 
-        let cursor_val = pagination.cursor();
-        let params = vec![
+        let cursor = pagination.cursor();
+        let created_after = filter.created_after();
+        let created_before = filter.created_before();
+        let mut params = vec![
             (":execution_id", &exec_id_str as &dyn rusqlite::ToSql),
-            (":cursor", cursor_val as &dyn rusqlite::ToSql),
+            (":cursor", &cursor.0 as &dyn rusqlite::ToSql),
             (":length", &length as &dyn rusqlite::ToSql),
         ];
+        if let Some(created_after) = &created_after {
+            params.push((":created_after", created_after as &dyn rusqlite::ToSql));
+        }
+        if let Some(created_before) = &created_before {
+            params.push((":created_before", created_before as &dyn rusqlite::ToSql));
+        }
 
         // Logs and streams filter
         let level_filter = if filter.should_show_logs() {
@@ -3195,14 +3203,16 @@ impl SqlitePool {
             (None, None) => unreachable!("guarded by constructor"),
         }
 
-        // Pagination
-        write!(&mut query, " AND created_at {} :cursor", pagination.rel())
-            .expect("writing to string");
+        if created_after.is_some() {
+            query.push_str(" AND created_at > :created_after");
+        }
+        if created_before.is_some() {
+            query.push_str(" AND created_at < :created_before");
+        }
 
-        // Ordering
-        query.push_str(" ORDER BY created_at ");
-        query.push_str(pagination.asc_or_desc());
-        query.push_str(", id ");
+        // Pagination and ordering
+        write!(&mut query, " AND id {} :cursor", pagination.rel()).expect("writing to string");
+        query.push_str(" ORDER BY id ");
         query.push_str(pagination.asc_or_desc());
 
         // Limit
@@ -3243,7 +3253,7 @@ impl SqlitePool {
                     }
                 };
                 Ok(LogEntryRow {
-                    cursor: created_at,
+                    cursor: LogCursor(row.get("id")?),
                     run_id,
                     log_entry,
                     execution_id,
@@ -3266,8 +3276,8 @@ impl SqlitePool {
                         // no prev results, let's start from beginning
                         Pagination::NewerThan {
                             length: pagination.length(),
-                            cursor: DateTime::<Utc>::UNIX_EPOCH,
-                            including_cursor: true,
+                            cursor: LogCursor(i64::MIN),
+                            including_cursor: false,
                         }
                     }
                 }),
@@ -3277,9 +3287,7 @@ impl SqlitePool {
                     cursor: item.cursor,
                     including_cursor: false,
                 }),
-                None if pagination.is_asc()
-                    && pagination.cursor() > &DateTime::<Utc>::UNIX_EPOCH =>
-                {
+                None if pagination.is_asc() && pagination.cursor() != &LogCursor(i64::MIN) => {
                     // asked for a next page that does not exists (yet).
                     Some(pagination.invert())
                 }
@@ -4525,7 +4533,7 @@ impl DbExternalApi for SqlitePool {
         execution_id: &ExecutionId,
         show_derived: bool,
         filter: LogFilter,
-        pagination: Pagination<DateTime<Utc>>,
+        pagination: Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
         self.transaction(

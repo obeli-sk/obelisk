@@ -4,7 +4,7 @@ expression: logs
 ---
 [
   {
-    "cursor": "<TIMESTAMP>",
+    "cursor": "MQ==",
     "run_id": "Run_<REDACTED>",
     "execution_id": "E_<REDACTED>",
     "type": "log",

@@ -29,6 +29,7 @@ use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION;
+use concepts::storage::LogCursor;
 use concepts::storage::LogFilter;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
@@ -1133,7 +1134,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         } else {
             Pagination::NewerThan {
                 length,
-                cursor: DateTime::<Utc>::UNIX_EPOCH,
+                cursor: LogCursor(i64::MIN),
                 including_cursor: false,
             }
         };
@@ -1275,11 +1276,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum ListLogsPagination {
-    NewerThan { cursor: DateTime<Utc> },
-    OlderThan { cursor: DateTime<Utc> },
+    NewerThan { cursor: LogCursor },
+    OlderThan { cursor: LogCursor },
 }
-impl From<Pagination<DateTime<Utc>>> for ListLogsPagination {
-    fn from(value: Pagination<DateTime<Utc>>) -> Self {
+impl From<Pagination<LogCursor>> for ListLogsPagination {
+    fn from(value: Pagination<LogCursor>) -> Self {
         match value {
             Pagination::NewerThan { cursor, .. } => ListLogsPagination::NewerThan { cursor },
             Pagination::OlderThan { cursor, .. } => ListLogsPagination::OlderThan { cursor },

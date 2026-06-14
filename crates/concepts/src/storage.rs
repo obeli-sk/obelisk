@@ -1486,7 +1486,7 @@ pub trait DbExternalApi: DbConnection {
         execution_id: &ExecutionId,
         show_derived: bool,
         filter: LogFilter,
-        pagination: Pagination<DateTime<Utc>>,
+        pagination: Pagination<LogCursor>,
     ) -> Result<ListLogsResponse, DbErrorRead>;
 
     async fn list_deployment_states(
@@ -1698,8 +1698,8 @@ impl From<FunctionMetadata> for PersistedFunctionMetadata {
 #[derive(Debug)]
 pub struct ListLogsResponse {
     pub items: Vec<LogEntryRow>,
-    pub next_page: Pagination<DateTime<Utc>>, // Newer logs can always arrive e.g. via replay
-    pub prev_page: Option<Pagination<DateTime<Utc>>>, // None if we are already at the beginning
+    pub next_page: Pagination<LogCursor>, // Newer logs can always arrive e.g. via replay
+    pub prev_page: Option<Pagination<LogCursor>>, // None if we are already at the beginning
 }
 
 #[derive(Debug)]
@@ -1708,6 +1708,8 @@ pub struct LogFilter {
     show_streams: bool,
     levels: Vec<LogLevel>, // Only applied if `show_logs` = true, empty means return all levels.
     stream_types: Vec<LogStreamType>, // Only applied if `show_streams` = true, empty means return all stream types.
+    created_after: Option<DateTime<Utc>>,
+    created_before: Option<DateTime<Utc>>,
 }
 impl LogFilter {
     // Constructor for logs only
@@ -1718,6 +1720,8 @@ impl LogFilter {
             show_streams: false,
             levels,
             stream_types: Vec::new(),
+            created_after: None,
+            created_before: None,
         }
     }
     // Constructor for streams only
@@ -1728,6 +1732,8 @@ impl LogFilter {
             show_streams: true,
             levels: Vec::new(),
             stream_types,
+            created_after: None,
+            created_before: None,
         }
     }
     // Constructor for both logs and streams
@@ -1738,6 +1744,8 @@ impl LogFilter {
             show_streams: true,
             levels,
             stream_types,
+            created_after: None,
+            created_before: None,
         }
     }
     // Getters
@@ -1756,6 +1764,24 @@ impl LogFilter {
     #[must_use]
     pub fn stream_types(&self) -> &Vec<LogStreamType> {
         &self.stream_types
+    }
+    #[must_use]
+    pub fn with_created_bounds(
+        mut self,
+        created_after: Option<DateTime<Utc>>,
+        created_before: Option<DateTime<Utc>>,
+    ) -> Self {
+        self.created_after = created_after;
+        self.created_before = created_before;
+        self
+    }
+    #[must_use]
+    pub fn created_after(&self) -> Option<DateTime<Utc>> {
+        self.created_after
+    }
+    #[must_use]
+    pub fn created_before(&self) -> Option<DateTime<Utc>> {
+        self.created_before
     }
 }
 
@@ -1935,11 +1961,14 @@ pub struct LogInfoAppendRow {
 
 #[derive(Debug, Clone)]
 pub struct LogEntryRow {
-    pub cursor: DateTime<Utc>,
+    pub cursor: LogCursor,
     pub run_id: RunId,
     pub log_entry: LogEntry,
     pub execution_id: ExecutionId,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogCursor(pub i64);
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
