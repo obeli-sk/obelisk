@@ -198,6 +198,7 @@ impl Server {
                 server_config,
                 deployment,
                 empty: deployment_empty,
+                description,
                 suppress_type_checking_errors,
             } => {
                 Box::pin(run(
@@ -206,6 +207,7 @@ impl Server {
                     server_config,
                     deployment,
                     deployment_empty,
+                    description,
                     RunParams {
                         dir_params: PrepareDirsParams {
                             clean_cache,
@@ -416,6 +418,7 @@ pub(crate) async fn run(
     server_config: Option<PathBuf>,
     deployment: Option<PathBuf>,
     deployment_empty: bool,
+    description: Option<String>,
     params: RunParams,
 ) -> anyhow::Result<()> {
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
@@ -429,6 +432,9 @@ pub(crate) async fn run(
     } else {
         None
     };
+    if description.is_some() && deployment.is_none() {
+        anyhow::bail!("--description requires --deployment or --empty");
+    }
 
     let (termination_sender, termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
@@ -438,6 +444,7 @@ pub(crate) async fn run(
     Box::pin(run_internal(
         config,
         deployment,
+        description,
         config_holder.path_prefixes,
         params,
         prepared_dirs,
@@ -810,6 +817,7 @@ async fn insert_and_activate_deployment(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_id: DeploymentId,
     config_json: String,
+    description: Option<String>,
 ) -> anyhow::Result<()> {
     use chrono::Utc;
     use concepts::storage::{DeploymentRecord, DeploymentStatus};
@@ -823,6 +831,7 @@ async fn insert_and_activate_deployment(
     api_conn
         .insert_deployment(DeploymentRecord {
             deployment_id,
+            description,
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
@@ -869,6 +878,7 @@ pub(crate) fn create_engines(
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
     deployment: Option<DeploymentCanonical>,
+    description: Option<String>,
     path_prefixes: PathPrefixes,
     params: RunParams,
     prepared_dirs: PreparedDirs,
@@ -935,7 +945,8 @@ pub(crate) async fn run_internal(
         let new_deployment_id = DeploymentId::generate();
         span.record("deployment_id", tracing::field::display(&new_deployment_id));
         let config_json = crate::config::toml::compute_config_json(&deployment);
-        insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json).await?;
+        insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json, description)
+            .await?;
         info!("Activated new deployment");
         (new_deployment_id, deployment)
     } else {
@@ -975,7 +986,7 @@ pub(crate) async fn run_internal(
             info!("No deployment found in DB; starting with empty deployment");
             let config_json =
                 crate::config::toml::compute_config_json(&DeploymentCanonical::default());
-            insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json).await?;
+            insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json, None).await?;
 
             (new_deployment_id, DeploymentCanonical::default())
         }
@@ -1484,11 +1495,13 @@ pub(crate) async fn persist_deployment_component_metadata(
 /// Shared logic for submitting a deployment (used by both gRPC and web API).
 /// Parses, verifies, and inserts the deployment record.
 #[instrument(skip_all)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
     config_json: &str,
     verify: bool,
     created_by: Option<String>,
+    description: Option<String>,
     prepared_dirs: &PreparedDirs,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
@@ -1524,6 +1537,7 @@ pub(crate) async fn submit_deployment(
 
     conn.insert_deployment(DeploymentRecord {
         deployment_id,
+        description,
         created_at: now,
         last_active_at: None,
         status: DeploymentStatus::Inactive,

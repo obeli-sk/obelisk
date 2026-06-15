@@ -564,6 +564,7 @@ impl TestServer {
             Box::pin(run_internal(
                 config,
                 Some(deployment_toml),
+                None,
                 config_holder.path_prefixes,
                 params,
                 prepared_dirs,
@@ -937,6 +938,7 @@ impl TestDeployClient {
                         config_json: new_config_json,
                         created_by: Some("test".to_string()),
                         verify: false,
+                        description: None,
                     })
                     .await
                     .unwrap()

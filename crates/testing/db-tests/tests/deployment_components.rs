@@ -30,6 +30,7 @@ fn mk_deployment_record(
 ) -> DeploymentRecord {
     DeploymentRecord {
         deployment_id,
+        description: None,
         created_at: now,
         last_active_at: None,
         status: DeploymentStatus::Inactive,

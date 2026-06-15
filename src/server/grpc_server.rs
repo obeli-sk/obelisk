@@ -1691,6 +1691,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             &request.config_json,
             request.verify,
             request.created_by.clone(),
+            request.description.clone(),
             &self.prepared_dirs,
             self.db_pool.clone(),
             &mut termination_watcher,
@@ -1747,6 +1748,7 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
         created_at: Some(prost_wkt_types::Timestamp::from(record.created_at)),
         last_active_at: record.last_active_at.map(prost_wkt_types::Timestamp::from),
         config_json: Some(record.config_json),
+        description: record.description,
     }
 }
 
@@ -1757,6 +1759,7 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
         created_at: Some(prost_wkt_types::Timestamp::from(dep.created_at)),
         last_active_at: dep.last_active_at.map(prost_wkt_types::Timestamp::from),
         config_json: dep.config_json,
+        description: dep.description,
     };
     grpc_gen::DeploymentSummary {
         deployment: Some(deployment),

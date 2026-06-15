@@ -18,6 +18,7 @@ impl args::Deployment {
                 file,
                 empty,
                 verify,
+                description,
                 api_url,
             } => {
                 let config_json = load_config_json_from_file_or_empty(file, empty).await?;
@@ -28,6 +29,7 @@ impl args::Deployment {
                         config_json,
                         created_by: Some("cli".to_string()),
                         verify,
+                        description,
                     })
                     .await?
                     .into_inner();
@@ -40,6 +42,7 @@ impl args::Deployment {
                 source,
                 empty,
                 verify,
+                description,
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
@@ -49,6 +52,7 @@ impl args::Deployment {
                     source,
                     empty,
                     false, // will be verified in switch
+                    description,
                 )
                 .await?;
                 switch_deployment(
@@ -63,6 +67,7 @@ impl args::Deployment {
             args::Deployment::Apply {
                 source,
                 empty,
+                description,
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
@@ -72,6 +77,7 @@ impl args::Deployment {
                     source,
                     empty,
                     false, // will be verified in switch
+                    description,
                 )
                 .await?;
                 switch_deployment(
@@ -101,7 +107,7 @@ impl args::Deployment {
                 }
 
                 println!(
-                    "{:<32}  {:<12}  {:<19}  {:<19}",
+                    "{:<32}  {:<12}  {:<19}  {:<19}  DESCRIPTION",
                     "ID", "STATUS", "CREATED_AT", "LAST_ACTIVE_AT"
                 );
                 for summary in resp.deployments {
@@ -122,7 +128,10 @@ impl args::Deployment {
                             dt.format("%Y-%m-%d %H:%M:%S").to_string()
                         })
                         .unwrap_or_default();
-                    println!("{id:<32}  {status:<12}  {created:<19}  {last_active:<19}");
+                    println!(
+                        "{id:<32}  {status:<12}  {created:<19}  {last_active:<19}  {}",
+                        dep.description.unwrap_or_default()
+                    );
                 }
                 Ok(())
             }
@@ -157,10 +166,14 @@ async fn submit_deployment(
     source: Option<DeploymentSource>,
     empty: bool,
     verify: bool,
+    description: Option<String>,
 ) -> anyhow::Result<DeploymentId> {
     assert_ne!(source.is_some(), empty);
     let config_json = match source {
         Some(DeploymentSource::Id(id)) => {
+            if description.is_some() {
+                bail!("--description cannot be used with an existing deployment ID");
+            }
             return Ok(id);
         }
         Some(DeploymentSource::File(path)) => load_config_json(path).await?,
@@ -171,6 +184,7 @@ async fn submit_deployment(
             config_json,
             created_by: Some("cli".to_string()),
             verify,
+            description,
         })
         .await?
         .into_inner();
