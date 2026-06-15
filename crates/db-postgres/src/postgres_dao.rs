@@ -316,7 +316,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
     Ok(DeploymentRecord {
         deployment_id,
         description: get(row, "description")?,
-        digest: deployment_digest_from_pg_row(row)?,
+        digest: get(row, "digest")?,
         created_at: get(row, "created_at")?,
         last_active_at: get(row, "last_active_at")?,
         status,

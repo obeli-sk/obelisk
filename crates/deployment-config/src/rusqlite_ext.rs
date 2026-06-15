@@ -1,5 +1,5 @@
 use crate::{
-    ComponentType, FunctionFqn,
+    ComponentType, ContentDigest, FunctionFqn,
     component_id::{ComponentDigest, Digest},
 };
 use rusqlite::{
@@ -54,6 +54,19 @@ impl ToSql for ComponentType {
     }
 }
 impl FromSql for ComponentType {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let str = value.as_str()?;
+        str.parse::<Self>().map_err(|err| {
+            error!(
+                "Cannot convert to {} value:`{str}` - {err:?}",
+                std::any::type_name::<Self>()
+            );
+            FromSqlError::InvalidType
+        })
+    }
+}
+
+impl FromSql for ContentDigest {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         let str = value.as_str()?;
         str.parse::<Self>().map_err(|err| {

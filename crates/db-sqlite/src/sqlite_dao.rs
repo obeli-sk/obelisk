@@ -2,8 +2,8 @@ use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
-    JoinSetId, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ExecutionId, FunctionFqn, JoinSetId,
+    StrVariant, SupportedFunctionReturnValue,
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
@@ -416,13 +416,6 @@ impl Default for SqliteConfig {
 
 struct ShutdownRequested;
 
-fn deployment_digest_from_row(row: &Row<'_>) -> rusqlite::Result<ContentDigest> {
-    let digest: String = row.get("digest")?;
-    digest.parse::<ContentDigest>().map_err(|_| {
-        rusqlite::Error::InvalidColumnType(0, "digest".to_string(), rusqlite::types::Type::Text)
-    })
-}
-
 fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecord> {
     let deployment_id: DeploymentId = row.get("deployment_id")?;
     let status_str: String = row.get("status")?;
@@ -432,7 +425,7 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
     Ok(DeploymentRecord {
         deployment_id,
         description: row.get("description")?,
-        digest: deployment_digest_from_row(row)?,
+        digest: row.get("digest")?,
         created_at: row.get("created_at")?,
         last_active_at: row.get("last_active_at")?,
         status,
@@ -3400,7 +3393,7 @@ impl SqlitePool {
                     Ok(DeploymentState {
                         deployment_id: row.get("deployment_id")?,
                         description: row.get("description")?,
-                        digest: deployment_digest_from_row(row)?,
+                        digest: row.get("digest")?,
                         locked: row.get("locked")?,
                         pending: row.get("pending")?,
                         scheduled: row.get("scheduled")?,

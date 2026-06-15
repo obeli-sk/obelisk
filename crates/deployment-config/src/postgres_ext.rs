@@ -1,5 +1,5 @@
-use crate::component_id::ComponentDigest;
-use tokio_postgres::types::ToSql;
+use crate::{ContentDigest, component_id::ComponentDigest};
+use tokio_postgres::types::{FromSql, ToSql};
 
 impl ToSql for ComponentDigest {
     fn to_sql(
@@ -21,5 +21,19 @@ impl ToSql for ComponentDigest {
         out: &mut tokio_postgres::types::private::BytesMut,
     ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
         self.as_slice().to_sql_checked(ty, out)
+    }
+}
+
+impl<'a> FromSql<'a> for ContentDigest {
+    fn from_sql(
+        ty: &tokio_postgres::types::Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        let str = <&str as FromSql>::from_sql(ty, raw)?;
+        Ok(str.parse::<ContentDigest>()?)
+    }
+
+    fn accepts(ty: &tokio_postgres::types::Type) -> bool {
+        <&str as FromSql>::accepts(ty)
     }
 }
