@@ -645,6 +645,10 @@
               "help": "Optional human-readable description"
             },
             {
+              "name": "--deployment-id",
+              "help": "Optional client-supplied deployment ID for idempotent submission"
+            },
+            {
               "name": "--api-url",
               "short": "a",
               "help": "Address of the obelisk server"
@@ -677,6 +681,10 @@
               "help": "Optional human-readable description for a newly submitted deployment"
             },
             {
+              "name": "--deployment-id",
+              "help": "Optional client-supplied deployment ID for idempotent submission"
+            },
+            {
               "name": "--api-url",
               "short": "a",
               "help": "Address of the obelisk server"
@@ -700,6 +708,10 @@
             {
               "name": "--description",
               "help": "Optional human-readable description for a newly submitted deployment"
+            },
+            {
+              "name": "--deployment-id",
+              "help": "Optional client-supplied deployment ID for idempotent submission"
             },
             {
               "name": "--api-url",
@@ -1002,6 +1014,17 @@
         {
           "name": "execution-id",
           "about": "Generate a fresh random execution ID and print it to stdout",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of plain text"
+            }
+          ]
+        },
+        {
+          "name": "deployment-id",
+          "about": "Generate a fresh random deployment ID and print it to stdout",
           "options": [
             {
               "name": "--json",

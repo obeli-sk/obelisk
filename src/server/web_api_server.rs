@@ -3307,6 +3307,10 @@ mod deployment {
         /// Verify all environment variables before persisting
         #[serde(default)]
         pub verify: bool,
+        /// Optional client-supplied deployment ID for idempotent submission.
+        /// If a deployment with this ID already exists and its content digest
+        /// matches, the submission is a no-op; a digest mismatch is rejected.
+        pub deployment_id: Option<String>,
     }
 
     /// Submit a new deployment
@@ -3327,6 +3331,16 @@ mod deployment {
         accept: AcceptHeader,
         Json(payload): Json<DeploymentSubmitPayload>,
     ) -> Result<Response, HttpResponse> {
+        let requested_deployment_id = payload
+            .deployment_id
+            .as_deref()
+            .map(str::parse::<DeploymentId>)
+            .transpose()
+            .map_err(|err| HttpResponse {
+                status: StatusCode::BAD_REQUEST,
+                message: format!("invalid deployment_id: {err}"),
+                accept,
+            })?;
         let mut termination_watcher = state.termination_watcher.clone();
         let result = Box::pin(crate::command::server::submit_deployment(
             state.server_verified.clone(),
@@ -3334,6 +3348,7 @@ mod deployment {
             payload.verify,
             Some("web-api".to_string()),
             payload.description,
+            requested_deployment_id,
             &state.prepared_dirs,
             state.db_pool.clone(),
             &mut termination_watcher,

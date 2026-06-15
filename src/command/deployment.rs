@@ -19,6 +19,7 @@ impl args::Deployment {
                 empty,
                 verify,
                 description,
+                deployment_id,
                 api_url,
             } => {
                 let config_json = load_config_json_from_file_or_empty(file, empty).await?;
@@ -30,6 +31,7 @@ impl args::Deployment {
                         created_by: Some("cli".to_string()),
                         verify,
                         description,
+                        deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
                     })
                     .await?
                     .into_inner();
@@ -43,6 +45,7 @@ impl args::Deployment {
                 empty,
                 verify,
                 description,
+                deployment_id,
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
@@ -53,6 +56,7 @@ impl args::Deployment {
                     empty,
                     false, // will be verified in switch
                     description,
+                    deployment_id,
                 )
                 .await?;
                 switch_deployment(
@@ -68,6 +72,7 @@ impl args::Deployment {
                 source,
                 empty,
                 description,
+                deployment_id,
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
@@ -78,6 +83,7 @@ impl args::Deployment {
                     empty,
                     false, // will be verified in switch
                     description,
+                    deployment_id,
                 )
                 .await?;
                 switch_deployment(
@@ -167,12 +173,16 @@ async fn submit_deployment(
     empty: bool,
     verify: bool,
     description: Option<String>,
+    deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
     assert_ne!(source.is_some(), empty);
     let config_json = match source {
         Some(DeploymentSource::Id(id)) => {
             if description.is_some() {
                 bail!("--description cannot be used with an existing deployment ID");
+            }
+            if deployment_id.is_some() {
+                bail!("--deployment-id cannot be used with an existing deployment ID source");
             }
             return Ok(id);
         }
@@ -185,6 +195,7 @@ async fn submit_deployment(
             created_by: Some("cli".to_string()),
             verify,
             description,
+            deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
         })
         .await?
         .into_inner();

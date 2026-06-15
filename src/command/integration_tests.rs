@@ -875,6 +875,26 @@ impl TestServer {
             .expect("webapi submit deployment: invalid deployment id")
     }
 
+    /// Submit a deployment via the Web API with an explicit (idempotency) deployment ID,
+    /// returning the raw response so callers can assert on success or conflict.
+    async fn webapi_submit_deployment_with_id(
+        &self,
+        config_json: &str,
+        deployment_id: DeploymentId,
+    ) -> reqwest::Response {
+        self.client
+            .post(format!("{}/v1/deployments", self.base_url))
+            .header("Accept", "application/json")
+            .json(&json!({
+                "config_json": config_json,
+                "verify": false,
+                "deployment_id": deployment_id.to_string(),
+            }))
+            .send()
+            .await
+            .expect("webapi submit deployment request failed")
+    }
+
     /// Hot-redeploy to the given deployment via the Web API.
     async fn webapi_switch_hot_redeploy(&self, deployment_id: DeploymentId) {
         let resp = self
@@ -939,6 +959,7 @@ impl TestDeployClient {
                         created_by: Some("test".to_string()),
                         verify: false,
                         description: None,
+                        deployment_id: None,
                     })
                     .await
                     .unwrap()
@@ -1652,6 +1673,79 @@ async fn list_components_grpc_filters_with_explicit_deployment_id() {
     assert_eq!(
         NEW_STUB_NAME,
         filtered.components[0].component_id.as_ref().unwrap().name
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
+    let server = TestServer::start(test_addr!(40_104)).await;
+
+    // Read the active deployment's canonical config so we can resubmit it verbatim.
+    let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+        .await
+        .unwrap();
+    let conn = pool.external_api_conn().await.unwrap();
+    let active = conn.get_active_deployment().await.unwrap().unwrap();
+    pool.close().await;
+    let canonical: DeploymentCanonical = serde_json::from_str(&active.config_json).unwrap();
+    let config_json = crate::config::toml::compute_config_json(&canonical);
+
+    let deployment_id = DeploymentId::generate();
+
+    // First submission under the explicit ID creates the deployment.
+    let resp1 = server
+        .webapi_submit_deployment_with_id(&config_json, deployment_id)
+        .await;
+    assert!(
+        resp1.status().is_success(),
+        "first submit failed: {}",
+        resp1.status()
+    );
+    let body1: Value = resp1.json().await.unwrap();
+    let returned1: DeploymentId = body1["ok"].as_str().unwrap().parse().unwrap();
+    assert_eq!(deployment_id, returned1, "explicit ID must be honored");
+
+    // Resubmitting the identical config under the same ID is an idempotent no-op.
+    let resp2 = server
+        .webapi_submit_deployment_with_id(&config_json, deployment_id)
+        .await;
+    assert!(
+        resp2.status().is_success(),
+        "idempotent resubmit failed: {}",
+        resp2.status()
+    );
+    let body2: Value = resp2.json().await.unwrap();
+    let returned2: DeploymentId = body2["ok"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        deployment_id, returned2,
+        "no-op resubmit must return same ID"
+    );
+
+    // Submitting a different config under the same ID is rejected as a digest conflict.
+    let mut mutated: DeploymentCanonical = serde_json::from_str(&active.config_json).unwrap();
+    mutated
+        .activities_stub
+        .push(ActivityStubComponentConfigCanonical::Inline(
+            ActivityStubExtInlineConfigCanonical {
+                name: ConfigName::new(concepts::StrVariant::from("idempotency_conflict_stub"))
+                    .unwrap(),
+                ffqn: "testing:integration/stubs.idempotency-conflict"
+                    .parse()
+                    .unwrap(),
+                params: Some(vec![]),
+                return_type: Some("result<string, string>".to_string()),
+            },
+        ));
+    let mutated_json = crate::config::toml::compute_config_json(&mutated);
+    let resp3 = server
+        .webapi_submit_deployment_with_id(&mutated_json, deployment_id)
+        .await;
+    assert_eq!(
+        resp3.status(),
+        reqwest::StatusCode::BAD_REQUEST,
+        "different config under same ID must be rejected as a digest conflict"
     );
 
     server.shutdown().await;
