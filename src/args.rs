@@ -105,6 +105,9 @@ pub(crate) enum Deployment {
         /// Verify all environment variables before persisting.
         #[arg(long)]
         verify: bool,
+        /// Optional human-readable description.
+        #[arg(long)]
+        description: Option<String>,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -124,6 +127,9 @@ pub(crate) enum Deployment {
         /// Verify all environment variables before enqueuing.
         #[arg(long)]
         verify: bool,
+        /// Optional human-readable description for a newly submitted deployment.
+        #[arg(long)]
+        description: Option<String>,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -140,6 +146,9 @@ pub(crate) enum Deployment {
         /// Apply an empty deployment with no components.
         #[arg(long)]
         empty: bool,
+        /// Optional human-readable description for a newly submitted deployment.
+        #[arg(long)]
+        description: Option<String>,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -317,6 +326,9 @@ pub(crate) enum Server {
         /// Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC.
         #[arg(long)]
         empty: bool,
+        /// Optional human-readable description for the deployment created by --deployment or --empty.
+        #[arg(long)]
+        description: Option<String>,
         /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
         #[arg(long, short)]
         suppress_type_checking_errors: bool,

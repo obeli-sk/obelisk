@@ -49,6 +49,10 @@
               "help": "Start with an empty deployment, ignoring any Enqueued or Active deployment in the database. Useful for recovering from a faulty deployment: start empty, then push a new deployment or switch to existing via gRPC"
             },
             {
+              "name": "--description",
+              "help": "Optional human-readable description for the deployment created by --deployment or --empty"
+            },
+            {
               "name": "--suppress-type-checking-errors",
               "short": "s",
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
@@ -637,6 +641,10 @@
               "help": "Verify all environment variables before persisting"
             },
             {
+              "name": "--description",
+              "help": "Optional human-readable description"
+            },
+            {
               "name": "--api-url",
               "short": "a",
               "help": "Address of the obelisk server"
@@ -665,6 +673,10 @@
               "help": "Verify all environment variables before enqueuing"
             },
             {
+              "name": "--description",
+              "help": "Optional human-readable description for a newly submitted deployment"
+            },
+            {
               "name": "--api-url",
               "short": "a",
               "help": "Address of the obelisk server"
@@ -684,6 +696,10 @@
             {
               "name": "--empty",
               "help": "Apply an empty deployment with no components"
+            },
+            {
+              "name": "--description",
+              "help": "Optional human-readable description for a newly submitted deployment"
             },
             {
               "name": "--api-url",

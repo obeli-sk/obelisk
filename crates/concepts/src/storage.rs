@@ -1568,6 +1568,7 @@ pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<Deploymen
 
 pub struct DeploymentState {
     pub deployment_id: DeploymentId,
+    pub description: Option<String>,
     pub locked: u32,
     // In `PendingAt` state, scheduled to present or past
     pub pending: u32,
@@ -1621,6 +1622,7 @@ impl std::str::FromStr for DeploymentStatus {
 #[derive(Debug, Clone)]
 pub struct DeploymentRecord {
     pub deployment_id: DeploymentId,
+    pub description: Option<String>,
     pub created_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,

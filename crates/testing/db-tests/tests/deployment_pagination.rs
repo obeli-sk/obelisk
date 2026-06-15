@@ -38,6 +38,7 @@ async fn create_deployment_with_execution(
         db_connection
             .insert_deployment(DeploymentRecord {
                 deployment_id,
+                description: None,
                 created_at: now,
                 last_active_at: None,
                 status: DeploymentStatus::Inactive,

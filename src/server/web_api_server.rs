@@ -3061,6 +3061,8 @@ mod deployment {
         /// Deployment identifier
         #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
         pub deployment_id: DeploymentId,
+        /// Optional human-readable deployment description
+        pub description: Option<String>,
         /// Deployment lifecycle status
         pub status: DeploymentStatusSer,
         /// When this deployment was submitted
@@ -3089,6 +3091,7 @@ mod deployment {
         fn from(deployment_state: &DeploymentState) -> Self {
             Self {
                 deployment_id: deployment_state.deployment_id,
+                description: deployment_state.description.clone(),
                 status: DeploymentStatusSer::from(&deployment_state.status),
                 created_at: deployment_state.created_at,
                 last_active_at: deployment_state.last_active_at,
@@ -3210,6 +3213,7 @@ mod deployment {
     pub struct DeploymentRecordSer {
         #[schema(value_type = String)]
         pub deployment_id: DeploymentId,
+        pub description: Option<String>,
         pub status: DeploymentStatusSer,
         pub created_at: DateTime<Utc>,
         pub last_active_at: Option<DateTime<Utc>>,
@@ -3220,6 +3224,7 @@ mod deployment {
         fn from(r: &DeploymentRecord) -> Self {
             Self {
                 deployment_id: r.deployment_id,
+                description: r.description.clone(),
                 status: DeploymentStatusSer::from(&r.status),
                 created_at: r.created_at,
                 last_active_at: r.last_active_at,
@@ -3265,7 +3270,7 @@ mod deployment {
                 let mut output = String::new();
                 writeln!(
                     &mut output,
-                    "{} status={} created={} last_active={} config={}",
+                    "{} status={} created={} last_active={} description={} config={}",
                     ser.deployment_id,
                     match ser.status {
                         DeploymentStatusSer::Inactive => "inactive",
@@ -3276,6 +3281,7 @@ mod deployment {
                     ser.last_active_at
                         .map(|t| t.to_rfc3339())
                         .unwrap_or_default(),
+                    ser.description.unwrap_or_default(),
                     ser.config_json,
                 )
                 .expect("writing to string");
@@ -3289,6 +3295,8 @@ mod deployment {
     pub struct DeploymentSubmitPayload {
         /// Deployment config as JSON string
         pub config_json: String,
+        /// Optional human-readable deployment description
+        pub description: Option<String>,
         /// Verify all environment variables before persisting
         #[serde(default)]
         pub verify: bool,
@@ -3318,6 +3326,7 @@ mod deployment {
             &payload.config_json,
             payload.verify,
             Some("web-api".to_string()),
+            payload.description,
             &state.prepared_dirs,
             state.db_pool.clone(),
             &mut termination_watcher,

@@ -1944,6 +1944,12 @@
           "deployment_id": {
             "type": "string"
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "last_active_at": {
             "type": [
               "string",
@@ -1988,6 +1994,13 @@
             "type": "string",
             "description": "Deployment identifier",
             "example": "Dep_01JKXYZ123456789ABCDEFGHIJ"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional human-readable deployment description"
           },
           "finished_error": {
             "type": "integer",
@@ -2063,6 +2076,13 @@
           "config_json": {
             "type": "string",
             "description": "Deployment config as JSON string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional human-readable deployment description"
           },
           "verify": {
             "type": "boolean",
