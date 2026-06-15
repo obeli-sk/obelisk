@@ -2087,6 +2087,13 @@
             "type": "string",
             "description": "Deployment config as JSON string"
           },
+          "deployment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional client-supplied deployment ID for idempotent submission.\nIf a deployment with this ID already exists and its content digest\nmatches, the submission is a no-op; a digest mismatch is rejected."
+          },
           "description": {
             "type": [
               "string",

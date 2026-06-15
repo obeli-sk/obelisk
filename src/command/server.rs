@@ -1504,6 +1504,7 @@ pub(crate) async fn submit_deployment(
     verify: bool,
     created_by: Option<String>,
     description: Option<String>,
+    requested_deployment_id: Option<DeploymentId>,
     prepared_dirs: &PreparedDirs,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
@@ -1513,6 +1514,26 @@ pub(crate) async fn submit_deployment(
         serde_json::from_str(config_json).with_context(|| "cannot parse config_json")?;
 
     let canonical_config = crate::config::toml::compute_config_json(&deployment);
+    let digest = DeploymentRecord::compute_digest(&canonical_config);
+
+    let conn = db_pool.external_api_conn().await?;
+
+    // Idempotent submission: if the caller supplied a deployment ID that already
+    // exists, return it as a no-op when the content digest matches (skipping the
+    // expensive verify/compile/link), and reject a digest mismatch as a conflict.
+    if let Some(requested_deployment_id) = requested_deployment_id
+        && let Some(existing) = conn.get_deployment(requested_deployment_id).await?
+    {
+        if existing.digest == digest {
+            info!(%requested_deployment_id, "Deployment already exists with matching digest, returning existing ID");
+            return Ok(requested_deployment_id);
+        }
+        bail!(
+            "deployment {requested_deployment_id} already exists with a different content digest \
+             (existing {}, submitted {digest}); use a fresh deployment ID",
+            existing.digest
+        );
+    }
 
     let verify_deployment_id = DeploymentId::generate();
     let server_compiled = deployment_verify_config_compile_link(
@@ -1533,10 +1554,8 @@ pub(crate) async fn submit_deployment(
     )
     .await?;
 
-    let deployment_id = DeploymentId::generate();
-    let conn = db_pool.external_api_conn().await?;
+    let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
     let now = chrono::Utc::now();
-    let digest = DeploymentRecord::compute_digest(&canonical_config);
 
     conn.insert_deployment(DeploymentRecord {
         deployment_id,

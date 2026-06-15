@@ -108,6 +108,13 @@ pub(crate) enum Deployment {
         /// Optional human-readable description.
         #[arg(long)]
         description: Option<String>,
+        /// Optional client-supplied deployment ID for idempotent submission.
+        ///
+        /// If a deployment with this ID already exists and its content digest
+        /// matches, the submission is a no-op; a digest mismatch is an error.
+        /// Generate one with `obelisk generate deployment-id`.
+        #[arg(long)]
+        deployment_id: Option<DeploymentId>,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -130,6 +137,13 @@ pub(crate) enum Deployment {
         /// Optional human-readable description for a newly submitted deployment.
         #[arg(long)]
         description: Option<String>,
+        /// Optional client-supplied deployment ID for idempotent submission.
+        ///
+        /// Only valid when submitting a file/empty deployment, not when `source`
+        /// is an existing deployment ID. Generate one with
+        /// `obelisk generate deployment-id`.
+        #[arg(long)]
+        deployment_id: Option<DeploymentId>,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -149,6 +163,13 @@ pub(crate) enum Deployment {
         /// Optional human-readable description for a newly submitted deployment.
         #[arg(long)]
         description: Option<String>,
+        /// Optional client-supplied deployment ID for idempotent submission.
+        ///
+        /// Only valid when submitting a file/empty deployment, not when `source`
+        /// is an existing deployment ID. Generate one with
+        /// `obelisk generate deployment-id`.
+        #[arg(long)]
+        deployment_id: Option<DeploymentId>,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
@@ -284,6 +305,15 @@ pub(crate) enum Generate {
     },
     /// Generate a fresh random execution ID and print it to stdout.
     ExecutionId {
+        /// Output as JSON instead of plain text.
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Generate a fresh random deployment ID and print it to stdout.
+    ///
+    /// The ID can be passed to `deployment submit/enqueue/apply --deployment-id`
+    /// for idempotent submission.
+    DeploymentId {
         /// Output as JSON instead of plain text.
         #[arg(short, long)]
         json: bool,

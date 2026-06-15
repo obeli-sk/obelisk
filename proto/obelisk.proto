@@ -1100,6 +1100,11 @@ message SubmitDeploymentRequest {
     // Verify all environment variables before persisting the deployment.
     bool verify = 3;
     optional string description = 4;
+    // Optional client-supplied deployment ID for idempotent submission.
+    // If a deployment with this ID already exists and its content digest matches
+    // the submitted config, the submission is a no-op and returns this ID.
+    // A digest mismatch is rejected. When unset, a fresh ID is generated.
+    optional DeploymentId deployment_id = 5;
 }
 message SubmitDeploymentResponse {
     DeploymentId deployment_id = 1;

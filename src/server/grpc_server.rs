@@ -1685,6 +1685,10 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         request: tonic::Request<grpc_gen::SubmitDeploymentRequest>,
     ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
         let request = request.into_inner();
+        let requested_deployment_id = request
+            .deployment_id
+            .map(DeploymentId::try_from)
+            .transpose()?;
         let mut termination_watcher = self.termination_watcher.clone();
         let result = Box::pin(server::submit_deployment(
             self.server_verified.clone(),
@@ -1692,6 +1696,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             request.verify,
             request.created_by.clone(),
             request.description.clone(),
+            requested_deployment_id,
             &self.prepared_dirs,
             self.db_pool.clone(),
             &mut termination_watcher,

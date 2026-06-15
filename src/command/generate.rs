@@ -130,6 +130,15 @@ impl Generate {
                 }
                 Ok(())
             }
+            Generate::DeploymentId { json } => {
+                let deployment_id = DeploymentId::generate();
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&deployment_id)?);
+                } else {
+                    println!("{deployment_id}");
+                }
+                Ok(())
+            }
             Generate::Prompt { description } => {
                 let version = format!("v{PKG_VERSION}");
                 let description = description.join(" ");
