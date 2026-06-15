@@ -3845,9 +3845,11 @@ async fn deployment_insert_and_get(database: Database) {
 
     let deployment_id = concepts::prefixed_ulid::DeploymentId::generate();
     let now = sim_clock.now();
+    let expected_digest = DeploymentRecord::compute_digest(r#"{"activities":[]}"#);
     let record = DeploymentRecord {
         deployment_id,
         description: Some("test deployment".to_string()),
+        digest: expected_digest.clone(),
         created_at: now,
         last_active_at: None,
         status: DeploymentStatus::Inactive,
@@ -3867,6 +3869,7 @@ async fn deployment_insert_and_get(database: Database) {
     assert_eq!("0.0.0-test", fetched.obelisk_version);
     assert_eq!(Some("test".to_string()), fetched.created_by);
     assert_eq!(Some("test deployment".to_string()), fetched.description);
+    assert_eq!(expected_digest, fetched.digest);
     assert!(fetched.last_active_at.is_none());
 
     drop(api_conn);
@@ -3891,6 +3894,7 @@ async fn deployment_activate(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id,
             description: None,
+            digest: DeploymentRecord::compute_digest("{}"),
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
@@ -3931,6 +3935,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id: id1,
             description: None,
+            digest: DeploymentRecord::compute_digest("{}"),
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
@@ -3948,6 +3953,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
         .insert_deployment(DeploymentRecord {
             deployment_id: id2,
             description: None,
+            digest: DeploymentRecord::compute_digest("{}"),
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
@@ -3988,6 +3994,7 @@ async fn deployment_list(database: Database) {
             .insert_deployment(DeploymentRecord {
                 deployment_id: id,
                 description: None,
+                digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
                 last_active_at: None,
                 status: DeploymentStatus::Inactive,

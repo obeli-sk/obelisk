@@ -828,10 +828,12 @@ async fn insert_and_activate_deployment(
         .context("cannot get external api connection for deployment activation")?;
 
     let now = Utc::now();
+    let digest = DeploymentRecord::compute_digest(&config_json);
     api_conn
         .insert_deployment(DeploymentRecord {
             deployment_id,
             description,
+            digest,
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
@@ -1534,10 +1536,12 @@ pub(crate) async fn submit_deployment(
     let deployment_id = DeploymentId::generate();
     let conn = db_pool.external_api_conn().await?;
     let now = chrono::Utc::now();
+    let digest = DeploymentRecord::compute_digest(&canonical_config);
 
     conn.insert_deployment(DeploymentRecord {
         deployment_id,
         description,
+        digest,
         created_at: now,
         last_active_at: None,
         status: DeploymentStatus::Inactive,

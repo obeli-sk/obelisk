@@ -2,8 +2,8 @@ use crate::postgres_dao::ddl::ADMIN_DB_NAME;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ExecutionId, FunctionFqn, JoinSetId,
-    StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
+    JoinSetId, StrVariant, SupportedFunctionReturnValue,
     component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
@@ -297,6 +297,13 @@ impl PostgresPool {
     }
 }
 
+fn deployment_digest_from_pg_row(row: &Row) -> Result<ContentDigest, DbErrorRead> {
+    let digest_str: String = get(row, "digest")?;
+    digest_str
+        .parse::<ContentDigest>()
+        .map_err(|e| DbErrorRead::Generic(consistency_db_err(format!("invalid digest: {e}"))))
+}
+
 fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorRead> {
     let deployment_id_str: String = get(row, "deployment_id")?;
     let deployment_id = deployment_id_str.parse::<DeploymentId>().map_err(|e| {
@@ -309,6 +316,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
     Ok(DeploymentRecord {
         deployment_id,
         description: get(row, "description")?,
+        digest: deployment_digest_from_pg_row(row)?,
         created_at: get(row, "created_at")?,
         last_active_at: get(row, "last_active_at")?,
         status,
@@ -1673,6 +1681,7 @@ async fn list_deployment_states(
         SELECT
             d.deployment_id,
             d.description,
+            d.digest,
 
             COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}' AND s.is_paused = false) AS locked,
 
@@ -1743,7 +1752,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY d.deployment_id, d.description, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY d.deployment_id, d.description, d.digest, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -1774,6 +1783,7 @@ async fn list_deployment_states(
         result.push(DeploymentState {
             deployment_id: DeploymentId::from_str(&deployment_id).map_err(DbErrorGeneric::from)?,
             description: get::<Option<String>, _>(&row, "description")?,
+            digest: deployment_digest_from_pg_row(&row)?,
             locked: u32::try_from(get::<i64, _>(&row, "locked")?).expect("count is never negative"),
             pending: u32::try_from(get::<i64, _>(&row, "pending")?)
                 .expect("count is never negative"),
@@ -4681,18 +4691,20 @@ impl DbExternalApi for PostgresConnection {
         );
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        let digest = record.digest.to_string();
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, created_at, status, config_json, obelisk_version, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             (deployment_id, description, digest, created_at, status, config_json, obelisk_version, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             &[
                 &record.deployment_id.to_string(), // $1
                 &record.description,               // $2
-                &record.created_at,                // $3
-                &record.status.as_str(),           // $4
-                &record.config_json,               // $5
-                &record.obelisk_version,           // $6
-                &record.created_by,                // $7
+                &digest,                           // $3
+                &record.created_at,                // $4
+                &record.status.as_str(),           // $5
+                &record.config_json,               // $6
+                &record.obelisk_version,           // $7
+                &record.created_by,                // $8
             ],
         )
         .await?;
@@ -4772,7 +4784,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
@@ -4791,7 +4803,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
@@ -4808,7 +4820,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
                  FROM t_deployment WHERE status IN ('enqueued', 'active') \
                  ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                 &[],
@@ -4835,7 +4847,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment",
         );
 

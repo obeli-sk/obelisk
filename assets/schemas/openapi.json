@@ -1929,6 +1929,7 @@
         "description": "Deployment details with config",
         "required": [
           "deployment_id",
+          "digest",
           "status",
           "created_at",
           "config_json"
@@ -1950,6 +1951,10 @@
               "null"
             ]
           },
+          "digest": {
+            "type": "string",
+            "description": "Content digest derived from the deployment's canonical config JSON"
+          },
           "last_active_at": {
             "type": [
               "string",
@@ -1967,6 +1972,7 @@
         "description": "Deployment state with execution counts",
         "required": [
           "deployment_id",
+          "digest",
           "status",
           "created_at",
           "locked",
@@ -2001,6 +2007,10 @@
               "null"
             ],
             "description": "Optional human-readable deployment description"
+          },
+          "digest": {
+            "type": "string",
+            "description": "Content digest derived from the deployment's canonical config JSON"
           },
           "finished_error": {
             "type": "integer",

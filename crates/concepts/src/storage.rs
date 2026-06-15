@@ -1,6 +1,7 @@
 use crate::ComponentId;
 use crate::ComponentRetryConfig;
 use crate::ComponentType;
+use crate::ContentDigest;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
@@ -1569,6 +1570,8 @@ pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<Deploymen
 pub struct DeploymentState {
     pub deployment_id: DeploymentId,
     pub description: Option<String>,
+    /// Content digest derived from the deployment's canonical config JSON.
+    pub digest: ContentDigest,
     pub locked: u32,
     // In `PendingAt` state, scheduled to present or past
     pub pending: u32,
@@ -1623,6 +1626,8 @@ impl std::str::FromStr for DeploymentStatus {
 pub struct DeploymentRecord {
     pub deployment_id: DeploymentId,
     pub description: Option<String>,
+    /// Content digest derived from `config_json`.
+    pub digest: ContentDigest,
     pub created_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
@@ -1630,6 +1635,16 @@ pub struct DeploymentRecord {
     pub config_json: String, // Serialized `DeploymentCanonical`
     pub obelisk_version: String,
     pub created_by: Option<String>,
+}
+
+impl DeploymentRecord {
+    /// Computes the content digest of a deployment from its canonical config JSON.
+    #[must_use]
+    pub fn compute_digest(config_json: &str) -> ContentDigest {
+        use sha2::{Digest as _, Sha256};
+        let hash: [u8; 32] = Sha256::digest(config_json.as_bytes()).into();
+        ContentDigest(crate::component_id::Digest(hash))
+    }
 }
 
 #[derive(Debug, Clone)]

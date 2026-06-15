@@ -31,6 +31,7 @@ fn mk_deployment_record(
     DeploymentRecord {
         deployment_id,
         description: None,
+        digest: DeploymentRecord::compute_digest("{}"),
         created_at: now,
         last_active_at: None,
         status: DeploymentStatus::Inactive,
