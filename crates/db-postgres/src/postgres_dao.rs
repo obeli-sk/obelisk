@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
     JoinSetId, StrVariant, SupportedFunctionReturnValue,
-    component_id::{ComponentDigest, Digest},
+    component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -298,10 +298,7 @@ impl PostgresPool {
 }
 
 fn deployment_digest_from_pg_row(row: &Row) -> Result<ContentDigest, DbErrorRead> {
-    let digest_str: String = get(row, "digest")?;
-    digest_str
-        .parse::<ContentDigest>()
-        .map_err(|e| DbErrorRead::Generic(consistency_db_err(format!("invalid digest: {e}"))))
+    Ok(get(row, "digest")?)
 }
 
 fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorRead> {
@@ -330,19 +327,8 @@ fn deployment_component_detail_from_pg_row(
     row: &Row,
 ) -> Result<DeploymentComponentDetail, DbErrorRead> {
     let component_name: String = get(row, "component_name")?;
-    let component_type: ComponentType =
-        get::<String, _>(row, "component_type")?
-            .parse()
-            .map_err(|err| {
-                DbErrorRead::Generic(consistency_db_err(format!("invalid component_type: {err}")))
-            })?;
-    let component_digest = ComponentDigest(Digest(
-        get::<Vec<u8>, _>(row, "component_digest")?
-            .try_into()
-            .map_err(|_| {
-                DbErrorRead::Generic(consistency_db_err("invalid component_digest length"))
-            })?,
-    ));
+    let component_type: ComponentType = get(row, "component_type")?;
+    let component_digest: ComponentDigest = get(row, "component_digest")?;
     let component_id = ComponentId::new(
         component_type,
         StrVariant::from(component_name),
@@ -1070,24 +1056,15 @@ async fn get_combined_state(
     let created_at: DateTime<Utc> = get(&row, "created_at")?;
     let first_scheduled_at: DateTime<Utc> = get(&row, "first_scheduled_at")?;
 
-    let digest_bytes: Vec<u8> = get(&row, "component_id_input_digest")?;
-    let digest = Digest::try_from(digest_bytes.as_slice()).map_err(|err| {
-        consistency_db_err_src("cannot parse `component_id_input_digest`", Arc::from(err))
-    })?;
-    let component_digest = ComponentDigest(digest);
+    let component_digest: ComponentDigest = get(&row, "component_id_input_digest")?;
 
-    let component_type: String = get(&row, "component_type")?;
-    let component_type = ComponentType::from_str(&component_type)
-        .map_err(|err| consistency_db_err_src("cannot parse `component_type`", Arc::from(err)))?;
+    let component_type: ComponentType = get(&row, "component_type")?;
 
     let deployment_id: String = get(&row, "deployment_id")?;
     let deployment_id = DeploymentId::from_str(&deployment_id).map_err(DbErrorGeneric::from)?;
 
     let state: String = get(&row, "state")?;
-    let ffqn: String = get(&row, "ffqn")?;
-    let ffqn = FunctionFqn::from_str(&ffqn).map_err(|parse_err| {
-        consistency_db_err(format!("invalid ffqn value in `t_state` - {parse_err}"))
-    })?;
+    let ffqn: FunctionFqn = get(&row, "ffqn")?;
 
     let pending_expires_finished: DateTime<Utc> = get(&row, "pending_expires_finished")?;
 
@@ -1291,16 +1268,9 @@ async fn list_executions(
             let execution_id = ExecutionId::from_str(&execution_id_str)
                 .map_err(|err| consistency_db_err(err.to_string()))?;
 
-            let digest_bytes: Vec<u8> = get(&row, "component_id_input_digest")?;
-            let digest = Digest::try_from(digest_bytes.as_slice()).map_err(|err| {
-                consistency_db_err_src("cannot parse `component_id_input_digest`", Arc::from(err))
-            })?;
-            let component_digest = ComponentDigest(digest);
+            let component_digest: ComponentDigest = get(&row, "component_id_input_digest")?;
 
-            let component_type: String = get(&row, "component_type")?;
-            let component_type = ComponentType::from_str(&component_type).map_err(|err| {
-                consistency_db_err_src("cannot parse `component_type`", Arc::from(err))
-            })?;
+            let component_type: ComponentType = get(&row, "component_type")?;
 
             let deployment_id: String = get(&row, "deployment_id")?;
             let deployment_id =
@@ -1338,11 +1308,7 @@ async fn list_executions(
                 .map(|id| JoinSetId::from_str(&id))
                 .transpose()?;
 
-            let ffqn: String = get(&row, "ffqn")?;
-            let ffqn = FunctionFqn::from_str(&ffqn).map_err(|parse_err| {
-                error!("Error parsing ffqn - {parse_err:?}");
-                consistency_db_err("invalid ffqn value in `t_state`")
-            })?;
+            let ffqn: FunctionFqn = get(&row, "ffqn")?;
 
             let combined_state_dto = CombinedStateDTO {
                 execution_id,
