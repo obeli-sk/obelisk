@@ -1749,6 +1749,7 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
         last_active_at: record.last_active_at.map(prost_wkt_types::Timestamp::from),
         config_json: Some(record.config_json),
         description: record.description,
+        digest: record.digest.to_string(),
     }
 }
 
@@ -1760,6 +1761,7 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
         last_active_at: dep.last_active_at.map(prost_wkt_types::Timestamp::from),
         config_json: dep.config_json,
         description: dep.description,
+        digest: dep.digest.to_string(),
     };
     grpc_gen::DeploymentSummary {
         deployment: Some(deployment),

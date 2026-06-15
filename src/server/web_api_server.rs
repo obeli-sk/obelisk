@@ -3063,6 +3063,8 @@ mod deployment {
         pub deployment_id: DeploymentId,
         /// Optional human-readable deployment description
         pub description: Option<String>,
+        /// Content digest derived from the deployment's canonical config JSON
+        pub digest: String,
         /// Deployment lifecycle status
         pub status: DeploymentStatusSer,
         /// When this deployment was submitted
@@ -3092,6 +3094,7 @@ mod deployment {
             Self {
                 deployment_id: deployment_state.deployment_id,
                 description: deployment_state.description.clone(),
+                digest: deployment_state.digest.to_string(),
                 status: DeploymentStatusSer::from(&deployment_state.status),
                 created_at: deployment_state.created_at,
                 last_active_at: deployment_state.last_active_at,
@@ -3214,6 +3217,8 @@ mod deployment {
         #[schema(value_type = String)]
         pub deployment_id: DeploymentId,
         pub description: Option<String>,
+        /// Content digest derived from the deployment's canonical config JSON
+        pub digest: String,
         pub status: DeploymentStatusSer,
         pub created_at: DateTime<Utc>,
         pub last_active_at: Option<DateTime<Utc>>,
@@ -3225,6 +3230,7 @@ mod deployment {
             Self {
                 deployment_id: r.deployment_id,
                 description: r.description.clone(),
+                digest: r.digest.to_string(),
                 status: DeploymentStatusSer::from(&r.status),
                 created_at: r.created_at,
                 last_active_at: r.last_active_at,
@@ -3270,7 +3276,7 @@ mod deployment {
                 let mut output = String::new();
                 writeln!(
                     &mut output,
-                    "{} status={} created={} last_active={} description={} config={}",
+                    "{} status={} created={} last_active={} description={} digest={} config={}",
                     ser.deployment_id,
                     match ser.status {
                         DeploymentStatusSer::Inactive => "inactive",
@@ -3282,6 +3288,7 @@ mod deployment {
                         .map(|t| t.to_rfc3339())
                         .unwrap_or_default(),
                     ser.description.unwrap_or_default(),
+                    ser.digest,
                     ser.config_json,
                 )
                 .expect("writing to string");

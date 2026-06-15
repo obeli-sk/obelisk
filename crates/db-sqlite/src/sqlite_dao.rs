@@ -425,6 +425,7 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
     Ok(DeploymentRecord {
         deployment_id,
         description: row.get("description")?,
+        digest: row.get("digest")?,
         created_at: row.get("created_at")?,
         last_active_at: row.get("last_active_at")?,
         status,
@@ -3316,6 +3317,7 @@ impl SqlitePool {
         SELECT
             d.deployment_id,
             d.description,
+            d.digest,
             COALESCE(SUM(s.state = '{STATE_LOCKED}' AND s.is_paused = false), 0) AS locked,
             COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished <= :now), 0) AS pending,
             COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished > :now), 0) AS scheduled,
@@ -3360,7 +3362,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY d.deployment_id, d.description, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY d.deployment_id, d.description, d.digest, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3391,6 +3393,7 @@ impl SqlitePool {
                     Ok(DeploymentState {
                         deployment_id: row.get("deployment_id")?,
                         description: row.get("description")?,
+                        digest: row.get("digest")?,
                         locked: row.get("locked")?,
                         pending: row.get("pending")?,
                         scheduled: row.get("scheduled")?,
@@ -3427,11 +3430,12 @@ impl SqlitePool {
         );
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, created_at, status, config_json, obelisk_version, created_by) \
-             VALUES (:deployment_id, :description, :created_at, :status, :config_json, :obelisk_version, :created_by)",
+             (deployment_id, description, digest, created_at, status, config_json, obelisk_version, created_by) \
+             VALUES (:deployment_id, :description, :digest, :created_at, :status, :config_json, :obelisk_version, :created_by)",
             rusqlite::named_params! {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":description": record.description,
+                ":digest": record.digest.to_string(),
                 ":created_at": record.created_at,
                 ":status": record.status.as_str(),
                 ":config_json": record.config_json,
@@ -3514,7 +3518,7 @@ impl SqlitePool {
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
-            "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment WHERE deployment_id = :deployment_id",
             rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
             deployment_record_from_row,
@@ -3526,7 +3530,7 @@ impl SqlitePool {
     #[cfg(feature = "test")]
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         tx.query_row(
-            "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment WHERE status = 'active' LIMIT 1",
             [],
             deployment_record_from_row,
@@ -3541,7 +3545,7 @@ impl SqlitePool {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let mut sql = String::from(
-            "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
              FROM t_deployment",
         );
 
@@ -4634,7 +4638,7 @@ impl DbExternalApi for SqlitePool {
         self.transaction(
             move |tx| {
                 tx.query_row(
-                    "SELECT deployment_id, description, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                    "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
                      FROM t_deployment WHERE status IN ('enqueued', 'active') \
                      ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                     [],

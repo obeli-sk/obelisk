@@ -39,6 +39,7 @@ async fn create_deployment_with_execution(
             .insert_deployment(DeploymentRecord {
                 deployment_id,
                 description: None,
+                digest: DeploymentRecord::compute_digest("{}"),
                 created_at: now,
                 last_active_at: None,
                 status: DeploymentStatus::Inactive,
