@@ -2426,7 +2426,7 @@ async fn resolve_local_refs_to_canonical(
         })
         .collect();
 
-    Ok(DeploymentCanonical {
+    let canonical = DeploymentCanonical {
         activities_wasm: deployment.activities_wasm,
         activities_stub,
         activities_external,
@@ -2437,7 +2437,61 @@ async fn resolve_local_refs_to_canonical(
         webhooks_wasm,
         webhooks_js,
         crons: deployment.crons,
-    })
+    };
+    validate_owned_source_file_names(&canonical)?;
+    Ok(canonical)
+}
+
+/// Reject deployments where two deployment-owned source files (inline/owned scripts and
+/// recreated workflow/webhook backtrace sources) would be written to the same `file_name`
+/// with differing content. Such a deployment hashes and runs fine, but could never be
+/// retrieved with `deployment get`, which writes every owned source to disk at its
+/// `file_name` and refuses to clobber (see [`SideFileCollector`]). Identical re-uses of a
+/// name are allowed (they dedupe to a single file on export). This mirrors the export-side
+/// check so the failure surfaces at submit time rather than on a later round-trip.
+fn validate_owned_source_file_names(canonical: &DeploymentCanonical) -> anyhow::Result<()> {
+    fn register<'a>(
+        seen: &mut HashMap<&'a str, &'a str>,
+        file_name: &'a str,
+        content: &'a str,
+    ) -> anyhow::Result<()> {
+        if let Some(existing) = seen.insert(file_name, content) {
+            ensure!(
+                existing == content,
+                "two deployment-owned source files would be written to `{file_name}`; rename \
+                 one of the colliding scripts or backtrace sources so the deployment can be \
+                 retrieved with `deployment get`"
+            );
+        }
+        Ok(())
+    }
+
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+
+    let script_locations = canonical
+        .activities_js
+        .iter()
+        .map(|c| &c.location)
+        .chain(canonical.activities_exec.iter().map(|c| &c.location))
+        .chain(canonical.workflows_js.iter().map(|c| &c.location))
+        .chain(canonical.webhooks_js.iter().map(|c| &c.location));
+    for loc in script_locations {
+        if let ScriptLocationCanonical::Content { content, file_name } = loc {
+            register(&mut seen, file_name, content)?;
+        }
+    }
+
+    let backtraces = canonical
+        .workflows_wasm
+        .iter()
+        .map(|c| &c.backtrace)
+        .chain(canonical.webhooks_wasm.iter().map(|c| &c.backtrace));
+    for bt in backtraces {
+        for source in bt.frame_files_to_sources.values() {
+            register(&mut seen, &source.file_name, &source.content)?;
+        }
+    }
+    Ok(())
 }
 
 /// Verify `bytes` against `expected` content digest, if one is set. No-op when unset
@@ -4574,6 +4628,50 @@ name = "my_stub"
             // The result serializes to TOML.
             let serialized = toml::to_string_pretty(toml_config).unwrap();
             assert!(serialized.contains("[[activity_js]]"));
+        }
+
+        #[test]
+        fn submit_rejects_owned_file_name_collision() {
+            // Two distinct owned scripts resolving to the same `file_name` must be rejected
+            // at submit time, since `deployment get` could never write both to disk.
+            let mut deployment = DeploymentCanonical::default();
+            deployment.activities_js.push(js_activity(
+                "a",
+                ScriptLocationCanonical::Content {
+                    content: "export const a = 1;".to_string(),
+                    file_name: "foo".to_string(),
+                },
+            ));
+            deployment.activities_js.push(js_activity(
+                "b",
+                ScriptLocationCanonical::Content {
+                    content: "export const b = 2;".to_string(),
+                    file_name: "foo".to_string(),
+                },
+            ));
+            let err = validate_owned_source_file_names(&deployment)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("two deployment-owned source files would be written to `foo`"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn submit_allows_identical_owned_content_under_same_name() {
+            // Same file_name with identical content dedupes on export, so it must pass submit.
+            let mut deployment = DeploymentCanonical::default();
+            for name in ["a", "b"] {
+                deployment.activities_js.push(js_activity(
+                    name,
+                    ScriptLocationCanonical::Content {
+                        content: "export const shared = 1;".to_string(),
+                        file_name: "shared.js".to_string(),
+                    },
+                ));
+            }
+            validate_owned_source_file_names(&deployment).unwrap();
         }
     }
 
