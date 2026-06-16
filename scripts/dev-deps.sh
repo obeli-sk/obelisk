@@ -31,6 +31,9 @@ echo "pkg-config $(pkg-config --version)" >> dev-deps.txt
 # protobuf
 protoc --version >> dev-deps.txt
 rustc --version >> dev-deps.txt
+cargo metadata --no-deps --format-version 1 \
+    | jq -r '.workspace_root as $root | .packages[] | select(.manifest_path == ($root + "/Cargo.toml")) | "rust-version " + .rust_version' \
+    >> dev-deps.txt
 wasm-tools --version >> dev-deps.txt
 nix develop .#cargo-zigbuild --command cargo-zigbuild --version >> dev-deps.txt
 
@@ -39,5 +42,4 @@ echo "litestream $(get_litestream_version)" >> dev-deps.txt
 
 # libc
 ldd --version | head -n 1 >> dev-deps.txt
-
 

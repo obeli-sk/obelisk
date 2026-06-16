@@ -197,7 +197,7 @@ license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
 edition = "2024"
-rust-version = "1.91.0"
+rust-version = "1.96.0"
 
 [workspace.dependencies]
 activity-js-runtime-builder = { path = "crates/activity-js-runtime/builder" }
@@ -387,7 +387,7 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.7", def
 wasip2 = "1.0.4"
 wit-bindgen = "0.57.1"
 wit-bindgen-rust = "0.57.1"
-wstd = "0.6.5"
+wstd = "0.6.6"
 
 # otlp
 opentelemetry = "0.31.0"
