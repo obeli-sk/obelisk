@@ -660,7 +660,7 @@
           "additionalProperties": false
         },
         {
-          "description": "OCI-sourced script.",
+          "description": "OCI-sourced script. No `oci://` prefix.",
           "type": "object",
           "properties": {
             "oci": {
