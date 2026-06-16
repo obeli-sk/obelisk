@@ -319,7 +319,7 @@ impl DeploymentToml {
         if std::path::Path::new(candidate).is_absolute() {
             return Ok(());
         }
-        let rel = normalize_owned_subpath(candidate)
+        let rel = sanitize_deployment_relative_path(candidate)
             .with_context(|| format!("invalid deployment-relative path `{s}`"))?;
         *s = deployment_dir.join(rel).to_string_lossy().into_owned();
         Ok(())
@@ -1526,7 +1526,7 @@ impl ActivityExecComponentConfigCanonicalExt for ActivityExecComponentConfigCano
                     source_bytes: content.as_bytes().to_vec(),
                 })
             }
-            ScriptLocationCanonical::Path { path } => {
+            ScriptLocationCanonical::ExternalPath { path } => {
                 let full_path = PathBuf::from(path);
                 let content = tokio::fs::read_to_string(&full_path)
                     .await
@@ -1829,25 +1829,16 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
     }
 }
 
-/// Location of a WASM backtrace source file.
-/// On-disk format only; resolved to `ComponentBacktraceConfigCanonical` before transmission
-/// and hash computation.
-///
-/// Serialised as: `"path/to/file.ts"` → `Path`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-#[schemars(with = "String")]
-pub(crate) enum BacktraceSourceLocation {
-    /// Local file path — resolved at submit/startup time via `resolve_to_canonical`.
-    Path(String),
-}
-
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
+    /// Maps a frame-symbol key to a backtrace source file path. On-disk format only;
+    /// resolved to `ComponentBacktraceConfigCanonical` before transmission and hash
+    /// computation. A relative path is deployment-dir-relative (a leading
+    /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); an absolute path is out-of-tree.
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceLocation>,
+    pub(crate) frame_files_to_sources: HashMap<String, String>,
 }
 pub(crate) struct JsContent {
     pub(crate) source: String,
@@ -1887,7 +1878,7 @@ impl JsLocationCanonicalExt for ScriptLocationCanonical {
                     file_name: file_name.clone(),
                 })
             }
-            ScriptLocationCanonical::Path { path } => {
+            ScriptLocationCanonical::ExternalPath { path } => {
                 let full_path = PathBuf::from(path);
                 let source = tokio::fs::read_to_string(&full_path)
                     .await
@@ -2426,7 +2417,7 @@ async fn resolve_local_refs_to_canonical(
         })
         .collect();
 
-    Ok(DeploymentCanonical {
+    let canonical = DeploymentCanonical {
         activities_wasm: deployment.activities_wasm,
         activities_stub,
         activities_external,
@@ -2437,7 +2428,61 @@ async fn resolve_local_refs_to_canonical(
         webhooks_wasm,
         webhooks_js,
         crons: deployment.crons,
-    })
+    };
+    validate_owned_source_file_names(&canonical)?;
+    Ok(canonical)
+}
+
+/// Reject deployments where two deployment-owned source files (inline/owned scripts and
+/// recreated workflow/webhook backtrace sources) would be written to the same `file_name`
+/// with differing content. Such a deployment hashes and runs fine, but could never be
+/// retrieved with `deployment get`, which writes every owned source to disk at its
+/// `file_name` and refuses to clobber (see [`SideFileCollector`]). Identical re-uses of a
+/// name are allowed (they dedupe to a single file on export). This mirrors the export-side
+/// check so the failure surfaces at submit time rather than on a later round-trip.
+fn validate_owned_source_file_names(canonical: &DeploymentCanonical) -> anyhow::Result<()> {
+    fn register<'a>(
+        seen: &mut HashMap<&'a str, &'a str>,
+        file_name: &'a str,
+        content: &'a str,
+    ) -> anyhow::Result<()> {
+        if let Some(existing) = seen.insert(file_name, content) {
+            ensure!(
+                existing == content,
+                "two deployment-owned source files would be written to `{file_name}`; rename \
+                 one of the colliding scripts or backtrace sources so the deployment can be \
+                 retrieved with `deployment get`"
+            );
+        }
+        Ok(())
+    }
+
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+
+    let script_locations = canonical
+        .activities_js
+        .iter()
+        .map(|c| &c.location)
+        .chain(canonical.activities_exec.iter().map(|c| &c.location))
+        .chain(canonical.workflows_js.iter().map(|c| &c.location))
+        .chain(canonical.webhooks_js.iter().map(|c| &c.location));
+    for loc in script_locations {
+        if let ScriptLocationCanonical::Content { content, file_name } = loc {
+            register(&mut seen, file_name, content)?;
+        }
+    }
+
+    let backtraces = canonical
+        .workflows_wasm
+        .iter()
+        .map(|c| &c.backtrace)
+        .chain(canonical.webhooks_wasm.iter().map(|c| &c.backtrace));
+    for bt in backtraces {
+        for source in bt.frame_files_to_sources.values() {
+            register(&mut seen, &source.file_name, &source.content)?;
+        }
+    }
+    Ok(())
 }
 
 /// Verify `bytes` against `expected` content digest, if one is set. No-op when unset
@@ -2469,8 +2514,7 @@ fn strip_deployment_dir_prefix(s: &str) -> Option<&str> {
 
 /// Normalize a deployment-owned relative path to forward-slash form, rejecting anything
 /// that would escape the deployment directory (`..`, absolute paths, drive prefixes).
-/// Used both when canonicalizing and (defensively) when recreating files on export.
-pub(crate) fn normalize_owned_subpath(rel: &str) -> anyhow::Result<String> {
+pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<String> {
     use std::path::Component;
     let mut parts: Vec<&str> = Vec::new();
     for comp in std::path::Path::new(rel).components() {
@@ -2543,23 +2587,7 @@ async fn resolve_script_toml_to_canonical(
             })
         }
         (Some(JsLocationToml::Path(path)), None) => {
-            // A `${DEPLOYMENT_DIR}/…` prefix or any non-absolute path is deployment-owned;
-            // an absolute path is an external reference.
-            let owned_rel = if let Some(rest) = strip_deployment_dir_prefix(&path) {
-                Some(normalize_owned_subpath(rest)?)
-            } else if std::path::Path::new(&path).is_absolute() {
-                None
-            } else {
-                Some(normalize_owned_subpath(&path)?)
-            };
-            if let Some(file_name) = owned_rel {
-                let full_path = deployment_dir.join(&file_name);
-                let content = tokio::fs::read_to_string(&full_path)
-                    .await
-                    .with_context(|| format!("cannot read script file {full_path:?}"))?;
-                verify_content_digest(content.as_bytes(), content_digest, &file_name)?;
-                Ok(ScriptLocationCanonical::Content { content, file_name })
-            } else {
+            if std::path::Path::new(&path).is_absolute() {
                 // External reference: verify digest against its bytes if set.
                 if content_digest.is_some() {
                     let bytes = tokio::fs::read(&path)
@@ -2567,11 +2595,22 @@ async fn resolve_script_toml_to_canonical(
                         .with_context(|| format!("cannot read external script file {path:?}"))?;
                     verify_content_digest(&bytes, content_digest, &path)?;
                 }
-                Ok(ScriptLocationCanonical::Path { path })
+                Ok(ScriptLocationCanonical::ExternalPath { path })
+            } else {
+                let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
+                let path = sanitize_deployment_relative_path(path)?;
+                let full_path = deployment_dir.join(&path);
+                let content = tokio::fs::read_to_string(&full_path)
+                    .await
+                    .with_context(|| format!("cannot read script file {full_path:?}"))?;
+                verify_content_digest(content.as_bytes(), content_digest, &path)?;
+                Ok(ScriptLocationCanonical::Content {
+                    content,
+                    file_name: path,
+                })
             }
         }
         (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationCanonical::Oci {
-            // `to_string()` == `whole()`; use `to_string()` to match WASM OCI normalization.
             image: reference.to_string(),
         }),
         (None, None) | (Some(_), Some(_)) => {
@@ -2585,19 +2624,18 @@ async fn resolve_backtrace_to_canonical(
     deployment_dir: &Path,
 ) -> anyhow::Result<ComponentBacktraceConfigCanonical> {
     let mut frame_files_to_sources = HashMap::new();
-    for (key, location) in &backtrace.frame_files_to_sources {
-        let BacktraceSourceLocation::Path(path) = location;
+    for (key, path) in &backtrace.frame_files_to_sources {
         // Classify the source path like a script: a relative path (bare or
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
         // export; an absolute path is recreated self-contained under a root-stripped mirror.
         let (full_path, file_name) = if let Some(rest) = strip_deployment_dir_prefix(path) {
-            let rel = normalize_owned_subpath(rest)?;
+            let rel = sanitize_deployment_relative_path(rest)?;
             (deployment_dir.join(&rel), rel)
         } else if std::path::Path::new(path).is_absolute() {
             // Captured content is recreated self-contained under a root-stripped mirror.
             (PathBuf::from(path), mirror_path_as_relative(path)?)
         } else {
-            let rel = normalize_owned_subpath(path)?;
+            let rel = sanitize_deployment_relative_path(path)?;
             (deployment_dir.join(&rel), rel)
         };
         if !full_path.exists() {
@@ -3538,19 +3576,6 @@ pub(crate) struct DeploymentExport {
     pub(crate) external_paths: Vec<String>,
 }
 
-/// Build a `${DEPLOYMENT_DIR}/<rel>` location hint (never an absolute path).
-fn deployment_dir_hint(rel: &str) -> String {
-    format!("{DEPLOYMENT_DIR_PREFIX}/{rel}")
-}
-
-fn path_basename(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path)
-        .to_string()
-}
-
 /// Accumulates side files, erroring on basename collisions with conflicting content.
 #[derive(Default)]
 struct SideFileCollector {
@@ -3585,9 +3610,9 @@ fn script_location_to_toml(
     Ok(Some(match location {
         ScriptLocationCanonical::Content { content, file_name } => {
             files.push(file_name.clone(), content)?;
-            JsLocationToml::Path(deployment_dir_hint(&file_name))
+            JsLocationToml::Path(file_name)
         }
-        ScriptLocationCanonical::Path { path } => {
+        ScriptLocationCanonical::ExternalPath { path } => {
             // External reference: emit the absolute path verbatim (it cannot be expressed
             // as a portable `${DEPLOYMENT_DIR}` hint) and do not recreate the file.
             external_paths.push(path.clone());
@@ -3600,17 +3625,6 @@ fn script_location_to_toml(
     }))
 }
 
-/// Rewrite a WASM component location to a `${DEPLOYMENT_DIR}` hint (Path) or pass through (Oci).
-/// WASM bytes are never recreated; only the location string is rewritten.
-fn wasm_location_to_toml(location: &ComponentLocationToml) -> ComponentLocationToml {
-    match location {
-        ComponentLocationToml::Path(p) => {
-            ComponentLocationToml::Path(deployment_dir_hint(&path_basename(p)))
-        }
-        ComponentLocationToml::Oci(r) => ComponentLocationToml::Oci(r.clone()),
-    }
-}
-
 /// Recreate backtrace sources as side files (mirroring their deployment-relative subpath),
 /// pointing each frame-symbol key at a `${DEPLOYMENT_DIR}` hint.
 fn backtrace_to_toml(
@@ -3620,10 +3634,7 @@ fn backtrace_to_toml(
     let mut frame_files_to_sources = HashMap::new();
     for (key, source) in backtrace.frame_files_to_sources {
         files.push(source.file_name.clone(), source.content)?;
-        frame_files_to_sources.insert(
-            key,
-            BacktraceSourceLocation::Path(deployment_dir_hint(&source.file_name)),
-        );
+        frame_files_to_sources.insert(key, source.file_name);
     }
     Ok(ComponentBacktraceConfig {
         frame_files_to_sources,
@@ -3641,21 +3652,12 @@ pub(crate) fn deployment_canonical_to_toml(
     let mut files = SideFileCollector::default();
     let mut external_paths: Vec<String> = Vec::new();
 
-    let activities_wasm = deployment
-        .activities_wasm
-        .into_iter()
-        .map(|mut c| {
-            c.common.location = wasm_location_to_toml(&c.common.location);
-            c
-        })
-        .collect();
-
+    // cannonical -> toml repr
     let activities_stub = deployment
         .activities_stub
         .into_iter()
         .map(|c| match c {
-            ActivityStubComponentConfigCanonical::File(mut f) => {
-                f.common.location = wasm_location_to_toml(&f.common.location);
+            ActivityStubComponentConfigCanonical::File(f) => {
                 ActivityStubComponentConfigToml::File(f)
             }
             ActivityStubComponentConfigCanonical::Inline(i) => {
@@ -3673,8 +3675,7 @@ pub(crate) fn deployment_canonical_to_toml(
         .activities_external
         .into_iter()
         .map(|c| match c {
-            ActivityExternalComponentConfigCanonical::File(mut f) => {
-                f.common.location = wasm_location_to_toml(&f.common.location);
+            ActivityExternalComponentConfigCanonical::File(f) => {
                 ActivityExternalComponentConfigToml::File(f)
             }
             ActivityExternalComponentConfigCanonical::Inline(i) => {
@@ -3736,8 +3737,7 @@ pub(crate) fn deployment_canonical_to_toml(
     }
 
     let mut workflows_wasm = Vec::with_capacity(deployment.workflows_wasm.len());
-    for mut w in deployment.workflows_wasm {
-        w.common.location = wasm_location_to_toml(&w.common.location);
+    for w in deployment.workflows_wasm {
         let backtrace = backtrace_to_toml(w.backtrace, &mut files)?;
         workflows_wasm.push(WorkflowWasmComponentConfigToml {
             common: w.common,
@@ -3773,8 +3773,7 @@ pub(crate) fn deployment_canonical_to_toml(
     }
 
     let mut webhooks_wasm = Vec::with_capacity(deployment.webhooks_wasm.len());
-    for mut w in deployment.webhooks_wasm {
-        w.common.location = wasm_location_to_toml(&w.common.location);
+    for w in deployment.webhooks_wasm {
         let backtrace = backtrace_to_toml(w.backtrace, &mut files)?;
         webhooks_wasm.push(WebhookWasmComponentConfigToml {
             common: w.common,
@@ -3808,7 +3807,7 @@ pub(crate) fn deployment_canonical_to_toml(
     }
 
     let deployment_toml = DeploymentToml {
-        activities_wasm,
+        activities_wasm: deployment.activities_wasm,
         activities_stub,
         activities_external,
         activities_js,
@@ -4308,7 +4307,7 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 location,
-                ScriptLocationCanonical::Path { path } if path == abs
+                ScriptLocationCanonical::ExternalPath { path } if path == abs
             );
         }
 
@@ -4429,7 +4428,7 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 loc,
-                Some(JsLocationToml::Path(p)) if p == "${DEPLOYMENT_DIR}/scripts/a.js"
+                Some(JsLocationToml::Path(p)) if p == "scripts/a.js"
             );
             assert_eq!(files.files.len(), 1);
             assert_eq!(files.files[0].rel_path, "scripts/a.js");
@@ -4442,7 +4441,7 @@ name = "my_stub"
             let mut files = SideFileCollector::default();
             let mut external = Vec::new();
             let loc = script_location_to_toml(
-                ScriptLocationCanonical::Path {
+                ScriptLocationCanonical::ExternalPath {
                     path: "/abs/elsewhere/lib.js".to_string(),
                 },
                 &mut files,
@@ -4474,24 +4473,6 @@ name = "my_stub"
                 Some(JsLocationToml::Oci(r)) if r.to_string() == "docker.io/library/example:latest"
             );
             assert!(files.files.is_empty());
-        }
-
-        #[test]
-        fn wasm_path_becomes_basename_hint() {
-            let rewritten = wasm_location_to_toml(&ComponentLocationToml::Path(
-                "/deployment/dir/component.wasm".to_string(),
-            ));
-            assert_matches::assert_matches!(
-                rewritten,
-                ComponentLocationToml::Path(p) if p == "${DEPLOYMENT_DIR}/component.wasm"
-            );
-            let oci = wasm_location_to_toml(&ComponentLocationToml::Oci(
-                "docker.io/library/example:latest".to_string(),
-            ));
-            assert_matches::assert_matches!(
-                oci,
-                ComponentLocationToml::Oci(r) if r == "docker.io/library/example:latest"
-            );
         }
 
         #[test]
@@ -4547,7 +4528,7 @@ name = "my_stub"
             ));
             deployment.activities_js.push(js_activity(
                 "external",
-                ScriptLocationCanonical::Path {
+                ScriptLocationCanonical::ExternalPath {
                     path: "/somewhere/external.js".to_string(),
                 },
             ));
@@ -4574,6 +4555,50 @@ name = "my_stub"
             // The result serializes to TOML.
             let serialized = toml::to_string_pretty(toml_config).unwrap();
             assert!(serialized.contains("[[activity_js]]"));
+        }
+
+        #[test]
+        fn submit_rejects_owned_file_name_collision() {
+            // Two distinct owned scripts resolving to the same `file_name` must be rejected
+            // at submit time, since `deployment get` could never write both to disk.
+            let mut deployment = DeploymentCanonical::default();
+            deployment.activities_js.push(js_activity(
+                "a",
+                ScriptLocationCanonical::Content {
+                    content: "export const a = 1;".to_string(),
+                    file_name: "foo".to_string(),
+                },
+            ));
+            deployment.activities_js.push(js_activity(
+                "b",
+                ScriptLocationCanonical::Content {
+                    content: "export const b = 2;".to_string(),
+                    file_name: "foo".to_string(),
+                },
+            ));
+            let err = validate_owned_source_file_names(&deployment)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("two deployment-owned source files would be written to `foo`"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn submit_allows_identical_owned_content_under_same_name() {
+            // Same file_name with identical content dedupes on export, so it must pass submit.
+            let mut deployment = DeploymentCanonical::default();
+            for name in ["a", "b"] {
+                deployment.activities_js.push(js_activity(
+                    name,
+                    ScriptLocationCanonical::Content {
+                        content: "export const shared = 1;".to_string(),
+                        file_name: "shared.js".to_string(),
+                    },
+                ));
+            }
+            validate_owned_source_file_names(&deployment).unwrap();
         }
     }
 
@@ -4623,9 +4648,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                BacktraceSourceLocation::Path(
-                    "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
-                ),
+                "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
             );
             let canon = resolve_backtrace_to_canonical(&bt, dir.path())
                 .await
@@ -4647,7 +4670,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                BacktraceSourceLocation::Path("crates/foo/src/lib.rs".to_string()),
+                "crates/foo/src/lib.rs".to_string(),
             );
             let canon = resolve_backtrace_to_canonical(&bt, dir.path())
                 .await
@@ -4663,7 +4686,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 "frame".to_string(),
-                BacktraceSourceLocation::Path("${DEPLOYMENT_DIR}/../escape.rs".to_string()),
+                "${DEPLOYMENT_DIR}/../escape.rs".to_string(),
             );
             let err = format!(
                 "{:#}",
@@ -4686,7 +4709,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                BacktraceSourceLocation::Path(abs.to_string_lossy().into_owned()),
+                abs.to_string_lossy().into_owned(),
             );
             // Deployment dir is unrelated to the absolute source.
             let other_dir = tempfile::tempdir().unwrap();
@@ -4703,7 +4726,7 @@ name = "my_stub"
         }
 
         #[test]
-        fn export_mirrors_subpaths_without_basename_collision() {
+        fn deployment_export_mirrors_subpaths_without_basename_collision() {
             // Two components whose frame keys share a basename (`lib.rs`) but live in
             // distinct subfolders: must produce two side files, not a collision error.
             let mut files = SideFileCollector::default();
@@ -4725,9 +4748,8 @@ name = "my_stub"
             let toml_bt = backtrace_to_toml(bt, &mut files).unwrap();
             assert_eq!(files.files.len(), 2);
             assert_eq!(toml_bt.frame_files_to_sources.len(), 2);
-            for loc in toml_bt.frame_files_to_sources.values() {
-                let BacktraceSourceLocation::Path(p) = loc;
-                assert!(p.starts_with("${DEPLOYMENT_DIR}/"), "unexpected hint: {p}");
+            for p in toml_bt.frame_files_to_sources.values() {
+                assert!(p.starts_with("fibo"), "unexpected hint: {p}");
             }
         }
     }

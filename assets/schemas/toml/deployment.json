@@ -968,6 +968,7 @@
       "type": "object",
       "properties": {
         "sources": {
+          "description": "Maps a frame-symbol key to a backtrace source file path. On-disk format only;\nresolved to `ComponentBacktraceConfigCanonical` before transmission and hash\ncomputation. A relative path is deployment-dir-relative (a leading\n`${DEPLOYMENT_DIR}/` is accepted for backcompat); an absolute path is out-of-tree.",
           "type": "object",
           "additionalProperties": {
             "type": "string"

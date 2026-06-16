@@ -650,12 +650,12 @@
           "description": "External local file, read at runtime, not recreated on export.",
           "type": "object",
           "properties": {
-            "path": {
+            "external_path": {
               "type": "string"
             }
           },
           "required": [
-            "path"
+            "external_path"
           ],
           "additionalProperties": false
         },

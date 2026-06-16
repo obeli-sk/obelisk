@@ -464,7 +464,7 @@ pub enum ScriptLocationCanonical {
     Content { content: String, file_name: String },
     /// External local file, read at runtime, not recreated on export.
     #[schemars(with = "String")]
-    Path { path: String },
+    ExternalPath { path: String },
     /// OCI-sourced script. No `oci://` prefix.
     #[schemars(with = "String")]
     Oci { image: String },
