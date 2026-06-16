@@ -1829,25 +1829,16 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
     }
 }
 
-/// Location of a WASM backtrace source file.
-/// On-disk format only; resolved to `ComponentBacktraceConfigCanonical` before transmission
-/// and hash computation.
-///
-/// Serialised as: `"path/to/file.ts"` → `Path`
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-#[schemars(with = "String")]
-pub(crate) enum BacktraceSourceLocation {
-    /// Local file path — resolved at submit/startup time via `resolve_to_canonical`.
-    Path(String),
-}
-
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
+    /// Maps a frame-symbol key to a backtrace source file path. On-disk format only;
+    /// resolved to `ComponentBacktraceConfigCanonical` before transmission and hash
+    /// computation. A relative path is deployment-dir-relative (a leading
+    /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); an absolute path is out-of-tree.
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceLocation>,
+    pub(crate) frame_files_to_sources: HashMap<String, String>,
 }
 pub(crate) struct JsContent {
     pub(crate) source: String,
@@ -2633,8 +2624,7 @@ async fn resolve_backtrace_to_canonical(
     deployment_dir: &Path,
 ) -> anyhow::Result<ComponentBacktraceConfigCanonical> {
     let mut frame_files_to_sources = HashMap::new();
-    for (key, location) in &backtrace.frame_files_to_sources {
-        let BacktraceSourceLocation::Path(path) = location;
+    for (key, path) in &backtrace.frame_files_to_sources {
         // Classify the source path like a script: a relative path (bare or
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
         // export; an absolute path is recreated self-contained under a root-stripped mirror.
@@ -3644,7 +3634,7 @@ fn backtrace_to_toml(
     let mut frame_files_to_sources = HashMap::new();
     for (key, source) in backtrace.frame_files_to_sources {
         files.push(source.file_name.clone(), source.content)?;
-        frame_files_to_sources.insert(key, BacktraceSourceLocation::Path(source.file_name));
+        frame_files_to_sources.insert(key, source.file_name);
     }
     Ok(ComponentBacktraceConfig {
         frame_files_to_sources,
@@ -4658,9 +4648,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                BacktraceSourceLocation::Path(
-                    "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
-                ),
+                "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
             );
             let canon = resolve_backtrace_to_canonical(&bt, dir.path())
                 .await
@@ -4682,7 +4670,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                BacktraceSourceLocation::Path("crates/foo/src/lib.rs".to_string()),
+                "crates/foo/src/lib.rs".to_string(),
             );
             let canon = resolve_backtrace_to_canonical(&bt, dir.path())
                 .await
@@ -4698,7 +4686,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 "frame".to_string(),
-                BacktraceSourceLocation::Path("${DEPLOYMENT_DIR}/../escape.rs".to_string()),
+                "${DEPLOYMENT_DIR}/../escape.rs".to_string(),
             );
             let err = format!(
                 "{:#}",
@@ -4721,7 +4709,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                BacktraceSourceLocation::Path(abs.to_string_lossy().into_owned()),
+                abs.to_string_lossy().into_owned(),
             );
             // Deployment dir is unrelated to the absolute source.
             let other_dir = tempfile::tempdir().unwrap();
@@ -4760,8 +4748,7 @@ name = "my_stub"
             let toml_bt = backtrace_to_toml(bt, &mut files).unwrap();
             assert_eq!(files.files.len(), 2);
             assert_eq!(toml_bt.frame_files_to_sources.len(), 2);
-            for loc in toml_bt.frame_files_to_sources.values() {
-                let BacktraceSourceLocation::Path(p) = loc;
+            for p in toml_bt.frame_files_to_sources.values() {
                 assert!(p.starts_with("fibo"), "unexpected hint: {p}");
             }
         }
