@@ -2568,7 +2568,8 @@ async fn resolve_script_toml_to_canonical(
             }
         }
         (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationCanonical::Oci {
-            image: reference.whole(),
+            // `to_string()` == `whole()`; use `to_string()` to match WASM OCI normalization.
+            image: reference.to_string(),
         }),
         (None, None) | (Some(_), Some(_)) => {
             bail!("exactly one of `location` or `content` must be set for script components")
@@ -4467,7 +4468,7 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 loc,
-                Some(JsLocationToml::Oci(r)) if r.whole() == "docker.io/library/example:latest"
+                Some(JsLocationToml::Oci(r)) if r.to_string() == "docker.io/library/example:latest"
             );
             assert!(files.files.is_empty());
         }
