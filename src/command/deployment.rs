@@ -1,6 +1,8 @@
 use crate::args::{self, DeploymentSource};
 use crate::config::config_holder::load_deployment_canonical;
-use crate::config::toml::DeploymentTomlValidated;
+use crate::config::toml::{
+    DeploymentCanonical, DeploymentTomlValidated, deployment_canonical_to_toml,
+};
 use crate::get_deployment_repository_client;
 use anyhow::{Context as _, bail};
 use chrono::DateTime;
@@ -9,6 +11,7 @@ use grpc::grpc_gen;
 use grpc::grpc_gen::switch_deployment_response::Outcome;
 use grpc::injector::TracingInjector;
 use grpc::to_channel;
+use std::path::PathBuf;
 use tonic::transport::Channel;
 
 impl args::Deployment {
@@ -157,8 +160,104 @@ impl args::Deployment {
                 println!("{}", serde_json::to_string_pretty(&value)?);
                 Ok(())
             }
+
+            args::Deployment::Get {
+                id,
+                output,
+                force,
+                api_url,
+            } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_deployment_repository_client(channel).await?;
+                let resp = client
+                    .get_deployment(grpc_gen::GetDeploymentRequest {
+                        deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),
+                    })
+                    .await?
+                    .into_inner();
+                let dep = resp.deployment.context("deployment not found")?;
+                let config_json = dep.config_json.context("config_json not available")?;
+                let canonical: DeploymentCanonical = serde_json::from_str(&config_json)
+                    .context("cannot parse stored deployment config")?;
+                let export = deployment_canonical_to_toml(canonical)?;
+                let toml_str = toml::to_string_pretty(&export.deployment_toml)
+                    .context("cannot serialize deployment to TOML")?;
+
+                let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
+                tokio::fs::create_dir_all(&output_dir)
+                    .await
+                    .with_context(|| format!("cannot create output directory {output_dir:?}"))?;
+
+                let toml_path = output_dir.join("deployment.toml");
+                write_new_file(&toml_path, toml_str.as_bytes(), force).await?;
+                for side_file in &export.side_files {
+                    // Defensively re-validate the relative path so a malformed stored
+                    // config can never write outside the output directory.
+                    let rel = crate::config::toml::normalize_owned_subpath(&side_file.rel_path)
+                        .with_context(|| {
+                            format!(
+                                "refusing to write unsafe source path `{}`",
+                                side_file.rel_path
+                            )
+                        })?;
+                    let path = output_dir.join(&rel);
+                    if let Some(parent) = path.parent() {
+                        tokio::fs::create_dir_all(parent).await.with_context(|| {
+                            format!("cannot create source directory {parent:?}")
+                        })?;
+                    }
+                    write_new_file(&path, side_file.content.as_bytes(), force).await?;
+                }
+                println!(
+                    "Wrote {} ({} source file{}) for deployment {id}",
+                    toml_path.display(),
+                    export.side_files.len(),
+                    if export.side_files.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                );
+                if !export.external_paths.is_empty() {
+                    eprintln!(
+                        "warning: this deployment references {} external file(s) by absolute \
+                         path; these are emitted verbatim and are not portable across machines:",
+                        export.external_paths.len()
+                    );
+                    for p in &export.external_paths {
+                        eprintln!("  {p}");
+                    }
+                }
+                Ok(())
+            }
         }
     }
+}
+
+/// Write `contents` to `path`. Refuses to overwrite an existing file unless `force`.
+async fn write_new_file(
+    path: &std::path::Path,
+    contents: &[u8],
+    force: bool,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true) // allow creating new files
+        .truncate(true) // truncate when overwriting is permitted
+        .create_new(!force) // when set, only new-file creation is allowed (no overwrite)
+        .open(path)
+        .await
+        .with_context(|| {
+            format!(
+                "cannot open {path:?} for writing{}",
+                if force { "" } else { ", try using `--force`" }
+            )
+        })?;
+    file.write_all(contents)
+        .await
+        .with_context(|| format!("cannot write {path:?}"))?;
+    Ok(())
 }
 
 type DeploymentClient = grpc::grpc_gen::deployment_repository_client::DeploymentRepositoryClient<

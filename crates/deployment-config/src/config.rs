@@ -447,28 +447,52 @@ impl ActivityExternalComponentConfigCanonical {
     }
 }
 
-/// Canonical JS location — no local file paths.
+/// Canonical location of a script source (JS or exec) — no deployment-relative paths.
 /// Used for hash computation, wire format in deployment submission, and DB storage.
+///
+/// - `Content` is owned by the deployment (inline content, or a file that lived under
+///   the deployment directory); `file_name` is the deployment-relative path (which may
+///   include subfolders), used to recreate the file on filesystem export.
+/// - `Path` is an external local file that the deployment merely references; it is read
+///   at runtime and is not recreated on export.
+/// - `Oci` is an external registry reference.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum JsLocationCanonical {
+pub enum ScriptLocationCanonical {
     #[schemars(with = "String")]
     Content { content: String, file_name: String },
-    /// OCI-sourced JS.
+    /// External local file, read at runtime, not recreated on export.
+    #[schemars(with = "String")]
+    Path { path: String },
+    /// OCI-sourced script.
     #[schemars(with = "String")]
     Oci { image: String },
 }
 
+/// Canonical backtrace source: the inlined source `content` plus the deployment-relative
+/// `file_name` it was read from (used to recreate the file, mirroring subfolders, on export).
+#[derive(JsonSchema, Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BacktraceSourceCanonical {
+    pub content: String,
+    pub file_name: String,
+}
+
 #[derive(JsonSchema, Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ComponentBacktraceConfigCanonical {
-    #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub frame_files_to_sources: HashMap<String, String>,
+    #[schemars(with = "std::collections::HashMap<String, BacktraceSourceCanonical>")]
+    pub frame_files_to_sources: HashMap<String, BacktraceSourceCanonical>,
 }
 
 impl ComponentBacktraceConfigCanonical {
+    /// Map each frame-symbol key to its source content (dropping the recreate path),
+    /// as needed by the runtime backtrace lookup.
     #[must_use]
     pub fn into_frame_files(self) -> HashMap<String, String> {
         self.frame_files_to_sources
+            .into_iter()
+            .map(|(k, v)| (k, v.content))
+            .collect()
     }
 }
 
@@ -477,7 +501,7 @@ impl ComponentBacktraceConfigCanonical {
 #[serde(deny_unknown_fields)]
 pub struct ActivityJsComponentConfigCanonical {
     pub name: ConfigName,
-    pub location: JsLocationCanonical,
+    pub location: ScriptLocationCanonical,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
@@ -491,15 +515,6 @@ pub struct ActivityJsComponentConfigCanonical {
     pub env_vars: Vec<EnvVarConfig>,
     pub allowed_hosts: Vec<AllowedHostToml>,
     pub return_type: Option<String>,
-}
-
-/// Canonical exec source.
-/// Local file paths are resolved to `content` before canonicalization.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecSourceCanonical {
-    Content(String),
-    Oci { image: String },
 }
 
 /// Secret entry: resolved from environment variables at startup.
@@ -527,7 +542,7 @@ pub struct ExecSecretsToml {
 #[serde(deny_unknown_fields)]
 pub struct ActivityExecComponentConfigCanonical {
     pub name: ConfigName,
-    pub source: ExecSourceCanonical,
+    pub location: ScriptLocationCanonical,
     pub content_digest: Option<ContentDigest>,
     pub ffqn: FunctionFqn,
     pub params: Vec<JsParamToml>,
@@ -598,7 +613,7 @@ pub struct WorkflowWasmComponentConfigCanonical {
 #[serde(deny_unknown_fields)]
 pub struct WorkflowJsComponentConfigCanonical {
     pub name: ConfigName,
-    pub location: JsLocationCanonical,
+    pub location: ScriptLocationCanonical,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
@@ -614,7 +629,7 @@ pub struct WorkflowJsComponentConfigCanonical {
 pub mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfigCanonical, ComponentCommon,
-        ComponentStdOutputToml, ConfigName, JsLocationCanonical, LogLevelToml,
+        ComponentStdOutputToml, ConfigName, LogLevelToml, ScriptLocationCanonical,
     };
     use crate::component_id::ContentDigest;
     use crate::env_var::EnvVarConfig;
@@ -677,7 +692,7 @@ pub mod webhook {
     #[serde(deny_unknown_fields)]
     pub struct WebhookJsComponentConfigCanonical {
         pub name: ConfigName,
-        pub location: JsLocationCanonical,
+        pub location: ScriptLocationCanonical,
         #[serde(default)]
         pub content_digest: Option<ContentDigest>,
         #[serde(default = "default_external_server_name")]
