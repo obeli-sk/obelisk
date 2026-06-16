@@ -553,7 +553,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/JsLocationCanonical"
+          "$ref": "#/$defs/ScriptLocationCanonical"
         },
         "content_digest": {
           "type": [
@@ -631,8 +631,8 @@
         "allowed_hosts"
       ]
     },
-    "JsLocationCanonical": {
-      "description": "Canonical JS location — no local file paths.\nUsed for hash computation, wire format in deployment submission, and DB storage.",
+    "ScriptLocationCanonical": {
+      "description": "Canonical location of a script source (JS or exec) — no deployment-relative paths.\nUsed for hash computation, wire format in deployment submission, and DB storage.\n\n- `Content` is owned by the deployment (inline content, or a file that lived under\n  the deployment directory); `file_name` is the deployment-relative path (which may\n  include subfolders), used to recreate the file on filesystem export.\n- `Path` is an external local file that the deployment merely references; it is read\n  at runtime and is not recreated on export.\n- `Oci` is an external registry reference.",
       "oneOf": [
         {
           "type": "object",
@@ -647,7 +647,20 @@
           "additionalProperties": false
         },
         {
-          "description": "OCI-sourced JS.",
+          "description": "External local file, read at runtime, not recreated on export.",
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "OCI-sourced script. No `oci://` prefix.",
           "type": "object",
           "properties": {
             "oci": {
@@ -668,8 +681,8 @@
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
-        "source": {
-          "$ref": "#/$defs/ExecSourceCanonical"
+        "location": {
+          "$ref": "#/$defs/ScriptLocationCanonical"
         },
         "content_digest": {
           "type": [
@@ -743,7 +756,7 @@
       "additionalProperties": false,
       "required": [
         "name",
-        "source",
+        "location",
         "ffqn",
         "params",
         "exec",
@@ -754,43 +767,6 @@
         "logs_store_min_level",
         "env_vars",
         "max_output_bytes"
-      ]
-    },
-    "ExecSourceCanonical": {
-      "description": "Canonical exec source.\nLocal file paths are resolved to `content` before canonicalization.",
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "content": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "content"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "oci": {
-              "type": "object",
-              "properties": {
-                "image": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "image"
-              ]
-            }
-          },
-          "required": [
-            "oci"
-          ],
-          "additionalProperties": false
-        }
       ]
     },
     "ExecSecretsToml": {
@@ -936,12 +912,29 @@
         "frame_files_to_sources": {
           "type": "object",
           "additionalProperties": {
-            "type": "string"
+            "$ref": "#/$defs/BacktraceSourceCanonical"
           }
         }
       },
       "required": [
         "frame_files_to_sources"
+      ]
+    },
+    "BacktraceSourceCanonical": {
+      "description": "Canonical backtrace source: the inlined source `content` plus the deployment-relative\n`file_name` it was read from (used to recreate the file, mirroring subfolders, on export).",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "file_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "content",
+        "file_name"
       ]
     },
     "WorkflowJsComponentConfigCanonical": {
@@ -952,7 +945,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/JsLocationCanonical"
+          "$ref": "#/$defs/ScriptLocationCanonical"
         },
         "content_digest": {
           "type": [
@@ -1107,7 +1100,7 @@
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/JsLocationCanonical"
+          "$ref": "#/$defs/ScriptLocationCanonical"
         },
         "content_digest": {
           "type": [

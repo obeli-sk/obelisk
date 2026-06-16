@@ -754,6 +754,37 @@
               "required": true
             }
           ]
+        },
+        {
+          "name": "get",
+          "about": "Retrieve a deployment to disk as a re-submittable `deployment.toml` plus its source files",
+          "options": [
+            {
+              "name": "--output",
+              "short": "o",
+              "help": "Directory to write `deployment.toml` and source files into. Defaults to the current directory",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--force",
+              "short": "f",
+              "help": "Overwrite existing files in the output directory"
+            },
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "id",
+              "help": "Deployment ID",
+              "required": true
+            }
+          ]
         }
       ]
     },

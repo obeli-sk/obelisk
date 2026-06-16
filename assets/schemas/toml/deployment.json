@@ -681,7 +681,7 @@
       ]
     },
     "JsLocationToml": {
-      "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`JsLocationCanonical`] before transmission and hash computation.",
+      "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`ScriptLocationCanonical`] before transmission and hash computation.",
       "type": "string"
     },
     "ActivityExecComponentConfigToml": {

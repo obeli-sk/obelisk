@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(cli)* `deployment get <ID> [--output DIR] [--force]` retrieves a stored deployment to disk as a re-submittable `deployment.toml` plus its source files. Owned scripts and backtrace sources are recreated (subfolders mirrored, relative to `${DEPLOYMENT_DIR}`); WASM bytes and external (absolute-path) scripts are referenced but not recreated.
+- *(deployment)* Verify a user-supplied `content_digest` at submit time, in addition to runtime.
+
+### Changed
+
+- *(deployment)* **Canonical deployment format changed.** JS and exec sources now share one `ScriptLocationCanonical` (`Content`/`Path`/`Oci`): a relative location (bare or `${DEPLOYMENT_DIR}/…`) is deployment-owned and inlined, an absolute location is an external reference read at runtime, and `..` escapes are rejected. The `activity_exec` canonical field `source` was renamed to `location`, its inline `Content` gained a `file_name`, and its OCI image no longer carries the `oci://` prefix. Workflow/webhook backtrace sources retain their source path for recreation (canonical value is now `{ content, file_name }`). As a result, previously stored deployments that contain `activity_exec` components or backtrace sources will not deserialize and must be re-submitted.
+
 ## [0.38.3](https://github.com/obeli-sk/obelisk/compare/v0.38.2...v0.38.3)
 
 This release adds the `auto` locking strategy and makes it the default for workflows. With this strategy, in-progress executions of a workflow

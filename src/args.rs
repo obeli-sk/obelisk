@@ -189,6 +189,22 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
+    /// Retrieve a deployment to disk as a re-submittable `deployment.toml` plus its source files.
+    Get {
+        /// Deployment ID
+        #[arg(value_name = "ID")]
+        id: DeploymentId,
+        /// Directory to write `deployment.toml` and source files into. Defaults to the
+        /// current directory.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+        /// Overwrite existing files in the output directory.
+        #[arg(long, short)]
+        force: bool,
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
