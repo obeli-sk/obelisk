@@ -2,6 +2,7 @@ use crate::args::{self, DeploymentSource};
 use crate::config::config_holder::load_deployment_canonical;
 use crate::config::toml::{
     DeploymentCanonical, DeploymentTomlValidated, deployment_canonical_to_toml,
+    sanitize_deployment_relative_path,
 };
 use crate::get_deployment_repository_client;
 use anyhow::{Context as _, bail};
@@ -193,13 +194,14 @@ impl args::Deployment {
                 for side_file in &export.side_files {
                     // Defensively re-validate the relative path so a malformed stored
                     // config can never write outside the output directory.
-                    let rel = crate::config::toml::normalize_owned_subpath(&side_file.rel_path)
-                        .with_context(|| {
+                    let rel = sanitize_deployment_relative_path(&side_file.rel_path).with_context(
+                        || {
                             format!(
                                 "refusing to write unsafe source path `{}`",
                                 side_file.rel_path
                             )
-                        })?;
+                        },
+                    )?;
                     let path = output_dir.join(&rel);
                     if let Some(parent) = path.parent() {
                         tokio::fs::create_dir_all(parent).await.with_context(|| {

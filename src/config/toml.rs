@@ -319,7 +319,7 @@ impl DeploymentToml {
         if std::path::Path::new(candidate).is_absolute() {
             return Ok(());
         }
-        let rel = normalize_owned_subpath(candidate)
+        let rel = sanitize_deployment_relative_path(candidate)
             .with_context(|| format!("invalid deployment-relative path `{s}`"))?;
         *s = deployment_dir.join(rel).to_string_lossy().into_owned();
         Ok(())
@@ -2523,8 +2523,7 @@ fn strip_deployment_dir_prefix(s: &str) -> Option<&str> {
 
 /// Normalize a deployment-owned relative path to forward-slash form, rejecting anything
 /// that would escape the deployment directory (`..`, absolute paths, drive prefixes).
-/// Used both when canonicalizing and (defensively) when recreating files on export.
-pub(crate) fn normalize_owned_subpath(rel: &str) -> anyhow::Result<String> {
+pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<String> {
     use std::path::Component;
     let mut parts: Vec<&str> = Vec::new();
     for comp in std::path::Path::new(rel).components() {
@@ -2597,23 +2596,7 @@ async fn resolve_script_toml_to_canonical(
             })
         }
         (Some(JsLocationToml::Path(path)), None) => {
-            // A `${DEPLOYMENT_DIR}/…` prefix or any non-absolute path is deployment-owned;
-            // an absolute path is an external reference.
-            let owned_rel = if let Some(rest) = strip_deployment_dir_prefix(&path) {
-                Some(normalize_owned_subpath(rest)?)
-            } else if std::path::Path::new(&path).is_absolute() {
-                None
-            } else {
-                Some(normalize_owned_subpath(&path)?)
-            };
-            if let Some(file_name) = owned_rel {
-                let full_path = deployment_dir.join(&file_name);
-                let content = tokio::fs::read_to_string(&full_path)
-                    .await
-                    .with_context(|| format!("cannot read script file {full_path:?}"))?;
-                verify_content_digest(content.as_bytes(), content_digest, &file_name)?;
-                Ok(ScriptLocationCanonical::Content { content, file_name })
-            } else {
+            if std::path::Path::new(&path).is_absolute() {
                 // External reference: verify digest against its bytes if set.
                 if content_digest.is_some() {
                     let bytes = tokio::fs::read(&path)
@@ -2622,10 +2605,21 @@ async fn resolve_script_toml_to_canonical(
                     verify_content_digest(&bytes, content_digest, &path)?;
                 }
                 Ok(ScriptLocationCanonical::ExternalPath { path })
+            } else {
+                let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
+                let path = sanitize_deployment_relative_path(&path)?;
+                let full_path = deployment_dir.join(&path);
+                let content = tokio::fs::read_to_string(&full_path)
+                    .await
+                    .with_context(|| format!("cannot read script file {full_path:?}"))?;
+                verify_content_digest(content.as_bytes(), content_digest, &path)?;
+                Ok(ScriptLocationCanonical::Content {
+                    content,
+                    file_name: path,
+                })
             }
         }
         (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationCanonical::Oci {
-            // `to_string()` == `whole()`; use `to_string()` to match WASM OCI normalization.
             image: reference.to_string(),
         }),
         (None, None) | (Some(_), Some(_)) => {
@@ -2645,13 +2639,13 @@ async fn resolve_backtrace_to_canonical(
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
         // export; an absolute path is recreated self-contained under a root-stripped mirror.
         let (full_path, file_name) = if let Some(rest) = strip_deployment_dir_prefix(path) {
-            let rel = normalize_owned_subpath(rest)?;
+            let rel = sanitize_deployment_relative_path(rest)?;
             (deployment_dir.join(&rel), rel)
         } else if std::path::Path::new(path).is_absolute() {
             // Captured content is recreated self-contained under a root-stripped mirror.
             (PathBuf::from(path), mirror_path_as_relative(path)?)
         } else {
-            let rel = normalize_owned_subpath(path)?;
+            let rel = sanitize_deployment_relative_path(path)?;
             (deployment_dir.join(&rel), rel)
         };
         if !full_path.exists() {
