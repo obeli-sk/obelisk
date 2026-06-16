@@ -86,6 +86,7 @@ impl ConfigName {
 #[schemars(with = "String")]
 pub enum ComponentLocationToml {
     Path(String), // String because it can contain path prefix - $DEPLOYMENT_DIR/
+    /// No `oci://` prefix.
     Oci(String),
 }
 
@@ -464,7 +465,7 @@ pub enum ScriptLocationCanonical {
     /// External local file, read at runtime, not recreated on export.
     #[schemars(with = "String")]
     Path { path: String },
-    /// OCI-sourced script.
+    /// OCI-sourced script. No `oci://` prefix.
     #[schemars(with = "String")]
     Oci { image: String },
 }

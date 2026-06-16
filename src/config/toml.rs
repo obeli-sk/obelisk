@@ -305,20 +305,23 @@ impl DeploymentToml {
             .collect()
     }
 
-    /// Expand a `${DEPLOYMENT_DIR}/<suffix>` prefix to an absolute path. The suffix must
-    /// stay within the deployment directory (no `..` escape). Paths without the prefix are
-    /// left untouched.
+    /// Resolve a WASM component file path to an absolute path. A `${DEPLOYMENT_DIR}/<suffix>`
+    /// path and a bare relative path are both anchored to the deployment directory and must
+    /// stay within it (no `..` escape); an absolute path is left untouched (out-of-tree
+    /// reference). This makes every relative path in a deployment.toml deployment-relative.
     fn expand_deployment_dir(
         s: &mut String,
         deployment_dir: &std::path::Path,
     ) -> anyhow::Result<()> {
-        if let Some(rest) = s.strip_prefix(DEPLOYMENT_DIR_PREFIX)
-            && let Some(suffix) = rest.strip_prefix('/')
-        {
-            let rel = normalize_owned_subpath(suffix)
-                .with_context(|| format!("invalid `${{DEPLOYMENT_DIR}}` path `{s}`"))?;
-            *s = deployment_dir.join(rel).to_string_lossy().into_owned();
+        // A `${DEPLOYMENT_DIR}/x` path and a bare relative `x` are equivalent; only an
+        // absolute path is left untouched (out-of-tree reference).
+        let candidate = strip_deployment_dir_prefix(s).unwrap_or(s.as_str());
+        if std::path::Path::new(candidate).is_absolute() {
+            return Ok(());
         }
+        let rel = normalize_owned_subpath(candidate)
+            .with_context(|| format!("invalid deployment-relative path `{s}`"))?;
+        *s = deployment_dir.join(rel).to_string_lossy().into_owned();
         Ok(())
     }
 
@@ -2585,8 +2588,8 @@ async fn resolve_backtrace_to_canonical(
     for (key, location) in &backtrace.frame_files_to_sources {
         let BacktraceSourceLocation::Path(path) = location;
         // Classify the source path like a script: a relative path (bare or
-        // `${DEPLOYMENT_DIR}/…`) is deployment-owned and its subpath is mirrored on export;
-        // an absolute path is external and recreated under its basename only.
+        // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
+        // export; an absolute path is recreated self-contained under a root-stripped mirror.
         let (full_path, file_name) = if let Some(rest) = strip_deployment_dir_prefix(path) {
             let rel = normalize_owned_subpath(rest)?;
             (deployment_dir.join(&rel), rel)
@@ -4591,6 +4594,23 @@ name = "my_stub"
             let mut ok = "${DEPLOYMENT_DIR}/components/a.wasm".to_string();
             DeploymentToml::expand_deployment_dir(&mut ok, dir).unwrap();
             assert_eq!(ok, "/dep/components/a.wasm");
+
+            // Bare relative paths are anchored to the deployment dir too.
+            let mut bare = "components/a.wasm".to_string();
+            DeploymentToml::expand_deployment_dir(&mut bare, dir).unwrap();
+            assert_eq!(bare, "/dep/components/a.wasm");
+
+            let mut bare_escape = "../evil.wasm".to_string();
+            let err = format!(
+                "{:#}",
+                DeploymentToml::expand_deployment_dir(&mut bare_escape, dir).unwrap_err()
+            );
+            assert!(err.contains("`..`"), "unexpected error: {err}");
+
+            // Absolute paths are left untouched (out-of-tree reference).
+            let mut abs = "/other/a.wasm".to_string();
+            DeploymentToml::expand_deployment_dir(&mut abs, dir).unwrap();
+            assert_eq!(abs, "/other/a.wasm");
         }
 
         #[tokio::test]
@@ -4613,6 +4633,45 @@ name = "my_stub"
             let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
             assert_eq!(src.content, "SRC");
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
+        }
+
+        #[tokio::test]
+        async fn bare_relative_source_is_deployment_dir_relative() {
+            // A bare relative backtrace source (no `${DEPLOYMENT_DIR}` prefix) is resolved
+            // against the deployment dir, same as the explicit-prefix form.
+            let dir = tempfile::tempdir().unwrap();
+            let sub = dir.path().join("crates/foo/src");
+            std::fs::create_dir_all(&sub).unwrap();
+            std::fs::write(sub.join("lib.rs"), "SRC").unwrap();
+
+            let mut bt = ComponentBacktraceConfig::default();
+            bt.frame_files_to_sources.insert(
+                ".../src/lib.rs".to_string(),
+                BacktraceSourceLocation::Path("crates/foo/src/lib.rs".to_string()),
+            );
+            let canon = resolve_backtrace_to_canonical(&bt, dir.path())
+                .await
+                .unwrap();
+            let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
+            assert_eq!(src.content, "SRC");
+            assert_eq!(src.file_name, "crates/foo/src/lib.rs");
+        }
+
+        #[tokio::test]
+        async fn source_parent_dir_escape_is_rejected() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut bt = ComponentBacktraceConfig::default();
+            bt.frame_files_to_sources.insert(
+                "frame".to_string(),
+                BacktraceSourceLocation::Path("${DEPLOYMENT_DIR}/../escape.rs".to_string()),
+            );
+            let err = format!(
+                "{:#}",
+                resolve_backtrace_to_canonical(&bt, dir.path())
+                    .await
+                    .unwrap_err()
+            );
+            assert!(err.contains("`..`"), "unexpected error: {err}");
         }
 
         #[tokio::test]

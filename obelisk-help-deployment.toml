@@ -361,6 +361,16 @@
 # params = '["arg1", 42]'                                     # Optional. JSON-encoded parameters (default: "[]").
 # schedule = "@daily"                                         # Required. Cron expression, or one of "@once", "@daily", "@hourly", "@weekly", "@monthly", "@yearly".
 
-## Appendix: Supported path prefixes:
+## Appendix: Path resolution
+## Every local file path in this file (component `location`, `backtrace.sources` values) is resolved the same way:
+##   - A relative path (e.g. "components/a.wasm", "scripts/x.js") is relative to ${DEPLOYMENT_DIR}, the directory
+##     containing this deployment.toml. It must stay within that directory ("../" escapes are rejected).
+##   - The explicit "${DEPLOYMENT_DIR}/..." prefix is equivalent to a bare relative path; use it for clarity.
+##   - An absolute path (e.g. "/opt/wasm/a.wasm") references a file anywhere on the host (out-of-tree, not portable).
+## For JS/exec components, deployment-relative sources are read and inlined at deploy time so the deployment is
+## self-contained; absolute paths stay external references read at runtime. `obelisk deployment get` recreates the
+## deployment-relative files (mirroring subfolders) but cannot recreate WASM bytes or out-of-tree absolute paths.
+##
+## Supported path prefixes:
 # | Prefix                  | Default path           | Details
 # | ${DEPLOYMENT_DIR}       | N/A                    | Directory where the deployment.toml file is located
