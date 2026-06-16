@@ -1526,7 +1526,7 @@ impl ActivityExecComponentConfigCanonicalExt for ActivityExecComponentConfigCano
                     source_bytes: content.as_bytes().to_vec(),
                 })
             }
-            ScriptLocationCanonical::Path { path } => {
+            ScriptLocationCanonical::ExternalPath { path } => {
                 let full_path = PathBuf::from(path);
                 let content = tokio::fs::read_to_string(&full_path)
                     .await
@@ -1887,7 +1887,7 @@ impl JsLocationCanonicalExt for ScriptLocationCanonical {
                     file_name: file_name.clone(),
                 })
             }
-            ScriptLocationCanonical::Path { path } => {
+            ScriptLocationCanonical::ExternalPath { path } => {
                 let full_path = PathBuf::from(path);
                 let source = tokio::fs::read_to_string(&full_path)
                     .await
@@ -2621,7 +2621,7 @@ async fn resolve_script_toml_to_canonical(
                         .with_context(|| format!("cannot read external script file {path:?}"))?;
                     verify_content_digest(&bytes, content_digest, &path)?;
                 }
-                Ok(ScriptLocationCanonical::Path { path })
+                Ok(ScriptLocationCanonical::ExternalPath { path })
             }
         }
         (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationCanonical::Oci {
@@ -3641,7 +3641,7 @@ fn script_location_to_toml(
             files.push(file_name.clone(), content)?;
             JsLocationToml::Path(deployment_dir_hint(&file_name))
         }
-        ScriptLocationCanonical::Path { path } => {
+        ScriptLocationCanonical::ExternalPath { path } => {
             // External reference: emit the absolute path verbatim (it cannot be expressed
             // as a portable `${DEPLOYMENT_DIR}` hint) and do not recreate the file.
             external_paths.push(path.clone());
@@ -4362,7 +4362,7 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 location,
-                ScriptLocationCanonical::Path { path } if path == abs
+                ScriptLocationCanonical::ExternalPath { path } if path == abs
             );
         }
 
@@ -4496,7 +4496,7 @@ name = "my_stub"
             let mut files = SideFileCollector::default();
             let mut external = Vec::new();
             let loc = script_location_to_toml(
-                ScriptLocationCanonical::Path {
+                ScriptLocationCanonical::ExternalPath {
                     path: "/abs/elsewhere/lib.js".to_string(),
                 },
                 &mut files,
@@ -4601,7 +4601,7 @@ name = "my_stub"
             ));
             deployment.activities_js.push(js_activity(
                 "external",
-                ScriptLocationCanonical::Path {
+                ScriptLocationCanonical::ExternalPath {
                     path: "/somewhere/external.js".to_string(),
                 },
             ));
