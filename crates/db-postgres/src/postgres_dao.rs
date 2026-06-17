@@ -329,7 +329,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         created_at: get(row, "created_at")?,
         last_active_at: get(row, "last_active_at")?,
         status,
-        config_json: get(row, "config_json")?,
+        deployment_toml: get(row, "deployment_toml")?,
         obelisk_version: get(row, "obelisk_version")?,
         created_by: get(row, "created_by")?,
         files: Vec::new(),
@@ -1673,7 +1673,7 @@ async fn list_deployment_states(
     tx: &Transaction<'_>,
     current_time: DateTime<Utc>,
     pagination: Pagination<Option<DeploymentId>>,
-    include_config_json: bool,
+    include_deployment_toml: bool,
     include_derived: bool,
 ) -> Result<Vec<DeploymentState>, DbErrorRead> {
     // Helper for numbered params ($1, $2, ...)
@@ -1686,10 +1686,10 @@ async fn list_deployment_states(
     // Base params
     let p_now = add_param(Box::new(current_time));
 
-    let config_json_col = if include_config_json {
-        "d.config_json"
+    let deployment_toml_col = if include_deployment_toml {
+        "d.deployment_toml"
     } else {
-        "NULL::TEXT AS config_json"
+        "NULL::TEXT AS deployment_toml"
     };
 
     let mut sql = format!(
@@ -1733,7 +1733,7 @@ async fn list_deployment_states(
                   AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}'::jsonb, '{RESULT_KIND_JSON_ERROR}'::jsonb)
             ) AS finished_execution_failure,
 
-            {config_json_col},
+            {deployment_toml_col},
             d.created_at,
             d.last_active_at,
             d.status
@@ -1768,7 +1768,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY d.deployment_id, d.description, d.digest, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -1817,7 +1817,7 @@ async fn list_deployment_states(
                 "finished_execution_failure",
             )?)
             .expect("count is never negative"),
-            config_json: get::<Option<String>, _>(&row, "config_json")?,
+            deployment_toml: get::<Option<String>, _>(&row, "deployment_toml")?,
             created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
             last_active_at: get::<Option<DateTime<Utc>>, _>(&row, "last_active_at")?,
             status,
@@ -4677,7 +4677,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
-        include_config_json: bool,
+        include_deployment_toml: bool,
         include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
@@ -4686,7 +4686,7 @@ impl DbExternalApi for PostgresConnection {
             &tx,
             current_time,
             pagination,
-            include_config_json,
+            include_deployment_toml,
             include_derived,
         )
         .await?;
@@ -4710,7 +4710,7 @@ impl DbExternalApi for PostgresConnection {
         let digest = record.digest.to_string();
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, digest, created_at, status, config_json, obelisk_version, created_by) \
+             (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             &[
                 &record.deployment_id.to_string(), // $1
@@ -4718,7 +4718,7 @@ impl DbExternalApi for PostgresConnection {
                 &digest,                           // $3
                 &record.created_at,                // $4
                 &record.status.as_str(),           // $5
-                &record.config_json,               // $6
+                &record.deployment_toml,               // $6
                 &record.obelisk_version,           // $7
                 &record.created_by,                // $8
             ],
@@ -4855,7 +4855,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
@@ -4877,7 +4877,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
@@ -4897,7 +4897,7 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status IN ('enqueued', 'active') \
                  ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                 &[],
@@ -4927,7 +4927,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment",
         );
 

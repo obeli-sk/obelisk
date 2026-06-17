@@ -9,6 +9,7 @@ use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
+use concepts::ContentDigest;
 use concepts::ExecutionId;
 use concepts::FunctionExtension;
 use concepts::FunctionFqn;
@@ -1607,12 +1608,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .map_err(map_to_status)?;
 
-        let include_config_json = request.include_config_json;
+        let include_deployment_toml = request.include_deployment_toml;
         let include_derived = request.include_derived;
         let pagination = convert_deployment_pagination(&request)?;
 
         let summaries = conn
-            .list_deployment_states(Utc::now(), pagination, include_config_json, include_derived)
+            .list_deployment_states(Utc::now(), pagination, include_deployment_toml, include_derived)
             .await
             .to_status()?;
 
@@ -1690,9 +1691,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .map(DeploymentId::try_from)
             .transpose()?;
         let mut termination_watcher = self.termination_watcher.clone();
-        let result = Box::pin(server::submit_deployment(
+        let (deployment_id, missing_digests) = Box::pin(server::submit_deployment(
             self.server_verified.clone(),
-            &request.config_json,
+            &request.deployment_toml,
             request.verify,
             request.created_by.clone(),
             request.description.clone(),
@@ -1703,9 +1704,10 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         ))
         .await
         .map_err(|err| tonic::Status::failed_precondition(format!("{err:#}")))?;
-        tracing::Span::current().record("deployment_id", tracing::field::display(&result));
+        tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
-            deployment_id: Some(result.into()),
+            deployment_id: Some(deployment_id.into()),
+            missing_digests: missing_digests.iter().map(ToString::to_string).collect(),
         }))
     }
 
@@ -1736,6 +1738,41 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             deployment: Some(deployment_record_to_grpc(record)),
         }))
     }
+
+    #[instrument(skip_all)]
+    async fn upload_file(
+        &self,
+        request: tonic::Request<grpc_gen::UploadFileRequest>,
+    ) -> TonicRespResult<grpc_gen::UploadFileResponse> {
+        let request = request.into_inner();
+        let cas = self.db_pool.cas_conn().await.map_err(map_to_status)?;
+        let digest = cas
+            .write_blob(&request.content)
+            .await
+            .map_err(|err| tonic::Status::internal(format!("cannot store file: {err}")))?;
+        Ok(tonic::Response::new(grpc_gen::UploadFileResponse {
+            digest: digest.to_string(),
+        }))
+    }
+
+    #[instrument(skip_all)]
+    async fn get_file(
+        &self,
+        request: tonic::Request<grpc_gen::GetFileRequest>,
+    ) -> TonicRespResult<grpc_gen::GetFileResponse> {
+        let request = request.into_inner();
+        let digest: ContentDigest = request
+            .digest
+            .parse()
+            .map_err(|err| tonic::Status::invalid_argument(format!("invalid digest: {err}")))?;
+        let cas = self.db_pool.cas_conn().await.map_err(map_to_status)?;
+        let content = cas
+            .read_blob(&digest)
+            .await
+            .map_err(|err| tonic::Status::internal(format!("cannot read file: {err}")))?
+            .must_exist("file")?;
+        Ok(tonic::Response::new(grpc_gen::GetFileResponse { content }))
+    }
 }
 
 fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
@@ -1746,15 +1783,26 @@ fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
     }
 }
 
+fn file_refs_to_grpc(files: Vec<concepts::storage::DeploymentFileRecord>) -> Vec<grpc_gen::FileRef> {
+    files
+        .into_iter()
+        .map(|file| grpc_gen::FileRef {
+            path: file.path,
+            digest: file.digest.to_string(),
+        })
+        .collect()
+}
+
 fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grpc_gen::Deployment {
     grpc_gen::Deployment {
         deployment_id: Some(record.deployment_id.into()),
         status: status_to_grpc(record.status).into(),
         created_at: Some(prost_wkt_types::Timestamp::from(record.created_at)),
         last_active_at: record.last_active_at.map(prost_wkt_types::Timestamp::from),
-        config_json: Some(record.config_json),
+        deployment_toml: Some(record.deployment_toml),
         description: record.description,
         digest: record.digest.to_string(),
+        files: file_refs_to_grpc(record.files),
     }
 }
 
@@ -1764,9 +1812,10 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
         status: status_to_grpc(dep.status).into(),
         created_at: Some(prost_wkt_types::Timestamp::from(dep.created_at)),
         last_active_at: dep.last_active_at.map(prost_wkt_types::Timestamp::from),
-        config_json: dep.config_json,
+        deployment_toml: dep.deployment_toml,
         description: dep.description,
         digest: dep.digest.to_string(),
+        files: Vec::new(),
     };
     grpc_gen::DeploymentSummary {
         deployment: Some(deployment),
@@ -1799,7 +1848,7 @@ mod tests {
                     including_cursor: true,
                 },
             )),
-            include_config_json: true,
+            include_deployment_toml: true,
             include_derived: false,
         };
 
@@ -1832,7 +1881,7 @@ mod tests {
                     including_cursor: false,
                 },
             )),
-            include_config_json: true, // TODO test
+            include_deployment_toml: true, // TODO test
             include_derived: false,
         };
 
@@ -1858,7 +1907,7 @@ mod tests {
     fn test_convert_deployment_pagination_none_defaults_to_older_than() {
         let request = grpc_gen::ListDeploymentsRequest {
             pagination: None,
-            include_config_json: true, // TODO test
+            include_deployment_toml: true, // TODO test
             include_derived: false,
         };
 
@@ -1888,7 +1937,7 @@ mod tests {
                     including_cursor: false,
                 },
             )),
-            include_config_json: true, // TODO test
+            include_deployment_toml: true, // TODO test
             include_derived: false,
         };
 

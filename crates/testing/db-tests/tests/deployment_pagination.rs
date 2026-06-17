@@ -43,7 +43,7 @@ async fn create_deployment_with_execution(
                 created_at: now,
                 last_active_at: None,
                 status: DeploymentStatus::Inactive,
-                config_json: "{}".to_string(),
+                deployment_toml: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
                 files: Vec::new(),

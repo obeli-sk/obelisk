@@ -4,8 +4,8 @@ use crate::{
         backtrace::{execution_backtrace, execution_backtrace_source},
         components::{component_wit, components_list},
         deployment::{
-            get_current_deployment_id, get_deployment, list_deployments, submit_deployment,
-            switch_deployment,
+            get_current_deployment_id, get_deployment, get_file, list_deployments,
+            submit_deployment, switch_deployment, upload_file,
         },
         functions::{function_wit, functions_list},
     },
@@ -112,6 +112,8 @@ pub(crate) struct WebApiState {
         deployment::get_deployment,
         deployment::submit_deployment,
         deployment::switch_deployment,
+        deployment::upload_file,
+        deployment::get_file,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -238,6 +240,8 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/deployments", routing::get(list_deployments))
         .route("/deployments", routing::post(submit_deployment))
         .route("/deployments/{deployment-id}", routing::get(get_deployment))
+        .route("/files", routing::post(upload_file))
+        .route("/files/{digest}", routing::get(get_file))
         .route(
             "/deployments/{deployment-id}/switch",
             routing::put(switch_deployment),
@@ -3217,12 +3221,13 @@ mod deployment {
         #[schema(value_type = String)]
         pub deployment_id: DeploymentId,
         pub description: Option<String>,
-        /// Content digest derived from the deployment's canonical config JSON
+        /// Content digest = `sha256(deployment_toml)`
         pub digest: String,
         pub status: DeploymentStatusSer,
         pub created_at: DateTime<Utc>,
         pub last_active_at: Option<DateTime<Utc>>,
-        pub config_json: String,
+        /// Verbatim deployment manifest (`deployment.toml`)
+        pub deployment_toml: String,
     }
 
     impl From<&DeploymentRecord> for DeploymentRecordSer {
@@ -3234,7 +3239,7 @@ mod deployment {
                 status: DeploymentStatusSer::from(&r.status),
                 created_at: r.created_at,
                 last_active_at: r.last_active_at,
-                config_json: r.config_json.clone(),
+                deployment_toml: r.deployment_toml.clone(),
             }
         }
     }
@@ -3276,7 +3281,7 @@ mod deployment {
                 let mut output = String::new();
                 writeln!(
                     &mut output,
-                    "{} status={} created={} last_active={} description={} digest={} config={}",
+                    "{} status={} created={} last_active={} description={} digest={} manifest={}",
                     ser.deployment_id,
                     match ser.status {
                         DeploymentStatusSer::Inactive => "inactive",
@@ -3289,7 +3294,7 @@ mod deployment {
                         .unwrap_or_default(),
                     ser.description.unwrap_or_default(),
                     ser.digest,
-                    ser.config_json,
+                    ser.deployment_toml,
                 )
                 .expect("writing to string");
                 output.into_response()
@@ -3300,8 +3305,9 @@ mod deployment {
     /// Request payload for submitting a new deployment
     #[derive(Deserialize, ToSchema)]
     pub struct DeploymentSubmitPayload {
-        /// Deployment config as JSON string
-        pub config_json: String,
+        /// Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must
+        /// already be uploaded to the content-addressed store.
+        pub deployment_toml: String,
         /// Optional human-readable deployment description
         pub description: Option<String>,
         /// Verify all environment variables before persisting
@@ -3342,29 +3348,104 @@ mod deployment {
                 accept,
             })?;
         let mut termination_watcher = state.termination_watcher.clone();
-        let result = Box::pin(crate::command::server::submit_deployment(
-            state.server_verified.clone(),
-            &payload.config_json,
-            payload.verify,
-            Some("web-api".to_string()),
-            payload.description,
-            requested_deployment_id,
-            &state.prepared_dirs,
-            state.db_pool.clone(),
-            &mut termination_watcher,
-        ))
-        .await
-        .map_err(|err| HttpResponse {
-            status: StatusCode::BAD_REQUEST,
-            message: format!("{err:#}"),
+        let (deployment_id, _missing_digests) =
+            Box::pin(crate::command::server::submit_deployment(
+                state.server_verified.clone(),
+                &payload.deployment_toml,
+                payload.verify,
+                Some("web-api".to_string()),
+                payload.description,
+                requested_deployment_id,
+                &state.prepared_dirs,
+                state.db_pool.clone(),
+                &mut termination_watcher,
+            ))
+            .await
+            .map_err(|err| HttpResponse {
+                status: StatusCode::BAD_REQUEST,
+                message: format!("{err:#}"),
+                accept,
+            })?;
+        Ok(HttpResponse {
+            status: StatusCode::OK,
+            message: deployment_id.to_string(),
+            accept,
+        }
+        .into_response())
+    }
+
+    /// Upload a deployment file blob to the content-addressed store. The request body is the
+    /// raw file content; the response is the server-computed content digest.
+    #[utoipa::path(
+        post,
+        path = "/v1/files",
+        tag = "deployments",
+        request_body(content = Vec<u8>, content_type = "application/octet-stream"),
+        responses(
+            (status = 200, description = "Stored; returns the content digest", body = String)
+        )
+    )]
+    #[instrument(skip_all)]
+    pub(crate) async fn upload_file(
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+        body: axum::body::Bytes,
+    ) -> Result<Response, HttpResponse> {
+        let cas = state
+            .db_pool
+            .cas_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let digest = cas.write_blob(&body).await.map_err(|err| HttpResponse {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: format!("cannot store file: {err}"),
             accept,
         })?;
         Ok(HttpResponse {
             status: StatusCode::OK,
-            message: result.to_string(),
+            message: digest.to_string(),
             accept,
         }
         .into_response())
+    }
+
+    /// Fetch a deployment file blob by content digest.
+    #[utoipa::path(
+        get,
+        path = "/v1/files/{digest}",
+        tag = "deployments",
+        params(("digest" = String, Path, description = "Content digest (sha256:...)")),
+        responses(
+            (status = 200, description = "Blob bytes", body = Vec<u8>),
+            (status = 404, description = "Blob not found")
+        )
+    )]
+    #[instrument(skip_all)]
+    pub(crate) async fn get_file(
+        Path(digest): Path<String>,
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+    ) -> Result<Response, HttpResponse> {
+        let digest: concepts::ContentDigest = digest.parse().map_err(|err| HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message: format!("invalid digest: {err}"),
+            accept,
+        })?;
+        let cas = state
+            .db_pool
+            .cas_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let content = cas
+            .read_blob(&digest)
+            .await
+            .map_err(|err| HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("cannot read file: {err}"),
+                accept,
+            })?
+            .ok_or_else(|| HttpResponse::not_found(accept, Some("file")))?;
+        Ok(content.into_response())
     }
 
     /// Request payload for switching deployment

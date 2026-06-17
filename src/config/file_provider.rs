@@ -43,10 +43,6 @@ impl FileProvider for DiskProvider {
 ///
 /// A digest is required; later manifest work makes digests mandatory on every
 /// relative ref before this provider is used for canonicalization.
-#[expect(
-    dead_code,
-    reason = "constructed in the server-side canonicalize slice"
-)]
 pub(crate) struct CasFileProvider {
     pub(crate) cas: Arc<dyn Cas>,
 }

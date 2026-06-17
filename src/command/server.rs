@@ -56,6 +56,7 @@ use anyhow::Context;
 use anyhow::bail;
 use concepts::ComponentId;
 use concepts::ComponentType;
+use concepts::ContentDigest;
 use concepts::ExecutionId;
 use concepts::FnName;
 use concepts::FunctionExtension;
@@ -425,10 +426,9 @@ pub(crate) async fn run(
     let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
     let deployment = if let Some(deployment_path) = deployment {
-        let toml = load_deployment_canonical(&deployment_path).await?;
-        Some(toml)
+        Some(LocalDeployment::from_path(&deployment_path).await?)
     } else if deployment_empty {
-        Some(DeploymentCanonical::default())
+        Some(LocalDeployment::empty())
     } else {
         None
     };
@@ -804,23 +804,159 @@ async fn get_deployment_canonical_from_db(
     let record = record
         .context("no Enqueued or Active deployment found in database; provide --deployment")?;
 
-    let deployment = serde_json::from_str(&record.config_json).with_context(|| {
-        format!(
-            "cannot parse deployment config_json for {:?}",
-            record.deployment_id
-        )
-    })?;
+    let pool = db_pool_container
+        .as_ref()
+        .map(|(pool, _)| pool.clone())
+        .expect("db pool was set above");
+    let deployment = canonical_from_manifest(pool.as_ref(), &record.deployment_toml)
+        .await
+        .with_context(|| {
+            format!(
+                "cannot canonicalize deployment manifest for {:?}",
+                record.deployment_id
+            )
+        })?;
     Ok((deployment, record.deployment_id))
+}
+
+/// A deployment authored locally and passed via `server run -d <toml>` / `--empty`.
+///
+/// Carries the verbatim manifest (stored as the source of truth), its referenced file
+/// blobs (uploaded to the CAS so later restarts can canonicalize from it), and the
+/// already-canonicalized form used to compile/link this run.
+pub(crate) struct LocalDeployment {
+    deployment_toml: String,
+    canonical: DeploymentCanonical,
+    files: Vec<crate::config::manifest::DeploymentManifestFile>,
+}
+
+impl LocalDeployment {
+    pub(crate) async fn from_path(deployment_path: &Path) -> anyhow::Result<Self> {
+        let canonical = load_deployment_canonical(deployment_path).await?;
+        let prepared =
+            crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_path).await?;
+        Ok(Self {
+            deployment_toml: prepared.deployment_toml,
+            canonical,
+            files: prepared.files,
+        })
+    }
+
+    pub(crate) fn empty() -> Self {
+        Self {
+            deployment_toml: String::new(),
+            canonical: DeploymentCanonical::default(),
+            files: Vec::new(),
+        }
+    }
+}
+
+/// Synthetic root for canonicalizing a stored manifest against the CAS.
+///
+/// The manifest's `${DEPLOYMENT_DIR}` / relative paths are expanded against this root only
+/// for relative-vs-absolute classification; the CAS provider addresses blobs by digest, so
+/// the expanded path value itself is never read from disk.
+fn cas_deployment_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from("/deployment")
+}
+
+/// A [`FileProvider`] that reads from the CAS and records the `(path, digest)` of every blob
+/// it serves, so the caller learns exactly which files the manifest references.
+struct RecordingCasProvider {
+    inner: crate::config::file_provider::CasFileProvider,
+    seen: std::sync::Mutex<Vec<concepts::storage::DeploymentFileRecord>>,
+}
+
+#[async_trait::async_trait]
+impl crate::config::file_provider::FileProvider for RecordingCasProvider {
+    async fn read(
+        &self,
+        path: &str,
+        digest: Option<&ContentDigest>,
+    ) -> anyhow::Result<Vec<u8>> {
+        let bytes = self.inner.read(path, digest).await?;
+        if let Some(digest) = digest {
+            self.seen
+                .lock()
+                .expect("RecordingCasProvider mutex poisoned")
+                .push(concepts::storage::DeploymentFileRecord {
+                    path: path.to_string(),
+                    digest: digest.clone(),
+                });
+        }
+        Ok(bytes)
+    }
+}
+
+/// Canonicalize a stored verbatim manifest by reading its referenced blobs from the CAS,
+/// returning the canonical form and the `(path, digest)` of every file it referenced.
+///
+/// `${...}` env vars and secrets resolve here, in the server's environment.
+async fn canonical_and_files_from_manifest(
+    db_pool: &dyn concepts::storage::DbPool,
+    deployment_toml: &str,
+) -> anyhow::Result<(
+    DeploymentCanonical,
+    Vec<concepts::storage::DeploymentFileRecord>,
+)> {
+    let cas: std::sync::Arc<dyn concepts::cas::Cas> = db_pool
+        .cas_conn()
+        .await
+        .context("cannot get CAS connection for deployment canonicalization")?
+        .into();
+    let provider = RecordingCasProvider {
+        inner: crate::config::file_provider::CasFileProvider { cas },
+        seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let canonical = crate::config::manifest::manifest_to_canonical(
+        deployment_toml,
+        &cas_deployment_dir(),
+        &provider,
+    )
+    .await
+    .context("cannot canonicalize deployment manifest from the content-addressed store")?;
+    let files = provider
+        .seen
+        .into_inner()
+        .expect("RecordingCasProvider mutex poisoned");
+    Ok((canonical, files))
+}
+
+/// Canonicalize a stored verbatim manifest by reading its referenced blobs from the CAS.
+async fn canonical_from_manifest(
+    db_pool: &dyn concepts::storage::DbPool,
+    deployment_toml: &str,
+) -> anyhow::Result<DeploymentCanonical> {
+    Ok(canonical_and_files_from_manifest(db_pool, deployment_toml)
+        .await?
+        .0)
 }
 
 async fn insert_and_activate_deployment(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_id: DeploymentId,
-    config_json: String,
+    deployment_toml: String,
+    files: Vec<crate::config::manifest::DeploymentManifestFile>,
     description: Option<String>,
 ) -> anyhow::Result<()> {
     use chrono::Utc;
-    use concepts::storage::{DeploymentRecord, DeploymentStatus};
+    use concepts::storage::{DeploymentFileRecord, DeploymentRecord, DeploymentStatus};
+
+    // Upload referenced blobs to the CAS first, so a later restart can canonicalize from it.
+    let cas = db_pool
+        .cas_conn()
+        .await
+        .context("cannot get CAS connection for deployment file upload")?;
+    let mut file_records = Vec::with_capacity(files.len());
+    for file in files {
+        cas.write_blob(&file.bytes)
+            .await
+            .with_context(|| format!("cannot upload deployment file `{}`", file.path))?;
+        file_records.push(DeploymentFileRecord {
+            path: file.path,
+            digest: file.digest,
+        });
+    }
 
     let api_conn = db_pool
         .external_api_conn()
@@ -828,7 +964,7 @@ async fn insert_and_activate_deployment(
         .context("cannot get external api connection for deployment activation")?;
 
     let now = Utc::now();
-    let digest = DeploymentRecord::compute_digest(&config_json);
+    let digest = DeploymentRecord::compute_digest(&deployment_toml);
     api_conn
         .insert_deployment(DeploymentRecord {
             deployment_id,
@@ -837,10 +973,10 @@ async fn insert_and_activate_deployment(
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
-            config_json,
+            deployment_toml,
             obelisk_version: PKG_VERSION.to_string(),
             created_by: Some("server".to_string()),
-            files: Vec::new(),
+            files: file_records,
         })
         .await
         .context("cannot insert deployment")?;
@@ -880,7 +1016,7 @@ pub(crate) fn create_engines(
 #[instrument(skip_all, name = "init", fields(deployment_id))]
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
-    deployment: Option<DeploymentCanonical>,
+    deployment: Option<LocalDeployment>,
     description: Option<String>,
     path_prefixes: PathPrefixes,
     params: RunParams,
@@ -947,11 +1083,16 @@ pub(crate) async fn run_internal(
         // --deployment or `--deployment-empty` provided: insert and activate.
         let new_deployment_id = DeploymentId::generate();
         span.record("deployment_id", tracing::field::display(&new_deployment_id));
-        let config_json = crate::config::toml::compute_config_json(&deployment);
-        insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json, description)
-            .await?;
+        insert_and_activate_deployment(
+            &*db_pool,
+            new_deployment_id,
+            deployment.deployment_toml,
+            deployment.files,
+            description,
+        )
+        .await?;
         info!("Activated new deployment");
-        (new_deployment_id, deployment)
+        (new_deployment_id, deployment.canonical)
     } else {
         // No --deployment: pick up from the DB.
         // Activate any Enqueued deployment (queued for this restart), then use active.
@@ -969,8 +1110,7 @@ pub(crate) async fn run_internal(
                     .await
                     .context("cannot activate enqueued deployment")?;
             }
-            let canonical: DeploymentCanonical = serde_json::from_str(&record.config_json)
-                .context("cannot parse deployment config_json")?;
+            let canonical = canonical_from_manifest(&*db_pool, &record.deployment_toml).await?;
             span.record(
                 "deployment_id",
                 tracing::field::display(&record.deployment_id),
@@ -987,9 +1127,14 @@ pub(crate) async fn run_internal(
             span.record("deployment_id", tracing::field::display(&new_deployment_id));
 
             info!("No deployment found in DB; starting with empty deployment");
-            let config_json =
-                crate::config::toml::compute_config_json(&DeploymentCanonical::default());
-            insert_and_activate_deployment(&*db_pool, new_deployment_id, config_json, None).await?;
+            insert_and_activate_deployment(
+                &*db_pool,
+                new_deployment_id,
+                String::new(),
+                Vec::new(),
+                None,
+            )
+            .await?;
 
             (new_deployment_id, DeploymentCanonical::default())
         }
@@ -1501,7 +1646,7 @@ pub(crate) async fn persist_deployment_component_metadata(
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
-    config_json: &str,
+    deployment_toml: &str,
     verify: bool,
     created_by: Option<String>,
     description: Option<String>,
@@ -1509,13 +1654,11 @@ pub(crate) async fn submit_deployment(
     prepared_dirs: &PreparedDirs,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
-) -> anyhow::Result<DeploymentId> {
+) -> anyhow::Result<(DeploymentId, Vec<ContentDigest>)> {
     info!("Submitting deployment");
-    let deployment: DeploymentCanonical =
-        serde_json::from_str(config_json).with_context(|| "cannot parse config_json")?;
-
-    let canonical_config = crate::config::toml::compute_config_json(&deployment);
-    let digest = DeploymentRecord::compute_digest(&canonical_config);
+    // The deployment digest is the hash of the verbatim manifest; it transitively covers
+    // every referenced file because the manifest embeds each file's content digest.
+    let digest = DeploymentRecord::compute_digest(deployment_toml);
 
     let conn = db_pool.external_api_conn().await?;
 
@@ -1527,7 +1670,8 @@ pub(crate) async fn submit_deployment(
     {
         if existing.digest == digest {
             info!(%requested_deployment_id, "Deployment already exists with matching digest, returning existing ID");
-            return Ok(requested_deployment_id);
+            let missing = conn.missing_digests(requested_deployment_id).await?;
+            return Ok((requested_deployment_id, missing));
         }
         bail!(
             "deployment {requested_deployment_id} already exists with a different content digest \
@@ -1535,6 +1679,11 @@ pub(crate) async fn submit_deployment(
             existing.digest
         );
     }
+
+    // Canonicalize by reading the referenced blobs from the CAS (the client uploads them
+    // before submit). `${...}` env vars and secrets resolve here, in the server's environment.
+    let (deployment, file_records) =
+        canonical_and_files_from_manifest(&*db_pool, deployment_toml).await?;
 
     let verify_deployment_id = DeploymentId::generate();
     let server_compiled = deployment_verify_config_compile_link(
@@ -1567,8 +1716,8 @@ pub(crate) async fn submit_deployment(
         status: DeploymentStatus::Inactive,
         obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
         created_by,
-        config_json: canonical_config,
-        files: Vec::new(),
+        deployment_toml: deployment_toml.to_string(),
+        files: file_records,
     })
     .await?;
 
@@ -1581,8 +1730,9 @@ pub(crate) async fn submit_deployment(
 
     upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
 
+    let missing = conn.missing_digests(deployment_id).await?;
     info!(%deployment_id, "Deployment submitted");
-    Ok(deployment_id)
+    Ok((deployment_id, missing))
 }
 
 /// Outcome of switching a deployment.
@@ -1651,9 +1801,9 @@ pub(crate) async fn switch_deployment(
         .map_err(|e| SwitchError::Other(e.into()))?
         .ok_or(SwitchError::NotFound)?;
 
-    let target_deployment: DeploymentCanonical =
-        serde_json::from_str(&deployment_record.config_json)
-            .with_context(|| "cannot parse stored deployment config")?;
+    let target_deployment = canonical_from_manifest(&*db_pool, &deployment_record.deployment_toml)
+        .await
+        .map_err(SwitchError::Other)?;
 
     if action == SwitchDeploymentAction::HotRedeploy {
         let server_compiled_linked = deployment_verify_config_compile_link(

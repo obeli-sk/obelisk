@@ -11,10 +11,6 @@ use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, InlineTable, Item, Value, value};
 
 #[derive(Debug, Clone)]
-#[expect(
-    dead_code,
-    reason = "used by manifest submit/upload flow in later slices"
-)]
 pub(crate) struct DeploymentManifestFile {
     pub(crate) path: String,
     pub(crate) digest: ContentDigest,
@@ -22,11 +18,22 @@ pub(crate) struct DeploymentManifestFile {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct PreparedDeploymentManifest {
     pub(crate) deployment_toml: String,
+    #[allow(dead_code)] // digest is recomputed server-side from the stored manifest
     pub(crate) digest: ContentDigest,
     pub(crate) files: Vec<DeploymentManifestFile>,
+}
+
+impl PreparedDeploymentManifest {
+    /// The empty deployment: an empty manifest with no referenced files.
+    pub(crate) fn empty() -> Self {
+        Self {
+            deployment_toml: String::new(),
+            digest: compute_manifest_digest(""),
+            files: Vec::new(),
+        }
+    }
 }
 
 /// Parse a verbatim manifest and canonicalize it using the supplied file provider.
@@ -43,10 +50,6 @@ pub(crate) async fn manifest_to_canonical(
         .await
 }
 
-#[expect(
-    dead_code,
-    reason = "used by manifest submit/upload flow in later slices"
-)]
 pub(crate) async fn prepare_deployment_manifest_from_disk(
     deployment_toml_path: &Path,
 ) -> anyhow::Result<PreparedDeploymentManifest> {
