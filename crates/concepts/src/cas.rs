@@ -4,7 +4,7 @@ use async_trait::async_trait;
 /// Content-addressed blob store for deployment files (scripts, WASM, backtrace
 /// sources), addressed purely by content digest.
 ///
-/// Deliberately separate from `DbConnection`: bytes may live in SQLite,
+/// Deliberately separate from `DbConnection`: bytes may live in `SQLite`,
 /// Postgres, or a future object store such as S3, while the metadata that
 /// references blobs stays in the database.
 #[async_trait]

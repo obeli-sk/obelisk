@@ -46,6 +46,7 @@ async fn create_deployment_with_execution(
                 config_json: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
+                files: Vec::new(),
             })
             .await
             .unwrap();

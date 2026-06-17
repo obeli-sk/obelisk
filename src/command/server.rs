@@ -840,6 +840,7 @@ async fn insert_and_activate_deployment(
             config_json,
             obelisk_version: PKG_VERSION.to_string(),
             created_by: Some("server".to_string()),
+            files: Vec::new(),
         })
         .await
         .context("cannot insert deployment")?;
@@ -1567,6 +1568,7 @@ pub(crate) async fn submit_deployment(
         obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
         created_by,
         config_json: canonical_config,
+        files: Vec::new(),
     })
     .await?;
 

@@ -1036,6 +1036,11 @@ pub trait DbPool: Send + Sync {
 
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric>;
 
+    /// Content-addressed blob store for deployment files. Separate from the metadata
+    /// connections so the bytes can move to an object store (S3) in future while the
+    /// referencing metadata stays in the database.
+    async fn cas_conn(&self) -> Result<Box<dyn crate::cas::Cas>, DbErrorGeneric>;
+
     #[cfg(feature = "test")]
     async fn connection_test(&self) -> Result<Box<dyn DbConnectionTest>, DbErrorGeneric>;
 }
@@ -1502,6 +1507,21 @@ pub trait DbExternalApi: DbConnection {
     /// `last_active_at == None`; activation is a separate step via [`Self::activate_deployment`].
     async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite>;
 
+    /// Return deployment file digests referenced by this deployment but absent from the CAS.
+    ///
+    /// Blob bytes themselves are stored and fetched through the separate [`crate::cas::Cas`]
+    /// trait (see [`DbPool::cas_conn`]); only this metadata/completeness query lives on the `Db`.
+    async fn missing_digests(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<ContentDigest>, DbErrorRead>;
+
+    /// Return the deployment-owned file refs recorded for a deployment.
+    async fn list_deployment_files(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead>;
+
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,
@@ -1635,6 +1655,7 @@ pub struct DeploymentRecord {
     pub config_json: String, // Serialized `DeploymentCanonical`
     pub obelisk_version: String,
     pub created_by: Option<String>,
+    pub files: Vec<DeploymentFileRecord>,
 }
 
 impl DeploymentRecord {
@@ -1645,6 +1666,12 @@ impl DeploymentRecord {
         let hash: [u8; 32] = Sha256::digest(config_json.as_bytes()).into();
         ContentDigest(crate::component_id::Digest(hash))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeploymentFileRecord {
+    pub path: String,
+    pub digest: ContentDigest,
 }
 
 #[derive(Debug, Clone)]

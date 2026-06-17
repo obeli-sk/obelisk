@@ -38,6 +38,7 @@ fn mk_deployment_record(
         config_json: "{}".to_string(),
         obelisk_version: "0.0.0-test".to_string(),
         created_by: None,
+        files: Vec::new(),
     }
 }
 
