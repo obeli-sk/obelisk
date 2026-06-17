@@ -1,7 +1,5 @@
 use crate::args::{self, DeploymentSource};
-use crate::config::manifest::{
-    PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
-};
+use crate::config::manifest::{PreparedDeploymentManifest, prepare_deployment_manifest_from_disk};
 use crate::config::toml::sanitize_deployment_relative_path;
 use crate::get_deployment_repository_client;
 use anyhow::{Context as _, bail};
@@ -232,9 +230,10 @@ impl args::Deployment {
                 for file_ref in &dep.files {
                     // Defensively re-validate the relative path so a malformed stored
                     // manifest can never write outside the output directory.
-                    let rel = sanitize_deployment_relative_path(&file_ref.path).with_context(
-                        || format!("refusing to write unsafe source path `{}`", file_ref.path),
-                    )?;
+                    let rel =
+                        sanitize_deployment_relative_path(&file_ref.path).with_context(|| {
+                            format!("refusing to write unsafe source path `{}`", file_ref.path)
+                        })?;
                     let path = output_dir.join(&rel);
                     if let Some(parent) = path.parent() {
                         tokio::fs::create_dir_all(parent).await.with_context(|| {

@@ -1613,7 +1613,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let pagination = convert_deployment_pagination(&request)?;
 
         let summaries = conn
-            .list_deployment_states(Utc::now(), pagination, include_deployment_toml, include_derived)
+            .list_deployment_states(
+                Utc::now(),
+                pagination,
+                include_deployment_toml,
+                include_derived,
+            )
             .await
             .to_status()?;
 
@@ -1783,7 +1788,9 @@ fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
     }
 }
 
-fn file_refs_to_grpc(files: Vec<concepts::storage::DeploymentFileRecord>) -> Vec<grpc_gen::FileRef> {
+fn file_refs_to_grpc(
+    files: Vec<concepts::storage::DeploymentFileRecord>,
+) -> Vec<grpc_gen::FileRef> {
     files
         .into_iter()
         .map(|file| grpc_gen::FileRef {

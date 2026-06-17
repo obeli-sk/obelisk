@@ -3657,7 +3657,6 @@ pub(crate) mod cron {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     mod blocking_strategy {
@@ -4501,6 +4500,5 @@ name = "my_stub"
             assert!(!src.file_name.starts_with('/'));
             assert!(src.file_name.ends_with("nested/lib.rs"));
         }
-
     }
 }

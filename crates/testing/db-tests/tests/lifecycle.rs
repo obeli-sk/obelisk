@@ -3925,8 +3925,14 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
 
     // Content-addressed and idempotent: the digest is computed from the bytes,
     // and storing the same blob twice is a no-op.
-    assert_eq!(file_digest, cas_conn.write_blob(file_content).await.unwrap());
-    assert_eq!(file_digest, cas_conn.write_blob(file_content).await.unwrap());
+    assert_eq!(
+        file_digest,
+        cas_conn.write_blob(file_content).await.unwrap()
+    );
+    assert_eq!(
+        file_digest,
+        cas_conn.write_blob(file_content).await.unwrap()
+    );
     assert!(cas_conn.contains_blob(&file_digest).await.unwrap());
     assert_eq!(
         Some(file_content.to_vec()),
