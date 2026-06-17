@@ -2259,6 +2259,7 @@ impl DeploymentVerified {
                             .parse()
                             .expect("hard-coded webui reference must be parsed"),
                     },
+                    content_digest: None,
                     http_server: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
                     routes: vec![WebhookRoute::default()],
                     forward_stdout: ComponentStdOutputToml::default(),

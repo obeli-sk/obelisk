@@ -71,6 +71,17 @@ pub(crate) async fn prepare_deployment_manifest(
     parse_manifest(deployment_toml, deployment_dir)?;
 
     let mut files = Vec::new();
+    collect_wasm_refs(&mut doc, "activity_wasm", deployment_dir, &mut files).await?;
+    collect_wasm_refs(&mut doc, "activity_stub", deployment_dir, &mut files).await?;
+    collect_wasm_refs(&mut doc, "activity_external", deployment_dir, &mut files).await?;
+    collect_wasm_refs(&mut doc, "workflow_wasm", deployment_dir, &mut files).await?;
+    collect_wasm_refs(
+        &mut doc,
+        "webhook_endpoint_wasm",
+        deployment_dir,
+        &mut files,
+    )
+    .await?;
     collect_script_refs(&mut doc, "activity_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "workflow_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "webhook_endpoint_js", deployment_dir, &mut files).await?;
@@ -136,6 +147,53 @@ async fn collect_script_refs(
         });
     }
 
+    Ok(())
+}
+
+async fn collect_wasm_refs(
+    doc: &mut DocumentMut,
+    section: &str,
+    deployment_dir: &Path,
+    files: &mut Vec<DeploymentManifestFile>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+        return Ok(());
+    };
+
+    for table in components.iter_mut() {
+        let Some(raw_location) = table
+            .get("location")
+            .and_then(Item::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        collect_location_ref(table, &raw_location, deployment_dir, files).await?;
+    }
+
+    Ok(())
+}
+
+async fn collect_location_ref(
+    table: &mut toml_edit::Table,
+    raw_location: &str,
+    deployment_dir: &Path,
+    files: &mut Vec<DeploymentManifestFile>,
+) -> anyhow::Result<()> {
+    let Some(path) = deployment_owned_path(raw_location)? else {
+        return Ok(());
+    };
+    let full_path = deployment_dir.join(&path);
+    let bytes = tokio::fs::read(&full_path)
+        .await
+        .with_context(|| format!("cannot read deployment file {full_path:?}"))?;
+    let digest = content_digest(&bytes);
+    table["content_digest"] = value(digest.to_string());
+    files.push(DeploymentManifestFile {
+        path,
+        digest,
+        bytes,
+    });
     Ok(())
 }
 
@@ -214,6 +272,35 @@ ffqn = "ns:pkg/ifc.fn"
         assert_eq!(
             prepared.digest,
             compute_manifest_digest(&prepared.deployment_toml)
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_fills_relative_wasm_digest_and_collects_blob() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("components"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("components/a.wasm"), b"\0asm")
+            .await
+            .unwrap();
+        let manifest = r#"
+[[activity_wasm]]
+name = "a"
+location = "components/a.wasm"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+
+        assert_eq!(prepared.files.len(), 1);
+        assert_eq!(prepared.files[0].path, "components/a.wasm");
+        assert_eq!(prepared.files[0].bytes, b"\0asm");
+        assert!(
+            prepared
+                .deployment_toml
+                .contains("content_digest = \"sha256:")
         );
     }
 

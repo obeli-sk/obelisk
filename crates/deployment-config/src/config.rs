@@ -359,6 +359,10 @@ impl<'de> Deserialize<'de> for JsParamToml {
 pub struct ActivityWasmComponentConfigToml {
     #[serde(flatten)]
     pub common: ComponentCommon,
+    /// Optional content digest of the WASM file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub content_digest: Option<ContentDigest>,
     /// Override the auto-computed component digest used for locking.
     /// If set, this value is used instead of the content digest of the WASM file.
     #[serde(default)]
@@ -388,6 +392,10 @@ pub struct ActivityWasmComponentConfigToml {
 pub struct ActivityStubFileConfigToml {
     #[serde(flatten)]
     pub common: ComponentCommon,
+    /// Optional content digest of the WASM file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub content_digest: Option<ContentDigest>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -395,6 +403,10 @@ pub struct ActivityStubFileConfigToml {
 pub struct ActivityExternalFileConfigToml {
     #[serde(flatten)]
     pub common: ComponentCommon,
+    /// Optional content digest of the WASM file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub content_digest: Option<ContentDigest>,
     /// Override the auto-computed component digest used for locking.
     /// If set, this value is used instead of the content digest of the WASM file.
     #[serde(default)]
@@ -599,6 +611,8 @@ pub enum BlockingStrategyConfigSimple {
 #[serde(deny_unknown_fields)]
 pub struct WorkflowWasmComponentConfigCanonical {
     pub common: ComponentCommon,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub exec: ExecConfigToml,
     pub retry_exp_backoff: DurationConfig,
@@ -671,6 +685,8 @@ pub mod webhook {
     pub struct WebhookWasmComponentConfigCanonical {
         #[serde(flatten)]
         pub common: ComponentCommon,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub content_digest: Option<ContentDigest>,
         #[serde(default = "default_external_server_name")]
         pub http_server: ConfigName,
         pub routes: Vec<WebhookRoute>,

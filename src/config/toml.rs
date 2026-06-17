@@ -942,6 +942,19 @@ impl ComponentCommonFetchExt for ComponentCommon {
     }
 }
 
+fn verify_fetched_content_digest(
+    actual: &ContentDigest,
+    expected: Option<&ContentDigest>,
+    what: &str,
+) -> anyhow::Result<()> {
+    ensure!(
+        expected.is_none_or(|expected| expected == actual),
+        "content digest mismatch for {what}: expected {}, got {actual}",
+        expected.expect("checked above")
+    );
+    Ok(())
+}
+
 fn locking_strategy_into_executor(value: LockingStrategy) -> executor::executor::LockingStrategy {
     match value {
         LockingStrategy::ByFfqns => executor::executor::LockingStrategy::ByFfqns,
@@ -1090,8 +1103,14 @@ impl ActivityStubComponentConfigCanonicalExt for ActivityStubComponentConfigCano
     ) -> Result<ActivityStubConfigVerified, anyhow::Error> {
         match self {
             Self::File(file) => {
+                let expected_content_digest = file.content_digest;
                 let (common, content_digest, wasm_path) =
                     file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+                verify_fetched_content_digest(
+                    &content_digest,
+                    expected_content_digest.as_ref(),
+                    &common.location.to_string(),
+                )?;
                 let component_id = ComponentId::new(
                     ComponentType::ActivityStub,
                     StrVariant::from(common.name),
@@ -1199,8 +1218,14 @@ impl ActivityExternalComponentConfigCanonicalExt for ActivityExternalComponentCo
         match self {
             Self::File(file) => {
                 let component_digest_override = file.component_digest;
+                let expected_content_digest = file.content_digest;
                 let (common, content_digest, wasm_path) =
                     file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+                verify_fetched_content_digest(
+                    &content_digest,
+                    expected_content_digest.as_ref(),
+                    &common.location.to_string(),
+                )?;
                 let component_digest =
                     component_digest_override.unwrap_or(ComponentDigest(content_digest.0));
                 let component_id = ComponentId::new(
@@ -1322,8 +1347,14 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
+        let expected_content_digest = self.content_digest;
         let (common, content_digest, wasm_path) =
             self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+        verify_fetched_content_digest(
+            &content_digest,
+            expected_content_digest.as_ref(),
+            &common.location.to_string(),
+        )?;
 
         let env_vars = resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars)?;
         let allowed_hosts = resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars)?;
@@ -1790,6 +1821,10 @@ impl WorkflowJsConfigVerified {
 pub(crate) struct WorkflowWasmComponentConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+    /// Optional content digest of the WASM file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub(crate) content_digest: Option<ContentDigest>,
     /// Override the auto-computed component digest used for locking.
     /// If set, this value is used instead of the content digest of the WASM file.
     #[serde(default)]
@@ -2103,8 +2138,14 @@ impl WorkflowWasmComponentConfigCanonicalExt for WorkflowWasmComponentConfigCano
                 self.common.name
             );
         }
+        let expected_content_digest = self.content_digest;
         let (common, content_digest, wasm_path) =
             self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+        verify_fetched_content_digest(
+            &content_digest,
+            expected_content_digest.as_ref(),
+            &common.location.to_string(),
+        )?;
         let wasm_path = WasmComponent::convert_core_module_to_component(
             &wasm_path,
             &content_digest,
@@ -2288,6 +2329,7 @@ async fn resolve_local_refs_to_canonical(
     for w in deployment.workflows_wasm {
         workflows_wasm.push(WorkflowWasmComponentConfigCanonical {
             common: w.common,
+            content_digest: w.content_digest,
             component_digest: w.component_digest,
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
@@ -2330,6 +2372,7 @@ async fn resolve_local_refs_to_canonical(
     for w in deployment.webhooks_wasm {
         webhooks_wasm.push(webhook::WebhookWasmComponentConfigCanonical {
             common: w.common,
+            content_digest: w.content_digest,
             http_server: w.http_server,
             routes: w.routes,
             forward_stdout: w.forward_stdout,
@@ -2985,6 +3028,10 @@ pub(crate) mod webhook {
     pub(crate) struct WebhookWasmComponentConfigToml {
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
+        /// Optional content digest of the WASM file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(with = "Option<String>")]
+        pub(crate) content_digest: Option<ContentDigest>,
         #[serde(default = "default_external_server_name")]
         pub(crate) http_server: ConfigName,
         pub(crate) routes: Vec<WebhookRoute>,
@@ -3123,8 +3170,14 @@ pub(crate) mod webhook {
             ignore_missing_env_vars: bool,
             subscription_interruption: Option<Duration>,
         ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error> {
+            let expected_content_digest = self.content_digest;
             let (common, content_digest, wasm_path) =
                 self.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+            super::verify_fetched_content_digest(
+                &content_digest,
+                expected_content_digest.as_ref(),
+                &common.location.to_string(),
+            )?;
             let frame_files_to_sources = self.backtrace.into_frame_files();
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
@@ -3752,6 +3805,7 @@ pub(crate) fn deployment_canonical_to_toml(
         let backtrace = backtrace_to_toml(w.backtrace, &mut files)?;
         workflows_wasm.push(WorkflowWasmComponentConfigToml {
             common: w.common,
+            content_digest: w.content_digest,
             component_digest: w.component_digest,
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
@@ -3788,6 +3842,7 @@ pub(crate) fn deployment_canonical_to_toml(
         let backtrace = backtrace_to_toml(w.backtrace, &mut files)?;
         webhooks_wasm.push(WebhookWasmComponentConfigToml {
             common: w.common,
+            content_digest: w.content_digest,
             http_server: w.http_server,
             routes: w.routes,
             forward_stdout: w.forward_stdout,
@@ -4017,6 +4072,11 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
     mod activity_stub {
         use super::super::*;
 
+        fn digest_of(bytes: &[u8]) -> ContentDigest {
+            let hash: [u8; 32] = Sha256::digest(bytes).into();
+            ContentDigest(Digest(hash))
+        }
+
         #[test]
         fn deserialize_file_mode() {
             let toml_str = r#"
@@ -4055,6 +4115,31 @@ ffqn = "ns:pkg/ifc.fn"
 name = "my_stub"
 "#;
             toml::from_str::<ActivityStubComponentConfigToml>(toml_str).unwrap_err();
+        }
+
+        #[tokio::test]
+        async fn file_mode_rejects_mismatched_content_digest() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("stub.wasm");
+            tokio::fs::write(&path, b"actual").await.unwrap();
+            let stub = ActivityStubComponentConfigCanonical::File(ActivityStubFileConfigToml {
+                common: ComponentCommon {
+                    name: ConfigName::new(StrVariant::from("my_stub")).unwrap(),
+                    location: ComponentLocationToml::Path(path.to_string_lossy().into_owned()),
+                },
+                content_digest: Some(digest_of(b"different")),
+            });
+
+            let err = stub
+                .fetch_and_verify(dir.path().into(), dir.path().into())
+                .await
+                .unwrap_err()
+                .to_string();
+
+            assert!(
+                err.contains("content digest mismatch"),
+                "unexpected error: {err}"
+            );
         }
     }
 
