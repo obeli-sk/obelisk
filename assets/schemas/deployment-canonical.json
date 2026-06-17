@@ -87,6 +87,13 @@
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
         },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
           "type": [
@@ -451,6 +458,13 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
+        },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
@@ -529,6 +543,13 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
+        },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
@@ -810,6 +831,12 @@
         "common": {
           "$ref": "#/$defs/ComponentCommon"
         },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "component_digest": {
           "type": [
             "string",
@@ -1012,6 +1039,12 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
+        },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "http_server": {
           "$ref": "#/$defs/ConfigName",

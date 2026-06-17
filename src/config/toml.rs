@@ -1883,8 +1883,41 @@ pub(crate) struct ComponentBacktraceConfig {
     /// computation. A relative path is deployment-dir-relative (a leading
     /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); an absolute path is out-of-tree.
     #[serde(rename = "sources")]
-    #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub(crate) frame_files_to_sources: HashMap<String, String>,
+    #[schemars(with = "std::collections::HashMap<String, BacktraceSourceToml>")]
+    pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceToml>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub(crate) enum BacktraceSourceToml {
+    Path(String),
+    Detailed {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(with = "Option<String>")]
+        content_digest: Option<ContentDigest>,
+    },
+}
+
+impl BacktraceSourceToml {
+    fn path(&self) -> &str {
+        match self {
+            Self::Path(path) | Self::Detailed { path, .. } => path,
+        }
+    }
+
+    fn content_digest(&self) -> Option<&ContentDigest> {
+        match self {
+            Self::Path(_) => None,
+            Self::Detailed { content_digest, .. } => content_digest.as_ref(),
+        }
+    }
+}
+
+impl From<String> for BacktraceSourceToml {
+    fn from(value: String) -> Self {
+        Self::Path(value)
+    }
 }
 pub(crate) struct JsContent {
     pub(crate) source: String,
@@ -2667,7 +2700,9 @@ async fn resolve_backtrace_to_canonical(
     provider: &dyn FileProvider,
 ) -> anyhow::Result<ComponentBacktraceConfigCanonical> {
     let mut frame_files_to_sources = HashMap::new();
-    for (key, path) in &backtrace.frame_files_to_sources {
+    for (key, source) in &backtrace.frame_files_to_sources {
+        let path = source.path();
+        let content_digest = source.content_digest();
         // Classify the source path like a script: a relative path (bare or
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
         // export; an absolute path is recreated self-contained under a root-stripped mirror.
@@ -2683,7 +2718,7 @@ async fn resolve_backtrace_to_canonical(
                 (deployment_dir.join(&rel), rel.clone(), Some(rel))
             };
         let content = if let Some(rel) = owned_rel_path {
-            provider.read(&rel, None).await.and_then(|bytes| {
+            provider.read(&rel, content_digest).await.and_then(|bytes| {
                 String::from_utf8(bytes)
                     .with_context(|| format!("backtrace source {rel:?} is not valid UTF-8"))
             })
@@ -2692,9 +2727,16 @@ async fn resolve_backtrace_to_canonical(
                 warn!("Ignoring missing backtrace source - file does not exist: {full_path:?}");
                 continue;
             }
-            tokio::fs::read_to_string(&full_path)
-                .await
-                .with_context(|| format!("cannot read backtrace source {full_path:?}"))
+            match tokio::fs::read(&full_path).await {
+                Ok(bytes) => verify_content_digest(&bytes, content_digest, path).and_then(|()| {
+                    String::from_utf8(bytes).with_context(|| {
+                        format!("backtrace source {full_path:?} is not valid UTF-8")
+                    })
+                }),
+                Err(err) => {
+                    Err(err).with_context(|| format!("cannot read backtrace source {full_path:?}"))
+                }
+            }
         };
         match content {
             Ok(content) => {
@@ -3698,7 +3740,7 @@ fn backtrace_to_toml(
     let mut frame_files_to_sources = HashMap::new();
     for (key, source) in backtrace.frame_files_to_sources {
         files.push(source.file_name.clone(), source.content)?;
-        frame_files_to_sources.insert(key, source.file_name);
+        frame_files_to_sources.insert(key, source.file_name.into());
     }
     Ok(ComponentBacktraceConfig {
         frame_files_to_sources,
@@ -4770,7 +4812,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
+                "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string().into(),
             );
             let canon = resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
                 .await
@@ -4795,7 +4837,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                "crates/foo/src/lib.rs".to_string(),
+                "crates/foo/src/lib.rs".to_string().into(),
             );
             let canon = resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
                 .await
@@ -4814,7 +4856,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 "frame".to_string(),
-                "${DEPLOYMENT_DIR}/../escape.rs".to_string(),
+                "${DEPLOYMENT_DIR}/../escape.rs".to_string().into(),
             );
             let err = format!(
                 "{:#}",
@@ -4837,7 +4879,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                abs.to_string_lossy().into_owned(),
+                abs.to_string_lossy().into_owned().into(),
             );
             // Deployment dir is unrelated to the absolute source.
             let other_dir = tempfile::tempdir().unwrap();
@@ -4880,7 +4922,7 @@ name = "my_stub"
             assert_eq!(files.files.len(), 2);
             assert_eq!(toml_bt.frame_files_to_sources.len(), 2);
             for p in toml_bt.frame_files_to_sources.values() {
-                assert!(p.starts_with("fibo"), "unexpected hint: {p}");
+                assert!(p.path().starts_with("fibo"), "unexpected hint: {p:?}");
             }
         }
     }

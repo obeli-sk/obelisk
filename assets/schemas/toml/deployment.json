@@ -85,6 +85,13 @@
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
         },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
           "type": [
@@ -449,6 +456,13 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
+        },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
@@ -535,6 +549,13 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
+        },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
@@ -867,6 +888,13 @@
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
         },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "component_digest": {
           "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
           "type": [
@@ -971,13 +999,37 @@
           "description": "Maps a frame-symbol key to a backtrace source file path. On-disk format only;\nresolved to `ComponentBacktraceConfigCanonical` before transmission and hash\ncomputation. A relative path is deployment-dir-relative (a leading\n`${DEPLOYMENT_DIR}/` is accepted for backcompat); an absolute path is out-of-tree.",
           "type": "object",
           "additionalProperties": {
-            "type": "string"
+            "$ref": "#/$defs/BacktraceSourceToml"
           }
         }
       },
       "additionalProperties": false,
       "required": [
         "sources"
+      ]
+    },
+    "BacktraceSourceToml": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "content_digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
       ]
     },
     "WorkflowJsComponentConfigToml": {
@@ -1096,6 +1148,13 @@
         },
         "location": {
           "$ref": "#/$defs/ComponentLocationToml"
+        },
+        "content_digest": {
+          "description": "Optional content digest of the WASM file.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "http_server": {
           "$ref": "#/$defs/ConfigName",

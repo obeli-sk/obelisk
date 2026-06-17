@@ -8,7 +8,7 @@ use concepts::ContentDigest;
 use concepts::component_id::Digest;
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
-use toml_edit::{DocumentMut, Item, value};
+use toml_edit::{DocumentMut, InlineTable, Item, Value, value};
 
 #[derive(Debug, Clone)]
 #[expect(
@@ -75,7 +75,15 @@ pub(crate) async fn prepare_deployment_manifest(
     collect_wasm_refs(&mut doc, "activity_stub", deployment_dir, &mut files).await?;
     collect_wasm_refs(&mut doc, "activity_external", deployment_dir, &mut files).await?;
     collect_wasm_refs(&mut doc, "workflow_wasm", deployment_dir, &mut files).await?;
+    collect_backtrace_refs(&mut doc, "workflow_wasm", deployment_dir, &mut files).await?;
     collect_wasm_refs(
+        &mut doc,
+        "webhook_endpoint_wasm",
+        deployment_dir,
+        &mut files,
+    )
+    .await?;
+    collect_backtrace_refs(
         &mut doc,
         "webhook_endpoint_wasm",
         deployment_dir,
@@ -134,11 +142,7 @@ async fn collect_script_refs(
         let Some(path) = deployment_owned_path(raw_location)? else {
             continue;
         };
-        let full_path = deployment_dir.join(&path);
-        let bytes = tokio::fs::read(&full_path)
-            .await
-            .with_context(|| format!("cannot read deployment file {full_path:?}"))?;
-        let digest = content_digest(&bytes);
+        let (digest, bytes) = read_deployment_file(deployment_dir, &path).await?;
         table["content_digest"] = value(digest.to_string());
         files.push(DeploymentManifestFile {
             path,
@@ -183,11 +187,7 @@ async fn collect_location_ref(
     let Some(path) = deployment_owned_path(raw_location)? else {
         return Ok(());
     };
-    let full_path = deployment_dir.join(&path);
-    let bytes = tokio::fs::read(&full_path)
-        .await
-        .with_context(|| format!("cannot read deployment file {full_path:?}"))?;
-    let digest = content_digest(&bytes);
+    let (digest, bytes) = read_deployment_file(deployment_dir, &path).await?;
     table["content_digest"] = value(digest.to_string());
     files.push(DeploymentManifestFile {
         path,
@@ -195,6 +195,68 @@ async fn collect_location_ref(
         bytes,
     });
     Ok(())
+}
+
+async fn collect_backtrace_refs(
+    doc: &mut DocumentMut,
+    section: &str,
+    deployment_dir: &Path,
+    files: &mut Vec<DeploymentManifestFile>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+        return Ok(());
+    };
+
+    for table in components.iter_mut() {
+        let Some(sources) = table
+            .get_mut("backtrace")
+            .and_then(Item::as_table_like_mut)
+            .and_then(|backtrace| backtrace.get_mut("sources"))
+            .and_then(Item::as_table_like_mut)
+        else {
+            continue;
+        };
+
+        for (_, source) in sources.iter_mut() {
+            let Some(raw_path) = backtrace_source_path(source) else {
+                continue;
+            };
+            let Some(path) = deployment_owned_path(&raw_path)? else {
+                continue;
+            };
+            let (digest, bytes) = read_deployment_file(deployment_dir, &path).await?;
+            write_backtrace_source_digest(source, raw_path, &digest);
+            files.push(DeploymentManifestFile {
+                path,
+                digest,
+                bytes,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn backtrace_source_path(source: &Item) -> Option<String> {
+    source.as_str().map(str::to_string).or_else(|| {
+        source
+            .as_table_like()
+            .and_then(|table| table.get("path"))
+            .and_then(Item::as_str)
+            .map(str::to_string)
+    })
+}
+
+fn write_backtrace_source_digest(source: &mut Item, path: String, digest: &ContentDigest) {
+    if let Some(table) = source.as_table_like_mut() {
+        table.insert("content_digest", value(digest.to_string()));
+        return;
+    }
+
+    let mut inline = InlineTable::new();
+    inline.insert("path", Value::from(path));
+    inline.insert("content_digest", Value::from(digest.to_string()));
+    *source = Item::Value(Value::InlineTable(inline));
 }
 
 fn deployment_owned_path(raw: &str) -> anyhow::Result<Option<String>> {
@@ -217,6 +279,18 @@ fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {
         .parent()
         .with_context(|| format!("error getting parent path of {path:?}"))?
         .to_path_buf())
+}
+
+async fn read_deployment_file(
+    deployment_dir: &Path,
+    path: &str,
+) -> anyhow::Result<(ContentDigest, Vec<u8>)> {
+    let full_path = deployment_dir.join(path);
+    let bytes = tokio::fs::read(&full_path)
+        .await
+        .with_context(|| format!("cannot read deployment file {full_path:?}"))?;
+    let digest = content_digest(&bytes);
+    Ok((digest, bytes))
 }
 
 #[expect(
@@ -297,6 +371,86 @@ location = "components/a.wasm"
         assert_eq!(prepared.files.len(), 1);
         assert_eq!(prepared.files[0].path, "components/a.wasm");
         assert_eq!(prepared.files[0].bytes, b"\0asm");
+        assert!(
+            prepared
+                .deployment_toml
+                .contains("content_digest = \"sha256:")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_fills_relative_backtrace_digest_and_collects_blob() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("components"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(dir.path().join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("components/w.wasm"), b"\0asm")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("src/lib.rs"), "fn workflow() {}")
+            .await
+            .unwrap();
+        let manifest = r#"
+[[workflow_wasm]]
+name = "w"
+location = "components/w.wasm"
+
+[workflow_wasm.backtrace.sources]
+".../src/lib.rs" = "src/lib.rs"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+
+        assert_eq!(prepared.files.len(), 2);
+        assert!(
+            prepared
+                .files
+                .iter()
+                .any(|file| file.path == "components/w.wasm")
+        );
+        assert!(prepared.files.iter().any(|file| file.path == "src/lib.rs"));
+        assert!(
+            prepared.deployment_toml.contains(
+                "\".../src/lib.rs\" = { path = \"src/lib.rs\", content_digest = \"sha256:"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_preserves_detailed_backtrace_source_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("components"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(dir.path().join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("components/w.wasm"), b"\0asm")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("src/lib.rs"), "fn workflow() {}")
+            .await
+            .unwrap();
+        let manifest = r#"
+[[workflow_wasm]]
+name = "w"
+location = "components/w.wasm"
+
+[workflow_wasm.backtrace.sources]
+".../src/lib.rs" = { path = "src/lib.rs" }
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+
+        assert!(prepared.files.iter().any(|file| file.path == "src/lib.rs"));
+        assert!(prepared.deployment_toml.contains("path = \"src/lib.rs\""));
         assert!(
             prepared
                 .deployment_toml
