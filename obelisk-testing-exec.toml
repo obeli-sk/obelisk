@@ -11,7 +11,7 @@ env_vars = ["PATH"] # for sleep
 
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-include"
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/exec/greet.sh"
+location = "crates/testing/test-programs/exec/greet.sh"
 params = [
   { name = "name", type = "string" },
 ]

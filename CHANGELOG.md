@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(deployment)* The `${DEPLOYMENT_DIR}/` path prefix is now implicit: a bare relative path in a
+  deployment.toml (component `location`, `backtrace.sources`) is already resolved relative to the
+  directory containing the file. The explicit `${DEPLOYMENT_DIR}/` prefix is still accepted for
+  backwards compatibility but is no longer needed and has been removed from the bundled
+  example/testing configs.
 - *(deployment)* **Canonical deployment format changed.** JS and exec sources now share one `ScriptLocationCanonical` (`Content`/`Path`/`Oci`): a relative location (bare or `${DEPLOYMENT_DIR}/…`) is deployment-owned and inlined, an absolute location is an external reference read at runtime, and `..` escapes are rejected. The `activity_exec` canonical field `source` was renamed to `location`, its inline `Content` gained a `file_name`, and its OCI image no longer carries the `oci://` prefix. Workflow/webhook backtrace sources retain their source path for recreation (canonical value is now `{ content, file_name }`). As a result, previously stored deployments that contain `activity_exec` components or backtrace sources will not deserialize and must be re-submitted.
 
 ## [0.38.3](https://github.com/obeli-sk/obelisk/compare/v0.38.2...v0.38.3)

@@ -127,7 +127,7 @@
 # echo "\"hello\""
 # '''
 ## `location`: local file path or OCI registry reference. Local files are read at deploy time and converted to `content`, making deployment self-contained.
-# location = "${DEPLOYMENT_DIR}/scripts/my-script.sh"
+# location = "scripts/my-script.sh"
 ## `location` may also be an OCI reference. Script is pulled from the exec layer and resolved at deploy time. Written by `obelisk component add`.
 # location = "oci://docker.io/repo/image:tag@sha256:..."
 ## Optional content digest of the exec script. Useful for verifying OCI-backed or local script contents.
@@ -363,14 +363,12 @@
 
 ## Appendix: Path resolution
 ## Every local file path in this file (component `location`, `backtrace.sources` values) is resolved the same way:
-##   - A relative path (e.g. "components/a.wasm", "scripts/x.js") is relative to ${DEPLOYMENT_DIR}, the directory
+##   - A relative path (e.g. "components/a.wasm", "scripts/x.js") is relative to the directory
 ##     containing this deployment.toml. It must stay within that directory ("../" escapes are rejected).
-##   - The explicit "${DEPLOYMENT_DIR}/..." prefix is equivalent to a bare relative path; use it for clarity.
 ##   - An absolute path (e.g. "/opt/wasm/a.wasm") references a file anywhere on the host (out-of-tree, not portable).
 ## For JS/exec components, deployment-relative sources are read and inlined at deploy time so the deployment is
 ## self-contained; absolute paths stay external references read at runtime. `obelisk deployment get` recreates the
 ## deployment-relative files (mirroring subfolders) but cannot recreate WASM bytes or out-of-tree absolute paths.
 ##
-## Supported path prefixes:
-# | Prefix                  | Default path           | Details
-# | ${DEPLOYMENT_DIR}       | N/A                    | Directory where the deployment.toml file is located
+## For backwards compatibility a relative path may be prefixed with `${DEPLOYMENT_DIR}/`; this is
+## equivalent to a bare relative path (the directory containing this deployment.toml) and is no longer needed.
