@@ -4,13 +4,16 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::config_holder::load_deployment_canonical;
+use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ActivityExecComponentConfigCanonicalExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
+use crate::config::toml::ActivityExternalComponentConfigCanonical;
 use crate::config::toml::ActivityExternalComponentConfigCanonicalExt as _;
 use crate::config::toml::ActivityExternalConfigVerified;
 use crate::config::toml::ActivityJsComponentConfigCanonicalExt as _;
 use crate::config::toml::ActivityJsConfigVerified;
+use crate::config::toml::ActivityStubComponentConfigCanonical;
 use crate::config::toml::ActivityStubComponentConfigCanonicalExt as _;
 use crate::config::toml::ActivityStubConfigVerified;
 use crate::config::toml::ActivityStubExtConfigVerified;
@@ -20,6 +23,7 @@ use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ComponentLocationFetchExt as _;
+use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DatabaseConfigToml;
@@ -504,10 +508,16 @@ pub(crate) async fn verify(
         .await?
     };
     let server_verified = Box::pin(server_verify(config, engines)).await?;
+    let cas: Option<Arc<dyn concepts::cas::Cas>> = if let Some((pool, _)) = db_pool.as_ref() {
+        Some(pool.cas_conn().await?.into())
+    } else {
+        None
+    };
     deployment_verify_config_compile_link(
         server_verified,
         &prepared_dirs,
         deployment,
+        cas,
         deployment_id,
         verify_params,
         &mut termination_watcher,
@@ -666,6 +676,7 @@ pub(crate) async fn deployment_verify_config_compile_link(
     server_verified: ServerVerified,
     prepared_dirs: &PreparedDirs,
     deployment: DeploymentCanonical,
+    cas: Option<Arc<dyn concepts::cas::Cas>>,
     deployment_id: DeploymentId,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
@@ -675,6 +686,7 @@ pub(crate) async fn deployment_verify_config_compile_link(
         &server_verified,
         prepared_dirs,
         deployment,
+        cas,
         params.clone(),
         termination_watcher,
     )
@@ -719,9 +731,14 @@ pub(crate) async fn deployment_verify_config(
     server_verified: &ServerVerified,
     prepared_dirs: &PreparedDirs,
     deployment: DeploymentCanonical,
+    cas: Option<Arc<dyn concepts::cas::Cas>>,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
+    // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
+    let deployment =
+        DeploymentResolved::resolve(deployment, cas.as_deref(), &prepared_dirs.wasm_cache_dir)
+            .await?;
     let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
         deployment,
         server_verified.http_servers.clone(),
@@ -851,13 +868,16 @@ impl LocalDeployment {
     }
 }
 
-/// Synthetic root for canonicalizing a stored manifest against the CAS.
+/// Root for canonicalizing a stored manifest against the CAS.
 ///
-/// The manifest's `${DEPLOYMENT_DIR}` / relative paths are expanded against this root only
-/// for relative-vs-absolute classification; the CAS provider addresses blobs by digest, so
-/// the expanded path value itself is never read from disk.
+/// Empty on purpose: a stored manifest has no submitter host to anchor relative paths to.
+/// Deployment-owned references are addressed by content digest in the CAS, so joining a
+/// `${DEPLOYMENT_DIR}` / relative path against an empty root leaves it relative. That keeps
+/// deployment-owned WASM locations relative in the resulting `DeploymentCanonical` (no
+/// fabricated host paths); they become concrete on-disk paths only later, in
+/// [`DeploymentResolved::resolve`], which materializes their blobs from the CAS.
 fn cas_deployment_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from("/deployment")
+    std::path::PathBuf::new()
 }
 
 /// A [`FileProvider`] that reads from the CAS and records the `(path, digest)` of every blob
@@ -869,11 +889,7 @@ struct RecordingCasProvider {
 
 #[async_trait::async_trait]
 impl crate::config::file_provider::FileProvider for RecordingCasProvider {
-    async fn read(
-        &self,
-        path: &str,
-        digest: Option<&ContentDigest>,
-    ) -> anyhow::Result<Vec<u8>> {
+    async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>> {
         let bytes = self.inner.read(path, digest).await?;
         if let Some(digest) = digest {
             self.seen
@@ -930,6 +946,127 @@ async fn canonical_from_manifest(
     Ok(canonical_and_files_from_manifest(db_pool, deployment_toml)
         .await?
         .0)
+}
+
+/// A [`DeploymentCanonical`] whose every WASM component location is a concrete, runnable
+/// reference: an absolute on-disk path or an OCI image.
+///
+/// `DeploymentCanonical` is host-independent: a deployment-owned WASM is a *relative* path
+/// addressed by content digest in the CAS (a stored manifest carries no submitter host).
+/// Compiling/linking needs real files, so [`Self::resolve`] materializes each deployment-owned
+/// blob from the CAS into the wasm cache and rewrites its location to that path. External
+/// (absolute) paths and OCI references already are concrete and pass through unchanged. The
+/// disk-authored local-run canonical is already all-absolute, so it resolves to itself.
+///
+/// The inner value is private so the only way to obtain one is `resolve`; that makes it
+/// impossible to feed an unresolved (relative-path) canonical into compilation.
+pub(crate) struct DeploymentResolved {
+    deployment: DeploymentCanonical,
+}
+
+impl DeploymentResolved {
+    /// Resolve every deployment-owned WASM location against the CAS.
+    ///
+    /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
+    /// `--skip-db`), whose canonical holds only absolute paths and OCI refs; encountering a
+    /// deployment-owned (relative) WASM there is an error because there is no store to read it.
+    pub(crate) async fn resolve(
+        mut deployment: DeploymentCanonical,
+        cas: Option<&dyn concepts::cas::Cas>,
+        wasm_cache_dir: &Path,
+    ) -> anyhow::Result<Self> {
+        for c in &mut deployment.activities_wasm {
+            materialize_wasm_location(
+                &mut c.common.location,
+                c.content_digest.as_ref(),
+                cas,
+                wasm_cache_dir,
+            )
+            .await?;
+        }
+        for c in &mut deployment.activities_stub {
+            if let ActivityStubComponentConfigCanonical::File(f) = c {
+                materialize_wasm_location(
+                    &mut f.common.location,
+                    f.content_digest.as_ref(),
+                    cas,
+                    wasm_cache_dir,
+                )
+                .await?;
+            }
+        }
+        for c in &mut deployment.activities_external {
+            if let ActivityExternalComponentConfigCanonical::File(f) = c {
+                materialize_wasm_location(
+                    &mut f.common.location,
+                    f.content_digest.as_ref(),
+                    cas,
+                    wasm_cache_dir,
+                )
+                .await?;
+            }
+        }
+        for c in &mut deployment.workflows_wasm {
+            materialize_wasm_location(
+                &mut c.common.location,
+                c.content_digest.as_ref(),
+                cas,
+                wasm_cache_dir,
+            )
+            .await?;
+        }
+        for c in &mut deployment.webhooks_wasm {
+            materialize_wasm_location(
+                &mut c.common.location,
+                c.content_digest.as_ref(),
+                cas,
+                wasm_cache_dir,
+            )
+            .await?;
+        }
+        Ok(Self { deployment })
+    }
+
+    fn into_canonical(self) -> DeploymentCanonical {
+        self.deployment
+    }
+}
+
+/// Turn a single WASM component location into a concrete on-disk path.
+///
+/// - `Oci` and absolute `Path`s are already concrete and left untouched.
+/// - A relative `Path` is deployment-owned: its bytes live in the CAS under `content_digest`.
+///   Materialize them into `wasm_cache_dir` (keyed by digest, mirroring the OCI pull cache)
+///   and rewrite the location to that absolute path.
+async fn materialize_wasm_location(
+    location: &mut ComponentLocationToml,
+    content_digest: Option<&ContentDigest>,
+    cas: Option<&dyn concepts::cas::Cas>,
+    wasm_cache_dir: &Path,
+) -> anyhow::Result<()> {
+    let ComponentLocationToml::Path(path) = location else {
+        return Ok(()); // OCI reference: pulled later, during fetch.
+    };
+    if Path::new(path).is_absolute() {
+        return Ok(()); // External / disk-authored file, read from disk at runtime.
+    }
+    let digest = content_digest.with_context(|| {
+        format!("deployment-owned WASM component `{path}` is missing a content digest")
+    })?;
+    let cas = cas.with_context(|| {
+        format!("cannot resolve deployment-owned WASM component `{path}` without a content-addressed store")
+    })?;
+    let target = content_digest_to_wasm_file(wasm_cache_dir, digest);
+    if !target.exists() {
+        let bytes = cas.read_blob(digest).await?.with_context(|| {
+            format!("blob {digest} for WASM component `{path}` not present in the CAS")
+        })?;
+        tokio::fs::write(&target, &bytes)
+            .await
+            .with_context(|| format!("cannot write WASM blob to cache file {target:?}"))?;
+    }
+    *location = ComponentLocationToml::Path(target.to_string_lossy().into_owned());
+    Ok(())
 }
 
 async fn insert_and_activate_deployment(
@@ -1141,10 +1278,12 @@ pub(crate) async fn run_internal(
     };
     let engines = create_engines(&config, &prepared_dirs)?;
     let server_verified = server_verify(config, engines).await?;
+    let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
         &prepared_dirs,
         deployment_canonical,
+        Some(cas),
         active_deployment_id,
         VerifyParams {
             dir_params: PrepareDirsParams {
@@ -1685,11 +1824,13 @@ pub(crate) async fn submit_deployment(
     let (deployment, file_records) =
         canonical_and_files_from_manifest(&*db_pool, deployment_toml).await?;
 
+    let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
     let verify_deployment_id = DeploymentId::generate();
     let server_compiled = deployment_verify_config_compile_link(
         server_verified,
         prepared_dirs,
         deployment,
+        Some(cas),
         verify_deployment_id,
         VerifyParams {
             dir_params: PrepareDirsParams {
@@ -1805,11 +1946,18 @@ pub(crate) async fn switch_deployment(
         .await
         .map_err(SwitchError::Other)?;
 
+    let cas: Arc<dyn concepts::cas::Cas> = db_pool
+        .cas_conn()
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?
+        .into();
+
     if action == SwitchDeploymentAction::HotRedeploy {
         let server_compiled_linked = deployment_verify_config_compile_link(
             server_verified,
             prepared_dirs,
             target_deployment,
+            Some(cas),
             DeploymentId::generate(),
             VerifyParams {
                 dir_params: PrepareDirsParams {
@@ -1840,6 +1988,7 @@ pub(crate) async fn switch_deployment(
                 server_verified,
                 prepared_dirs,
                 target_deployment,
+                Some(cas),
                 DeploymentId::generate(),
                 VerifyParams {
                     dir_params: PrepareDirsParams {
@@ -2375,7 +2524,7 @@ impl DeploymentVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        mut deployment: DeploymentCanonical,
+        deployment: DeploymentResolved,
         http_servers: Vec<webhook::HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -2387,6 +2536,7 @@ impl DeploymentVerified {
         subscription_interruption: Option<Duration>,
         api_addr_if_webui_enabled: Option<String>,
     ) -> Result<DeploymentVerified, anyhow::Error> {
+        let mut deployment = deployment.into_canonical();
         trace!("Using deployment toml: {deployment:#?}");
         // Check uniqueness of http_server names.
         if http_servers.len()
@@ -4009,9 +4159,9 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            DeploymentVerified, PrepareDirsParams, ServerCompiledLinked, ServerVerified,
-            VerifyParams, compile_activity_inline, create_engines, deployment_verify_config,
-            prepare_dirs,
+            DeploymentResolved, DeploymentVerified, PrepareDirsParams, ServerCompiledLinked,
+            ServerVerified, VerifyParams, compile_activity_inline, create_engines,
+            deployment_verify_config, prepare_dirs,
         },
         config::config_holder::{ConfigHolder, load_deployment_canonical},
     };
@@ -4092,7 +4242,10 @@ mod tests {
         let params = VerifyParams::default();
         let webui_enabled = None;
 
-        // Verify deployment
+        // Verify deployment. The disk-authored canonical holds only absolute paths, so it
+        // resolves to itself without a CAS.
+        let deployment =
+            DeploymentResolved::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
         let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
             deployment,
             server_verified.http_servers,
@@ -4159,6 +4312,7 @@ mod tests {
             &server_verified,
             &prepared_dirs,
             deployment,
+            None,
             VerifyParams::default(),
             &mut termination_watcher,
         )

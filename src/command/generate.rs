@@ -613,10 +613,12 @@ async fn generate_wit_deps(
     let engines = create_engines(&server_config, &prepared_dirs)?;
 
     let server_verified = Box::pin(server_verify(server_config, engines)).await?;
+    // Disk-authored canonical: only absolute paths, so it resolves without a CAS.
     let deployment_verified = deployment_verify_config(
         &server_verified,
         &prepared_dirs,
         deployment,
+        None,
         verify_params.clone(),
         &mut termination_watcher,
     )

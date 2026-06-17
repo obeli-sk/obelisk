@@ -71,7 +71,7 @@ use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
     GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, SubmitDeploymentRequest,
-    SubmitRequest, SwitchDeploymentRequest,
+    SubmitRequest, SwitchDeploymentRequest, UploadFileRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -568,16 +568,30 @@ struct TestServer {
 
 impl TestServer {
     async fn start(ip: String) -> Self {
-        test_utils::set_up();
-
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip);
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment).await
+    }
+
+    /// Start a server with an empty deployment (no components, no CAS blobs), so a later
+    /// `deployment apply` exercises the upload-then-submit path from a clean store.
+    async fn start_empty(ip: String) -> Self {
+        let (tmp_dir, server_path, _deployment_path) = write_test_configs(&ip);
+        Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty()).await
+    }
+
+    async fn launch(
+        ip: String,
+        tmp_dir: tempfile::TempDir,
+        server_path: PathBuf,
+        deployment: LocalDeployment,
+    ) -> Self {
+        test_utils::set_up();
 
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
         let config = config_holder.load_config().await.unwrap();
-
-        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
@@ -835,7 +849,11 @@ impl TestServer {
         &self,
         mutate: impl FnOnce(&mut DocumentMut),
     ) -> DeploymentId {
-        let mut doc = self.active_deployment_toml().await.parse::<DocumentMut>().unwrap();
+        let mut doc = self
+            .active_deployment_toml()
+            .await
+            .parse::<DocumentMut>()
+            .unwrap();
         mutate(&mut doc);
         self.webapi_submit_deployment(&doc.to_string()).await
     }
@@ -944,6 +962,72 @@ impl TestServer {
             .expect("webapi submit deployment request failed")
     }
 
+    /// Upload a manifest's referenced file blobs over gRPC, then submit it, mirroring the
+    /// CLI `deployment apply` upload-then-submit flow. Returns the new deployment ID.
+    async fn grpc_upload_and_submit_manifest(
+        &self,
+        deployment_toml_path: &std::path::Path,
+    ) -> DeploymentId {
+        let prepared =
+            crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_toml_path)
+                .await
+                .expect("cannot prepare deployment manifest");
+        let mut grpc_client =
+            DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        for file in &prepared.files {
+            grpc_client
+                .upload_file(UploadFileRequest {
+                    deployment_id: None,
+                    content: file.bytes.clone(),
+                })
+                .await
+                .unwrap_or_else(|e| panic!("cannot upload deployment file `{}`: {e}", file.path));
+        }
+        let resp = grpc_client
+            .submit_deployment(SubmitDeploymentRequest {
+                deployment_toml: prepared.deployment_toml,
+                created_by: Some("test".to_string()),
+                verify: true,
+                description: None,
+                deployment_id: None,
+            })
+            .await
+            .expect("submit_deployment failed")
+            .into_inner();
+        assert!(
+            resp.missing_digests.is_empty(),
+            "server still missing blobs after upload: {:?}",
+            resp.missing_digests
+        );
+        resp.deployment_id
+            .expect("submit_deployment: missing deployment_id")
+            .id
+            .parse()
+            .expect("submit_deployment: invalid deployment id")
+    }
+
+    /// Hot-redeploy to the given deployment over gRPC, asserting the switch succeeded.
+    async fn grpc_switch_hot_redeploy(&self, deployment_id: DeploymentId) {
+        let mut grpc_client =
+            DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        let resp = grpc_client
+            .switch_deployment(SwitchDeploymentRequest {
+                deployment_id: Some(GrpcDeploymentId {
+                    id: deployment_id.to_string(),
+                }),
+                verify: true,
+                hot_redeploy: true,
+            })
+            .await
+            .expect("switch_deployment failed")
+            .into_inner();
+        assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
+    }
+
     /// Hot-redeploy to the given deployment via the Web API.
     async fn webapi_switch_hot_redeploy(&self, deployment_id: DeploymentId) {
         let resp = self
@@ -965,6 +1049,38 @@ impl TestServer {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["ok"], "switched", "unexpected switch outcome");
     }
+}
+
+/// Regression test for hot-deploying local WASM files to a server that starts empty.
+///
+/// Starts with an empty deployment (no components, no CAS blobs), then runs the
+/// `deployment apply` flow over gRPC: upload every referenced WASM blob, submit the verbatim
+/// manifest, and hot-redeploy. This used to fail because the server canonicalized the stored
+/// manifest against a synthetic `/deployment` root and then tried to read the WASM from that
+/// non-existent path instead of materializing the uploaded blobs from the CAS.
+#[tokio::test]
+async fn deploy_local_wasm_to_empty_server() {
+    let server = TestServer::start_empty(test_addr!(78)).await;
+
+    let toml_path = get_workspace_dir().join("obelisk-testing-wasm-local.toml");
+    let deployment_id = server.grpc_upload_and_submit_manifest(&toml_path).await;
+    server.grpc_switch_hot_redeploy(deployment_id).await;
+
+    // The WASM components from the manifest are now live.
+    let components = server.list_components().await;
+    let rendered = serde_json::to_string(&components).unwrap();
+    for name in [
+        "test_programs_fibo_activity",
+        "test_programs_fibo_workflow",
+        "test_programs_fibo_webhook",
+    ] {
+        assert!(
+            rendered.contains(name),
+            "expected component `{name}` after hot-redeploy, got: {rendered}"
+        );
+    }
+
+    server.shutdown().await;
 }
 
 /// Selects which protocol to use for submit + hot-redeploy in parametrized tests.
