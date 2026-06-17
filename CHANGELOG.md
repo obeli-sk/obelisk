@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(cli)* `deployment get <ID> [--output DIR] [--force]` retrieves a stored deployment to disk as a re-submittable `deployment.toml` plus its source files. Owned scripts and backtrace sources are recreated (subfolders mirrored, relative to `${DEPLOYMENT_DIR}`); WASM bytes and external (absolute-path) scripts are referenced but not recreated.
 - *(deployment)* Verify a user-supplied `content_digest` at submit time, in addition to runtime.
 - *(deployment)* Reject at submit time deployments where two distinct deployment-owned sources (inline/owned scripts or backtrace sources) resolve to the same `file_name`, since `deployment get` could not recreate both on disk.
+- *(cli)* `deployment active` prints the ID of the currently active deployment.
 
 ### Changed
 

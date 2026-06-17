@@ -180,6 +180,15 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
+    /// Print the ID of the currently active deployment.
+    Active {
+        /// Output as JSON instead of plain text.
+        #[arg(long)]
+        json: bool,
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
     /// Show the full configuration of a deployment.
     Show {
         /// Deployment ID

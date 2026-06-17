@@ -738,6 +738,17 @@
           ]
         },
         {
+          "name": "active",
+          "about": "Print the ID of the currently active deployment",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ]
+        },
+        {
           "name": "show",
           "about": "Show the full configuration of a deployment",
           "options": [

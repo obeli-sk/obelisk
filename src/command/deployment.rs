@@ -146,6 +146,22 @@ impl args::Deployment {
                 Ok(())
             }
 
+            args::Deployment::Active { api_url, json } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_deployment_repository_client(channel).await?;
+                let resp = client
+                    .get_current_deployment_id(grpc_gen::GetCurrentDeploymentIdRequest {})
+                    .await?
+                    .into_inner();
+                let id = resp.deployment_id.context("missing deployment_id")?.id;
+                if json {
+                    println!("\"{id}\"");
+                } else {
+                    println!("{id}");
+                }
+                Ok(())
+            }
+
             args::Deployment::Show { id, api_url } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
