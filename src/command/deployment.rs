@@ -146,7 +146,28 @@ impl args::Deployment {
                 Ok(())
             }
 
-            args::Deployment::Show { id, api_url } => {
+            args::Deployment::Active { api_url, json } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_deployment_repository_client(channel).await?;
+                let resp = client
+                    .get_current_deployment_id(grpc_gen::GetCurrentDeploymentIdRequest {})
+                    .await?
+                    .into_inner();
+                let id = resp.deployment_id.context("missing deployment_id")?.id;
+                if json {
+                    println!("\"{id}\"");
+                } else {
+                    println!("{id}");
+                }
+                Ok(())
+            }
+
+            args::Deployment::Show {
+                id,
+                file,
+                json,
+                api_url,
+            } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let resp = client
@@ -157,8 +178,36 @@ impl args::Deployment {
                     .into_inner();
                 let dep = resp.deployment.context("deployment not found")?;
                 let config_json = dep.config_json.context("config_json not available")?;
-                let value: serde_json::Value = serde_json::from_str(&config_json)?;
-                println!("{}", serde_json::to_string_pretty(&value)?);
+
+                if json {
+                    let value: serde_json::Value = serde_json::from_str(&config_json)?;
+                    println!("{}", serde_json::to_string_pretty(&value)?);
+                    return Ok(());
+                }
+
+                let canonical: DeploymentCanonical = serde_json::from_str(&config_json)
+                    .context("cannot parse stored deployment config")?;
+                let export = deployment_canonical_to_toml(canonical)?;
+
+                if let Some(file) = file {
+                    // Normalize the requested path the same way `get` writes it, so a
+                    // `./scripts/x` or `scripts//x` still matches the stored `rel_path`.
+                    let rel = sanitize_deployment_relative_path(&file)
+                        .with_context(|| format!("invalid source path `{file}`"))?;
+                    let side = export
+                        .side_files
+                        .iter()
+                        .find(|f| f.rel_path == rel)
+                        .with_context(|| {
+                            format!("deployment {id} has no deployment-owned source file `{rel}`")
+                        })?;
+                    print!("{}", side.content);
+                    return Ok(());
+                }
+
+                let toml_str = toml::to_string_pretty(&export.deployment_toml)
+                    .context("cannot serialize deployment to TOML")?;
+                println!("{toml_str}");
                 Ok(())
             }
 
