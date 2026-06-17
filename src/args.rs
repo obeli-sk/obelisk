@@ -189,11 +189,23 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
-    /// Show the full configuration of a deployment.
+
+    /// Show a deployment.
+    ///
+    /// By default prints the reconstructed `deployment.toml` (with local file references,
+    /// the same TOML `deployment get` writes to disk). Pass a FILE to print a single source
+    /// file as `deployment get` would serialize it, or `--json` for the raw canonical config.
     Show {
         /// Deployment ID
         #[arg(value_name = "ID")]
         id: DeploymentId,
+        /// Print the content of a single source file, identified by its deployment-relative
+        /// path as shown in the TOML (e.g. `scripts/run.sh`).
+        #[arg(value_name = "FILE", conflicts_with = "json")]
+        file: Option<String>,
+        /// Print the raw canonical config JSON instead of the reconstructed TOML.
+        #[arg(long)]
+        json: bool,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
