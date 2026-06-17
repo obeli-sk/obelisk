@@ -5,6 +5,7 @@ use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use crate::config::env_var::{
     EnvVarMissing, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
+use crate::config::file_provider::{DiskProvider, FileProvider, verify_content_digest};
 use crate::config::toml::cron::CronComponentConfigToml;
 use crate::config::wasm_cache_metadata_dir;
 use crate::oci;
@@ -131,7 +132,10 @@ pub(crate) struct DeploymentTomlValidated {
 }
 impl DeploymentTomlValidated {
     pub(crate) async fn canonicalize(self) -> Result<DeploymentCanonical, anyhow::Error> {
-        resolve_local_refs_to_canonical(self).await
+        let provider = DiskProvider {
+            deployment_dir: self.deployment_dir.clone(),
+        };
+        resolve_local_refs_to_canonical(self, &provider).await
     }
 }
 
@@ -2241,6 +2245,7 @@ impl WorkflowJsComponentConfigCanonicalExt for WorkflowJsComponentConfigCanonica
 /// source files.
 async fn resolve_local_refs_to_canonical(
     deployment: DeploymentTomlValidated,
+    provider: &dyn FileProvider,
 ) -> anyhow::Result<DeploymentCanonical> {
     let deployment_dir = deployment.deployment_dir.clone();
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
@@ -2251,6 +2256,7 @@ async fn resolve_local_refs_to_canonical(
                 a.content,
                 format!("{name}.js"),
                 &deployment_dir,
+                provider,
                 a.content_digest.as_ref(),
             )
             .await?,
@@ -2279,7 +2285,8 @@ async fn resolve_local_refs_to_canonical(
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
-            backtrace: resolve_backtrace_to_canonical(&w.backtrace, &deployment_dir).await?,
+            backtrace: resolve_backtrace_to_canonical(&w.backtrace, &deployment_dir, provider)
+                .await?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
             logs_store_min_level: w.logs_store_min_level,
@@ -2294,6 +2301,7 @@ async fn resolve_local_refs_to_canonical(
                 w.content,
                 format!("{name}.js"),
                 &deployment_dir,
+                provider,
                 w.content_digest.as_ref(),
             )
             .await?,
@@ -2320,7 +2328,8 @@ async fn resolve_local_refs_to_canonical(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars,
-            backtrace: resolve_backtrace_to_canonical(&w.backtrace, &deployment_dir).await?,
+            backtrace: resolve_backtrace_to_canonical(&w.backtrace, &deployment_dir, provider)
+                .await?,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts,
         });
@@ -2334,6 +2343,7 @@ async fn resolve_local_refs_to_canonical(
                 w.content,
                 format!("{}.js", w.name),
                 &deployment_dir,
+                provider,
                 w.content_digest.as_ref(),
             )
             .await?,
@@ -2356,6 +2366,7 @@ async fn resolve_local_refs_to_canonical(
             a.content,
             name.to_string(),
             &deployment_dir,
+            provider,
             a.content_digest.as_ref(),
         )
         .await?;
@@ -2485,24 +2496,6 @@ fn validate_owned_source_file_names(canonical: &DeploymentCanonical) -> anyhow::
     Ok(())
 }
 
-/// Verify `bytes` against `expected` content digest, if one is set. No-op when unset
-/// (digests are purely optional, user-supplied, and never auto-computed).
-fn verify_content_digest(
-    bytes: &[u8],
-    expected: Option<&ContentDigest>,
-    what: &str,
-) -> anyhow::Result<()> {
-    if let Some(expected) = expected {
-        let hash: [u8; 32] = Sha256::digest(bytes).into();
-        let actual = ContentDigest(Digest(hash));
-        ensure!(
-            *expected == actual,
-            "content digest mismatch for {what}: expected {expected}, got {actual}"
-        );
-    }
-    Ok(())
-}
-
 /// The literal prefix used to anchor a path at the deployment directory.
 pub(crate) const DEPLOYMENT_DIR_PREFIX: &str = "${DEPLOYMENT_DIR}";
 
@@ -2575,7 +2568,8 @@ async fn resolve_script_toml_to_canonical(
     location: Option<JsLocationToml>,
     content: Option<String>,
     default_file_name: String,
-    deployment_dir: &Path,
+    _deployment_dir: &Path,
+    provider: &dyn FileProvider,
     content_digest: Option<&ContentDigest>,
 ) -> anyhow::Result<ScriptLocationCanonical> {
     match (location, content) {
@@ -2599,11 +2593,9 @@ async fn resolve_script_toml_to_canonical(
             } else {
                 let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
                 let path = sanitize_deployment_relative_path(path)?;
-                let full_path = deployment_dir.join(&path);
-                let content = tokio::fs::read_to_string(&full_path)
-                    .await
-                    .with_context(|| format!("cannot read script file {full_path:?}"))?;
-                verify_content_digest(content.as_bytes(), content_digest, &path)?;
+                let content = provider.read(&path, content_digest).await?;
+                let content = String::from_utf8(content)
+                    .with_context(|| format!("script file {path:?} is not valid UTF-8"))?;
                 Ok(ScriptLocationCanonical::Content {
                     content,
                     file_name: path,
@@ -2622,27 +2614,39 @@ async fn resolve_script_toml_to_canonical(
 async fn resolve_backtrace_to_canonical(
     backtrace: &ComponentBacktraceConfig,
     deployment_dir: &Path,
+    provider: &dyn FileProvider,
 ) -> anyhow::Result<ComponentBacktraceConfigCanonical> {
     let mut frame_files_to_sources = HashMap::new();
     for (key, path) in &backtrace.frame_files_to_sources {
         // Classify the source path like a script: a relative path (bare or
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
         // export; an absolute path is recreated self-contained under a root-stripped mirror.
-        let (full_path, file_name) = if let Some(rest) = strip_deployment_dir_prefix(path) {
-            let rel = sanitize_deployment_relative_path(rest)?;
-            (deployment_dir.join(&rel), rel)
-        } else if std::path::Path::new(path).is_absolute() {
-            // Captured content is recreated self-contained under a root-stripped mirror.
-            (PathBuf::from(path), mirror_path_as_relative(path)?)
+        let (full_path, file_name, owned_rel_path) =
+            if let Some(rest) = strip_deployment_dir_prefix(path) {
+                let rel = sanitize_deployment_relative_path(rest)?;
+                (deployment_dir.join(&rel), rel.clone(), Some(rel))
+            } else if std::path::Path::new(path).is_absolute() {
+                // Captured content is recreated self-contained under a root-stripped mirror.
+                (PathBuf::from(path), mirror_path_as_relative(path)?, None)
+            } else {
+                let rel = sanitize_deployment_relative_path(path)?;
+                (deployment_dir.join(&rel), rel.clone(), Some(rel))
+            };
+        let content = if let Some(rel) = owned_rel_path {
+            provider.read(&rel, None).await.and_then(|bytes| {
+                String::from_utf8(bytes)
+                    .with_context(|| format!("backtrace source {rel:?} is not valid UTF-8"))
+            })
         } else {
-            let rel = sanitize_deployment_relative_path(path)?;
-            (deployment_dir.join(&rel), rel)
+            if !full_path.exists() {
+                warn!("Ignoring missing backtrace source - file does not exist: {full_path:?}");
+                continue;
+            }
+            tokio::fs::read_to_string(&full_path)
+                .await
+                .with_context(|| format!("cannot read backtrace source {full_path:?}"))
         };
-        if !full_path.exists() {
-            warn!("Ignoring missing backtrace source - file does not exist: {full_path:?}");
-            continue;
-        }
-        match tokio::fs::read_to_string(&full_path).await {
+        match content {
             Ok(content) => {
                 frame_files_to_sources
                     .insert(key.clone(), BacktraceSourceCanonical { content, file_name });
@@ -4222,14 +4226,22 @@ name = "my_stub"
             ContentDigest(Digest(hash))
         }
 
+        fn disk_provider(dir: &Path) -> DiskProvider {
+            DiskProvider {
+                deployment_dir: dir.to_path_buf(),
+            }
+        }
+
         #[tokio::test]
         async fn inline_content_becomes_owned() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
             let location = resolve_script_toml_to_canonical(
                 None,
                 Some("export const x = 1;".to_string()),
                 "foo.js".to_string(),
                 dir.path(),
+                &provider,
                 None,
             )
             .await
@@ -4244,6 +4256,7 @@ name = "my_stub"
         #[tokio::test]
         async fn relative_file_is_owned_and_mirrors_subpath() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
             let sub = dir.path().join("scripts");
             std::fs::create_dir_all(&sub).unwrap();
             std::fs::write(sub.join("a.js"), "owned content").unwrap();
@@ -4254,6 +4267,7 @@ name = "my_stub"
                 None,
                 "ignored.js".to_string(),
                 dir.path(),
+                &provider,
                 None,
             )
             .await
@@ -4268,6 +4282,7 @@ name = "my_stub"
         #[tokio::test]
         async fn explicit_deployment_dir_prefix_is_owned() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
             let sub = dir.path().join("scripts");
             std::fs::create_dir_all(&sub).unwrap();
             std::fs::write(sub.join("a.js"), "owned content").unwrap();
@@ -4279,6 +4294,7 @@ name = "my_stub"
                 None,
                 "ignored.js".to_string(),
                 dir.path(),
+                &provider,
                 None,
             )
             .await
@@ -4292,6 +4308,7 @@ name = "my_stub"
         #[tokio::test]
         async fn absolute_path_is_external() {
             let root = tempfile::tempdir().unwrap();
+            let provider = disk_provider(root.path());
             let outside = root.path().join("outside.js");
             std::fs::write(&outside, "external content").unwrap();
             let abs = outside.to_string_lossy().into_owned();
@@ -4301,6 +4318,7 @@ name = "my_stub"
                 None,
                 "ignored.js".to_string(),
                 root.path(),
+                &provider,
                 None,
             )
             .await
@@ -4314,12 +4332,14 @@ name = "my_stub"
         #[tokio::test]
         async fn parent_dir_escape_is_rejected() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
             for raw in ["../escape.js", "${DEPLOYMENT_DIR}/../escape.js"] {
                 let err = resolve_script_toml_to_canonical(
                     Some(JsLocationToml::Path(raw.to_string())),
                     None,
                     "ignored.js".to_string(),
                     dir.path(),
+                    &provider,
                     None,
                 )
                 .await
@@ -4332,6 +4352,7 @@ name = "my_stub"
         #[tokio::test]
         async fn oci_becomes_oci() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
             let reference =
                 oci_client::Reference::from_str("docker.io/library/example:latest").unwrap();
             let location = resolve_script_toml_to_canonical(
@@ -4339,6 +4360,7 @@ name = "my_stub"
                 None,
                 "ignored.js".to_string(),
                 dir.path(),
+                &provider,
                 None,
             )
             .await
@@ -4353,6 +4375,7 @@ name = "my_stub"
         #[tokio::test]
         async fn content_digest_verified_at_submit() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
             let content = "export const x = 1;";
 
             // Matching digest succeeds.
@@ -4361,6 +4384,7 @@ name = "my_stub"
                 Some(content.to_string()),
                 "foo.js".to_string(),
                 dir.path(),
+                &provider,
                 Some(&digest_of(content.as_bytes())),
             )
             .await
@@ -4373,6 +4397,7 @@ name = "my_stub"
                 Some(content.to_string()),
                 "foo.js".to_string(),
                 dir.path(),
+                &provider,
                 Some(&wrong),
             )
             .await
@@ -4389,6 +4414,7 @@ name = "my_stub"
             let root = tempfile::tempdir().unwrap();
             let inner = root.path().join("inner");
             std::fs::create_dir_all(&inner).unwrap();
+            let provider = disk_provider(&inner);
             let outside = root.path().join("outside.js");
             std::fs::write(&outside, "external content").unwrap();
 
@@ -4398,6 +4424,7 @@ name = "my_stub"
                 None,
                 "ignored.js".to_string(),
                 &inner,
+                &provider,
                 Some(&wrong),
             )
             .await
@@ -4641,6 +4668,9 @@ name = "my_stub"
         #[tokio::test]
         async fn canonical_retains_relative_subpath() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = DiskProvider {
+                deployment_dir: dir.path().to_path_buf(),
+            };
             let sub = dir.path().join("crates/foo/src");
             std::fs::create_dir_all(&sub).unwrap();
             std::fs::write(sub.join("lib.rs"), "SRC").unwrap();
@@ -4650,7 +4680,7 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
             );
-            let canon = resolve_backtrace_to_canonical(&bt, dir.path())
+            let canon = resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
                 .await
                 .unwrap();
             let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
@@ -4663,6 +4693,9 @@ name = "my_stub"
             // A bare relative backtrace source (no `${DEPLOYMENT_DIR}` prefix) is resolved
             // against the deployment dir, same as the explicit-prefix form.
             let dir = tempfile::tempdir().unwrap();
+            let provider = DiskProvider {
+                deployment_dir: dir.path().to_path_buf(),
+            };
             let sub = dir.path().join("crates/foo/src");
             std::fs::create_dir_all(&sub).unwrap();
             std::fs::write(sub.join("lib.rs"), "SRC").unwrap();
@@ -4672,7 +4705,7 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "crates/foo/src/lib.rs".to_string(),
             );
-            let canon = resolve_backtrace_to_canonical(&bt, dir.path())
+            let canon = resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
                 .await
                 .unwrap();
             let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
@@ -4683,6 +4716,9 @@ name = "my_stub"
         #[tokio::test]
         async fn source_parent_dir_escape_is_rejected() {
             let dir = tempfile::tempdir().unwrap();
+            let provider = DiskProvider {
+                deployment_dir: dir.path().to_path_buf(),
+            };
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 "frame".to_string(),
@@ -4690,7 +4726,7 @@ name = "my_stub"
             );
             let err = format!(
                 "{:#}",
-                resolve_backtrace_to_canonical(&bt, dir.path())
+                resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
                     .await
                     .unwrap_err()
             );
@@ -4713,7 +4749,10 @@ name = "my_stub"
             );
             // Deployment dir is unrelated to the absolute source.
             let other_dir = tempfile::tempdir().unwrap();
-            let canon = resolve_backtrace_to_canonical(&bt, other_dir.path())
+            let provider = DiskProvider {
+                deployment_dir: other_dir.path().to_path_buf(),
+            };
+            let canon = resolve_backtrace_to_canonical(&bt, other_dir.path(), &provider)
                 .await
                 .unwrap();
             let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
