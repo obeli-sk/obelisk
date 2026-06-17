@@ -1,9 +1,6 @@
 use crate::args::{self, DeploymentSource};
-use crate::config::config_holder::load_deployment_canonical;
-use crate::config::toml::{
-    DeploymentCanonical, DeploymentTomlValidated, deployment_canonical_to_toml,
-    sanitize_deployment_relative_path,
-};
+use crate::config::manifest::{PreparedDeploymentManifest, prepare_deployment_manifest_from_disk};
+use crate::config::toml::sanitize_deployment_relative_path;
 use crate::get_deployment_repository_client;
 use anyhow::{Context as _, bail};
 use chrono::DateTime;
@@ -26,20 +23,17 @@ impl args::Deployment {
                 deployment_id,
                 api_url,
             } => {
-                let config_json = load_config_json_from_file_or_empty(file, empty).await?;
+                let prepared = prepare_manifest_from_file_or_empty(file, empty).await?;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
-                let resp = client
-                    .submit_deployment(grpc_gen::SubmitDeploymentRequest {
-                        config_json,
-                        created_by: Some("cli".to_string()),
-                        verify,
-                        description,
-                        deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
-                    })
-                    .await?
-                    .into_inner();
-                let id = resp.deployment_id.context("missing deployment_id")?.id;
+                let id = upload_and_submit_manifest(
+                    &mut client,
+                    prepared,
+                    verify,
+                    description,
+                    deployment_id,
+                )
+                .await?;
                 println!("{id}");
                 Ok(())
             }
@@ -105,7 +99,7 @@ impl args::Deployment {
                 let resp = client
                     .list_deployments(grpc_gen::ListDeploymentsRequest {
                         pagination: None,
-                        include_config_json: false,
+                        include_deployment_toml: false,
                         include_derived: false,
                     })
                     .await?
@@ -177,37 +171,32 @@ impl args::Deployment {
                     .await?
                     .into_inner();
                 let dep = resp.deployment.context("deployment not found")?;
-                let config_json = dep.config_json.context("config_json not available")?;
+                let deployment_toml = dep
+                    .deployment_toml
+                    .context("deployment_toml not available")?;
+
+                if let Some(file) = file {
+                    // Normalize the requested path the same way `get` writes it, so a
+                    // `./scripts/x` or `scripts//x` still matches the stored ref path.
+                    let rel = sanitize_deployment_relative_path(&file)
+                        .with_context(|| format!("invalid source path `{file}`"))?;
+                    let file_ref = dep.files.iter().find(|f| f.path == rel).with_context(|| {
+                        format!("deployment {id} has no deployment-owned source file `{rel}`")
+                    })?;
+                    let bytes = fetch_file(&mut client, &file_ref.digest).await?;
+                    print!("{}", String::from_utf8_lossy(&bytes));
+                    return Ok(());
+                }
 
                 if json {
-                    let value: serde_json::Value = serde_json::from_str(&config_json)?;
+                    // The manifest is the source of truth; render it as JSON for tooling.
+                    let value: toml::Value = toml::from_str(&deployment_toml)
+                        .context("cannot parse stored deployment manifest")?;
                     println!("{}", serde_json::to_string_pretty(&value)?);
                     return Ok(());
                 }
 
-                let canonical: DeploymentCanonical = serde_json::from_str(&config_json)
-                    .context("cannot parse stored deployment config")?;
-                let export = deployment_canonical_to_toml(canonical)?;
-
-                if let Some(file) = file {
-                    // Normalize the requested path the same way `get` writes it, so a
-                    // `./scripts/x` or `scripts//x` still matches the stored `rel_path`.
-                    let rel = sanitize_deployment_relative_path(&file)
-                        .with_context(|| format!("invalid source path `{file}`"))?;
-                    let side = export
-                        .side_files
-                        .iter()
-                        .find(|f| f.rel_path == rel)
-                        .with_context(|| {
-                            format!("deployment {id} has no deployment-owned source file `{rel}`")
-                        })?;
-                    print!("{}", side.content);
-                    return Ok(());
-                }
-
-                let toml_str = toml::to_string_pretty(&export.deployment_toml)
-                    .context("cannot serialize deployment to TOML")?;
-                println!("{toml_str}");
+                print!("{deployment_toml}");
                 Ok(())
             }
 
@@ -226,12 +215,9 @@ impl args::Deployment {
                     .await?
                     .into_inner();
                 let dep = resp.deployment.context("deployment not found")?;
-                let config_json = dep.config_json.context("config_json not available")?;
-                let canonical: DeploymentCanonical = serde_json::from_str(&config_json)
-                    .context("cannot parse stored deployment config")?;
-                let export = deployment_canonical_to_toml(canonical)?;
-                let toml_str = toml::to_string_pretty(&export.deployment_toml)
-                    .context("cannot serialize deployment to TOML")?;
+                let deployment_toml = dep
+                    .deployment_toml
+                    .context("deployment_toml not available")?;
 
                 let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
                 tokio::fs::create_dir_all(&output_dir)
@@ -239,46 +225,29 @@ impl args::Deployment {
                     .with_context(|| format!("cannot create output directory {output_dir:?}"))?;
 
                 let toml_path = output_dir.join("deployment.toml");
-                write_new_file(&toml_path, toml_str.as_bytes(), force).await?;
-                for side_file in &export.side_files {
+                write_new_file(&toml_path, deployment_toml.as_bytes(), force).await?;
+                let file_count = dep.files.len();
+                for file_ref in &dep.files {
                     // Defensively re-validate the relative path so a malformed stored
-                    // config can never write outside the output directory.
-                    let rel = sanitize_deployment_relative_path(&side_file.rel_path).with_context(
-                        || {
-                            format!(
-                                "refusing to write unsafe source path `{}`",
-                                side_file.rel_path
-                            )
-                        },
-                    )?;
+                    // manifest can never write outside the output directory.
+                    let rel =
+                        sanitize_deployment_relative_path(&file_ref.path).with_context(|| {
+                            format!("refusing to write unsafe source path `{}`", file_ref.path)
+                        })?;
                     let path = output_dir.join(&rel);
                     if let Some(parent) = path.parent() {
                         tokio::fs::create_dir_all(parent).await.with_context(|| {
                             format!("cannot create source directory {parent:?}")
                         })?;
                     }
-                    write_new_file(&path, side_file.content.as_bytes(), force).await?;
+                    let bytes = fetch_file(&mut client, &file_ref.digest).await?;
+                    write_new_file(&path, &bytes, force).await?;
                 }
                 println!(
-                    "Wrote {} ({} source file{}) for deployment {id}",
+                    "Wrote {} ({file_count} source file{}) for deployment {id}",
                     toml_path.display(),
-                    export.side_files.len(),
-                    if export.side_files.len() == 1 {
-                        ""
-                    } else {
-                        "s"
-                    }
+                    if file_count == 1 { "" } else { "s" }
                 );
-                if !export.external_paths.is_empty() {
-                    eprintln!(
-                        "warning: this deployment references {} external file(s) by absolute \
-                         path; these are emitted verbatim and are not portable across machines:",
-                        export.external_paths.len()
-                    );
-                    for p in &export.external_paths {
-                        eprintln!("  {p}");
-                    }
-                }
                 Ok(())
             }
         }
@@ -326,7 +295,7 @@ async fn submit_deployment(
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
     assert_ne!(source.is_some(), empty);
-    let config_json = match source {
+    let prepared = match source {
         Some(DeploymentSource::Id(id)) => {
             if description.is_some() {
                 bail!("--description cannot be used with an existing deployment ID");
@@ -336,12 +305,37 @@ async fn submit_deployment(
             }
             return Ok(id);
         }
-        Some(DeploymentSource::File(path)) => load_config_json(path).await?,
-        None => load_config_json_from_file_or_empty(None, empty).await?,
+        Some(DeploymentSource::File(path)) => prepare_deployment_manifest_from_disk(&path).await?,
+        None => prepare_manifest_from_file_or_empty(None, empty).await?,
     };
+    let id =
+        upload_and_submit_manifest(client, prepared, verify, description, deployment_id).await?;
+    println!("Submitted as {id}");
+    Ok(id)
+}
+
+/// Upload the manifest's referenced file blobs to the content-addressed store, then submit the
+/// verbatim manifest. The server is content-addressed and idempotent, so re-uploading a blob it
+/// already has is a no-op.
+async fn upload_and_submit_manifest(
+    client: &mut DeploymentClient,
+    prepared: PreparedDeploymentManifest,
+    verify: bool,
+    description: Option<String>,
+    deployment_id: Option<DeploymentId>,
+) -> anyhow::Result<DeploymentId> {
+    for file in &prepared.files {
+        client
+            .upload_file(grpc_gen::UploadFileRequest {
+                deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
+                content: file.bytes.clone(),
+            })
+            .await
+            .with_context(|| format!("cannot upload deployment file `{}`", file.path))?;
+    }
     let resp = client
         .submit_deployment(grpc_gen::SubmitDeploymentRequest {
-            config_json,
+            deployment_toml: prepared.deployment_toml,
             created_by: Some("cli".to_string()),
             verify,
             description,
@@ -349,9 +343,26 @@ async fn submit_deployment(
         })
         .await?
         .into_inner();
-    let id = DeploymentId::try_from(resp.deployment_id.context("missing deployment_id")?)?;
-    println!("Submitted as {id}");
-    Ok(id)
+    if !resp.missing_digests.is_empty() {
+        bail!(
+            "server is still missing {} file blob(s) after upload: {}",
+            resp.missing_digests.len(),
+            resp.missing_digests.join(", ")
+        );
+    }
+    DeploymentId::try_from(resp.deployment_id.context("missing deployment_id")?).map_err(Into::into)
+}
+
+/// Fetch a deployment file blob from the server's content-addressed store.
+async fn fetch_file(client: &mut DeploymentClient, digest: &str) -> anyhow::Result<Vec<u8>> {
+    let resp = client
+        .get_file(grpc_gen::GetFileRequest {
+            digest: digest.to_string(),
+        })
+        .await
+        .with_context(|| format!("cannot fetch deployment file `{digest}`"))?
+        .into_inner();
+    Ok(resp.content)
 }
 
 async fn switch_deployment(
@@ -388,22 +399,16 @@ async fn switch_deployment(
     Ok(())
 }
 
-async fn load_config_json_from_file_or_empty(
+async fn prepare_manifest_from_file_or_empty(
     file: Option<std::path::PathBuf>,
     empty: bool,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<PreparedDeploymentManifest> {
     assert_ne!(file.is_some(), empty);
     if let Some(path) = file {
-        load_config_json(path).await
+        prepare_deployment_manifest_from_disk(&path).await
     } else {
-        let deployment = DeploymentTomlValidated::default().canonicalize().await?;
-        Ok(crate::config::toml::compute_config_json(&deployment))
+        Ok(PreparedDeploymentManifest::empty())
     }
-}
-
-async fn load_config_json(path: std::path::PathBuf) -> anyhow::Result<String> {
-    let deployment = load_deployment_canonical(&path).await?;
-    Ok(crate::config::toml::compute_config_json(&deployment))
 }
 
 fn format_status(status: grpc_gen::DeploymentStatus) -> &'static str {

@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, RunId};
+use concepts::storage::DeploymentFileRecord;
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
@@ -3853,9 +3854,10 @@ async fn deployment_insert_and_get(database: Database) {
         created_at: now,
         last_active_at: None,
         status: DeploymentStatus::Inactive,
-        config_json: r#"{"activities":[]}"#.to_string(),
+        deployment_toml: r#"{"activities":[]}"#.to_string(),
         obelisk_version: "0.0.0-test".to_string(),
         created_by: Some("test".to_string()),
+        files: Vec::new(),
     };
     api_conn.insert_deployment(record).await.unwrap();
 
@@ -3872,6 +3874,88 @@ async fn deployment_insert_and_get(database: Database) {
     assert_eq!(expected_digest, fetched.digest);
     assert!(fetched.last_active_at.is_none());
 
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let cas_conn = db_pool.cas_conn().await.unwrap();
+
+    let deployment_id = concepts::prefixed_ulid::DeploymentId::generate();
+    let now = sim_clock.now();
+    let file_content = b"hello deployment file";
+    let file_digest = DeploymentRecord::compute_digest("hello deployment file");
+    let file = DeploymentFileRecord {
+        path: "scripts/a.js".to_string(),
+        digest: file_digest.clone(),
+    };
+    api_conn
+        .insert_deployment(DeploymentRecord {
+            deployment_id,
+            description: None,
+            digest: DeploymentRecord::compute_digest("{}"),
+            created_at: now,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
+            deployment_toml: "{}".to_string(),
+            obelisk_version: "0.0.0-test".to_string(),
+            created_by: None,
+            files: vec![file.clone()],
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        vec![file.clone()],
+        api_conn.list_deployment_files(deployment_id).await.unwrap()
+    );
+    assert_eq!(
+        vec![file_digest.clone()],
+        api_conn.missing_digests(deployment_id).await.unwrap()
+    );
+    assert!(!cas_conn.contains_blob(&file_digest).await.unwrap());
+    assert!(cas_conn.read_blob(&file_digest).await.unwrap().is_none());
+
+    // Content-addressed and idempotent: the digest is computed from the bytes,
+    // and storing the same blob twice is a no-op.
+    assert_eq!(
+        file_digest,
+        cas_conn.write_blob(file_content).await.unwrap()
+    );
+    assert_eq!(
+        file_digest,
+        cas_conn.write_blob(file_content).await.unwrap()
+    );
+    assert!(cas_conn.contains_blob(&file_digest).await.unwrap());
+    assert_eq!(
+        Some(file_content.to_vec()),
+        cas_conn.read_blob(&file_digest).await.unwrap()
+    );
+    assert!(
+        api_conn
+            .missing_digests(deployment_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        vec![file],
+        api_conn
+            .get_deployment(deployment_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .files
+    );
+
+    drop(cas_conn);
     drop(api_conn);
     db_close.close().await;
 }
@@ -3898,9 +3982,10 @@ async fn deployment_activate(database: Database) {
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
-            config_json: "{}".to_string(),
+            deployment_toml: "{}".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
+            files: Vec::new(),
         })
         .await
         .unwrap();
@@ -3939,9 +4024,10 @@ async fn deployment_only_one_active_allowed(database: Database) {
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
-            config_json: "{}".to_string(),
+            deployment_toml: "{}".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
+            files: Vec::new(),
         })
         .await
         .unwrap();
@@ -3957,9 +4043,10 @@ async fn deployment_only_one_active_allowed(database: Database) {
             created_at: now,
             last_active_at: None,
             status: DeploymentStatus::Inactive,
-            config_json: "{}".to_string(),
+            deployment_toml: "{}".to_string(),
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
+            files: Vec::new(),
         })
         .await
         .unwrap();
@@ -3998,9 +4085,10 @@ async fn deployment_list(database: Database) {
                 created_at: now,
                 last_active_at: None,
                 status: DeploymentStatus::Inactive,
-                config_json: "{}".to_string(),
+                deployment_toml: "{}".to_string(),
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
+                files: Vec::new(),
             })
             .await
             .unwrap();

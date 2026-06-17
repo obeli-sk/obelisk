@@ -1036,6 +1036,11 @@ pub trait DbPool: Send + Sync {
 
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric>;
 
+    /// Content-addressed blob store for deployment files. Separate from the metadata
+    /// connections so the bytes can move to an object store (S3) in future while the
+    /// referencing metadata stays in the database.
+    async fn cas_conn(&self) -> Result<Box<dyn crate::cas::Cas>, DbErrorGeneric>;
+
     #[cfg(feature = "test")]
     async fn connection_test(&self) -> Result<Box<dyn DbConnectionTest>, DbErrorGeneric>;
 }
@@ -1494,13 +1499,28 @@ pub trait DbExternalApi: DbConnection {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
-        include_config_json: bool,
+        include_deployment_toml: bool,
         include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 
     /// Insert a new deployment. The record must have `status == Inactive` and
     /// `last_active_at == None`; activation is a separate step via [`Self::activate_deployment`].
     async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite>;
+
+    /// Return deployment file digests referenced by this deployment but absent from the CAS.
+    ///
+    /// Blob bytes themselves are stored and fetched through the separate [`crate::cas::Cas`]
+    /// trait (see [`DbPool::cas_conn`]); only this metadata/completeness query lives on the `Db`.
+    async fn missing_digests(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<ContentDigest>, DbErrorRead>;
+
+    /// Return the deployment-owned file refs recorded for a deployment.
+    async fn list_deployment_files(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead>;
 
     async fn activate_deployment(
         &self,
@@ -1513,19 +1533,19 @@ pub trait DbExternalApi: DbConnection {
     /// Any previously Enqueued deployment is demoted to Inactive.
     async fn enqueue_deployment(&self, deployment_id: DeploymentId) -> Result<(), DbErrorWrite>;
 
-    /// Returned [`DeploymentRecord`] must contain `config_json`.
+    /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     async fn get_deployment(
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
     /// Return active deployment.
-    /// Returned [`DeploymentRecord`] must contain `config_json`.
+    /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     #[cfg(feature = "test")]
     async fn get_active_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
     /// Return the most relevant current deployment: Enqueued if present, otherwise Active.
-    /// Returned [`DeploymentRecord`] must contain `config_json`.
+    /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead>;
 
     async fn list_deployments(
@@ -1583,8 +1603,8 @@ pub struct DeploymentState {
     pub finished_ok: u32,
     pub finished_error: u32,
     pub finished_execution_failure: u32,
-    /// None if not requested from db.
-    pub config_json: Option<String>,
+    /// Verbatim deployment manifest. None if not requested from db.
+    pub deployment_toml: Option<String>,
     pub created_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
@@ -1626,25 +1646,32 @@ impl std::str::FromStr for DeploymentStatus {
 pub struct DeploymentRecord {
     pub deployment_id: DeploymentId,
     pub description: Option<String>,
-    /// Content digest derived from `config_json`.
+    /// Content digest = `sha256(deployment_toml)`.
     pub digest: ContentDigest,
     pub created_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
     pub status: DeploymentStatus,
-    pub config_json: String, // Serialized `DeploymentCanonical`
+    pub deployment_toml: String, // Verbatim `deployment.toml` manifest
     pub obelisk_version: String,
     pub created_by: Option<String>,
+    pub files: Vec<DeploymentFileRecord>,
 }
 
 impl DeploymentRecord {
-    /// Computes the content digest of a deployment from its canonical config JSON.
+    /// Computes the deployment content digest = `sha256(deployment_toml)`.
     #[must_use]
-    pub fn compute_digest(config_json: &str) -> ContentDigest {
+    pub fn compute_digest(deployment_toml: &str) -> ContentDigest {
         use sha2::{Digest as _, Sha256};
-        let hash: [u8; 32] = Sha256::digest(config_json.as_bytes()).into();
+        let hash: [u8; 32] = Sha256::digest(deployment_toml.as_bytes()).into();
         ContentDigest(crate::component_id::Digest(hash))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeploymentFileRecord {
+    pub path: String,
+    pub digest: ContentDigest,
 }
 
 #[derive(Debug, Clone)]

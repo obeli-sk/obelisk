@@ -7,18 +7,61 @@
 //! fixed ports, allowing parallel test execution without conflicts.
 //! The `test_addr!` macro ensures unique addresses at link time.
 
-use crate::config::toml::{
-    ActivityStubComponentConfigCanonical, ActivityStubExtInlineConfigCanonical, ConfigName,
-};
 use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
-    command::server::{PrepareDirsParams, RunParams, prepare_dirs, run_internal},
-    config::{
-        config_holder::{ConfigHolder, load_deployment_canonical},
-        env_var::EnvVarConfig,
-        toml::DeploymentCanonical,
-    },
+    command::server::{LocalDeployment, PrepareDirsParams, RunParams, prepare_dirs, run_internal},
+    config::config_holder::ConfigHolder,
 };
+use toml_edit::{DocumentMut, value};
+
+/// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the canonical
+/// `ActivityStubExtInlineConfigCanonical` the tests used to construct in-memory.
+fn append_inline_stub(doc: &mut DocumentMut, name: &str, ffqn: &str) {
+    let mut table = toml_edit::Table::new();
+    table["name"] = value(name);
+    table["ffqn"] = value(ffqn);
+    table["params"] = toml_edit::Item::Value(toml_edit::Array::new().into());
+    table["return_type"] = value("result<string, string>");
+    doc.entry("activity_stub")
+        .or_insert(toml_edit::Item::ArrayOfTables(
+            toml_edit::ArrayOfTables::new(),
+        ))
+        .as_array_of_tables_mut()
+        .expect("activity_stub must be an array of tables")
+        .push(table);
+}
+
+/// Find the `[[<section>]]` table named `name` for in-place mutation.
+fn manifest_component_mut<'a>(
+    doc: &'a mut DocumentMut,
+    section: &str,
+    name: &str,
+) -> &'a mut toml_edit::Table {
+    doc.get_mut(section)
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .unwrap_or_else(|| panic!("manifest has no `{section}` section"))
+        .iter_mut()
+        .find(|table| table.get("name").and_then(toml_edit::Item::as_str) == Some(name))
+        .unwrap_or_else(|| panic!("manifest has no `{section}` component named `{name}`"))
+}
+
+/// Set a component's `env_vars` to a single `{ key, value }` entry.
+fn set_component_env_var(doc: &mut DocumentMut, section: &str, name: &str, key: &str, val: &str) {
+    let mut entry = toml_edit::InlineTable::new();
+    entry.insert("key", toml_edit::Value::from(key));
+    entry.insert("value", toml_edit::Value::from(val));
+    let mut arr = toml_edit::Array::new();
+    arr.push(toml_edit::Value::InlineTable(entry));
+    manifest_component_mut(doc, section, name)["env_vars"] = toml_edit::Item::Value(arr.into());
+}
+
+/// Remove the `[[<section>]]` table named `name` from the manifest.
+fn remove_component(doc: &mut DocumentMut, section: &str, name: &str) {
+    doc.get_mut(section)
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .unwrap_or_else(|| panic!("manifest has no `{section}` section"))
+        .retain(|table| table.get("name").and_then(toml_edit::Item::as_str) != Some(name));
+}
 use concepts::FunctionFqn;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::DbPool as _;
@@ -28,7 +71,7 @@ use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
     GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, SubmitDeploymentRequest,
-    SubmitRequest, SwitchDeploymentRequest,
+    SubmitRequest, SwitchDeploymentRequest, UploadFileRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -525,16 +568,30 @@ struct TestServer {
 
 impl TestServer {
     async fn start(ip: String) -> Self {
-        test_utils::set_up();
-
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip);
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment).await
+    }
+
+    /// Start a server with an empty deployment (no components, no CAS blobs), so a later
+    /// `deployment apply` exercises the upload-then-submit path from a clean store.
+    async fn start_empty(ip: String) -> Self {
+        let (tmp_dir, server_path, _deployment_path) = write_test_configs(&ip);
+        Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty()).await
+    }
+
+    async fn launch(
+        ip: String,
+        tmp_dir: tempfile::TempDir,
+        server_path: PathBuf,
+        deployment: LocalDeployment,
+    ) -> Self {
+        test_utils::set_up();
 
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
         let config = config_holder.load_config().await.unwrap();
-
-        let deployment_toml = load_deployment_canonical(&deployment_path).await.unwrap();
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
@@ -563,7 +620,7 @@ impl TestServer {
         let server_handle = tokio::spawn(async move {
             Box::pin(run_internal(
                 config,
-                Some(deployment_toml),
+                Some(deployment),
                 None,
                 config_holder.path_prefixes,
                 params,
@@ -774,21 +831,31 @@ impl TestServer {
             .into_inner()
     }
 
-    async fn submit_modified_deployment(
-        &self,
-        mutate: impl FnOnce(&mut DeploymentCanonical),
-    ) -> DeploymentId {
+    /// Read the active deployment's verbatim manifest from the database.
+    async fn active_deployment_toml(&self) -> String {
         let pool = SqlitePool::new(&self.sqlite_file, SqliteConfig::default())
             .await
             .unwrap();
         let conn = pool.external_api_conn().await.unwrap();
         let active = conn.get_active_deployment().await.unwrap().unwrap();
         pool.close().await;
-        let mut new_deployment: DeploymentCanonical =
-            serde_json::from_str(&active.config_json).unwrap();
-        mutate(&mut new_deployment);
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
-        self.webapi_submit_deployment(&new_config_json).await
+        active.deployment_toml
+    }
+
+    /// Take the active deployment's manifest, apply `mutate` to its TOML, and resubmit.
+    /// The base manifest's file blobs are already in the CAS (uploaded at first activation),
+    /// so no new uploads are needed for inline-only edits.
+    async fn submit_modified_deployment(
+        &self,
+        mutate: impl FnOnce(&mut DocumentMut),
+    ) -> DeploymentId {
+        let mut doc = self
+            .active_deployment_toml()
+            .await
+            .parse::<DocumentMut>()
+            .unwrap();
+        mutate(&mut doc);
+        self.webapi_submit_deployment(&doc.to_string()).await
     }
 
     async fn list_executions(&self) -> Value {
@@ -853,12 +920,12 @@ impl TestServer {
     }
 
     /// Submit a new deployment via the Web API and return its deployment ID.
-    async fn webapi_submit_deployment(&self, config_json: &str) -> DeploymentId {
+    async fn webapi_submit_deployment(&self, deployment_toml: &str) -> DeploymentId {
         let resp = self
             .client
             .post(format!("{}/v1/deployments", self.base_url))
             .header("Accept", "application/json")
-            .json(&json!({ "config_json": config_json, "verify": false }))
+            .json(&json!({ "deployment_toml": deployment_toml, "verify": false }))
             .send()
             .await
             .expect("webapi submit deployment request failed");
@@ -879,20 +946,86 @@ impl TestServer {
     /// returning the raw response so callers can assert on success or conflict.
     async fn webapi_submit_deployment_with_id(
         &self,
-        config_json: &str,
+        deployment_toml: &str,
         deployment_id: DeploymentId,
     ) -> reqwest::Response {
         self.client
             .post(format!("{}/v1/deployments", self.base_url))
             .header("Accept", "application/json")
             .json(&json!({
-                "config_json": config_json,
+                "deployment_toml": deployment_toml,
                 "verify": false,
                 "deployment_id": deployment_id.to_string(),
             }))
             .send()
             .await
             .expect("webapi submit deployment request failed")
+    }
+
+    /// Upload a manifest's referenced file blobs over gRPC, then submit it, mirroring the
+    /// CLI `deployment apply` upload-then-submit flow. Returns the new deployment ID.
+    async fn grpc_upload_and_submit_manifest(
+        &self,
+        deployment_toml_path: &std::path::Path,
+    ) -> DeploymentId {
+        let prepared =
+            crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_toml_path)
+                .await
+                .expect("cannot prepare deployment manifest");
+        let mut grpc_client =
+            DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        for file in &prepared.files {
+            grpc_client
+                .upload_file(UploadFileRequest {
+                    deployment_id: None,
+                    content: file.bytes.clone(),
+                })
+                .await
+                .unwrap_or_else(|e| panic!("cannot upload deployment file `{}`: {e}", file.path));
+        }
+        let resp = grpc_client
+            .submit_deployment(SubmitDeploymentRequest {
+                deployment_toml: prepared.deployment_toml,
+                created_by: Some("test".to_string()),
+                verify: true,
+                description: None,
+                deployment_id: None,
+            })
+            .await
+            .expect("submit_deployment failed")
+            .into_inner();
+        assert!(
+            resp.missing_digests.is_empty(),
+            "server still missing blobs after upload: {:?}",
+            resp.missing_digests
+        );
+        resp.deployment_id
+            .expect("submit_deployment: missing deployment_id")
+            .id
+            .parse()
+            .expect("submit_deployment: invalid deployment id")
+    }
+
+    /// Hot-redeploy to the given deployment over gRPC, asserting the switch succeeded.
+    async fn grpc_switch_hot_redeploy(&self, deployment_id: DeploymentId) {
+        let mut grpc_client =
+            DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        let resp = grpc_client
+            .switch_deployment(SwitchDeploymentRequest {
+                deployment_id: Some(GrpcDeploymentId {
+                    id: deployment_id.to_string(),
+                }),
+                verify: true,
+                hot_redeploy: true,
+            })
+            .await
+            .expect("switch_deployment failed")
+            .into_inner();
+        assert_eq!(resp.outcome(), Outcome::SwitchOutcomeSwitched);
     }
 
     /// Hot-redeploy to the given deployment via the Web API.
@@ -918,6 +1051,38 @@ impl TestServer {
     }
 }
 
+/// Regression test for hot-deploying local WASM files to a server that starts empty.
+///
+/// Starts with an empty deployment (no components, no CAS blobs), then runs the
+/// `deployment apply` flow over gRPC: upload every referenced WASM blob, submit the verbatim
+/// manifest, and hot-redeploy. This used to fail because the server canonicalized the stored
+/// manifest against a synthetic `/deployment` root and then tried to read the WASM from that
+/// non-existent path instead of materializing the uploaded blobs from the CAS.
+#[tokio::test]
+async fn deploy_local_wasm_to_empty_server() {
+    let server = TestServer::start_empty(test_addr!(78)).await;
+
+    let toml_path = get_workspace_dir().join("obelisk-testing-wasm-local.toml");
+    let deployment_id = server.grpc_upload_and_submit_manifest(&toml_path).await;
+    server.grpc_switch_hot_redeploy(deployment_id).await;
+
+    // The WASM components from the manifest are now live.
+    let components = server.list_components().await;
+    let rendered = serde_json::to_string(&components).unwrap();
+    for name in [
+        "test_programs_fibo_activity",
+        "test_programs_fibo_workflow",
+        "test_programs_fibo_webhook",
+    ] {
+        assert!(
+            rendered.contains(name),
+            "expected component `{name}` after hot-redeploy, got: {rendered}"
+        );
+    }
+
+    server.shutdown().await;
+}
+
 /// Selects which protocol to use for submit + hot-redeploy in parametrized tests.
 enum TestDeployClient {
     /// Submit and switch via gRPC.
@@ -934,18 +1099,15 @@ impl TestDeployClient {
     async fn submit_and_hot_redeploy(
         &self,
         server: &TestServer,
-        mutate: impl FnOnce(&mut DeploymentCanonical),
+        mutate: impl FnOnce(&mut DocumentMut),
     ) {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+        let mut doc = server
+            .active_deployment_toml()
             .await
+            .parse::<DocumentMut>()
             .unwrap();
-        let conn = pool.external_api_conn().await.unwrap();
-        let active = conn.get_active_deployment().await.unwrap().unwrap();
-        pool.close().await;
-        let mut new_deployment: DeploymentCanonical =
-            serde_json::from_str(&active.config_json).unwrap();
-        mutate(&mut new_deployment);
-        let new_config_json = crate::config::toml::compute_config_json(&new_deployment);
+        mutate(&mut doc);
+        let new_deployment_toml = doc.to_string();
 
         match self {
             TestDeployClient::Grpc => {
@@ -955,7 +1117,7 @@ impl TestDeployClient {
                         .unwrap();
                 let submit_resp = grpc_client
                     .submit_deployment(SubmitDeploymentRequest {
-                        config_json: new_config_json,
+                        deployment_toml: new_deployment_toml,
                         created_by: Some("test".to_string()),
                         verify: false,
                         description: None,
@@ -977,7 +1139,7 @@ impl TestDeployClient {
                 assert_eq!(switch_resp.outcome(), Outcome::SwitchOutcomeSwitched);
             }
             TestDeployClient::WebApi => {
-                let id = server.webapi_submit_deployment(&new_config_json).await;
+                let id = server.webapi_submit_deployment(&new_deployment_toml).await;
                 server.webapi_switch_hot_redeploy(id).await;
             }
         }
@@ -1447,19 +1609,12 @@ async fn list_components_webapi_by_explicit_deployment_id() {
     const NEW_STUB_NAME: &str = "explicit_deployment_stub";
 
     let second_deployment_id = server
-        .submit_modified_deployment(|new_deployment| {
-            new_deployment
-                .activities_stub
-                .push(ActivityStubComponentConfigCanonical::Inline(
-                    ActivityStubExtInlineConfigCanonical {
-                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
-                        ffqn: "testing:integration/stubs.explicit-deployment-stub"
-                            .parse()
-                            .unwrap(),
-                        params: Some(vec![]),
-                        return_type: Some("result<string, string>".to_string()),
-                    },
-                ));
+        .submit_modified_deployment(|doc| {
+            append_inline_stub(
+                doc,
+                NEW_STUB_NAME,
+                "testing:integration/stubs.explicit-deployment-stub",
+            );
         })
         .await;
 
@@ -1494,19 +1649,12 @@ async fn list_components_webapi_filters_with_explicit_deployment_id() {
     const NEW_STUB_NAME: &str = "explicit_deployment_stub_filters";
 
     let second_deployment_id = server
-        .submit_modified_deployment(|new_deployment| {
-            new_deployment
-                .activities_stub
-                .push(ActivityStubComponentConfigCanonical::Inline(
-                    ActivityStubExtInlineConfigCanonical {
-                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
-                        ffqn: "testing:integration/stubs.explicit-deployment-filters"
-                            .parse()
-                            .unwrap(),
-                        params: Some(vec![]),
-                        return_type: Some("result<string, string>".to_string()),
-                    },
-                ));
+        .submit_modified_deployment(|doc| {
+            append_inline_stub(
+                doc,
+                NEW_STUB_NAME,
+                "testing:integration/stubs.explicit-deployment-filters",
+            );
         })
         .await;
 
@@ -1565,17 +1713,8 @@ async fn list_components_grpc_by_explicit_deployment_id() {
     const NEW_STUB_FFQN: &str = "testing:integration/stubs.explicit-deployment-grpc";
 
     let second_deployment_id = server
-        .submit_modified_deployment(|new_deployment| {
-            new_deployment
-                .activities_stub
-                .push(ActivityStubComponentConfigCanonical::Inline(
-                    ActivityStubExtInlineConfigCanonical {
-                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
-                        ffqn: NEW_STUB_FFQN.parse().unwrap(),
-                        params: Some(vec![]),
-                        return_type: Some("result<string, string>".to_string()),
-                    },
-                ));
+        .submit_modified_deployment(|doc| {
+            append_inline_stub(doc, NEW_STUB_NAME, NEW_STUB_FFQN);
         })
         .await;
 
@@ -1614,17 +1753,8 @@ async fn list_components_grpc_filters_with_explicit_deployment_id() {
     const NEW_STUB_FFQN: &str = "testing:integration/stubs.explicit-deployment-grpc-filters";
 
     let second_deployment_id = server
-        .submit_modified_deployment(|new_deployment| {
-            new_deployment
-                .activities_stub
-                .push(ActivityStubComponentConfigCanonical::Inline(
-                    ActivityStubExtInlineConfigCanonical {
-                        name: ConfigName::new(concepts::StrVariant::from(NEW_STUB_NAME)).unwrap(),
-                        ffqn: NEW_STUB_FFQN.parse().unwrap(),
-                        params: Some(vec![]),
-                        return_type: Some("result<string, string>".to_string()),
-                    },
-                ));
+        .submit_modified_deployment(|doc| {
+            append_inline_stub(doc, NEW_STUB_NAME, NEW_STUB_FFQN);
         })
         .await;
 
@@ -1682,21 +1812,14 @@ async fn list_components_grpc_filters_with_explicit_deployment_id() {
 async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     let server = TestServer::start(test_addr!(40_104)).await;
 
-    // Read the active deployment's canonical config so we can resubmit it verbatim.
-    let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-        .await
-        .unwrap();
-    let conn = pool.external_api_conn().await.unwrap();
-    let active = conn.get_active_deployment().await.unwrap().unwrap();
-    pool.close().await;
-    let canonical: DeploymentCanonical = serde_json::from_str(&active.config_json).unwrap();
-    let config_json = crate::config::toml::compute_config_json(&canonical);
+    // Read the active deployment's verbatim manifest so we can resubmit it.
+    let deployment_toml = server.active_deployment_toml().await;
 
     let deployment_id = DeploymentId::generate();
 
     // First submission under the explicit ID creates the deployment.
     let resp1 = server
-        .webapi_submit_deployment_with_id(&config_json, deployment_id)
+        .webapi_submit_deployment_with_id(&deployment_toml, deployment_id)
         .await;
     assert!(
         resp1.status().is_success(),
@@ -1707,9 +1830,9 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     let returned1: DeploymentId = body1["ok"].as_str().unwrap().parse().unwrap();
     assert_eq!(deployment_id, returned1, "explicit ID must be honored");
 
-    // Resubmitting the identical config under the same ID is an idempotent no-op.
+    // Resubmitting the identical manifest under the same ID is an idempotent no-op.
     let resp2 = server
-        .webapi_submit_deployment_with_id(&config_json, deployment_id)
+        .webapi_submit_deployment_with_id(&deployment_toml, deployment_id)
         .await;
     assert!(
         resp2.status().is_success(),
@@ -1723,24 +1846,16 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         "no-op resubmit must return same ID"
     );
 
-    // Submitting a different config under the same ID is rejected as a digest conflict.
-    let mut mutated: DeploymentCanonical = serde_json::from_str(&active.config_json).unwrap();
-    mutated
-        .activities_stub
-        .push(ActivityStubComponentConfigCanonical::Inline(
-            ActivityStubExtInlineConfigCanonical {
-                name: ConfigName::new(concepts::StrVariant::from("idempotency_conflict_stub"))
-                    .unwrap(),
-                ffqn: "testing:integration/stubs.idempotency-conflict"
-                    .parse()
-                    .unwrap(),
-                params: Some(vec![]),
-                return_type: Some("result<string, string>".to_string()),
-            },
-        ));
-    let mutated_json = crate::config::toml::compute_config_json(&mutated);
+    // Submitting a different manifest under the same ID is rejected as a digest conflict.
+    let mut mutated = deployment_toml.parse::<DocumentMut>().unwrap();
+    append_inline_stub(
+        &mut mutated,
+        "idempotency_conflict_stub",
+        "testing:integration/stubs.idempotency-conflict",
+    );
+    let mutated_toml = mutated.to_string();
     let resp3 = server
-        .webapi_submit_deployment_with_id(&mutated_json, deployment_id)
+        .webapi_submit_deployment_with_id(&mutated_toml, deployment_id)
         .await;
     assert_eq!(
         resp3.status(),
@@ -2719,16 +2834,14 @@ async fn hot_redeploy_activity_impl(server: &TestServer, deploy_client: &TestDep
 
     // 2. Build a second deployment with the env var changed to "updated_value".
     deploy_client
-        .submit_and_hot_redeploy(server, |new_deployment| {
-            let found = new_deployment
-                .activities_js
-                .iter_mut()
-                .find(|activity| &**activity.name == "test_read_env_activity")
-                .unwrap();
-            found.env_vars = vec![EnvVarConfig::KeyValue {
-                key: "TEST_ENV_VAR".to_string(),
-                value: "updated_value".to_string(),
-            }];
+        .submit_and_hot_redeploy(server, |doc| {
+            set_component_env_var(
+                doc,
+                "activity_js",
+                "test_read_env_activity",
+                "TEST_ENV_VAR",
+                "updated_value",
+            );
         })
         .await;
 
@@ -2823,18 +2936,8 @@ async fn hot_redeploy_registry_impl(server: &TestServer, deploy_client: &TestDep
 
     // Build a second deployment that adds the new inline stub and hot-redeploy.
     deploy_client
-        .submit_and_hot_redeploy(server, |new_deployment| {
-            new_deployment
-                .activities_stub
-                .push(ActivityStubComponentConfigCanonical::Inline(
-                    ActivityStubExtInlineConfigCanonical {
-                        name: ConfigName::new(concepts::StrVariant::Static("new_hot_stub"))
-                            .unwrap(),
-                        ffqn: NEW_STUB_FFQN.parse().unwrap(),
-                        params: Some(vec![]),
-                        return_type: Some("result<string, string>".to_string()),
-                    },
-                ));
+        .submit_and_hot_redeploy(server, |doc| {
+            append_inline_stub(doc, "new_hot_stub", NEW_STUB_FFQN);
         })
         .await;
 
@@ -2883,16 +2986,14 @@ async fn hot_redeploy_webhook_js_env_var_impl(
 
     // 2. Build a second deployment with the env var changed and hot-redeploy.
     deploy_client
-        .submit_and_hot_redeploy(server, |new_deployment| {
-            let found = new_deployment
-                .webhooks_js
-                .iter_mut()
-                .find(|w| &**w.name == "test_read_env_webhook")
-                .unwrap();
-            found.env_vars = vec![EnvVarConfig::KeyValue {
-                key: "WEBHOOK_TEST_ENV_VAR".to_string(),
-                value: "updated_webhook_env".to_string(),
-            }];
+        .submit_and_hot_redeploy(server, |doc| {
+            set_component_env_var(
+                doc,
+                "webhook_endpoint_js",
+                "test_read_env_webhook",
+                "WEBHOOK_TEST_ENV_VAR",
+                "updated_webhook_env",
+            );
         })
         .await;
     debug!("Expecting new deployment to answer the next request");
@@ -2939,10 +3040,8 @@ async fn hot_redeploy_webhook_js_remove_endpoint_impl(
 
     // 2. Build a second deployment that removes test_hello_webhook and hot-redeploy.
     deploy_client
-        .submit_and_hot_redeploy(server, |new_deployment| {
-            new_deployment
-                .webhooks_js
-                .retain(|w| &**w.name != "test_hello_webhook");
+        .submit_and_hot_redeploy(server, |doc| {
+            remove_component(doc, "webhook_endpoint_js", "test_hello_webhook");
         })
         .await;
 

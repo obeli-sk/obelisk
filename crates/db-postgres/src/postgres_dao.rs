@@ -4,7 +4,8 @@ use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
     JoinSetId, StrVariant, SupportedFunctionReturnValue,
-    component_id::ComponentDigest,
+    cas::{Cas, CasError},
+    component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -13,10 +14,10 @@ use concepts::{
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
-        DeploymentComponentRecord, DeploymentRecord, DeploymentState, DeploymentStatus,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        DeploymentComponentRecord, DeploymentFileRecord, DeploymentRecord, DeploymentState,
+        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
@@ -196,6 +197,17 @@ impl DbPool for PostgresPool {
         }))
     }
 
+    async fn cas_conn(&self) -> Result<Box<dyn Cas>, DbErrorGeneric> {
+        let client = self.pool.get().await?;
+
+        Ok(Box::new(PostgresConnection {
+            client: tokio::sync::Mutex::new(client),
+            response_subscribers: self.response_subscribers.clone(),
+            pending_subscribers: self.pending_subscribers.clone(),
+            execution_finished_subscribers: self.execution_finished_subscribers.clone(),
+        }))
+    }
+
     #[cfg(feature = "test")]
     async fn connection_test(
         &self,
@@ -317,10 +329,48 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         created_at: get(row, "created_at")?,
         last_active_at: get(row, "last_active_at")?,
         status,
-        config_json: get(row, "config_json")?,
+        deployment_toml: get(row, "deployment_toml")?,
         obelisk_version: get(row, "obelisk_version")?,
         created_by: get(row, "created_by")?,
+        files: Vec::new(),
     })
+}
+
+fn deployment_file_record_from_pg_row(row: &Row) -> Result<DeploymentFileRecord, DbErrorRead> {
+    Ok(DeploymentFileRecord {
+        path: get(row, "path")?,
+        digest: get(row, "digest")?,
+    })
+}
+
+fn compute_file_digest(content: &[u8]) -> ContentDigest {
+    let hash: [u8; 32] = Sha256::digest(content).into();
+    ContentDigest(Digest(hash))
+}
+
+async fn list_deployment_files_tx(
+    tx: &Transaction<'_>,
+    deployment_id: DeploymentId,
+) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
+    let rows = tx
+        .query(
+            "SELECT path, digest FROM t_deployment_file \
+             WHERE deployment_id = $1 \
+             ORDER BY path, digest",
+            &[&deployment_id.to_string()],
+        )
+        .await?;
+    rows.iter()
+        .map(deployment_file_record_from_pg_row)
+        .collect()
+}
+
+async fn deployment_record_with_files_tx(
+    tx: &Transaction<'_>,
+    mut record: DeploymentRecord,
+) -> Result<DeploymentRecord, DbErrorRead> {
+    record.files = list_deployment_files_tx(tx, record.deployment_id).await?;
+    Ok(record)
 }
 
 fn deployment_component_detail_from_pg_row(
@@ -1623,7 +1673,7 @@ async fn list_deployment_states(
     tx: &Transaction<'_>,
     current_time: DateTime<Utc>,
     pagination: Pagination<Option<DeploymentId>>,
-    include_config_json: bool,
+    include_deployment_toml: bool,
     include_derived: bool,
 ) -> Result<Vec<DeploymentState>, DbErrorRead> {
     // Helper for numbered params ($1, $2, ...)
@@ -1636,10 +1686,10 @@ async fn list_deployment_states(
     // Base params
     let p_now = add_param(Box::new(current_time));
 
-    let config_json_col = if include_config_json {
-        "d.config_json"
+    let deployment_toml_col = if include_deployment_toml {
+        "d.deployment_toml"
     } else {
-        "NULL::TEXT AS config_json"
+        "NULL::TEXT AS deployment_toml"
     };
 
     let mut sql = format!(
@@ -1683,7 +1733,7 @@ async fn list_deployment_states(
                   AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}'::jsonb, '{RESULT_KIND_JSON_ERROR}'::jsonb)
             ) AS finished_execution_failure,
 
-            {config_json_col},
+            {deployment_toml_col},
             d.created_at,
             d.last_active_at,
             d.status
@@ -1718,7 +1768,7 @@ async fn list_deployment_states(
 
     write!(
         sql,
-        " GROUP BY d.deployment_id, d.description, d.digest, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
+        " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -1767,7 +1817,7 @@ async fn list_deployment_states(
                 "finished_execution_failure",
             )?)
             .expect("count is never negative"),
-            config_json: get::<Option<String>, _>(&row, "config_json")?,
+            deployment_toml: get::<Option<String>, _>(&row, "deployment_toml")?,
             created_at: get::<DateTime<Utc>, _>(&row, "created_at")?,
             last_active_at: get::<Option<DateTime<Utc>>, _>(&row, "last_active_at")?,
             status,
@@ -4627,7 +4677,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
-        include_config_json: bool,
+        include_deployment_toml: bool,
         include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
@@ -4636,7 +4686,7 @@ impl DbExternalApi for PostgresConnection {
             &tx,
             current_time,
             pagination,
-            include_config_json,
+            include_deployment_toml,
             include_derived,
         )
         .await?;
@@ -4660,7 +4710,7 @@ impl DbExternalApi for PostgresConnection {
         let digest = record.digest.to_string();
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, digest, created_at, status, config_json, obelisk_version, created_by) \
+             (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             &[
                 &record.deployment_id.to_string(), // $1
@@ -4668,14 +4718,69 @@ impl DbExternalApi for PostgresConnection {
                 &digest,                           // $3
                 &record.created_at,                // $4
                 &record.status.as_str(),           // $5
-                &record.config_json,               // $6
+                &record.deployment_toml,               // $6
                 &record.obelisk_version,           // $7
                 &record.created_by,                // $8
             ],
         )
         .await?;
+        for file in &record.files {
+            tx.execute(
+                "INSERT INTO t_deployment_file (deployment_id, digest, path) VALUES ($1, $2, $3)",
+                &[
+                    &record.deployment_id.to_string(),
+                    &file.digest.to_string(),
+                    &file.path,
+                ],
+            )
+            .await?;
+        }
         tx.commit().await?;
         Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn missing_digests(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<ContentDigest>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let rows = tx
+            .query(
+                "SELECT df.digest \
+                 FROM t_deployment_file df \
+                 LEFT JOIN t_file f ON f.digest = df.digest \
+                 WHERE df.deployment_id = $1 AND f.digest IS NULL \
+                 ORDER BY df.digest",
+                &[&deployment_id.to_string()],
+            )
+            .await?;
+        tx.commit().await?;
+        rows.iter()
+            .map(|row| get(row, "digest").map_err(DbErrorRead::Generic))
+            .collect()
+    }
+
+    #[instrument(skip(self))]
+    async fn list_deployment_files(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let rows = tx
+            .query(
+                "SELECT path, digest FROM t_deployment_file \
+                 WHERE deployment_id = $1 \
+                 ORDER BY path, digest",
+                &[&deployment_id.to_string()],
+            )
+            .await?;
+        tx.commit().await?;
+        rows.iter()
+            .map(deployment_file_record_from_pg_row)
+            .collect()
     }
 
     #[instrument(skip(self))]
@@ -4750,16 +4855,19 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
             .await?;
+        let record = match row {
+            None => None,
+            Some(r) => Some(
+                deployment_record_with_files_tx(&tx, deployment_record_from_pg_row(&r)?).await?,
+            ),
+        };
         tx.commit().await?;
-        match row {
-            None => Ok(None),
-            Some(r) => Ok(Some(deployment_record_from_pg_row(&r)?)),
-        }
+        Ok(record)
     }
 
     #[instrument(skip(self))]
@@ -4769,16 +4877,19 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status = 'active' LIMIT 1",
                 &[],
             )
             .await?;
+        let record = match row {
+            None => None,
+            Some(r) => Some(
+                deployment_record_with_files_tx(&tx, deployment_record_from_pg_row(&r)?).await?,
+            ),
+        };
         tx.commit().await?;
-        match row {
-            None => Ok(None),
-            Some(r) => Ok(Some(deployment_record_from_pg_row(&r)?)),
-        }
+        Ok(record)
     }
 
     async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
@@ -4786,17 +4897,20 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let row = tx
             .query_opt(
-                "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
                  FROM t_deployment WHERE status IN ('enqueued', 'active') \
                  ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
                 &[],
             )
             .await?;
+        let record = match row {
+            None => None,
+            Some(r) => Some(
+                deployment_record_with_files_tx(&tx, deployment_record_from_pg_row(&r)?).await?,
+            ),
+        };
         tx.commit().await?;
-        match row {
-            None => Ok(None),
-            Some(r) => Ok(Some(deployment_record_from_pg_row(&r)?)),
-        }
+        Ok(record)
     }
 
     #[instrument(skip(self))]
@@ -4813,7 +4927,7 @@ impl DbExternalApi for PostgresConnection {
         };
 
         let mut sql = String::from(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment",
         );
 
@@ -4850,11 +4964,15 @@ impl DbExternalApi for PostgresConnection {
             params.iter().map(|p| p.as_ref() as _).collect();
 
         let rows = tx.query(&final_sql, &params_refs).await?;
-        tx.commit().await?;
-
-        rows.iter()
+        let mut records = rows
+            .iter()
             .map(deployment_record_from_pg_row)
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, _>>()?;
+        for record in &mut records {
+            record.files = list_deployment_files_tx(&tx, record.deployment_id).await?;
+        }
+        tx.commit().await?;
+        Ok(records)
     }
 
     #[instrument(skip(self))]
@@ -4971,6 +5089,54 @@ impl DbExternalApi for PostgresConnection {
             return Err(DbErrorWrite::NotFound);
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Cas for PostgresConnection {
+    async fn read_blob(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, CasError> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard
+            .transaction()
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
+        let row = tx
+            .query_opt(
+                "SELECT content FROM t_file WHERE digest = $1",
+                &[&digest.to_string()],
+            )
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
+        Ok(row.map(|row| row.get("content")))
+    }
+
+    async fn write_blob(&self, content: &[u8]) -> Result<ContentDigest, CasError> {
+        let digest = compute_file_digest(content);
+        let size = i64::try_from(content.len())
+            .map_err(|err| CasError::Uncategorized(format!("deployment file too large: {err}")))?;
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard
+            .transaction()
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
+        tx.execute(
+            "INSERT INTO t_file (digest, content, size) VALUES ($1, $2, $3) \
+             ON CONFLICT (digest) DO NOTHING",
+            &[&digest.to_string(), &content, &size],
+        )
+        .await
+        .map_err(|err| CasError::Uncategorized(err.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
+        Ok(digest)
+    }
+
+    async fn contains_blob(&self, digest: &ContentDigest) -> Result<bool, CasError> {
+        Ok(self.read_blob(digest).await?.is_some())
     }
 }
 

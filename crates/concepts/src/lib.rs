@@ -1,5 +1,6 @@
 #[cfg(any(feature = "rusqlite", feature = "postgres"))]
 pub mod backtrace;
+pub mod cas;
 pub use deployment_config::component_id;
 mod error_conversions;
 #[cfg(feature = "postgres")]

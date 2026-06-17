@@ -2,9 +2,10 @@ use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ExecutionId, FunctionFqn, JoinSetId,
-    StrVariant, SupportedFunctionReturnValue,
-    component_id::ComponentDigest,
+    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
+    JoinSetId, StrVariant, SupportedFunctionReturnValue,
+    cas::{Cas, CasError},
+    component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
@@ -13,10 +14,10 @@ use concepts::{
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
-        DeploymentComponentRecord, DeploymentRecord, DeploymentState, DeploymentStatus,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        DeploymentComponentRecord, DeploymentFileRecord, DeploymentRecord, DeploymentState,
+        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
@@ -364,6 +365,12 @@ impl DbPool for SqlitePool {
         }
         Ok(Box::new(self.clone()))
     }
+    async fn cas_conn(&self) -> Result<Box<dyn Cas>, DbErrorGeneric> {
+        if self.0.shutdown_requested.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(self.clone()))
+    }
     #[cfg(feature = "test")]
     async fn connection_test(
         &self,
@@ -429,9 +436,10 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
         created_at: row.get("created_at")?,
         last_active_at: row.get("last_active_at")?,
         status,
-        config_json: row.get("config_json")?,
+        deployment_toml: row.get("deployment_toml")?,
         obelisk_version: row.get("obelisk_version")?,
         created_by: row.get("created_by")?,
+        files: Vec::new(),
     })
 }
 
@@ -3303,14 +3311,14 @@ impl SqlitePool {
         tx: &Transaction,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
-        include_config_json: bool,
+        include_deployment_toml: bool,
         include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
-        let config_json_col = if include_config_json {
-            "d.config_json"
+        let deployment_toml_col = if include_deployment_toml {
+            "d.deployment_toml"
         } else {
-            "NULL AS config_json"
+            "NULL AS deployment_toml"
         };
         let mut sql = format!(
             r"
@@ -3327,7 +3335,7 @@ impl SqlitePool {
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_ERROR}'), 0) AS finished_error,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind IS NOT NULL
                 AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}', '{RESULT_KIND_JSON_ERROR}')), 0) AS finished_execution_failure,
-            {config_json_col},
+            {deployment_toml_col},
             d.created_at,
             d.last_active_at,
             d.status
@@ -3362,7 +3370,7 @@ impl SqlitePool {
 
         write!(
             sql,
-            " GROUP BY d.deployment_id, d.description, d.digest, d.config_json, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
+            " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -3402,7 +3410,7 @@ impl SqlitePool {
                         finished_ok: row.get("finished_ok")?,
                         finished_error: row.get("finished_error")?,
                         finished_execution_failure: row.get("finished_execution_failure")?,
-                        config_json: row.get("config_json")?,
+                        deployment_toml: row.get("deployment_toml")?,
                         created_at: row.get("created_at")?,
                         last_active_at: row.get("last_active_at")?,
                         status,
@@ -3430,21 +3438,134 @@ impl SqlitePool {
         );
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, digest, created_at, status, config_json, obelisk_version, created_by) \
-             VALUES (:deployment_id, :description, :digest, :created_at, :status, :config_json, :obelisk_version, :created_by)",
+             (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
+             VALUES (:deployment_id, :description, :digest, :created_at, :status, :deployment_toml, :obelisk_version, :created_by)",
             rusqlite::named_params! {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":description": record.description,
                 ":digest": record.digest.to_string(),
                 ":created_at": record.created_at,
                 ":status": record.status.as_str(),
-                ":config_json": record.config_json,
+                ":deployment_toml": record.deployment_toml,
                 ":obelisk_version": record.obelisk_version,
                 ":created_by": record.created_by,
             },
         )
         .map_err(RusqliteError::from)?;
+        Self::insert_deployment_files_tx(tx, record.deployment_id, &record.files)?;
         Ok(())
+    }
+
+    fn insert_deployment_files_tx(
+        tx: &Transaction,
+        deployment_id: DeploymentId,
+        files: &[DeploymentFileRecord],
+    ) -> Result<(), DbErrorWrite> {
+        let mut stmt = tx
+            .prepare_cached(
+                "INSERT INTO t_deployment_file (deployment_id, digest, path) \
+                 VALUES (:deployment_id, :digest, :path)",
+            )
+            .map_err(RusqliteError::from)?;
+        for file in files {
+            stmt.execute(rusqlite::named_params! {
+                ":deployment_id": deployment_id.to_string(),
+                ":digest": file.digest.to_string(),
+                ":path": file.path,
+            })
+            .map_err(RusqliteError::from)?;
+        }
+        Ok(())
+    }
+
+    fn compute_file_digest(content: &[u8]) -> ContentDigest {
+        let hash: [u8; 32] = Sha256::digest(content).into();
+        ContentDigest(Digest(hash))
+    }
+
+    fn upload_file_tx(
+        tx: &Transaction,
+        digest: &ContentDigest,
+        content: &[u8],
+    ) -> Result<(), DbErrorWrite> {
+        let actual = Self::compute_file_digest(content);
+        if &actual != digest {
+            return Err(DbErrorWriteNonRetriable::ValidationFailed(
+                format!("uploaded file digest mismatch: expected {digest}, got {actual}").into(),
+            )
+            .into());
+        }
+        let size = i64::try_from(content.len()).map_err(|err| DbErrorGeneric::Uncategorized {
+            reason: format!("deployment file too large: {err}").into(),
+            context: SpanTrace::capture(),
+            source: Some(Arc::new(err)),
+            loc: Location::caller(),
+        })?;
+        tx.execute(
+            "INSERT INTO t_file (digest, content, size) VALUES (:digest, :content, :size) \
+             ON CONFLICT (digest) DO NOTHING",
+            rusqlite::named_params! {
+                ":digest": digest.to_string(),
+                ":content": content,
+                ":size": size,
+            },
+        )
+        .map_err(RusqliteError::from)?;
+        Ok(())
+    }
+
+    fn get_file_tx(
+        tx: &Transaction,
+        digest: &ContentDigest,
+    ) -> Result<Option<Vec<u8>>, DbErrorRead> {
+        tx.query_row(
+            "SELECT content FROM t_file WHERE digest = :digest",
+            rusqlite::named_params! { ":digest": digest.to_string() },
+            |row| row.get("content"),
+        )
+        .optional()
+        .map_err(|err| DbErrorRead::from(RusqliteError::from(err)))
+    }
+
+    fn missing_digests_tx(
+        tx: &Transaction,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<ContentDigest>, DbErrorRead> {
+        tx.prepare(
+            "SELECT df.digest \
+             FROM t_deployment_file df \
+             LEFT JOIN t_file f ON f.digest = df.digest \
+             WHERE df.deployment_id = :deployment_id AND f.digest IS NULL \
+             ORDER BY df.digest",
+        )?
+        .query_map(
+            rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
+            |row| row.get("digest"),
+        )?
+        .collect::<Result<Vec<_>, rusqlite::Error>>()
+        .map_err(DbErrorRead::from)
+    }
+
+    fn list_deployment_files_tx(
+        tx: &Transaction,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
+        tx.prepare(
+            "SELECT path, digest FROM t_deployment_file \
+             WHERE deployment_id = :deployment_id \
+             ORDER BY path, digest",
+        )?
+        .query_map(
+            rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
+            |row| {
+                Ok(DeploymentFileRecord {
+                    path: row.get("path")?,
+                    digest: row.get("digest")?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, rusqlite::Error>>()
+        .map_err(DbErrorRead::from)
     }
 
     fn activate_deployment_tx(
@@ -3517,26 +3638,36 @@ impl SqlitePool {
         tx: &Transaction,
         deployment_id: DeploymentId,
     ) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        tx.query_row(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+        let Some(record) = tx
+            .query_row(
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment WHERE deployment_id = :deployment_id",
-            rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
-            deployment_record_from_row,
-        )
-        .optional()
-        .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
+                rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
+                deployment_record_from_row,
+            )
+            .optional()
+            .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))?
+        else {
+            return Ok(None);
+        };
+        Self::with_deployment_files_tx(tx, record).map(Some)
     }
 
     #[cfg(feature = "test")]
     fn get_active_deployment_tx(tx: &Transaction) -> Result<Option<DeploymentRecord>, DbErrorRead> {
-        tx.query_row(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+        let Some(record) = tx
+            .query_row(
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment WHERE status = 'active' LIMIT 1",
-            [],
-            deployment_record_from_row,
-        )
-        .optional()
-        .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
+                [],
+                deployment_record_from_row,
+            )
+            .optional()
+            .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))?
+        else {
+            return Ok(None);
+        };
+        Self::with_deployment_files_tx(tx, record).map(Some)
     }
 
     fn list_deployments_tx(
@@ -3545,7 +3676,7 @@ impl SqlitePool {
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let mut sql = String::from(
-            "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+            "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
              FROM t_deployment",
         );
 
@@ -3578,7 +3709,7 @@ impl SqlitePool {
             format!("SELECT * FROM ({sql}) AS sub ORDER BY deployment_id {outer_order}")
         };
 
-        let result: Vec<DeploymentRecord> = tx
+        let mut result: Vec<DeploymentRecord> = tx
             .prepare(&final_sql)?
             .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
                 params
@@ -3590,8 +3721,19 @@ impl SqlitePool {
             )?
             .collect::<Result<Vec<_>, rusqlite::Error>>()
             .map_err(DbErrorRead::from)?;
+        for record in &mut result {
+            record.files = Self::list_deployment_files_tx(tx, record.deployment_id)?;
+        }
 
         Ok(result)
+    }
+
+    fn with_deployment_files_tx(
+        tx: &Transaction,
+        mut record: DeploymentRecord,
+    ) -> Result<DeploymentRecord, DbErrorRead> {
+        record.files = Self::list_deployment_files_tx(tx, record.deployment_id)?;
+        Ok(record)
     }
 
     fn pause_execution(
@@ -4557,7 +4699,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
-        include_config_json: bool,
+        include_deployment_toml: bool,
         include_derived: bool,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         self.transaction(
@@ -4566,7 +4708,7 @@ impl DbExternalApi for SqlitePool {
                     tx,
                     current_time,
                     pagination,
-                    include_config_json,
+                    include_deployment_toml,
                     include_derived,
                 )
             },
@@ -4582,6 +4724,32 @@ impl DbExternalApi for SqlitePool {
             move |tx| Self::insert_deployment_tx(tx, &record),
             TxType::MultipleWrites,
             "insert_deployment",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn missing_digests(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<ContentDigest>, DbErrorRead> {
+        self.transaction(
+            move |tx| Self::missing_digests_tx(tx, deployment_id),
+            TxType::Other,
+            "missing_digests",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn list_deployment_files(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
+        self.transaction(
+            move |tx| Self::list_deployment_files_tx(tx, deployment_id),
+            TxType::Other,
+            "list_deployment_files",
         )
         .await
     }
@@ -4637,15 +4805,20 @@ impl DbExternalApi for SqlitePool {
     async fn get_current_deployment(&self) -> Result<Option<DeploymentRecord>, DbErrorRead> {
         self.transaction(
             move |tx| {
-                tx.query_row(
-                    "SELECT deployment_id, description, digest, created_at, last_active_at, status, config_json, obelisk_version, created_by \
+                let Some(record) = tx
+                    .query_row(
+                    "SELECT deployment_id, description, digest, created_at, last_active_at, status, deployment_toml, obelisk_version, created_by \
                      FROM t_deployment WHERE status IN ('enqueued', 'active') \
                      ORDER BY CASE status WHEN 'enqueued' THEN 0 ELSE 1 END LIMIT 1",
-                    [],
-                    deployment_record_from_row,
-                )
-                .optional()
-                .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))
+                        [],
+                        deployment_record_from_row,
+                    )
+                    .optional()
+                    .map_err(|e| DbErrorRead::from(RusqliteError::from(e)))?
+                else {
+                    return Ok(None);
+                };
+                Self::with_deployment_files_tx(tx, record).map(Some)
             },
             TxType::Other,
             "get_current_deployment",
@@ -4746,6 +4919,40 @@ impl DbExternalApi for SqlitePool {
             "unpause_delay",
         )
         .await
+    }
+}
+
+#[async_trait]
+impl Cas for SqlitePool {
+    async fn read_blob(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, CasError> {
+        let digest = digest.clone();
+        self.transaction(
+            move |tx| Self::get_file_tx(tx, &digest),
+            TxType::Other,
+            "cas_read_blob",
+        )
+        .await
+        .map_err(|err| CasError::Uncategorized(err.to_string()))
+    }
+
+    async fn write_blob(&self, content: &[u8]) -> Result<ContentDigest, CasError> {
+        let digest = Self::compute_file_digest(content);
+        let content = content.to_vec();
+        {
+            let digest = digest.clone();
+            self.transaction(
+                move |tx| Self::upload_file_tx(tx, &digest, &content),
+                TxType::MultipleWrites,
+                "cas_write_blob",
+            )
+            .await
+            .map_err(|err| CasError::Uncategorized(err.to_string()))?;
+        }
+        Ok(digest)
+    }
+
+    async fn contains_blob(&self, digest: &ContentDigest) -> Result<bool, CasError> {
+        Ok(self.read_blob(digest).await?.is_some())
     }
 }
 

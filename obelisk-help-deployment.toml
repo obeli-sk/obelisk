@@ -236,6 +236,7 @@
 
 ## Map from frame symbol file names to corresponding file paths on local filesystem. Supports path prefixes on both sides.
 ## If frame symbol path starts with `...`, only the suffix will be used to find the matching source file.
+## During manifest preparation, relative paths are rewritten to `{ path = "...", content_digest = "sha256:..." }`.
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 
 # Stub WASI CLI world imports. Only needed for workflows authored in TinyGo.
@@ -309,6 +310,7 @@
 ## Note: only `${VAR}` triggers interpolation; `$VAR` (no braces) is treated as a literal string.
 ## Forwarded vars ("ENV1") fail startup if missing; value strings with unresolved `${VAR}` also fail.
 # env_vars = ["ENV1", {key = "ENV2", value = "somevalue"}, {key = "ENV3", value = "${HOST_VAR}"}, {key = "ENV4", value = "prefix ${HOST_VAR}"}, {key = "ENV5", value = "${OPTIONAL:-fallback}"}]
+## During manifest preparation, relative paths are rewritten to `{ path = "...", content_digest = "sha256:..." }`.
 # backtrace.sources = {"frame symbol file path" = "path to the source file", ".../src/lib.rs" = "path to source file"}
 ## Outgoing HTTP host allowlist - same syntax as activity_wasm.allowed_host.
 # [[webhook_endpoint_wasm.allowed_host]]

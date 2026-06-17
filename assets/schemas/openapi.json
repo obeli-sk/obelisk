@@ -1415,6 +1415,82 @@
         }
       }
     },
+    "/v1/files": {
+      "post": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Upload a deployment file blob to the content-addressed store. The request body is the\nraw file content; the response is the server-computed content digest.",
+        "operationId": "upload_file",
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; returns the content digest",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/files/{digest}": {
+      "get": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Fetch a deployment file blob by content digest.",
+        "operationId": "get_file",
+        "parameters": [
+          {
+            "name": "digest",
+            "in": "path",
+            "description": "Content digest (sha256:...)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Blob bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Blob not found"
+          }
+        }
+      }
+    },
     "/v1/functions": {
       "get": {
         "tags": [
@@ -1932,18 +2008,19 @@
           "digest",
           "status",
           "created_at",
-          "config_json"
+          "deployment_toml"
         ],
         "properties": {
-          "config_json": {
-            "type": "string"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"
           },
           "deployment_id": {
             "type": "string"
+          },
+          "deployment_toml": {
+            "type": "string",
+            "description": "Verbatim deployment manifest (`deployment.toml`)"
           },
           "description": {
             "type": [
@@ -1953,7 +2030,7 @@
           },
           "digest": {
             "type": "string",
-            "description": "Content digest derived from the deployment's canonical config JSON"
+            "description": "Content digest = `sha256(deployment_toml)`"
           },
           "last_active_at": {
             "type": [
@@ -2080,19 +2157,19 @@
         "type": "object",
         "description": "Request payload for submitting a new deployment",
         "required": [
-          "config_json"
+          "deployment_toml"
         ],
         "properties": {
-          "config_json": {
-            "type": "string",
-            "description": "Deployment config as JSON string"
-          },
           "deployment_id": {
             "type": [
               "string",
               "null"
             ],
             "description": "Optional client-supplied deployment ID for idempotent submission.\nIf a deployment with this ID already exists and its content digest\nmatches, the submission is a no-op; a digest mismatch is rejected."
+          },
+          "deployment_toml": {
+            "type": "string",
+            "description": "Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must\nalready be uploaded to the content-addressed store."
           },
           "description": {
             "type": [
