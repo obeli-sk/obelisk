@@ -742,6 +742,10 @@
           "about": "Print the ID of the currently active deployment",
           "options": [
             {
+              "name": "--json",
+              "help": "Output as JSON instead of plain text"
+            },
+            {
               "name": "--api-url",
               "short": "a",
               "help": "Address of the obelisk server"
@@ -750,8 +754,12 @@
         },
         {
           "name": "show",
-          "about": "Show the full configuration of a deployment",
+          "about": "Show a deployment",
           "options": [
+            {
+              "name": "--json",
+              "help": "Print the raw canonical config JSON instead of the reconstructed TOML"
+            },
             {
               "name": "--api-url",
               "short": "a",
@@ -763,6 +771,10 @@
               "name": "id",
               "help": "Deployment ID",
               "required": true
+            },
+            {
+              "name": "file",
+              "help": "Print the content of a single source file, identified by its deployment-relative path as shown in the TOML (e.g. `scripts/run.sh`)"
             }
           ]
         },
