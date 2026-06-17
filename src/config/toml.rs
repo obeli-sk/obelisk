@@ -135,7 +135,14 @@ impl DeploymentTomlValidated {
         let provider = DiskProvider {
             deployment_dir: self.deployment_dir.clone(),
         };
-        resolve_local_refs_to_canonical(self, &provider).await
+        self.canonicalize_with_provider(&provider).await
+    }
+
+    pub(crate) async fn canonicalize_with_provider(
+        self,
+        provider: &dyn FileProvider,
+    ) -> Result<DeploymentCanonical, anyhow::Error> {
+        resolve_local_refs_to_canonical(self, provider).await
     }
 }
 
@@ -2500,7 +2507,7 @@ fn validate_owned_source_file_names(canonical: &DeploymentCanonical) -> anyhow::
 pub(crate) const DEPLOYMENT_DIR_PREFIX: &str = "${DEPLOYMENT_DIR}";
 
 /// Strip an optional `${DEPLOYMENT_DIR}` (and following `/`) prefix, returning the remainder.
-fn strip_deployment_dir_prefix(s: &str) -> Option<&str> {
+pub(crate) fn strip_deployment_dir_prefix(s: &str) -> Option<&str> {
     s.strip_prefix(DEPLOYMENT_DIR_PREFIX)
         .map(|rest| rest.strip_prefix('/').unwrap_or(rest))
 }
