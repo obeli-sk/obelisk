@@ -7,13 +7,13 @@ max_retries = 0
 name = "test_programs_fibo_workflow"
 location = "oci://docker.io/getobelisk/test_programs_fibo_workflow:2026-04-06@sha256:c232a058f391459e925a571e719ab25faf80759c75c08a5df666ee6870ca8838"
 exec.lock_expiry.seconds = 2
-backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/fibo/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/workflow/src/lib.rs" }
 
 [[webhook_endpoint_wasm]]
 name = "test_programs_fibo_webhook"
 location = "oci://docker.io/getobelisk/test_programs_fibo_webhook:2026-04-06@sha256:be962a066f58b11f4bb506a4038282586a9961f729170265101248fc4e76cfa5"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
-backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/fibo/webhook/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/fibo/webhook/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_http_get_activity"
@@ -22,7 +22,7 @@ location = "oci://docker.io/getobelisk/test_programs_http_get_activity:2026-04-0
 [[workflow_wasm]]
 name = "test_programs_http_get_workflow"
 location = "oci://docker.io/getobelisk/test_programs_http_get_workflow:2026-04-06@sha256:82a7668efac561f342ea4bc4e64131591f66c71078e17cc85657879c88df06e6"
-backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/http/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/http/workflow/src/lib.rs" }
 
 [[activity_wasm]]
 name = "test_programs_sleep_activity"
@@ -32,4 +32,4 @@ exec.lock_expiry.seconds = 10
 [[workflow_wasm]]
 name = "test_programs_sleep_workflow"
 location = "oci://docker.io/getobelisk/test_programs_sleep_workflow:2026-04-06@sha256:41b2a3433ecbb5d03ec45cf9ed7c427db1d6293dcc22ee9b67cc39488b836830"
-backtrace.sources = { ".../src/lib.rs" = "${DEPLOYMENT_DIR}/crates/testing/test-programs/sleep/workflow/src/lib.rs" }
+backtrace.sources = { ".../src/lib.rs" = "crates/testing/test-programs/sleep/workflow/src/lib.rs" }

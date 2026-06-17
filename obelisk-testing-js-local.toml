@@ -30,7 +30,7 @@ params = [
 return_type = "result<u32>"
 
 [[activity_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/read_env.js"
+location = "crates/testing/test-programs/js/activity/read_env.js"
 ffqn = "testing:integration/activity.read-env"
 params = [
   { name = "key", type = "string" },
@@ -39,7 +39,7 @@ max_retries = 0
 env_vars = [{key = "TEST_ENV_VAR", value = "hello_from_env"}]
 
 [[activity_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/fetch_get.js"
+location = "crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:js/activity.fetch-get"
 params = [
     {name = "url", type = "string"},
@@ -52,12 +52,12 @@ pattern = "http://localhost:5005"
 methods = ["GET"]
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/fetch_components.js"
+location = "crates/testing/test-programs/js/workflow/fetch_components.js"
 ffqn = "testing:js/workflow.fetch-components"
 params = []
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/call_activity.js"
+location = "crates/testing/test-programs/js/workflow/call_activity.js"
 ffqn = "testing:integration/workflow-call-activity.call-activity"
 params = [
   { name = "a", type = "u32" },
@@ -66,7 +66,7 @@ params = [
 return_type = "result<u32>"
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_call_activity.js"
+location = "crates/testing/test-programs/js/workflow/import_call_activity.js"
 ffqn = "testing:integration/workflow-import-call-activity.call-activity"
 params = [
   { name = "a", type = "u32" },
@@ -75,7 +75,7 @@ params = [
 return_type = "result<u32>"
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_star_call_activity.js"
+location = "crates/testing/test-programs/js/workflow/import_star_call_activity.js"
 ffqn = "testing:integration/workflow-import-star-call-activity.call-activity"
 params = [
   { name = "a", type = "u32" },
@@ -84,7 +84,7 @@ params = [
 return_type = "result<u32>"
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_schedule_activity.js"
+location = "crates/testing/test-programs/js/workflow/import_schedule_activity.js"
 ffqn = "testing:integration/workflow-import-schedule-activity.schedule-activity"
 params = [
   { name = "a", type = "u32" },
@@ -93,7 +93,7 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_ext_activity.js"
+location = "crates/testing/test-programs/js/workflow/import_ext_activity.js"
 ffqn = "testing:integration/workflow-import-ext-activity.add-via-activity"
 params = [
   { name = "a", type = "u32" },
@@ -102,7 +102,7 @@ params = [
 return_type = "result<u32, string>"
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/import_stub_activity.js"
+location = "crates/testing/test-programs/js/workflow/import_stub_activity.js"
 ffqn = "testing:integration/workflow-import-stub-activity.call-stub"
 params = [
   { name = "id", type = "u64" },
@@ -125,7 +125,7 @@ routes = [{ methods = ["GET"], route = "/hello" }]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_fetch_components"
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/fetch_components.js"
+location = "crates/testing/test-programs/js/webhook/fetch_components.js"
 routes = [{ methods = ["GET"], route = "/fetch" }]
 [[webhook_endpoint_js.allowed_host]]
 pattern = "http://localhost:5005"
@@ -133,23 +133,23 @@ methods = ["GET"]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_call_activity"
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/call_activity.js"
+location = "crates/testing/test-programs/js/webhook/call_activity.js"
 routes = [{ methods = ["GET"], route = "/call-activity/:a/:b" }]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_import_call_activity"
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/import_call_activity.js"
+location = "crates/testing/test-programs/js/webhook/import_call_activity.js"
 routes = [{ methods = ["GET"], route = "/import-call-activity" }]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_import_schedule_activity"
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/webhook/import_schedule_activity.js"
+location = "crates/testing/test-programs/js/webhook/import_schedule_activity.js"
 routes = [{ methods = ["GET"], route = "/import-schedule-activity" }]
 
 # stub
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/call_stub.js"
+location = "crates/testing/test-programs/js/workflow/call_stub.js"
 ffqn = "testing:integration/workflow-call-stub.call-stub"
 params = [
   { name = "id", type = "u64" },
@@ -166,13 +166,13 @@ return_type = "result<string, string>"
 # Busy workflow
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-sleep.js"
+location = "crates/testing/test-programs/js/workflow/busy-sleep.js"
 ffqn = "testing:integration/workflow-busy.busy"
 params = []
 return_type = "result<string, string>"
 
 [[activity_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/sleep.js"
+location = "crates/testing/test-programs/js/activity/sleep.js"
 ffqn = "testing:integration/sleep-activity.sleep"
 params = [
   { name = "milliseconds", type = "u64" },
@@ -181,13 +181,13 @@ return_type = "result"
 max_retries = 0
 
 [[workflow_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/workflow/busy-cpu.js"
+location = "crates/testing/test-programs/js/workflow/busy-cpu.js"
 ffqn = "testing:integration/workflow-busy.busy-cpu"
 params = []
 exec.lock_expiry.seconds = 10
 
 [[activity_js]]
-location = "${DEPLOYMENT_DIR}/crates/testing/test-programs/js/activity/busy-cpu.js"
+location = "crates/testing/test-programs/js/activity/busy-cpu.js"
 ffqn = "testing:integration/activity-busy-cpu.busy-cpu"
 params = []
 exec.lock_expiry.seconds = 10
