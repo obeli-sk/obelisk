@@ -4,6 +4,7 @@ use crate::command::server::PreparedDirs;
 use crate::command::server::ServerVerified;
 use crate::command::server::SubmitError;
 use crate::command::server::SwitchDeploymentAction;
+use crate::server::deployment_summary;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -1610,6 +1611,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .map_err(map_to_status)?;
 
         let include_deployment_toml = request.include_deployment_toml;
+        let include_component_summary = request.include_component_summary;
         let execution_counts = if request.include_execution_counts {
             DeploymentExecutionCounts::Count {
                 include_derived: request.include_derived,
@@ -1623,7 +1625,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .list_deployment_states(
                 Utc::now(),
                 pagination,
-                include_deployment_toml,
+                include_deployment_toml || include_component_summary,
                 execution_counts,
             )
             .await
@@ -1631,7 +1633,14 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
 
         let deployments: Vec<_> = summaries
             .into_iter()
-            .map(deployment_summary_to_grpc)
+            .map(|dep| {
+                deployment_summary_to_grpc(
+                    dep,
+                    include_deployment_toml,
+                    request.include_execution_counts,
+                    include_component_summary,
+                )
+            })
             .collect();
         Ok(tonic::Response::new(grpc_gen::ListDeploymentsResponse {
             deployments,
@@ -1924,27 +1933,102 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
     }
 }
 
-fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSummary {
+fn deployment_component_type_to_grpc(
+    component_type: deployment_summary::DeploymentComponentType,
+) -> grpc_gen::DeploymentComponentType {
+    match component_type {
+        deployment_summary::DeploymentComponentType::WorkflowWasm => {
+            grpc_gen::DeploymentComponentType::WorkflowWasm
+        }
+        deployment_summary::DeploymentComponentType::WorkflowJs => {
+            grpc_gen::DeploymentComponentType::WorkflowJs
+        }
+        deployment_summary::DeploymentComponentType::ActivityWasm => {
+            grpc_gen::DeploymentComponentType::ActivityWasm
+        }
+        deployment_summary::DeploymentComponentType::ActivityJs => {
+            grpc_gen::DeploymentComponentType::ActivityJs
+        }
+        deployment_summary::DeploymentComponentType::ActivityExec => {
+            grpc_gen::DeploymentComponentType::ActivityExec
+        }
+        deployment_summary::DeploymentComponentType::ActivityStub => {
+            grpc_gen::DeploymentComponentType::ActivityStub
+        }
+        deployment_summary::DeploymentComponentType::ActivityExternal => {
+            grpc_gen::DeploymentComponentType::ActivityExternal
+        }
+        deployment_summary::DeploymentComponentType::WebhookEndpointWasm => {
+            grpc_gen::DeploymentComponentType::WebhookEndpointWasm
+        }
+        deployment_summary::DeploymentComponentType::WebhookEndpointJs => {
+            grpc_gen::DeploymentComponentType::WebhookEndpointJs
+        }
+        deployment_summary::DeploymentComponentType::Cron => {
+            grpc_gen::DeploymentComponentType::Cron
+        }
+    }
+}
+
+fn deployment_component_summary_to_grpc(
+    summary: deployment_summary::DeploymentComponentSummary,
+) -> grpc_gen::DeploymentComponentSummary {
+    grpc_gen::DeploymentComponentSummary {
+        components: summary
+            .components
+            .into_iter()
+            .map(|component| grpc_gen::DeploymentComponentCount {
+                component_type: deployment_component_type_to_grpc(component.component_type).into(),
+                count: component.count,
+            })
+            .collect(),
+    }
+}
+
+fn deployment_summary_to_grpc(
+    mut dep: DeploymentState,
+    include_deployment_toml: bool,
+    include_execution_counts: bool,
+    include_component_summary: bool,
+) -> grpc_gen::DeploymentSummary {
+    let component_summary = include_component_summary
+        .then(|| {
+            dep.deployment_toml
+                .as_deref()
+                .and_then(deployment_summary::deployment_component_summary)
+        })
+        .flatten()
+        .map(deployment_component_summary_to_grpc);
+
     let deployment = grpc_gen::Deployment {
         deployment_id: Some(dep.deployment_id.into()),
         status: status_to_grpc(dep.status).into(),
         created_at: Some(prost_wkt_types::Timestamp::from(dep.created_at)),
         last_active_at: dep.last_active_at.map(prost_wkt_types::Timestamp::from),
-        deployment_toml: dep.deployment_toml,
+        deployment_toml: include_deployment_toml.then(|| {
+            dep.deployment_toml
+                .take()
+                .expect("deployment_toml was requested from storage")
+        }),
         description: dep.description,
         digest: dep.digest.to_string(),
         files: Vec::new(),
     };
     grpc_gen::DeploymentSummary {
         deployment: Some(deployment),
-        locked: dep.locked,
-        pending: dep.pending,
-        scheduled: dep.scheduled,
-        blocked: dep.blocked,
-        paused: dep.paused,
-        finished_ok: dep.finished_ok,
-        finished_error: dep.finished_error,
-        finished_execution_failure: dep.finished_execution_failure,
+        execution_summary: include_execution_counts.then_some(
+            grpc_gen::DeploymentExecutionSummary {
+                locked: dep.locked,
+                pending: dep.pending,
+                scheduled: dep.scheduled,
+                blocked: dep.blocked,
+                paused: dep.paused,
+                finished_ok: dep.finished_ok,
+                finished_error: dep.finished_error,
+                finished_execution_failure: dep.finished_execution_failure,
+            },
+        ),
+        component_summary,
     }
 }
 
@@ -1968,6 +2052,7 @@ mod tests {
             )),
             include_deployment_toml: true,
             include_execution_counts: false,
+            include_component_summary: false,
             include_derived: false,
         };
 
@@ -2002,6 +2087,7 @@ mod tests {
             )),
             include_deployment_toml: true, // TODO test
             include_execution_counts: false,
+            include_component_summary: false,
             include_derived: false,
         };
 
@@ -2029,6 +2115,7 @@ mod tests {
             pagination: None,
             include_deployment_toml: true, // TODO test
             include_execution_counts: false,
+            include_component_summary: false,
             include_derived: false,
         };
 
@@ -2060,6 +2147,7 @@ mod tests {
             )),
             include_deployment_toml: true, // TODO test
             include_execution_counts: false,
+            include_component_summary: false,
             include_derived: false,
         };
 

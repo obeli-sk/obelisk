@@ -3021,9 +3021,12 @@ mod functions {
 mod deployment {
     use crate::{
         command::server::{self, RuntimeConfigCheck, SwitchDeploymentAction},
-        server::web_api_server::{
-            AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
-            pretty_json_response,
+        server::{
+            deployment_summary,
+            web_api_server::{
+                AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
+                pretty_json_response,
+            },
         },
     };
     use http::header;
@@ -3104,10 +3107,20 @@ mod deployment {
         pub finished_error: u32,
         /// Number of executions finished with an execution failure
         pub finished_execution_failure: u32,
+        /// Component counts by manifest section type. Absent when not requested or unavailable.
+        pub component_summary: Option<deployment_summary::DeploymentComponentSummary>,
     }
 
     impl DeploymentStateSer {
-        fn from(deployment_state: &DeploymentState) -> Self {
+        fn from(deployment_state: &DeploymentState, include_component_summary: bool) -> Self {
+            let component_summary = include_component_summary
+                .then(|| {
+                    deployment_state
+                        .deployment_toml
+                        .as_deref()
+                        .and_then(deployment_summary::deployment_component_summary)
+                })
+                .flatten();
             Self {
                 deployment_id: deployment_state.deployment_id,
                 description: deployment_state.description.clone(),
@@ -3123,6 +3136,7 @@ mod deployment {
                 finished_ok: deployment_state.finished_ok,
                 finished_error: deployment_state.finished_error,
                 finished_execution_failure: deployment_state.finished_execution_failure,
+                component_summary,
             }
         }
     }
@@ -3141,6 +3155,9 @@ mod deployment {
         /// Count child executions in the summary buckets as well
         #[serde(default)]
         include_derived: bool,
+        /// Include component counts by manifest section type
+        #[serde(default)]
+        include_component_summary: bool,
     }
 
     /// List deployments
@@ -3175,7 +3192,7 @@ mod deployment {
             .list_deployment_states(
                 Utc::now(),
                 pagination,
-                false, // include_deployment_toml
+                params.include_component_summary,
                 DeploymentExecutionCounts::Count {
                     include_derived: params.include_derived,
                 },
@@ -3185,7 +3202,7 @@ mod deployment {
 
         let states: Vec<DeploymentStateSer> = states
             .into_iter()
-            .map(|dep| DeploymentStateSer::from(&dep))
+            .map(|dep| DeploymentStateSer::from(&dep, params.include_component_summary))
             .collect();
 
         Ok(match accept {
