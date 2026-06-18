@@ -1946,9 +1946,18 @@ impl JsLocationCanonicalExt for ScriptLocationCanonical {
                         "content digest mismatch for inline JS `{file_name}`: expected {expected}, got {actual}"
                     );
                 }
+                // Report the basename to the JS engine so stack frames (and the source
+                // lookup keyed by them) use the bare file name, matching the `ExternalPath`
+                // and `Oci` variants. The canonical `file_name` keeps its deployment-relative
+                // subpath for `deployment get` export.
+                let file_name = std::path::Path::new(file_name)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(file_name)
+                    .to_string();
                 Ok(JsContent {
                     source: content.clone(),
-                    file_name: file_name.clone(),
+                    file_name,
                 })
             }
             ScriptLocationCanonical::ExternalPath { path } => {
@@ -2636,17 +2645,16 @@ async fn resolve_script_toml_to_canonical(
         (Some(JsLocationToml::Path(path)), None) => {
             if std::path::Path::new(&path).is_absolute() {
                 bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
-            } else {
-                let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
-                let path = sanitize_deployment_relative_path(path)?;
-                let content = provider.read(&path, content_digest).await?;
-                let content = String::from_utf8(content)
-                    .with_context(|| format!("script file {path:?} is not valid UTF-8"))?;
-                Ok(ScriptLocationCanonical::Content {
-                    content,
-                    file_name: path,
-                })
             }
+            let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
+            let path = sanitize_deployment_relative_path(path)?;
+            let content = provider.read(&path, content_digest).await?;
+            let content = String::from_utf8(content)
+                .with_context(|| format!("script file {path:?} is not valid UTF-8"))?;
+            Ok(ScriptLocationCanonical::Content {
+                content,
+                file_name: path,
+            })
         }
         (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationCanonical::Oci {
             image: reference.to_string(),
