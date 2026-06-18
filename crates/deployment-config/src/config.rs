@@ -762,8 +762,7 @@ pub mod cron {
 /// provider. It is not the stored deployment source of truth. Deployment-owned scripts
 /// and backtrace sources are inlined as content; deployment-owned WASM locations remain
 /// relative path + content digest until `DeploymentResolved` materializes them from the
-/// CAS into a runnable cache path. External absolute paths and OCI references remain
-/// external references.
+/// CAS into a runnable cache path. OCI references remain external references.
 #[derive(Debug, Deserialize, Serialize, Default, Clone, JsonSchema)]
 pub struct DeploymentCanonical {
     pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,

@@ -81,7 +81,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::fmt::Write as _;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use test_utils::sanitize_json;
 use tokio::{sync::watch, task::JoinHandle};
 use tokio_stream::StreamExt;
@@ -102,6 +105,21 @@ mod populate_js_codegen_cache {
 
 fn get_workspace_dir() -> PathBuf {
     PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry.file_type().unwrap();
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path);
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dst_path).unwrap();
+        }
+    }
 }
 
 /// Fixed ports used by all integration tests.
@@ -133,6 +151,10 @@ pub(crate) use test_addr;
 fn write_test_configs(ip: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let workspace = get_workspace_dir();
     let db_dir = tempfile::tempdir().unwrap();
+    let fixture_src = workspace.join("crates/testing/test-programs");
+    let fixture_dst = db_dir.path().join("crates/testing/test-programs");
+    copy_dir_recursive(&fixture_src.join("js"), &fixture_dst.join("js"));
+    copy_dir_recursive(&fixture_src.join("exec"), &fixture_dst.join("exec"));
     let server_contents = format!(
         r#"api.listening_addr = "{ip}:{API_PORT}"
 webui.enabled = false
@@ -152,7 +174,7 @@ directory = "{db_dir}"
     let server_path = db_dir.path().join("obelisk-test-server.toml");
     std::fs::write(&server_path, server_contents).unwrap();
 
-    let ws = workspace.display();
+    let ws = ".";
     let deployment_contents = format!(
         r#"
 [[activity_js]]

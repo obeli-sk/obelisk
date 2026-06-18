@@ -957,9 +957,10 @@ async fn canonical_from_manifest(
 /// `DeploymentCanonical` is host-independent: a deployment-owned WASM is a *relative* path
 /// addressed by content digest in the CAS (a stored manifest carries no submitter host).
 /// Compiling/linking needs real files, so [`Self::resolve`] materializes each deployment-owned
-/// blob from the CAS into the wasm cache and rewrites its location to that path. External
-/// (absolute) paths and OCI references already are concrete and pass through unchanged. The
-/// disk-authored local-run canonical is already all-absolute, so it resolves to itself.
+/// blob from the CAS into the wasm cache and rewrites its location to that path. OCI
+/// references already are concrete and pass through unchanged. The current disk-authored
+/// local-run canonical expands valid relative WASM paths to absolute internal paths, so it
+/// resolves to itself.
 ///
 /// The inner value is private so the only way to obtain one is `resolve`; that makes it
 /// impossible to feed an unresolved (relative-path) canonical into compilation.
@@ -971,8 +972,9 @@ impl DeploymentResolved {
     /// Resolve every deployment-owned WASM location against the CAS.
     ///
     /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
-    /// `--skip-db`), whose canonical holds only absolute paths and OCI refs; encountering a
-    /// deployment-owned (relative) WASM there is an error because there is no store to read it.
+    /// `--skip-db`), whose current canonical holds internal absolute paths and OCI refs;
+    /// encountering a deployment-owned (relative) WASM there is an error because there is no
+    /// store to read it.
     pub(crate) async fn resolve(
         mut deployment: DeploymentCanonical,
         cas: Option<&dyn concepts::cas::Cas>,
@@ -1037,7 +1039,7 @@ impl DeploymentResolved {
 
 /// Turn a single WASM component location into a concrete on-disk path.
 ///
-/// - `Oci` and absolute `Path`s are already concrete and left untouched.
+/// - `Oci` and already-materialized absolute `Path`s are concrete and left untouched.
 /// - A relative `Path` is deployment-owned: its bytes live in the CAS under `content_digest`.
 ///   Materialize them into `wasm_cache_dir` (keyed by digest, mirroring the OCI pull cache)
 ///   and rewrite the location to that absolute path.
@@ -4270,8 +4272,8 @@ mod tests {
         let params = VerifyParams::default();
         let webui_enabled = None;
 
-        // Verify deployment. The disk-authored canonical holds only absolute paths, so it
-        // resolves to itself without a CAS.
+        // Verify deployment. The current disk-authored canonical holds internal absolute
+        // paths, so it resolves to itself without a CAS.
         let deployment =
             DeploymentResolved::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
         let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(

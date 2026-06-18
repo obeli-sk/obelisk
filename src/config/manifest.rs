@@ -3,7 +3,7 @@ use crate::config::toml::{
     DeploymentCanonical, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
     strip_deployment_dir_prefix,
 };
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use concepts::ContentDigest;
 use concepts::component_id::Digest;
 use concepts::storage::DeploymentFileRecord;
@@ -99,6 +99,9 @@ pub(crate) async fn prepare_deployment_manifest(
     collect_script_refs(&mut doc, "workflow_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "webhook_endpoint_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "activity_exec", deployment_dir, &mut files).await?;
+
+    let mut seen = HashSet::new();
+    files.retain(|file| seen.insert(file.digest.clone()));
 
     let deployment_toml = doc.to_string();
     let digest = compute_manifest_digest(&deployment_toml);
@@ -395,8 +398,11 @@ fn write_backtrace_source_digest(source: &mut Item, path: String, digest: &Conte
 }
 
 fn deployment_owned_path(raw: &str) -> anyhow::Result<Option<String>> {
-    if raw.starts_with(OCI_SCHEMA_PREFIX) || Path::new(raw).is_absolute() {
+    if raw.starts_with(OCI_SCHEMA_PREFIX) {
         return Ok(None);
+    }
+    if Path::new(raw).is_absolute() {
+        bail!("absolute local paths are not allowed in deployment manifests: `{raw}`");
     }
     let path = strip_deployment_dir_prefix(raw).unwrap_or(raw);
     sanitize_deployment_relative_path(path).map(Some)
@@ -594,7 +600,25 @@ location = "components/w.wasm"
     }
 
     #[tokio::test]
-    async fn prepare_skips_absolute_and_oci_script_locations() {
+    async fn prepare_skips_oci_script_locations() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = r#"
+[[workflow_js]]
+name = "oci"
+location = "oci://docker.io/library/example:latest"
+ffqn = "ns:pkg/ifc.oci"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+
+        assert!(prepared.files.is_empty());
+        assert!(!prepared.deployment_toml.contains("content_digest"));
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_absolute_script_locations() {
         let dir = tempfile::tempdir().unwrap();
         let abs = dir.path().join("external.js");
         tokio::fs::write(&abs, "external").await.unwrap();
@@ -604,21 +628,19 @@ location = "components/w.wasm"
 name = "external"
 location = "{}"
 ffqn = "ns:pkg/ifc.external"
-
-[[workflow_js]]
-name = "oci"
-location = "oci://docker.io/library/example:latest"
-ffqn = "ns:pkg/ifc.oci"
 "#,
             abs.display()
         );
 
-        let prepared = prepare_deployment_manifest(&manifest, dir.path())
+        let err = prepare_deployment_manifest(&manifest, dir.path())
             .await
-            .unwrap();
+            .unwrap_err()
+            .to_string();
 
-        assert!(prepared.files.is_empty());
-        assert!(!prepared.deployment_toml.contains("content_digest"));
+        assert!(
+            err.contains("absolute local paths are not allowed"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]

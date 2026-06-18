@@ -318,17 +318,16 @@ impl DeploymentToml {
 
     /// Resolve a WASM component file path to an absolute path. A `${DEPLOYMENT_DIR}/<suffix>`
     /// path and a bare relative path are both anchored to the deployment directory and must
-    /// stay within it (no `..` escape); an absolute path is left untouched (out-of-tree
-    /// reference). This makes every relative path in a deployment.toml deployment-relative.
+    /// stay within it (no `..` escape); authored absolute paths are rejected. This makes every
+    /// path in a deployment.toml deployment-relative.
     fn expand_deployment_dir(
         s: &mut String,
         deployment_dir: &std::path::Path,
     ) -> anyhow::Result<()> {
-        // A `${DEPLOYMENT_DIR}/x` path and a bare relative `x` are equivalent; only an
-        // absolute path is left untouched (out-of-tree reference).
+        // A `${DEPLOYMENT_DIR}/x` path and a bare relative `x` are equivalent.
         let candidate = strip_deployment_dir_prefix(s).unwrap_or(s.as_str());
         if std::path::Path::new(candidate).is_absolute() {
-            return Ok(());
+            bail!("absolute local paths are not allowed in deployment manifests: `{s}`");
         }
         let rel = sanitize_deployment_relative_path(candidate)
             .with_context(|| format!("invalid deployment-relative path `{s}`"))?;
@@ -399,10 +398,9 @@ impl DeploymentToml {
             }
         }
         // Script (JS/exec) locations and backtrace sources are NOT expanded here. Their
-        // `${DEPLOYMENT_DIR}` prefix and relative-vs-absolute classification are handled
-        // when resolving to canonical (`resolve_script_toml_to_canonical` /
-        // `resolve_backtrace_to_canonical`), so deployment-owned files (relative, mirrored)
-        // are distinguished from external references (absolute).
+        // `${DEPLOYMENT_DIR}` prefix is handled when resolving to canonical
+        // (`resolve_script_toml_to_canonical` / `resolve_backtrace_to_canonical`), so
+        // deployment-owned files preserve deployment-relative names.
         for c in &mut self.workflows_wasm {
             expand_loc(&mut c.common.location, deployment_dir)?;
         }
@@ -1563,6 +1561,7 @@ impl ActivityExecComponentConfigCanonicalExt for ActivityExecComponentConfigCano
                     source_bytes: content.as_bytes().to_vec(),
                 })
             }
+            // Legacy/internal canonical form; new deployment TOML cannot author absolute paths.
             ScriptLocationCanonical::ExternalPath { path } => {
                 let full_path = PathBuf::from(path);
                 let content = tokio::fs::read_to_string(&full_path)
@@ -1876,7 +1875,7 @@ pub(crate) struct ComponentBacktraceConfig {
     /// Maps a frame-symbol key to a backtrace source file path. On-disk format only;
     /// resolved to `ComponentBacktraceConfigCanonical` before transmission and hash
     /// computation. A relative path is deployment-dir-relative (a leading
-    /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); an absolute path is out-of-tree.
+    /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, BacktraceSourceToml>")]
     pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceToml>,
@@ -1930,7 +1929,7 @@ pub(crate) trait JsLocationCanonicalExt {
 impl JsLocationCanonicalExt for ScriptLocationCanonical {
     /// Return the JS source content and file name.
     /// For `Content`, returns them directly (validating digest if provided).
-    /// For `Path`, reads the external file at runtime (validating digest if provided).
+    /// For legacy/internal `ExternalPath`, reads the file at runtime (validating digest if provided).
     /// For `Oci`, pulls from the registry (or cache) under `wasm_cache_dir/js/`.
     async fn get_content(
         &self,
@@ -2608,39 +2607,16 @@ pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<Str
     Ok(parts.join("/"))
 }
 
-/// Mirror an absolute path into a safe relative subpath by dropping the root/drive prefix
-/// and keeping the remaining components (e.g. `/home/u/p/src/lib.rs` → `home/u/p/src/lib.rs`).
-/// Rejects `..`. Used to recreate absolute-sourced backtrace files self-contained under the
-/// output directory (their content is captured in the canonical, so this round-trips).
-fn mirror_path_as_relative(path: &str) -> anyhow::Result<String> {
-    use std::path::Component;
-    let mut parts: Vec<&str> = Vec::new();
-    for comp in std::path::Path::new(path).components() {
-        match comp {
-            Component::Normal(s) => parts.push(
-                s.to_str()
-                    .with_context(|| format!("non-UTF8 path component in `{path}`"))?,
-            ),
-            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
-            Component::ParentDir => {
-                bail!("backtrace source path must not contain `..`: `{path}`")
-            }
-        }
-    }
-    ensure!(!parts.is_empty(), "empty backtrace source path: `{path}`");
-    Ok(parts.join("/"))
-}
-
 /// Resolve a script source (JS or exec) TOML location to its canonical form.
 ///
 /// - inline `content` → `Content { content, file_name: default_file_name }` (owned).
 /// - a **relative** `Path` (bare, or `${DEPLOYMENT_DIR}/…`) → read + inline as `Content`,
 ///   with `file_name` preserving the deployment-relative subpath (owned). `..` escapes error.
-/// - an **absolute** `Path` → `Path { path }` (external; read at runtime, not recreated).
+/// - an **absolute** `Path` → rejected.
 /// - an `Oci` reference → `Oci { image }`.
 ///
 /// When `content_digest` is set it is verified here against the relevant bytes (inline
-/// content, the owned file, or the external file). `Oci` digests are verified at runtime.
+/// content or the owned file). `Oci` digests are verified at runtime.
 async fn resolve_script_toml_to_canonical(
     location: Option<JsLocationToml>,
     content: Option<String>,
@@ -2659,14 +2635,7 @@ async fn resolve_script_toml_to_canonical(
         }
         (Some(JsLocationToml::Path(path)), None) => {
             if std::path::Path::new(&path).is_absolute() {
-                // External reference: verify digest against its bytes if set.
-                if content_digest.is_some() {
-                    let bytes = tokio::fs::read(&path)
-                        .await
-                        .with_context(|| format!("cannot read external script file {path:?}"))?;
-                    verify_content_digest(&bytes, content_digest, &path)?;
-                }
-                Ok(ScriptLocationCanonical::ExternalPath { path })
+                bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
             } else {
                 let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
                 let path = sanitize_deployment_relative_path(path)?;
@@ -2690,7 +2659,7 @@ async fn resolve_script_toml_to_canonical(
 
 async fn resolve_backtrace_to_canonical(
     backtrace: &ComponentBacktraceConfig,
-    deployment_dir: &Path,
+    _deployment_dir: &Path,
     provider: &dyn FileProvider,
 ) -> anyhow::Result<ComponentBacktraceConfigCanonical> {
     let mut frame_files_to_sources = HashMap::new();
@@ -2698,47 +2667,28 @@ async fn resolve_backtrace_to_canonical(
         let path = source.path();
         let content_digest = source.content_digest();
         // Classify the source path like a script: a relative path (bare or
-        // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
-        // export; an absolute path is recreated self-contained under a root-stripped mirror.
-        let (full_path, file_name, owned_rel_path) =
-            if let Some(rest) = strip_deployment_dir_prefix(path) {
-                let rel = sanitize_deployment_relative_path(rest)?;
-                (deployment_dir.join(&rel), rel.clone(), Some(rel))
-            } else if std::path::Path::new(path).is_absolute() {
-                // Captured content is recreated self-contained under a root-stripped mirror.
-                (PathBuf::from(path), mirror_path_as_relative(path)?, None)
-            } else {
-                let rel = sanitize_deployment_relative_path(path)?;
-                (deployment_dir.join(&rel), rel.clone(), Some(rel))
-            };
-        let content = if let Some(rel) = owned_rel_path {
-            provider.read(&rel, content_digest).await.and_then(|bytes| {
-                String::from_utf8(bytes)
-                    .with_context(|| format!("backtrace source {rel:?} is not valid UTF-8"))
-            })
+        // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on export.
+        let file_name = if let Some(rest) = strip_deployment_dir_prefix(path) {
+            sanitize_deployment_relative_path(rest)?
+        } else if std::path::Path::new(path).is_absolute() {
+            bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
         } else {
-            if !full_path.exists() {
-                warn!("Ignoring missing backtrace source - file does not exist: {full_path:?}");
-                continue;
-            }
-            match tokio::fs::read(&full_path).await {
-                Ok(bytes) => verify_content_digest(&bytes, content_digest, path).and_then(|()| {
-                    String::from_utf8(bytes).with_context(|| {
-                        format!("backtrace source {full_path:?} is not valid UTF-8")
-                    })
-                }),
-                Err(err) => {
-                    Err(err).with_context(|| format!("cannot read backtrace source {full_path:?}"))
-                }
-            }
+            sanitize_deployment_relative_path(path)?
         };
+        let content = provider
+            .read(&file_name, content_digest)
+            .await
+            .and_then(|bytes| {
+                String::from_utf8(bytes)
+                    .with_context(|| format!("backtrace source {file_name:?} is not valid UTF-8"))
+            });
         match content {
             Ok(content) => {
                 frame_files_to_sources
                     .insert(key.clone(), BacktraceSourceCanonical { content, file_name });
             }
             Err(err) => {
-                warn!("Cannot read backtrace source {full_path:?} - {err:?}");
+                warn!("Cannot read backtrace source {file_name:?} - {err:?}");
             }
         }
     }
@@ -4164,14 +4114,14 @@ name = "my_stub"
         }
 
         #[tokio::test]
-        async fn absolute_path_is_external() {
+        async fn absolute_path_is_rejected() {
             let root = tempfile::tempdir().unwrap();
             let provider = disk_provider(root.path());
             let outside = root.path().join("outside.js");
             std::fs::write(&outside, "external content").unwrap();
             let abs = outside.to_string_lossy().into_owned();
 
-            let location = resolve_script_toml_to_canonical(
+            let err = resolve_script_toml_to_canonical(
                 Some(JsLocationToml::Path(abs.clone())),
                 None,
                 "ignored.js".to_string(),
@@ -4180,10 +4130,11 @@ name = "my_stub"
                 None,
             )
             .await
-            .unwrap();
-            assert_matches::assert_matches!(
-                location,
-                ScriptLocationCanonical::ExternalPath { path } if path == abs
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("absolute local paths are not allowed"),
+                "unexpected error: {err}"
             );
         }
 
@@ -4268,20 +4219,17 @@ name = "my_stub"
         }
 
         #[tokio::test]
-        async fn external_file_content_digest_verified_at_submit() {
-            let root = tempfile::tempdir().unwrap();
-            let inner = root.path().join("inner");
-            std::fs::create_dir_all(&inner).unwrap();
-            let provider = disk_provider(&inner);
-            let outside = root.path().join("outside.js");
-            std::fs::write(&outside, "external content").unwrap();
+        async fn relative_file_content_digest_verified_at_submit() {
+            let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
+            std::fs::write(dir.path().join("script.js"), "owned content").unwrap();
 
             let wrong = digest_of(b"nope");
             let err = resolve_script_toml_to_canonical(
-                Some(JsLocationToml::Path(outside.to_string_lossy().into_owned())),
+                Some(JsLocationToml::Path("script.js".to_string())),
                 None,
                 "ignored.js".to_string(),
-                &inner,
+                dir.path(),
                 &provider,
                 Some(&wrong),
             )
@@ -4396,10 +4344,16 @@ name = "my_stub"
             );
             assert!(err.contains("`..`"), "unexpected error: {err}");
 
-            // Absolute paths are left untouched (out-of-tree reference).
+            // Author-provided absolute paths are rejected.
             let mut abs = "/other/a.wasm".to_string();
-            DeploymentToml::expand_deployment_dir(&mut abs, dir).unwrap();
-            assert_eq!(abs, "/other/a.wasm");
+            let err = format!(
+                "{:#}",
+                DeploymentToml::expand_deployment_dir(&mut abs, dir).unwrap_err()
+            );
+            assert!(
+                err.contains("absolute local paths are not allowed"),
+                "unexpected error: {err}"
+            );
         }
 
         #[tokio::test]
@@ -4471,9 +4425,7 @@ name = "my_stub"
         }
 
         #[tokio::test]
-        async fn absolute_source_is_mirrored_root_stripped() {
-            // An absolute backtrace source path is recreated self-contained under a
-            // root-stripped relative mirror, so it never escapes the output directory.
+        async fn absolute_source_is_rejected() {
             let dir = tempfile::tempdir().unwrap();
             let abs = dir.path().join("nested/lib.rs");
             std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
@@ -4489,16 +4441,14 @@ name = "my_stub"
             let provider = DiskProvider {
                 deployment_dir: other_dir.path().to_path_buf(),
             };
-            let canon = resolve_backtrace_to_canonical(&bt, other_dir.path(), &provider)
+            let err = resolve_backtrace_to_canonical(&bt, other_dir.path(), &provider)
                 .await
-                .unwrap();
-            let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
-            assert_eq!(src.content, "SRC");
-            // Root/drive stripped, remaining components preserved, no leading separator.
-            let expected = mirror_path_as_relative(&abs.to_string_lossy()).unwrap();
-            assert_eq!(src.file_name, expected);
-            assert!(!src.file_name.starts_with('/'));
-            assert!(src.file_name.ends_with("nested/lib.rs"));
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("absolute local paths are not allowed"),
+                "unexpected error: {err}"
+            );
         }
     }
 }
