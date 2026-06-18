@@ -1609,7 +1609,6 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .await
             .map_err(map_to_status)?;
 
-        let include_deployment_toml = request.include_deployment_toml;
         let execution_counts = if request.include_execution_counts {
             DeploymentExecutionCounts::Count {
                 include_derived: request.include_derived,
@@ -1623,7 +1622,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .list_deployment_states(
                 Utc::now(),
                 pagination,
-                include_deployment_toml,
+                request.include_deployment_toml,
                 execution_counts,
             )
             .await
@@ -1631,7 +1630,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
 
         let deployments: Vec<_> = summaries
             .into_iter()
-            .map(deployment_summary_to_grpc)
+            .map(|dep| deployment_summary_to_grpc(dep, request.include_execution_counts))
             .collect();
         Ok(tonic::Response::new(grpc_gen::ListDeploymentsResponse {
             deployments,
@@ -1924,7 +1923,10 @@ fn deployment_record_to_grpc(record: concepts::storage::DeploymentRecord) -> grp
     }
 }
 
-fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSummary {
+fn deployment_summary_to_grpc(
+    dep: DeploymentState,
+    include_execution_counts: bool,
+) -> grpc_gen::DeploymentSummary {
     let deployment = grpc_gen::Deployment {
         deployment_id: Some(dep.deployment_id.into()),
         status: status_to_grpc(dep.status).into(),
@@ -1937,14 +1939,18 @@ fn deployment_summary_to_grpc(dep: DeploymentState) -> grpc_gen::DeploymentSumma
     };
     grpc_gen::DeploymentSummary {
         deployment: Some(deployment),
-        locked: dep.locked,
-        pending: dep.pending,
-        scheduled: dep.scheduled,
-        blocked: dep.blocked,
-        paused: dep.paused,
-        finished_ok: dep.finished_ok,
-        finished_error: dep.finished_error,
-        finished_execution_failure: dep.finished_execution_failure,
+        execution_summary: include_execution_counts.then_some(
+            grpc_gen::DeploymentExecutionSummary {
+                locked: dep.locked,
+                pending: dep.pending,
+                scheduled: dep.scheduled,
+                blocked: dep.blocked,
+                paused: dep.paused,
+                finished_ok: dep.finished_ok,
+                finished_error: dep.finished_error,
+                finished_execution_failure: dep.finished_execution_failure,
+            },
+        ),
     }
 }
 
