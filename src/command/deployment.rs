@@ -315,9 +315,8 @@ async fn submit_deployment(
     Ok(id)
 }
 
-/// Upload the manifest's referenced file blobs to the content-addressed store, then submit the
-/// verbatim manifest. The server is content-addressed and idempotent, so re-uploading a blob it
-/// already has is a no-op.
+/// Submit the verbatim manifest, upload the blobs the server reports missing, then re-submit with
+/// the same deployment ID to confirm the deployment is complete.
 async fn upload_and_submit_manifest(
     client: &mut DeploymentClient,
     prepared: PreparedDeploymentManifest,
@@ -325,22 +324,43 @@ async fn upload_and_submit_manifest(
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
-    for file in &prepared.files {
+    let resp = client
+        .submit_deployment(grpc_gen::SubmitDeploymentRequest {
+            deployment_toml: prepared.deployment_toml.clone(),
+            created_by: Some("cli".to_string()),
+            verify,
+            description: description.clone(),
+            deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
+        })
+        .await?
+        .into_inner();
+    let submitted_id =
+        DeploymentId::try_from(resp.deployment_id.context("missing deployment_id")?)?;
+
+    for missing in &resp.missing_digests {
+        let file = prepared
+            .files
+            .iter()
+            .find(|file| file.digest.to_string() == *missing)
+            .with_context(|| {
+                format!("server requested unknown deployment file digest `{missing}`")
+            })?;
         client
             .upload_file(grpc_gen::UploadFileRequest {
-                deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
+                deployment_id: Some(grpc_gen::DeploymentId::from(submitted_id)),
                 content: file.bytes.clone(),
             })
             .await
             .with_context(|| format!("cannot upload deployment file `{}`", file.path))?;
     }
+
     let resp = client
         .submit_deployment(grpc_gen::SubmitDeploymentRequest {
             deployment_toml: prepared.deployment_toml,
             created_by: Some("cli".to_string()),
             verify,
             description,
-            deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
+            deployment_id: Some(grpc_gen::DeploymentId::from(submitted_id)),
         })
         .await?
         .into_inner();

@@ -58,6 +58,7 @@ use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
 use anyhow::bail;
+use anyhow::ensure;
 use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::ContentDigest;
@@ -73,6 +74,7 @@ use concepts::ReturnTypeExtendable;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
+use concepts::component_id::Digest;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbErrorWrite;
@@ -104,6 +106,7 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use secrecy::SecretString;
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -1780,19 +1783,20 @@ pub(crate) async fn persist_deployment_component_metadata(
 }
 
 /// Shared logic for submitting a deployment (used by both gRPC and web API).
-/// Parses, verifies, and inserts the deployment record.
+/// Parses and stores the verbatim manifest plus the file refs it names. File bytes may be
+/// uploaded later; compile/link verification happens when the deployment is activated.
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit_deployment(
-    server_verified: ServerVerified,
+    _server_verified: ServerVerified,
     deployment_toml: &str,
-    verify: bool,
+    _verify: bool,
     created_by: Option<String>,
     description: Option<String>,
     requested_deployment_id: Option<DeploymentId>,
-    prepared_dirs: &PreparedDirs,
+    _prepared_dirs: &PreparedDirs,
     db_pool: Arc<dyn DbPool>,
-    termination_watcher: &mut watch::Receiver<()>,
+    _termination_watcher: &mut watch::Receiver<()>,
 ) -> anyhow::Result<(DeploymentId, Vec<ContentDigest>)> {
     info!("Submitting deployment");
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
@@ -1819,31 +1823,9 @@ pub(crate) async fn submit_deployment(
         );
     }
 
-    // Canonicalize by reading the referenced blobs from the CAS (the client uploads them
-    // before submit). `${...}` env vars and secrets resolve here, in the server's environment.
-    let (deployment, file_records) =
-        canonical_and_files_from_manifest(&*db_pool, deployment_toml).await?;
-
-    let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
-    let verify_deployment_id = DeploymentId::generate();
-    let server_compiled = deployment_verify_config_compile_link(
-        server_verified,
-        prepared_dirs,
-        deployment,
-        Some(cas),
-        verify_deployment_id,
-        VerifyParams {
-            dir_params: PrepareDirsParams {
-                clean_cache: false,
-                clean_codegen_cache: false,
-            },
-            ignore_missing_env_vars: !verify,
-            suppress_type_checking_errors: false,
-            suppress_linking_errors: false,
-        },
-        termination_watcher,
-    )
-    .await?;
+    let file_records =
+        crate::config::manifest::file_records_from_manifest(deployment_toml, &cas_deployment_dir())
+            .context("cannot read deployment file references from manifest")?;
 
     let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
     let now = chrono::Utc::now();
@@ -1862,18 +1844,48 @@ pub(crate) async fn submit_deployment(
     })
     .await?;
 
-    persist_deployment_component_metadata(
-        conn.as_ref(),
-        deployment_id,
-        &server_compiled.component_registry_ro,
-    )
-    .await?;
-
-    upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
-
     let missing = conn.missing_digests(deployment_id).await?;
     info!(%deployment_id, "Deployment submitted");
     Ok((deployment_id, missing))
+}
+
+fn compute_content_digest(content: &[u8]) -> ContentDigest {
+    let hash: [u8; 32] = Sha256::digest(content).into();
+    ContentDigest(Digest(hash))
+}
+
+pub(crate) async fn upload_deployment_file(
+    db_pool: Arc<dyn DbPool>,
+    deployment_id: DeploymentId,
+    content: &[u8],
+) -> anyhow::Result<ContentDigest> {
+    let digest = compute_content_digest(content);
+    let conn = db_pool
+        .external_api_conn()
+        .await
+        .context("cannot get external api connection for deployment file upload")?;
+    let deployment = conn
+        .get_deployment(deployment_id)
+        .await?
+        .with_context(|| format!("deployment {deployment_id} not found"))?;
+    ensure!(
+        deployment.files.iter().any(|file| file.digest == digest),
+        "uploaded file digest {digest} is not referenced by deployment {deployment_id}"
+    );
+
+    let cas = db_pool
+        .cas_conn()
+        .await
+        .context("cannot get CAS connection for deployment file upload")?;
+    let stored = cas
+        .write_blob(content)
+        .await
+        .with_context(|| format!("cannot store deployment file {digest}"))?;
+    ensure!(
+        stored == digest,
+        "stored deployment file digest mismatch: expected {digest}, got {stored}"
+    );
+    Ok(stored)
 }
 
 /// Outcome of switching a deployment.
@@ -1941,6 +1953,22 @@ pub(crate) async fn switch_deployment(
         .await
         .map_err(|e| SwitchError::Other(e.into()))?
         .ok_or(SwitchError::NotFound)?;
+
+    let missing = db_conn
+        .missing_digests(deployment_id)
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+    if !missing.is_empty() {
+        return Err(SwitchError::Other(anyhow::anyhow!(
+            "deployment {deployment_id} is missing {} referenced file blob(s): {}",
+            missing.len(),
+            missing
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
 
     let target_deployment = canonical_from_manifest(&*db_pool, &deployment_record.deployment_toml)
         .await

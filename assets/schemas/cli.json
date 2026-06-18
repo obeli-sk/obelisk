@@ -638,7 +638,7 @@
             },
             {
               "name": "--verify",
-              "help": "Verify all environment variables before persisting"
+              "help": "Deprecated for submit: verification happens when the deployment is activated"
             },
             {
               "name": "--description",

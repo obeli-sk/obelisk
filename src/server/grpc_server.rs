@@ -1757,11 +1757,14 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         request: tonic::Request<grpc_gen::UploadFileRequest>,
     ) -> TonicRespResult<grpc_gen::UploadFileResponse> {
         let request = request.into_inner();
-        let cas = self.db_pool.cas_conn().await.map_err(map_to_status)?;
-        let digest = cas
-            .write_blob(&request.content)
-            .await
-            .map_err(|err| tonic::Status::internal(format!("cannot store file: {err}")))?;
+        let deployment_id: DeploymentId = request
+            .deployment_id
+            .argument_must_exist("deployment_id")?
+            .try_into()?;
+        let digest =
+            server::upload_deployment_file(self.db_pool.clone(), deployment_id, &request.content)
+                .await
+                .map_err(|err| tonic::Status::failed_precondition(format!("{err:#}")))?;
         Ok(tonic::Response::new(grpc_gen::UploadFileResponse {
             digest: digest.to_string(),
         }))

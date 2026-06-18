@@ -102,7 +102,7 @@ pub(crate) enum Deployment {
         /// Submit an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Verify all environment variables before persisting.
+        /// Deprecated for submit: verification happens when the deployment is activated.
         #[arg(long)]
         verify: bool,
         /// Optional human-readable description.

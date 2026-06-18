@@ -240,7 +240,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/deployments", routing::get(list_deployments))
         .route("/deployments", routing::post(submit_deployment))
         .route("/deployments/{deployment-id}", routing::get(get_deployment))
-        .route("/files", routing::post(upload_file))
+        .route(
+            "/deployments/{deployment-id}/files",
+            routing::post(upload_file),
+        )
         .route("/files/{digest}", routing::get(get_file))
         .route(
             "/deployments/{deployment-id}/switch",
@@ -3314,17 +3317,23 @@ mod deployment {
     #[derive(Deserialize, ToSchema)]
     pub struct DeploymentSubmitPayload {
         /// Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must
-        /// already be uploaded to the content-addressed store.
+        /// be uploaded separately after the server returns `missing_digests`.
         pub deployment_toml: String,
         /// Optional human-readable deployment description
         pub description: Option<String>,
-        /// Verify all environment variables before persisting
+        /// Deprecated for submit: verification happens when the deployment is activated.
         #[serde(default)]
         pub verify: bool,
         /// Optional client-supplied deployment ID for idempotent submission.
         /// If a deployment with this ID already exists and its content digest
         /// matches, the submission is a no-op; a digest mismatch is rejected.
         pub deployment_id: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, ToSchema)]
+    pub struct DeploymentSubmitResponse {
+        pub deployment_id: String,
+        pub missing_digests: Vec<String>,
     }
 
     /// Submit a new deployment
@@ -3334,7 +3343,7 @@ mod deployment {
         tag = "deployments",
         request_body = DeploymentSubmitPayload,
         responses(
-            (status = 200, description = "Deployment submitted", body = String),
+            (status = 200, description = "Deployment submitted", body = DeploymentSubmitResponse),
             (status = 400, description = "Invalid config"),
             (status = 409, description = "Validation failed")
         )
@@ -3356,38 +3365,48 @@ mod deployment {
                 accept,
             })?;
         let mut termination_watcher = state.termination_watcher.clone();
-        let (deployment_id, _missing_digests) =
-            Box::pin(crate::command::server::submit_deployment(
-                state.server_verified.clone(),
-                &payload.deployment_toml,
-                payload.verify,
-                Some("web-api".to_string()),
-                payload.description,
-                requested_deployment_id,
-                &state.prepared_dirs,
-                state.db_pool.clone(),
-                &mut termination_watcher,
-            ))
-            .await
-            .map_err(|err| HttpResponse {
-                status: StatusCode::BAD_REQUEST,
-                message: format!("{err:#}"),
-                accept,
-            })?;
-        Ok(HttpResponse {
-            status: StatusCode::OK,
-            message: deployment_id.to_string(),
+        let (deployment_id, missing_digests) = Box::pin(crate::command::server::submit_deployment(
+            state.server_verified.clone(),
+            &payload.deployment_toml,
+            payload.verify,
+            Some("web-api".to_string()),
+            payload.description,
+            requested_deployment_id,
+            &state.prepared_dirs,
+            state.db_pool.clone(),
+            &mut termination_watcher,
+        ))
+        .await
+        .map_err(|err| HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message: format!("{err:#}"),
             accept,
-        }
-        .into_response())
+        })?;
+        Ok(match accept {
+            AcceptHeader::Json => pretty_json_response(
+                StatusCode::OK,
+                &DeploymentSubmitResponse {
+                    deployment_id: deployment_id.to_string(),
+                    missing_digests: missing_digests.iter().map(ToString::to_string).collect(),
+                },
+            ),
+            AcceptHeader::Text => HttpResponse {
+                status: StatusCode::OK,
+                message: deployment_id.to_string(),
+                accept,
+            }
+            .into_response(),
+        })
     }
 
     /// Upload a deployment file blob to the content-addressed store. The request body is the
-    /// raw file content; the response is the server-computed content digest.
+    /// raw file content; the response is the server-computed content digest. The digest must be
+    /// referenced by the deployment.
     #[utoipa::path(
         post,
-        path = "/v1/files",
+        path = "/v1/deployments/{deployment_id}/files",
         tag = "deployments",
+        params(("deployment_id" = String, Path, description = "Deployment ID that references the file")),
         request_body(content = Vec<u8>, content_type = "application/octet-stream"),
         responses(
             (status = 200, description = "Stored; returns the content digest", body = String)
@@ -3397,16 +3416,18 @@ mod deployment {
     pub(crate) async fn upload_file(
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,
+        Path(deployment_id): Path<DeploymentId>,
         body: axum::body::Bytes,
     ) -> Result<Response, HttpResponse> {
-        let cas = state
-            .db_pool
-            .cas_conn()
-            .await
-            .map_err(|e| ErrorWrapper(e, accept))?;
-        let digest = cas.write_blob(&body).await.map_err(|err| HttpResponse {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: format!("cannot store file: {err}"),
+        let digest = crate::command::server::upload_deployment_file(
+            state.db_pool.clone(),
+            deployment_id,
+            &body,
+        )
+        .await
+        .map_err(|err| HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message: format!("{err:#}"),
             accept,
         })?;
         Ok(HttpResponse {

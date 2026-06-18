@@ -355,9 +355,9 @@
           "200": {
             "description": "Deployment submitted",
             "content": {
-              "text/plain": {
+              "application/json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/DeploymentSubmitResponse"
                 }
               }
             }
@@ -402,6 +402,53 @@
           },
           "404": {
             "description": "Deployment not found"
+          }
+        }
+      }
+    },
+    "/v1/deployments/{deployment_id}/files": {
+      "post": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Upload a deployment file blob to the content-addressed store. The request body is the\nraw file content; the response is the server-computed content digest. The digest must be\nreferenced by the deployment.",
+        "operationId": "upload_file",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "description": "Deployment ID that references the file",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; returns the content digest",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -1415,42 +1462,6 @@
         }
       }
     },
-    "/v1/files": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "summary": "Upload a deployment file blob to the content-addressed store. The request body is the\nraw file content; the response is the server-computed content digest.",
-        "operationId": "upload_file",
-        "requestBody": {
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "type": "integer",
-                  "format": "int32",
-                  "minimum": 0
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Stored; returns the content digest",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/files/{digest}": {
       "get": {
         "tags": [
@@ -2169,7 +2180,7 @@
           },
           "deployment_toml": {
             "type": "string",
-            "description": "Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must\nalready be uploaded to the content-addressed store."
+            "description": "Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must\nbe uploaded separately after the server returns `missing_digests`."
           },
           "description": {
             "type": [
@@ -2180,7 +2191,25 @@
           },
           "verify": {
             "type": "boolean",
-            "description": "Verify all environment variables before persisting"
+            "description": "Deprecated for submit: verification happens when the deployment is activated."
+          }
+        }
+      },
+      "DeploymentSubmitResponse": {
+        "type": "object",
+        "required": [
+          "deployment_id",
+          "missing_digests"
+        ],
+        "properties": {
+          "deployment_id": {
+            "type": "string"
+          },
+          "missing_digests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

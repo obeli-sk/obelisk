@@ -1116,8 +1116,7 @@ message SubmitDeploymentRequest {
     // blobs are uploaded separately via `UploadFile`.
     string deployment_toml = 1;
     optional string created_by = 2;
-    // Verify env vars / secrets exist. Resolution itself happens at activation in
-    // the server's environment; this only decides whether a missing one errors now.
+    // Deprecated for submit: verification happens when the deployment is activated.
     bool verify = 3;
     optional string description = 4;
     // Optional client-supplied deployment ID for idempotent submission.

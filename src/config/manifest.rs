@@ -6,6 +6,8 @@ use crate::config::toml::{
 use anyhow::{Context, ensure};
 use concepts::ContentDigest;
 use concepts::component_id::Digest;
+use concepts::storage::DeploymentFileRecord;
+use hashbrown::HashSet;
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, InlineTable, Item, Value, value};
@@ -112,6 +114,34 @@ pub(crate) fn compute_manifest_digest(deployment_toml: &str) -> ContentDigest {
     ContentDigest(Digest(hash))
 }
 
+pub(crate) fn file_records_from_manifest(
+    deployment_toml: &str,
+    deployment_dir: &Path,
+) -> anyhow::Result<Vec<DeploymentFileRecord>> {
+    parse_manifest(deployment_toml, deployment_dir)?;
+
+    let doc = deployment_toml
+        .parse::<DocumentMut>()
+        .context("cannot parse deployment manifest as TOML")?;
+
+    let mut files = Vec::new();
+    collect_wasm_ref_records(&doc, "activity_wasm", &mut files)?;
+    collect_wasm_ref_records(&doc, "activity_stub", &mut files)?;
+    collect_wasm_ref_records(&doc, "activity_external", &mut files)?;
+    collect_wasm_ref_records(&doc, "workflow_wasm", &mut files)?;
+    collect_backtrace_ref_records(&doc, "workflow_wasm", &mut files)?;
+    collect_wasm_ref_records(&doc, "webhook_endpoint_wasm", &mut files)?;
+    collect_backtrace_ref_records(&doc, "webhook_endpoint_wasm", &mut files)?;
+    collect_script_ref_records(&doc, "activity_js", &mut files)?;
+    collect_script_ref_records(&doc, "workflow_js", &mut files)?;
+    collect_script_ref_records(&doc, "webhook_endpoint_js", &mut files)?;
+    collect_script_ref_records(&doc, "activity_exec", &mut files)?;
+
+    let mut seen = HashSet::new();
+    files.retain(|file| seen.insert(file.digest.clone()));
+    Ok(files)
+}
+
 fn parse_manifest(
     deployment_toml: &str,
     deployment_dir: &Path,
@@ -121,6 +151,108 @@ fn parse_manifest(
     deployment
         .validate(deployment_dir)
         .context("cannot validate deployment manifest")
+}
+
+fn collect_script_ref_records(
+    doc: &DocumentMut,
+    section: &str,
+    files: &mut Vec<DeploymentFileRecord>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
+        return Ok(());
+    };
+
+    for table in components.iter() {
+        let has_inline_content = table.get("content").and_then(Item::as_str).is_some();
+        let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
+            continue;
+        };
+        ensure!(
+            !has_inline_content,
+            "exactly one of `location` or `content` must be set for script components"
+        );
+        collect_file_ref_record(table, raw_location, files)?;
+    }
+
+    Ok(())
+}
+
+fn collect_wasm_ref_records(
+    doc: &DocumentMut,
+    section: &str,
+    files: &mut Vec<DeploymentFileRecord>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
+        return Ok(());
+    };
+
+    for table in components.iter() {
+        let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
+            continue;
+        };
+        collect_file_ref_record(table, raw_location, files)?;
+    }
+
+    Ok(())
+}
+
+fn collect_file_ref_record(
+    table: &toml_edit::Table,
+    raw_location: &str,
+    files: &mut Vec<DeploymentFileRecord>,
+) -> anyhow::Result<()> {
+    let Some(path) = deployment_owned_path(raw_location)? else {
+        return Ok(());
+    };
+    let digest = required_content_digest(table.get("content_digest"), &path)?;
+    files.push(DeploymentFileRecord { path, digest });
+    Ok(())
+}
+
+fn collect_backtrace_ref_records(
+    doc: &DocumentMut,
+    section: &str,
+    files: &mut Vec<DeploymentFileRecord>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
+        return Ok(());
+    };
+
+    for table in components.iter() {
+        let Some(sources) = table
+            .get("backtrace")
+            .and_then(Item::as_table_like)
+            .and_then(|backtrace| backtrace.get("sources"))
+            .and_then(Item::as_table_like)
+        else {
+            continue;
+        };
+
+        for (_, source) in sources.iter() {
+            let Some(raw_path) = backtrace_source_path(source) else {
+                continue;
+            };
+            let Some(path) = deployment_owned_path(&raw_path)? else {
+                continue;
+            };
+            let digest = required_content_digest(
+                source
+                    .as_table_like()
+                    .and_then(|table| table.get("content_digest")),
+                &path,
+            )?;
+            files.push(DeploymentFileRecord { path, digest });
+        }
+    }
+
+    Ok(())
+}
+
+fn required_content_digest(item: Option<&Item>, path: &str) -> anyhow::Result<ContentDigest> {
+    item.and_then(Item::as_str)
+        .with_context(|| format!("deployment-owned file `{path}` must set `content_digest`"))?
+        .parse()
+        .with_context(|| format!("invalid content_digest for deployment-owned file `{path}`"))
 }
 
 async fn collect_script_refs(

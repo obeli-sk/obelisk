@@ -460,14 +460,14 @@ impl ActivityExternalComponentConfigCanonical {
     }
 }
 
-/// Canonical location of a script source (JS or exec) — no deployment-relative paths.
-/// Used for hash computation, wire format in deployment submission, and DB storage.
+/// Canonical location of a script source (JS or exec) after file-provider resolution.
 ///
 /// - `Content` is owned by the deployment (inline content, or a file that lived under
-///   the deployment directory); `file_name` is the deployment-relative path (which may
-///   include subfolders), used to recreate the file on filesystem export.
+///   the deployment directory and was read from disk/CAS); `file_name` is the
+///   deployment-relative path (which may include subfolders), used for source names and
+///   backtraces.
 /// - `Path` is an external local file that the deployment merely references; it is read
-///   at runtime and is not recreated on export.
+///   at runtime.
 /// - `Oci` is an external registry reference.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -756,8 +756,14 @@ pub mod cron {
     }
 }
 
-/// Canonical deployment configuration — no local file paths.
-/// Used for hash computation, wire format, and DB storage.
+/// Canonical deployment configuration after resolving deployment-owned text sources.
+///
+/// This is a runtime/verification shape derived from the stored manifest plus a file
+/// provider. It is not the stored deployment source of truth. Deployment-owned scripts
+/// and backtrace sources are inlined as content; deployment-owned WASM locations remain
+/// relative path + content digest until `DeploymentResolved` materializes them from the
+/// CAS into a runnable cache path. External absolute paths and OCI references remain
+/// external references.
 #[derive(Debug, Deserialize, Serialize, Default, Clone, JsonSchema)]
 pub struct DeploymentCanonical {
     pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,

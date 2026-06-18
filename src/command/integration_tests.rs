@@ -935,9 +935,9 @@ impl TestServer {
             resp.status()
         );
         let body: Value = resp.json().await.unwrap();
-        body["ok"]
+        body["deployment_id"]
             .as_str()
-            .expect("webapi submit deployment: missing ok field")
+            .expect("webapi submit deployment: missing deployment_id field")
             .parse()
             .expect("webapi submit deployment: invalid deployment id")
     }
@@ -962,8 +962,8 @@ impl TestServer {
             .expect("webapi submit deployment request failed")
     }
 
-    /// Upload a manifest's referenced file blobs over gRPC, then submit it, mirroring the
-    /// CLI `deployment apply` upload-then-submit flow. Returns the new deployment ID.
+    /// Submit a manifest over gRPC, upload the missing file blobs, then confirm completeness.
+    /// Returns the new deployment ID.
     async fn grpc_upload_and_submit_manifest(
         &self,
         deployment_toml_path: &std::path::Path,
@@ -976,10 +976,30 @@ impl TestServer {
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap();
-        for file in &prepared.files {
+        let resp = grpc_client
+            .submit_deployment(SubmitDeploymentRequest {
+                deployment_toml: prepared.deployment_toml.clone(),
+                created_by: Some("test".to_string()),
+                verify: true,
+                description: None,
+                deployment_id: None,
+            })
+            .await
+            .expect("submit_deployment failed")
+            .into_inner();
+        let deployment_id = resp
+            .deployment_id
+            .clone()
+            .expect("submit_deployment: missing deployment_id");
+        for missing in &resp.missing_digests {
+            let file = prepared
+                .files
+                .iter()
+                .find(|file| file.digest.to_string() == *missing)
+                .unwrap_or_else(|| panic!("server requested unknown digest `{missing}`"));
             grpc_client
                 .upload_file(UploadFileRequest {
-                    deployment_id: None,
+                    deployment_id: Some(deployment_id.clone()),
                     content: file.bytes.clone(),
                 })
                 .await
@@ -991,10 +1011,10 @@ impl TestServer {
                 created_by: Some("test".to_string()),
                 verify: true,
                 description: None,
-                deployment_id: None,
+                deployment_id: Some(deployment_id),
             })
             .await
-            .expect("submit_deployment failed")
+            .expect("resubmit_deployment failed")
             .into_inner();
         assert!(
             resp.missing_digests.is_empty(),
@@ -1827,7 +1847,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         resp1.status()
     );
     let body1: Value = resp1.json().await.unwrap();
-    let returned1: DeploymentId = body1["ok"].as_str().unwrap().parse().unwrap();
+    let returned1: DeploymentId = body1["deployment_id"].as_str().unwrap().parse().unwrap();
     assert_eq!(deployment_id, returned1, "explicit ID must be honored");
 
     // Resubmitting the identical manifest under the same ID is an idempotent no-op.
@@ -1840,7 +1860,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         resp2.status()
     );
     let body2: Value = resp2.json().await.unwrap();
-    let returned2: DeploymentId = body2["ok"].as_str().unwrap().parse().unwrap();
+    let returned2: DeploymentId = body2["deployment_id"].as_str().unwrap().parse().unwrap();
     assert_eq!(
         deployment_id, returned2,
         "no-op resubmit must return same ID"
@@ -1862,6 +1882,97 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         reqwest::StatusCode::BAD_REQUEST,
         "different config under same ID must be rejected as a digest conflict"
     );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn submit_deployment_defers_missing_file_upload_and_upload_is_scoped_grpc() {
+    let server = TestServer::start(test_addr!(62)).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        dir.path().join("deferred.js"),
+        "export function run() { return 'ok'; }",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[activity_js]]
+name = "deferred"
+location = "deferred.js"
+ffqn = "testing:integration/deferred.run"
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+    let expected_digest = prepared.files[0].digest.to_string();
+
+    let mut grpc_client =
+        DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap();
+    let submit_resp = grpc_client
+        .submit_deployment(SubmitDeploymentRequest {
+            deployment_toml: prepared.deployment_toml.clone(),
+            created_by: Some("test".to_string()),
+            verify: true,
+            description: None,
+            deployment_id: None,
+        })
+        .await
+        .expect("submit_deployment failed")
+        .into_inner();
+    assert_eq!(submit_resp.missing_digests, vec![expected_digest]);
+    let deployment_id = submit_resp
+        .deployment_id
+        .clone()
+        .expect("submit_deployment: missing deployment_id");
+
+    grpc_client
+        .upload_file(UploadFileRequest {
+            deployment_id: Some(deployment_id.clone()),
+            content: b"unexpected".to_vec(),
+        })
+        .await
+        .expect_err("unexpected digest must be rejected");
+
+    grpc_client
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(deployment_id.clone()),
+            verify: true,
+            hot_redeploy: true,
+        })
+        .await
+        .expect_err("incomplete deployment must not activate");
+
+    grpc_client
+        .upload_file(UploadFileRequest {
+            deployment_id: Some(deployment_id.clone()),
+            content: prepared.files[0].bytes.clone(),
+        })
+        .await
+        .expect("expected upload must succeed");
+
+    let submit_resp = grpc_client
+        .submit_deployment(SubmitDeploymentRequest {
+            deployment_toml: prepared.deployment_toml,
+            created_by: Some("test".to_string()),
+            verify: true,
+            description: None,
+            deployment_id: Some(deployment_id),
+        })
+        .await
+        .expect("idempotent resubmit failed")
+        .into_inner();
+    assert!(submit_resp.missing_digests.is_empty());
 
     server.shutdown().await;
 }
