@@ -14,10 +14,11 @@ use concepts::{
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
-        DeploymentComponentRecord, DeploymentFileRecord, DeploymentRecord, DeploymentState,
-        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
+        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
@@ -3312,7 +3313,7 @@ impl SqlitePool {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
-        include_derived: bool,
+        execution_counts: DeploymentExecutionCounts,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut params: Vec<(&'static str, Box<dyn ToSql>)> = vec![];
         let deployment_toml_col = if include_deployment_toml {
@@ -3320,12 +3321,12 @@ impl SqlitePool {
         } else {
             "NULL AS deployment_toml"
         };
-        let mut sql = format!(
-            r"
-        SELECT
-            d.deployment_id,
-            d.description,
-            d.digest,
+        let include_execution_counts =
+            matches!(execution_counts, DeploymentExecutionCounts::Count { .. });
+        // Without counts, skip the SUMs (and the `t_state` join feeding them) and report zeros.
+        let count_cols = if include_execution_counts {
+            format!(
+                r"
             COALESCE(SUM(s.state = '{STATE_LOCKED}' AND s.is_paused = false), 0) AS locked,
             COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished <= :now), 0) AS pending,
             COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished > :now), 0) AS scheduled,
@@ -3334,21 +3335,49 @@ impl SqlitePool {
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_OK}'), 0) AS finished_ok,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_ERROR}'), 0) AS finished_error,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind IS NOT NULL
-                AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}', '{RESULT_KIND_JSON_ERROR}')), 0) AS finished_execution_failure,
+                AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}', '{RESULT_KIND_JSON_ERROR}')), 0) AS finished_execution_failure,"
+            )
+        } else {
+            "
+            0 AS locked,
+            0 AS pending,
+            0 AS scheduled,
+            0 AS blocked,
+            0 AS paused,
+            0 AS finished_ok,
+            0 AS finished_error,
+            0 AS finished_execution_failure,"
+                .to_string()
+        };
+        let mut sql = format!(
+            r"
+        SELECT
+            d.deployment_id,
+            d.description,
+            d.digest,{count_cols}
             {deployment_toml_col},
             d.created_at,
             d.last_active_at,
             d.status
-        FROM t_deployment d
-        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id{join_top_level}",
-            join_top_level = if include_derived {
-                ""
-            } else {
-                " AND s.is_top_level = true"
+        FROM t_deployment d{join}",
+            join = match execution_counts {
+                DeploymentExecutionCounts::Count { include_derived } => {
+                    let join_top_level = if include_derived {
+                        ""
+                    } else {
+                        " AND s.is_top_level = true"
+                    };
+                    format!(
+                        "\n        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id{join_top_level}"
+                    )
+                }
+                DeploymentExecutionCounts::Skip => String::new(),
             }
         );
 
-        params.push((":now", Box::new(current_time)));
+        if include_execution_counts {
+            params.push((":now", Box::new(current_time)));
+        }
 
         if let Some(cursor) = pagination.cursor() {
             params.push((":cursor", Box::new(*cursor)));
@@ -3368,9 +3397,17 @@ impl SqlitePool {
             ("ASC", "DESC")
         };
 
+        // GROUP BY only needed to collapse the rows multiplied by the `t_state` join.
+        if include_execution_counts {
+            write!(
+                sql,
+                " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status"
+            )
+            .expect("writing to string");
+        }
         write!(
             sql,
-            " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
+            " ORDER BY d.deployment_id {inner_order} LIMIT {limit}",
             limit = pagination.length()
         )
         .expect("writing to string");
@@ -4700,7 +4737,7 @@ impl DbExternalApi for SqlitePool {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
-        include_derived: bool,
+        execution_counts: DeploymentExecutionCounts,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         self.transaction(
             move |tx| {
@@ -4709,7 +4746,7 @@ impl DbExternalApi for SqlitePool {
                     current_time,
                     pagination,
                     include_deployment_toml,
-                    include_derived,
+                    execution_counts,
                 )
             },
             TxType::Other, // read only

@@ -1500,7 +1500,7 @@ pub trait DbExternalApi: DbConnection {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
-        include_derived: bool,
+        execution_counts: DeploymentExecutionCounts,
     ) -> Result<Vec<DeploymentState>, DbErrorRead>;
 
     /// Insert a new deployment. The record must have `status == Inactive` and
@@ -1609,6 +1609,14 @@ pub struct DeploymentState {
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
     pub status: DeploymentStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeploymentExecutionCounts {
+    /// Skip the aggregate queries; every bucket is reported as zero.
+    Skip,
+    /// Count executions per bucket; `include_derived` also counts child executions.
+    Count { include_derived: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

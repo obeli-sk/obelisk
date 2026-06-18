@@ -24,6 +24,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbPool;
+use concepts::storage::DeploymentExecutionCounts;
 use concepts::storage::DeploymentState;
 use concepts::storage::DeploymentStatus;
 use concepts::storage::ExecutionListPagination;
@@ -1609,7 +1610,13 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .map_err(map_to_status)?;
 
         let include_deployment_toml = request.include_deployment_toml;
-        let include_derived = request.include_derived;
+        let execution_counts = if request.include_execution_counts {
+            DeploymentExecutionCounts::Count {
+                include_derived: request.include_derived,
+            }
+        } else {
+            DeploymentExecutionCounts::Skip
+        };
         let pagination = convert_deployment_pagination(&request)?;
 
         let summaries = conn
@@ -1617,7 +1624,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 Utc::now(),
                 pagination,
                 include_deployment_toml,
-                include_derived,
+                execution_counts,
             )
             .await
             .to_status()?;
@@ -1856,6 +1863,7 @@ mod tests {
                 },
             )),
             include_deployment_toml: true,
+            include_execution_counts: false,
             include_derived: false,
         };
 
@@ -1889,6 +1897,7 @@ mod tests {
                 },
             )),
             include_deployment_toml: true, // TODO test
+            include_execution_counts: false,
             include_derived: false,
         };
 
@@ -1915,6 +1924,7 @@ mod tests {
         let request = grpc_gen::ListDeploymentsRequest {
             pagination: None,
             include_deployment_toml: true, // TODO test
+            include_execution_counts: false,
             include_derived: false,
         };
 
@@ -1945,6 +1955,7 @@ mod tests {
                 },
             )),
             include_deployment_toml: true, // TODO test
+            include_execution_counts: false,
             include_derived: false,
         };
 

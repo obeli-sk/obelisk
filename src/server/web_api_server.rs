@@ -3033,7 +3033,8 @@ mod deployment {
     use concepts::prefixed_ulid::DeploymentId;
     use concepts::storage::Pagination;
     use concepts::storage::{
-        DeploymentRecord, DeploymentState, DeploymentStatus, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
+        DeploymentExecutionCounts, DeploymentRecord, DeploymentState, DeploymentStatus,
+        LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
     };
     use http::StatusCode;
     use serde::{Deserialize, Serialize};
@@ -3159,7 +3160,14 @@ mod deployment {
             including_cursor: params.including_cursor,
         };
         let states = conn
-            .list_deployment_states(Utc::now(), pagination, false, params.include_derived)
+            .list_deployment_states(
+                Utc::now(),
+                pagination,
+                false, // include_deployment_toml
+                DeploymentExecutionCounts::Count {
+                    include_derived: params.include_derived,
+                },
+            )
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 

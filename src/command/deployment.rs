@@ -100,6 +100,7 @@ impl args::Deployment {
                     .list_deployments(grpc_gen::ListDeploymentsRequest {
                         pagination: None,
                         include_deployment_toml: false,
+                        include_execution_counts: false,
                         include_derived: false,
                     })
                     .await?

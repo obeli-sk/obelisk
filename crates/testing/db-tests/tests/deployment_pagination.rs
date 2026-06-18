@@ -6,7 +6,8 @@ use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbConnectionTest, DbExternalApi, DbPoolCloseable,
-    DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionRequest, Pagination, Version,
+    DeploymentExecutionCounts, DeploymentRecord, DeploymentState, DeploymentStatus,
+    ExecutionRequest, Pagination, Version,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -163,8 +164,10 @@ async fn list_deployment_states_basic(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             pagination,
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -219,8 +222,10 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -240,8 +245,10 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -261,8 +268,10 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -282,8 +291,10 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -347,8 +358,10 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -364,8 +377,10 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor: Some(oldest),
                 including_cursor: true,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -387,8 +402,10 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -408,8 +425,10 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -429,8 +448,10 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
                 cursor,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -546,8 +567,10 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
                 cursor: None,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -588,6 +611,41 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
         "expected 1 finished in mixed deployment"
     );
 
+    // Listing with `Skip` reports all buckets as zero.
+    let deployments = api_conn
+        .list_deployment_states(
+            sim_clock.now(),
+            Pagination::OlderThan {
+                length: 20,
+                cursor: None,
+                including_cursor: false,
+            },
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Skip,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(4, deployments.len());
+    for deployment in &deployments {
+        assert_eq!(0, deployment.locked, "{:?}", deployment.deployment_id);
+        assert_eq!(0, deployment.pending, "{:?}", deployment.deployment_id);
+        assert_eq!(0, deployment.scheduled, "{:?}", deployment.deployment_id);
+        assert_eq!(0, deployment.blocked, "{:?}", deployment.deployment_id);
+        assert_eq!(0, deployment.paused, "{:?}", deployment.deployment_id);
+        assert_eq!(0, deployment.finished_ok, "{:?}", deployment.deployment_id);
+        assert_eq!(
+            0, deployment.finished_error,
+            "{:?}",
+            deployment.deployment_id
+        );
+        assert_eq!(
+            0, deployment.finished_execution_failure,
+            "{:?}",
+            deployment.deployment_id
+        );
+    }
+
     drop(api_conn);
     drop(db_connection);
     db_close.close().await;
@@ -620,8 +678,10 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -636,8 +696,10 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: true,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -655,8 +717,10 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -674,8 +738,10 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: true,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -693,8 +759,10 @@ async fn list_deployment_states_including_cursor(database: Database) {
                 cursor: Some(middle),
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -738,8 +806,10 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 cursor: None,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -772,8 +842,10 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 cursor: Some(oldest),
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -793,8 +865,10 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
                 cursor: Some(oldest),
                 including_cursor: true,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -855,8 +929,10 @@ async fn list_deployment_states_empty(database: Database) {
                 cursor: None,
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
@@ -896,8 +972,10 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
                 cursor: Some(fake_cursor),
                 including_cursor: false,
             },
-            false, // include_config_json
-            false, // include_derived
+            false, // include_deployment_toml
+            DeploymentExecutionCounts::Count {
+                include_derived: false,
+            },
         )
         .await
         .unwrap();
