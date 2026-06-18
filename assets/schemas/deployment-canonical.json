@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "DeploymentCanonical",
-  "description": "Canonical deployment configuration — no local file paths.\nUsed for hash computation, wire format, and DB storage.",
+  "title": "DeploymentResolved",
+  "description": "Resolved deployment configuration after resolving deployment-owned text sources.\n\nThis is a runtime/verification shape derived from the stored manifest plus a file\nprovider. It is not the stored deployment source of truth. Deployment-owned scripts\nand backtrace sources are inlined as content; deployment-owned WASM locations remain\nrelative path + content digest until `DeploymentRunnable` materializes them from the\nCAS into a runnable cache path. OCI references remain external references.",
   "type": "object",
   "properties": {
     "activities_wasm": {
@@ -13,49 +13,49 @@
     "activities_stub": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityStubComponentConfigCanonical"
+        "$ref": "#/$defs/ActivityStubComponentConfigResolved"
       }
     },
     "activities_external": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityExternalComponentConfigCanonical"
+        "$ref": "#/$defs/ActivityExternalComponentConfigResolved"
       }
     },
     "activities_js": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityJsComponentConfigCanonical"
+        "$ref": "#/$defs/ActivityJsComponentConfigResolved"
       }
     },
     "activities_exec": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ActivityExecComponentConfigCanonical"
+        "$ref": "#/$defs/ActivityExecComponentConfigResolved"
       }
     },
     "workflows_wasm": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/WorkflowWasmComponentConfigCanonical"
+        "$ref": "#/$defs/WorkflowWasmComponentConfigResolved"
       }
     },
     "workflows_js": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/WorkflowJsComponentConfigCanonical"
+        "$ref": "#/$defs/WorkflowJsComponentConfigResolved"
       }
     },
     "webhooks_wasm": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/WebhookWasmComponentConfigCanonical"
+        "$ref": "#/$defs/WebhookWasmComponentConfigResolved"
       }
     },
     "webhooks_js": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/WebhookJsComponentConfigCanonical"
+        "$ref": "#/$defs/WebhookJsComponentConfigResolved"
       }
     },
     "crons": {
@@ -440,13 +440,13 @@
         "params"
       ]
     },
-    "ActivityStubComponentConfigCanonical": {
+    "ActivityStubComponentConfigResolved": {
       "anyOf": [
         {
           "$ref": "#/$defs/ActivityStubFileConfigToml"
         },
         {
-          "$ref": "#/$defs/ActivityStubExtInlineConfigCanonical"
+          "$ref": "#/$defs/ActivityStubExtInlineConfigResolved"
         }
       ]
     },
@@ -473,7 +473,7 @@
         "location"
       ]
     },
-    "ActivityStubExtInlineConfigCanonical": {
+    "ActivityStubExtInlineConfigResolved": {
       "type": "object",
       "properties": {
         "name": {
@@ -525,13 +525,13 @@
         "type"
       ]
     },
-    "ActivityExternalComponentConfigCanonical": {
+    "ActivityExternalComponentConfigResolved": {
       "anyOf": [
         {
           "$ref": "#/$defs/ActivityExternalFileConfigToml"
         },
         {
-          "$ref": "#/$defs/ActivityStubExtInlineConfigCanonical"
+          "$ref": "#/$defs/ActivityStubExtInlineConfigResolved"
         }
       ]
     },
@@ -566,15 +566,15 @@
         "location"
       ]
     },
-    "ActivityJsComponentConfigCanonical": {
-      "description": "Canonical form of `ActivityJsComponentConfigToml`.",
+    "ActivityJsComponentConfigResolved": {
+      "description": "Resolved form of `ActivityJsComponentConfigToml`.",
       "type": "object",
       "properties": {
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/ScriptLocationCanonical"
+          "$ref": "#/$defs/ScriptLocationResolved"
         },
         "content_digest": {
           "type": [
@@ -652,8 +652,8 @@
         "allowed_hosts"
       ]
     },
-    "ScriptLocationCanonical": {
-      "description": "Canonical location of a script source (JS or exec) — no deployment-relative paths.\nUsed for hash computation, wire format in deployment submission, and DB storage.\n\n- `Content` is owned by the deployment (inline content, or a file that lived under\n  the deployment directory); `file_name` is the deployment-relative path (which may\n  include subfolders), used to recreate the file on filesystem export.\n- `Path` is an external local file that the deployment merely references; it is read\n  at runtime and is not recreated on export.\n- `Oci` is an external registry reference.",
+    "ScriptLocationResolved": {
+      "description": "Resolved location of a script source (JS or exec) after file-provider resolution.\n\n- `Content` is owned by the deployment (inline content, or a file that lived under\n  the deployment directory and was read from disk/CAS); `file_name` is the\n  deployment-relative path (which may include subfolders), used for source names and\n  backtraces.\n- `Path` is an external local file that the deployment merely references; it is read\n  at runtime.\n- `Oci` is an external registry reference.",
       "oneOf": [
         {
           "type": "object",
@@ -695,15 +695,15 @@
         }
       ]
     },
-    "ActivityExecComponentConfigCanonical": {
-      "description": "Canonical form of `ActivityExecComponentConfigToml`.",
+    "ActivityExecComponentConfigResolved": {
+      "description": "Resolved form of `ActivityExecComponentConfigToml`.",
       "type": "object",
       "properties": {
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/ScriptLocationCanonical"
+          "$ref": "#/$defs/ScriptLocationResolved"
         },
         "content_digest": {
           "type": [
@@ -824,8 +824,8 @@
         "name"
       ]
     },
-    "WorkflowWasmComponentConfigCanonical": {
-      "description": "Canonical form of `WorkflowWasmComponentConfigToml`.",
+    "WorkflowWasmComponentConfigResolved": {
+      "description": "Resolved form of `WorkflowWasmComponentConfigToml`.",
       "type": "object",
       "properties": {
         "common": {
@@ -853,7 +853,7 @@
           "$ref": "#/$defs/BlockingStrategyConfigToml"
         },
         "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfigCanonical"
+          "$ref": "#/$defs/ComponentBacktraceConfigResolved"
         },
         "stub_wasi": {
           "type": "boolean"
@@ -933,13 +933,13 @@
         "await"
       ]
     },
-    "ComponentBacktraceConfigCanonical": {
+    "ComponentBacktraceConfigResolved": {
       "type": "object",
       "properties": {
         "frame_files_to_sources": {
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/$defs/BacktraceSourceCanonical"
+            "$ref": "#/$defs/BacktraceSourceResolved"
           }
         }
       },
@@ -947,8 +947,8 @@
         "frame_files_to_sources"
       ]
     },
-    "BacktraceSourceCanonical": {
-      "description": "Canonical backtrace source: the inlined source `content` plus the deployment-relative\n`file_name` it was read from (used to recreate the file, mirroring subfolders, on export).",
+    "BacktraceSourceResolved": {
+      "description": "Resolved backtrace source: the inlined source `content` plus the deployment-relative\n`file_name` it was read from (used to recreate the file, mirroring subfolders, on export).",
       "type": "object",
       "properties": {
         "content": {
@@ -964,15 +964,15 @@
         "file_name"
       ]
     },
-    "WorkflowJsComponentConfigCanonical": {
-      "description": "Canonical form of `WorkflowJsComponentConfigToml`.",
+    "WorkflowJsComponentConfigResolved": {
+      "description": "Resolved form of `WorkflowJsComponentConfigToml`.",
       "type": "object",
       "properties": {
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/ScriptLocationCanonical"
+          "$ref": "#/$defs/ScriptLocationResolved"
         },
         "content_digest": {
           "type": [
@@ -1030,8 +1030,8 @@
         "lock_extension"
       ]
     },
-    "WebhookWasmComponentConfigCanonical": {
-      "description": "Canonical form of `WebhookWasmComponentConfigToml`.",
+    "WebhookWasmComponentConfigResolved": {
+      "description": "Resolved form of `WebhookWasmComponentConfigToml`.",
       "type": "object",
       "properties": {
         "name": {
@@ -1072,7 +1072,7 @@
           "default": []
         },
         "backtrace": {
-          "$ref": "#/$defs/ComponentBacktraceConfigCanonical",
+          "$ref": "#/$defs/ComponentBacktraceConfigResolved",
           "default": {
             "frame_files_to_sources": {}
           }
@@ -1125,15 +1125,15 @@
         "route"
       ]
     },
-    "WebhookJsComponentConfigCanonical": {
-      "description": "Canonical form of `WebhookJsComponentConfigToml`.",
+    "WebhookJsComponentConfigResolved": {
+      "description": "Resolved form of `WebhookJsComponentConfigToml`.",
       "type": "object",
       "properties": {
         "name": {
           "$ref": "#/$defs/ConfigName"
         },
         "location": {
-          "$ref": "#/$defs/ScriptLocationCanonical"
+          "$ref": "#/$defs/ScriptLocationResolved"
         },
         "content_digest": {
           "type": [

@@ -1,6 +1,6 @@
 //! Deployment configuration data model shared between the obelisk server and the webui.
 //!
-//! Contains the canonical deployment configuration ([`DeploymentCanonical`]), the wire
+//! Contains the canonical deployment configuration ([`DeploymentResolved`]), the wire
 //! format used for hash computation, deployment submission and DB storage (`config_json`),
 //! plus the data types it is composed of. Some of these types double as the TOML
 //! representation (their original `*Toml` names are kept).
@@ -416,7 +416,7 @@ pub struct ActivityExternalFileConfigToml {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct ActivityStubExtInlineConfigCanonical {
+pub struct ActivityStubExtInlineConfigResolved {
     pub name: ConfigName,
     #[schemars(with = "String")]
     pub ffqn: FunctionFqn,
@@ -428,12 +428,12 @@ pub struct ActivityStubExtInlineConfigCanonical {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
-pub enum ActivityStubComponentConfigCanonical {
+pub enum ActivityStubComponentConfigResolved {
     File(ActivityStubFileConfigToml),
-    Inline(ActivityStubExtInlineConfigCanonical),
+    Inline(ActivityStubExtInlineConfigResolved),
 }
 
-impl ActivityStubComponentConfigCanonical {
+impl ActivityStubComponentConfigResolved {
     #[must_use]
     pub fn name_str(&self) -> &str {
         match self {
@@ -445,12 +445,12 @@ impl ActivityStubComponentConfigCanonical {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
-pub enum ActivityExternalComponentConfigCanonical {
+pub enum ActivityExternalComponentConfigResolved {
     File(ActivityExternalFileConfigToml),
-    Inline(ActivityStubExtInlineConfigCanonical),
+    Inline(ActivityStubExtInlineConfigResolved),
 }
 
-impl ActivityExternalComponentConfigCanonical {
+impl ActivityExternalComponentConfigResolved {
     #[must_use]
     pub fn name_str(&self) -> &str {
         match self {
@@ -460,7 +460,7 @@ impl ActivityExternalComponentConfigCanonical {
     }
 }
 
-/// Canonical location of a script source (JS or exec) after file-provider resolution.
+/// Resolved location of a script source (JS or exec) after file-provider resolution.
 ///
 /// - `Content` is owned by the deployment (inline content, or a file that lived under
 ///   the deployment directory and was read from disk/CAS); `file_name` is the
@@ -471,7 +471,7 @@ impl ActivityExternalComponentConfigCanonical {
 /// - `Oci` is an external registry reference.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ScriptLocationCanonical {
+pub enum ScriptLocationResolved {
     #[schemars(with = "String")]
     Content { content: String, file_name: String },
     /// External local file, read at runtime, not recreated on export.
@@ -482,22 +482,22 @@ pub enum ScriptLocationCanonical {
     Oci { image: String },
 }
 
-/// Canonical backtrace source: the inlined source `content` plus the deployment-relative
+/// Resolved backtrace source: the inlined source `content` plus the deployment-relative
 /// `file_name` it was read from (used to recreate the file, mirroring subfolders, on export).
 #[derive(JsonSchema, Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BacktraceSourceCanonical {
+pub struct BacktraceSourceResolved {
     pub content: String,
     pub file_name: String,
 }
 
 #[derive(JsonSchema, Debug, Default, Clone, Serialize, Deserialize)]
-pub struct ComponentBacktraceConfigCanonical {
-    #[schemars(with = "std::collections::HashMap<String, BacktraceSourceCanonical>")]
-    pub frame_files_to_sources: HashMap<String, BacktraceSourceCanonical>,
+pub struct ComponentBacktraceConfigResolved {
+    #[schemars(with = "std::collections::HashMap<String, BacktraceSourceResolved>")]
+    pub frame_files_to_sources: HashMap<String, BacktraceSourceResolved>,
 }
 
-impl ComponentBacktraceConfigCanonical {
+impl ComponentBacktraceConfigResolved {
     /// Map each frame-symbol key to its source content (dropping the recreate path),
     /// as needed by the runtime backtrace lookup.
     #[must_use]
@@ -509,12 +509,12 @@ impl ComponentBacktraceConfigCanonical {
     }
 }
 
-/// Canonical form of `ActivityJsComponentConfigToml`.
+/// Resolved form of `ActivityJsComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct ActivityJsComponentConfigCanonical {
+pub struct ActivityJsComponentConfigResolved {
     pub name: ConfigName,
-    pub location: ScriptLocationCanonical,
+    pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
@@ -550,12 +550,12 @@ pub struct ExecSecretsToml {
     pub env_vars: Vec<SecretEnvVarToml>,
 }
 
-/// Canonical form of `ActivityExecComponentConfigToml`.
+/// Resolved form of `ActivityExecComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct ActivityExecComponentConfigCanonical {
+pub struct ActivityExecComponentConfigResolved {
     pub name: ConfigName,
-    pub location: ScriptLocationCanonical,
+    pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub ffqn: FunctionFqn,
     pub params: Vec<JsParamToml>,
@@ -606,10 +606,10 @@ pub enum BlockingStrategyConfigSimple {
     Await,
 }
 
-/// Canonical form of `WorkflowWasmComponentConfigToml`.
+/// Resolved form of `WorkflowWasmComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct WorkflowWasmComponentConfigCanonical {
+pub struct WorkflowWasmComponentConfigResolved {
     pub common: ComponentCommon,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_digest: Option<ContentDigest>,
@@ -617,18 +617,18 @@ pub struct WorkflowWasmComponentConfigCanonical {
     pub exec: ExecConfigToml,
     pub retry_exp_backoff: DurationConfig,
     pub blocking_strategy: BlockingStrategyConfigToml,
-    pub backtrace: ComponentBacktraceConfigCanonical,
+    pub backtrace: ComponentBacktraceConfigResolved,
     pub stub_wasi: bool,
     pub lock_extension: bool,
     pub logs_store_min_level: LogLevelToml,
 }
 
-/// Canonical form of `WorkflowJsComponentConfigToml`.
+/// Resolved form of `WorkflowJsComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct WorkflowJsComponentConfigCanonical {
+pub struct WorkflowJsComponentConfigResolved {
     pub name: ConfigName,
-    pub location: ScriptLocationCanonical,
+    pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
@@ -643,8 +643,8 @@ pub struct WorkflowJsComponentConfigCanonical {
 
 pub mod webhook {
     use super::{
-        AllowedHostToml, ComponentBacktraceConfigCanonical, ComponentCommon,
-        ComponentStdOutputToml, ConfigName, LogLevelToml, ScriptLocationCanonical,
+        AllowedHostToml, ComponentBacktraceConfigResolved, ComponentCommon, ComponentStdOutputToml,
+        ConfigName, LogLevelToml, ScriptLocationResolved,
     };
     use crate::component_id::ContentDigest;
     use crate::env_var::EnvVarConfig;
@@ -679,10 +679,10 @@ pub mod webhook {
         pub route: String,
     }
 
-    /// Canonical form of `WebhookWasmComponentConfigToml`.
+    /// Resolved form of `WebhookWasmComponentConfigToml`.
     #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct WebhookWasmComponentConfigCanonical {
+    pub struct WebhookWasmComponentConfigResolved {
         #[serde(flatten)]
         pub common: ComponentCommon,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -697,19 +697,19 @@ pub mod webhook {
         #[serde(default)]
         pub env_vars: Vec<EnvVarConfig>,
         #[serde(default)]
-        pub backtrace: ComponentBacktraceConfigCanonical,
+        pub backtrace: ComponentBacktraceConfigResolved,
         #[serde(default)]
         pub logs_store_min_level: LogLevelToml,
         #[serde(default, rename = "allowed_host")]
         pub allowed_hosts: Vec<AllowedHostToml>,
     }
 
-    /// Canonical form of `WebhookJsComponentConfigToml`.
+    /// Resolved form of `WebhookJsComponentConfigToml`.
     #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct WebhookJsComponentConfigCanonical {
+    pub struct WebhookJsComponentConfigResolved {
         pub name: ConfigName,
-        pub location: ScriptLocationCanonical,
+        pub location: ScriptLocationResolved,
         #[serde(default)]
         pub content_digest: Option<ContentDigest>,
         #[serde(default = "default_external_server_name")]
@@ -756,24 +756,24 @@ pub mod cron {
     }
 }
 
-/// Canonical deployment configuration after resolving deployment-owned text sources.
+/// Resolved deployment configuration after resolving deployment-owned text sources.
 ///
 /// This is a runtime/verification shape derived from the stored manifest plus a file
 /// provider. It is not the stored deployment source of truth. Deployment-owned scripts
 /// and backtrace sources are inlined as content; deployment-owned WASM locations remain
-/// relative path + content digest until `DeploymentResolved` materializes them from the
+/// relative path + content digest until `DeploymentRunnable` materializes them from the
 /// CAS into a runnable cache path. OCI references remain external references.
 #[derive(Debug, Deserialize, Serialize, Default, Clone, JsonSchema)]
-pub struct DeploymentCanonical {
+pub struct DeploymentResolved {
     pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-    pub activities_stub: Vec<ActivityStubComponentConfigCanonical>,
-    pub activities_external: Vec<ActivityExternalComponentConfigCanonical>,
-    pub activities_js: Vec<ActivityJsComponentConfigCanonical>,
-    pub activities_exec: Vec<ActivityExecComponentConfigCanonical>,
-    pub workflows_wasm: Vec<WorkflowWasmComponentConfigCanonical>,
-    pub workflows_js: Vec<WorkflowJsComponentConfigCanonical>,
-    pub webhooks_wasm: Vec<webhook::WebhookWasmComponentConfigCanonical>,
-    pub webhooks_js: Vec<webhook::WebhookJsComponentConfigCanonical>,
+    pub activities_stub: Vec<ActivityStubComponentConfigResolved>,
+    pub activities_external: Vec<ActivityExternalComponentConfigResolved>,
+    pub activities_js: Vec<ActivityJsComponentConfigResolved>,
+    pub activities_exec: Vec<ActivityExecComponentConfigResolved>,
+    pub workflows_wasm: Vec<WorkflowWasmComponentConfigResolved>,
+    pub workflows_js: Vec<WorkflowJsComponentConfigResolved>,
+    pub webhooks_wasm: Vec<webhook::WebhookWasmComponentConfigResolved>,
+    pub webhooks_js: Vec<webhook::WebhookJsComponentConfigResolved>,
     #[serde(default)]
     pub crons: Vec<cron::CronComponentConfigToml>,
 }

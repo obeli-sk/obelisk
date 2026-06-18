@@ -6,15 +6,15 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::config_holder::load_deployment_canonical;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
-use crate::config::toml::ActivityExecComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
-use crate::config::toml::ActivityExternalComponentConfigCanonical;
-use crate::config::toml::ActivityExternalComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityExternalComponentConfigResolved;
+use crate::config::toml::ActivityExternalComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExternalConfigVerified;
-use crate::config::toml::ActivityJsComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityJsComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityJsConfigVerified;
-use crate::config::toml::ActivityStubComponentConfigCanonical;
-use crate::config::toml::ActivityStubComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityStubComponentConfigResolved;
+use crate::config::toml::ActivityStubComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityStubConfigVerified;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityStubExtInlineConfigVerified;
@@ -27,7 +27,7 @@ use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DatabaseConfigToml;
-use crate::config::toml::DeploymentCanonical;
+use crate::config::toml::DeploymentResolved;
 use crate::config::toml::InflightSemaphoreExt as _;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
@@ -35,18 +35,18 @@ use crate::config::toml::ServerConfigToml;
 use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigVerified;
-use crate::config::toml::WorkflowJsComponentConfigCanonicalExt as _;
+use crate::config::toml::WorkflowJsComponentConfigResolvedExt as _;
 use crate::config::toml::WorkflowJsConfigVerified;
-use crate::config::toml::WorkflowWasmComponentConfigCanonicalExt as _;
+use crate::config::toml::WorkflowWasmComponentConfigResolvedExt as _;
 use crate::config::toml::cron::CronComponentConfigTomlExt as _;
 use crate::config::toml::cron::CronConfigVerified;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::HttpServer;
-use crate::config::toml::webhook::WebhookJsComponentConfigCanonicalExt as _;
+use crate::config::toml::webhook::WebhookJsComponentConfigResolvedExt as _;
 use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
-use crate::config::toml::webhook::WebhookWasmComponentConfigCanonicalExt as _;
+use crate::config::toml::webhook::WebhookWasmComponentConfigResolvedExt as _;
 use crate::config::toml::webhook::WebhookWasmComponentConfigVerified;
 use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::wasm_cache_metadata_dir;
@@ -678,7 +678,7 @@ pub(crate) async fn server_verify(
 pub(crate) async fn deployment_verify_config_compile_link(
     server_verified: ServerVerified,
     prepared_dirs: &PreparedDirs,
-    deployment: DeploymentCanonical,
+    deployment: DeploymentResolved,
     cas: Option<Arc<dyn concepts::cas::Cas>>,
     deployment_id: DeploymentId,
     params: VerifyParams,
@@ -733,14 +733,14 @@ pub(crate) async fn deployment_compile_link(
 pub(crate) async fn deployment_verify_config(
     server_verified: &ServerVerified,
     prepared_dirs: &PreparedDirs,
-    deployment: DeploymentCanonical,
+    deployment: DeploymentResolved,
     cas: Option<Arc<dyn concepts::cas::Cas>>,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
     let deployment =
-        DeploymentResolved::resolve(deployment, cas.as_deref(), &prepared_dirs.wasm_cache_dir)
+        DeploymentRunnable::resolve(deployment, cas.as_deref(), &prepared_dirs.wasm_cache_dir)
             .await?;
     let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
         deployment,
@@ -766,7 +766,7 @@ async fn get_deployment_canonical_from_db(
     database: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
     db_pool_container: &mut DbPoolCloseableContainer,
-) -> anyhow::Result<(DeploymentCanonical, DeploymentId)> {
+) -> anyhow::Result<(DeploymentResolved, DeploymentId)> {
     let conn = if let Some((pool, _)) = db_pool_container.as_ref() {
         pool.external_api_conn()
             .await
@@ -846,7 +846,7 @@ async fn get_deployment_canonical_from_db(
 /// already-canonicalized form used to compile/link this run.
 pub(crate) struct LocalDeployment {
     deployment_toml: String,
-    canonical: DeploymentCanonical,
+    canonical: DeploymentResolved,
     files: Vec<crate::config::manifest::DeploymentManifestFile>,
 }
 
@@ -865,7 +865,7 @@ impl LocalDeployment {
     pub(crate) fn empty() -> Self {
         Self {
             deployment_toml: String::new(),
-            canonical: DeploymentCanonical::default(),
+            canonical: DeploymentResolved::default(),
             files: Vec::new(),
         }
     }
@@ -876,9 +876,9 @@ impl LocalDeployment {
 /// Empty on purpose: a stored manifest has no submitter host to anchor relative paths to.
 /// Deployment-owned references are addressed by content digest in the CAS, so joining a
 /// `${DEPLOYMENT_DIR}` / relative path against an empty root leaves it relative. That keeps
-/// deployment-owned WASM locations relative in the resulting `DeploymentCanonical` (no
+/// deployment-owned WASM locations relative in the resulting `DeploymentResolved` (no
 /// fabricated host paths); they become concrete on-disk paths only later, in
-/// [`DeploymentResolved::resolve`], which materializes their blobs from the CAS.
+/// [`DeploymentRunnable::resolve`], which materializes their blobs from the CAS.
 fn cas_deployment_dir() -> std::path::PathBuf {
     std::path::PathBuf::new()
 }
@@ -915,7 +915,7 @@ async fn canonical_and_files_from_manifest(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_toml: &str,
 ) -> anyhow::Result<(
-    DeploymentCanonical,
+    DeploymentResolved,
     Vec<concepts::storage::DeploymentFileRecord>,
 )> {
     let cas: std::sync::Arc<dyn concepts::cas::Cas> = db_pool
@@ -945,16 +945,16 @@ async fn canonical_and_files_from_manifest(
 async fn canonical_from_manifest(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_toml: &str,
-) -> anyhow::Result<DeploymentCanonical> {
+) -> anyhow::Result<DeploymentResolved> {
     Ok(canonical_and_files_from_manifest(db_pool, deployment_toml)
         .await?
         .0)
 }
 
-/// A [`DeploymentCanonical`] whose every WASM component location is a concrete, runnable
+/// A [`DeploymentResolved`] whose every WASM component location is a concrete, runnable
 /// reference: an absolute on-disk path or an OCI image.
 ///
-/// `DeploymentCanonical` is host-independent: a deployment-owned WASM is a *relative* path
+/// `DeploymentResolved` is host-independent: a deployment-owned WASM is a *relative* path
 /// addressed by content digest in the CAS (a stored manifest carries no submitter host).
 /// Compiling/linking needs real files, so [`Self::resolve`] materializes each deployment-owned
 /// blob from the CAS into the wasm cache and rewrites its location to that path. OCI
@@ -964,11 +964,11 @@ async fn canonical_from_manifest(
 ///
 /// The inner value is private so the only way to obtain one is `resolve`; that makes it
 /// impossible to feed an unresolved (relative-path) canonical into compilation.
-pub(crate) struct DeploymentResolved {
-    deployment: DeploymentCanonical,
+pub(crate) struct DeploymentRunnable {
+    deployment: DeploymentResolved,
 }
 
-impl DeploymentResolved {
+impl DeploymentRunnable {
     /// Resolve every deployment-owned WASM location against the CAS.
     ///
     /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
@@ -976,7 +976,7 @@ impl DeploymentResolved {
     /// encountering a deployment-owned (relative) WASM there is an error because there is no
     /// store to read it.
     pub(crate) async fn resolve(
-        mut deployment: DeploymentCanonical,
+        mut deployment: DeploymentResolved,
         cas: Option<&dyn concepts::cas::Cas>,
         wasm_cache_dir: &Path,
     ) -> anyhow::Result<Self> {
@@ -990,7 +990,7 @@ impl DeploymentResolved {
             .await?;
         }
         for c in &mut deployment.activities_stub {
-            if let ActivityStubComponentConfigCanonical::File(f) = c {
+            if let ActivityStubComponentConfigResolved::File(f) = c {
                 materialize_wasm_location(
                     &mut f.common.location,
                     f.content_digest.as_ref(),
@@ -1001,7 +1001,7 @@ impl DeploymentResolved {
             }
         }
         for c in &mut deployment.activities_external {
-            if let ActivityExternalComponentConfigCanonical::File(f) = c {
+            if let ActivityExternalComponentConfigResolved::File(f) = c {
                 materialize_wasm_location(
                     &mut f.common.location,
                     f.content_digest.as_ref(),
@@ -1032,7 +1032,7 @@ impl DeploymentResolved {
         Ok(Self { deployment })
     }
 
-    fn into_canonical(self) -> DeploymentCanonical {
+    fn into_canonical(self) -> DeploymentResolved {
         self.deployment
     }
 }
@@ -1278,7 +1278,7 @@ pub(crate) async fn run_internal(
             )
             .await?;
 
-            (new_deployment_id, DeploymentCanonical::default())
+            (new_deployment_id, DeploymentResolved::default())
         }
     };
     let engines = create_engines(&config, &prepared_dirs)?;
@@ -2811,7 +2811,7 @@ impl DeploymentVerified {
     }
 
     fn verify_no_webui_server_bindings(
-        deployment: &DeploymentCanonical,
+        deployment: &DeploymentResolved,
     ) -> Result<(), anyhow::Error> {
         let mut offending_webhooks = deployment
             .webhooks_wasm
@@ -2839,7 +2839,7 @@ impl DeploymentVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        deployment: DeploymentResolved,
+        deployment: DeploymentRunnable,
         http_servers: Vec<webhook::HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -2869,7 +2869,7 @@ impl DeploymentVerified {
             let target_url = format!("http://{api_listening_addr}");
             deployment
                 .webhooks_wasm
-                .push(webhook::WebhookWasmComponentConfigCanonical {
+                .push(webhook::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
                         location: WEBUI_LOCATION
@@ -2885,7 +2885,7 @@ impl DeploymentVerified {
                         key: "TARGET_URL".to_string(),
                         value: target_url.clone(),
                     }],
-                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
+                    backtrace: crate::config::toml::ComponentBacktraceConfigResolved::default(),
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
                         pattern: target_url,
@@ -4474,7 +4474,7 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            DeploymentResolved, DeploymentVerified, PrepareDirsParams, ServerCompiledLinked,
+            DeploymentRunnable, DeploymentVerified, PrepareDirsParams, ServerCompiledLinked,
             ServerVerified, VerifyParams, compile_activity_inline, create_engines,
             deployment_verify_config, prepare_dirs,
         },
@@ -4560,7 +4560,7 @@ mod tests {
         // Verify deployment. The current disk-authored canonical holds internal absolute
         // paths, so it resolves to itself without a CAS.
         let deployment =
-            DeploymentResolved::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
+            DeploymentRunnable::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
         let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
             deployment,
             server_verified.http_servers,

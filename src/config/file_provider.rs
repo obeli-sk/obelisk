@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// Source of deployment-owned file bytes during canonicalization.
 ///
 /// Canonicalization inlines every deployment-owned script/source into the
-/// `DeploymentCanonical`; where the bytes come from depends on context.
+/// `DeploymentResolved`; where the bytes come from depends on context.
 /// OCI refs are not deployment-owned and are not read through a provider.
 #[async_trait::async_trait]
 pub(crate) trait FileProvider: Send + Sync {

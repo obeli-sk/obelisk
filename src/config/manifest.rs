@@ -1,6 +1,6 @@
 use crate::config::file_provider::{DiskProvider, FileProvider};
 use crate::config::toml::{
-    DeploymentCanonical, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
+    DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
     strip_deployment_dir_prefix,
 };
 use anyhow::{Context, bail, ensure};
@@ -46,7 +46,7 @@ pub(crate) async fn manifest_to_canonical(
     deployment_toml: &str,
     deployment_dir: &Path,
     provider: &dyn FileProvider,
-) -> anyhow::Result<DeploymentCanonical> {
+) -> anyhow::Result<DeploymentResolved> {
     parse_manifest(deployment_toml, deployment_dir)?
         .canonicalize_with_provider(provider)
         .await
@@ -588,7 +588,7 @@ async fn read_deployment_file(
 )]
 pub(crate) async fn manifest_file_to_canonical(
     deployment_toml_path: &Path,
-) -> anyhow::Result<DeploymentCanonical> {
+) -> anyhow::Result<DeploymentResolved> {
     let deployment_toml = tokio::fs::read_to_string(deployment_toml_path)
         .await
         .with_context(|| format!("cannot read deployment manifest {deployment_toml_path:?}"))?;

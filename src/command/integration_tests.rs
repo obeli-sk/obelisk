@@ -15,7 +15,7 @@ use crate::{
 use toml_edit::{DocumentMut, value};
 
 /// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the canonical
-/// `ActivityStubExtInlineConfigCanonical` the tests used to construct in-memory.
+/// `ActivityStubExtInlineConfigResolved` the tests used to construct in-memory.
 fn append_inline_stub(doc: &mut DocumentMut, name: &str, ffqn: &str) {
     let mut table = toml_edit::Table::new();
     table["name"] = value(name);
