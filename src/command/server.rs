@@ -1784,9 +1784,177 @@ pub(crate) async fn persist_deployment_component_metadata(
     Ok(())
 }
 
+/// Per-file size limit for deployment-owned blobs attached to a submit request.
+const MAX_DEPLOYMENT_FILE_BYTES: usize = 512 * 1024 * 1024;
+
+/// A deployment-owned blob attached to a submit request.
+pub(crate) struct SuppliedFile {
+    pub(crate) path: String,
+    /// Optional client-computed digest; the server recomputes and uses its own value.
+    pub(crate) supplied_digest: Option<String>,
+    pub(crate) content: Vec<u8>,
+}
+
+/// A single file-set problem found while validating a submit package. Mirrors the
+/// proto `FileIssue` but keeps the command layer free of grpc types.
+#[derive(Debug, Clone)]
+pub(crate) struct SubmitFileIssue {
+    pub(crate) section: String,
+    pub(crate) component_name: Option<String>,
+    pub(crate) field_path: String,
+    pub(crate) path: Option<String>,
+    pub(crate) digest: Option<String>,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SubmitDigestMismatch {
+    pub(crate) file: SubmitFileIssue,
+    pub(crate) supplied_digest: String,
+    pub(crate) actual_digest: String,
+}
+
+/// Structured file-set validation failure. No deployment is stored when returned.
+#[derive(Debug, Default)]
+pub(crate) struct SubmitPackageError {
+    pub(crate) missing_digest_fields: Vec<SubmitFileIssue>,
+    pub(crate) missing_files: Vec<SubmitFileIssue>,
+    pub(crate) unexpected_files: Vec<SubmitFileIssue>,
+    pub(crate) digest_mismatches: Vec<SubmitDigestMismatch>,
+    pub(crate) oversized_files: Vec<SubmitFileIssue>,
+}
+
+impl SubmitPackageError {
+    fn is_empty(&self) -> bool {
+        self.missing_digest_fields.is_empty()
+            && self.missing_files.is_empty()
+            && self.unexpected_files.is_empty()
+            && self.digest_mismatches.is_empty()
+            && self.oversized_files.is_empty()
+    }
+}
+
+/// Submit failure: either a structured file-set error (no deployment stored) or any
+/// other error (parse/idempotency/storage).
+pub(crate) enum SubmitDeploymentError {
+    Package(SubmitPackageError),
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for SubmitDeploymentError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Other(err)
+    }
+}
+
+fn issue_from_ref(
+    file: &crate::config::manifest::DeploymentFileRef,
+    message: &str,
+) -> SubmitFileIssue {
+    SubmitFileIssue {
+        section: file.field.section.clone(),
+        component_name: file.field.component_name.clone(),
+        field_path: file.field.field_path.clone(),
+        path: Some(file.path.clone()),
+        digest: Some(file.digest.to_string()),
+        message: message.to_string(),
+    }
+}
+
+fn supplied_issue(path: &str, digest: &ContentDigest, message: &str) -> SubmitFileIssue {
+    SubmitFileIssue {
+        section: "files".to_string(),
+        component_name: None,
+        field_path: format!("files[path={path}]"),
+        path: Some(path.to_string()),
+        digest: Some(digest.to_string()),
+        message: message.to_string(),
+    }
+}
+
+/// Match attached blobs to the manifest's deployment-owned file refs. Returns the
+/// blobs that must be written to the CAS (referenced, not already present, attached),
+/// or a structured error pointing at each offending reference. Pure: no I/O.
+fn validate_submit_package(
+    expected: &[crate::config::manifest::DeploymentFileRef],
+    supplied: Vec<SuppliedFile>,
+    cas_present: &hashbrown::HashSet<ContentDigest>,
+    max_bytes: usize,
+) -> Result<Vec<crate::config::manifest::DeploymentManifestFile>, SubmitPackageError> {
+    use crate::config::manifest::DeploymentManifestFile;
+
+    let mut err = SubmitPackageError::default();
+    // `expected` is already deduplicated by digest in `DeploymentManifest`.
+    let expected_by_digest: HashMap<ContentDigest, ()> = expected
+        .iter()
+        .map(|file| (file.digest.clone(), ()))
+        .collect();
+
+    let mut provided: HashMap<ContentDigest, Vec<u8>> = HashMap::new();
+    for file in supplied {
+        let actual = compute_content_digest(&file.content);
+        if let Some(supplied_digest) = &file.supplied_digest
+            && supplied_digest.parse::<ContentDigest>().ok().as_ref() != Some(&actual)
+        {
+            err.digest_mismatches.push(SubmitDigestMismatch {
+                file: supplied_issue(
+                    &file.path,
+                    &actual,
+                    "attached blob digest does not match the supplied digest",
+                ),
+                supplied_digest: supplied_digest.clone(),
+                actual_digest: actual.to_string(),
+            });
+            continue;
+        }
+        if file.content.len() > max_bytes {
+            err.oversized_files.push(supplied_issue(
+                &file.path,
+                &actual,
+                &format!("attached blob exceeds the {max_bytes}-byte per-file limit"),
+            ));
+            continue;
+        }
+        if expected_by_digest.contains_key(&actual) {
+            provided.insert(actual, file.content);
+        } else {
+            err.unexpected_files.push(supplied_issue(
+                &file.path,
+                &actual,
+                "attached blob is not referenced by the manifest",
+            ));
+        }
+    }
+
+    let mut to_write = Vec::new();
+    for file in expected {
+        if cas_present.contains(&file.digest) {
+            continue;
+        }
+        if let Some(bytes) = provided.remove(&file.digest) {
+            to_write.push(DeploymentManifestFile {
+                path: file.path.clone(),
+                digest: file.digest.clone(),
+                bytes,
+            });
+        } else {
+            err.missing_files.push(issue_from_ref(
+                file,
+                "referenced file is neither attached nor present in the store",
+            ));
+        }
+    }
+
+    if err.is_empty() {
+        Ok(to_write)
+    } else {
+        Err(err)
+    }
+}
+
 /// Shared logic for submitting a deployment (used by both gRPC and web API).
-/// Parses and stores the verbatim manifest plus the file refs it names. File bytes may be
-/// uploaded later; compile/link verification happens when the deployment is activated.
+/// Validates the manifest and its file set as a package; persists only a complete
+/// deployment. Compile/link verification still happens when the deployment is activated.
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit_deployment(
@@ -1797,37 +1965,82 @@ pub(crate) async fn submit_deployment(
     description: Option<String>,
     requested_deployment_id: Option<DeploymentId>,
     _prepared_dirs: &PreparedDirs,
+    supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
     _termination_watcher: &mut watch::Receiver<()>,
-) -> anyhow::Result<(DeploymentId, Vec<ContentDigest>)> {
+) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
-    // every referenced file because the manifest embeds each file's content digest.
+    // every referenced file because the manifest embeds each file's content digest. It is
+    // used only for idempotency, not returned (the client already has the manifest).
     let digest = DeploymentRecord::compute_digest(deployment_toml);
 
-    let conn = db_pool.external_api_conn().await?;
+    let conn = db_pool
+        .external_api_conn()
+        .await
+        .map_err(anyhow::Error::from)?;
 
     // Idempotent submission: if the caller supplied a deployment ID that already
-    // exists, return it as a no-op when the content digest matches (skipping the
-    // expensive verify/compile/link), and reject a digest mismatch as a conflict.
+    // exists, return it as a no-op when the content digest matches, and reject a
+    // digest mismatch as a conflict. A stored deployment is always complete.
     if let Some(requested_deployment_id) = requested_deployment_id
-        && let Some(existing) = conn.get_deployment(requested_deployment_id).await?
+        && let Some(existing) = conn
+            .get_deployment(requested_deployment_id)
+            .await
+            .map_err(anyhow::Error::from)?
     {
         if existing.digest == digest {
             info!(%requested_deployment_id, "Deployment already exists with matching digest, returning existing ID");
-            let missing = conn.missing_digests(requested_deployment_id).await?;
-            return Ok((requested_deployment_id, missing));
+            return Ok(requested_deployment_id);
         }
-        bail!(
+        return Err(SubmitDeploymentError::Other(anyhow::anyhow!(
             "deployment {requested_deployment_id} already exists with a different content digest \
              (existing {}, submitted {digest}); use a fresh deployment ID",
             existing.digest
-        );
+        )));
     }
 
-    let file_records =
-        crate::config::manifest::file_records_from_manifest(deployment_toml, &cas_deployment_dir())
-            .context("cannot read deployment file references from manifest")?;
+    let manifest = crate::config::manifest::DeploymentManifest::try_from_toml(
+        deployment_toml,
+        &cas_deployment_dir(),
+    )
+    .context("cannot read deployment file references from manifest")?;
+
+    // A referenced digest already in the CAS need not be attached to the request.
+    let cas = db_pool.cas_conn().await.map_err(anyhow::Error::from)?;
+    let mut cas_present = hashbrown::HashSet::new();
+    for file in &manifest.files {
+        if cas
+            .contains_blob(&file.digest)
+            .await
+            .map_err(|err| anyhow::anyhow!("cannot query CAS for {}: {err}", file.digest))?
+        {
+            cas_present.insert(file.digest.clone());
+        }
+    }
+
+    let to_write = validate_submit_package(
+        &manifest.files,
+        supplied_files,
+        &cas_present,
+        MAX_DEPLOYMENT_FILE_BYTES,
+    )
+    .map_err(SubmitDeploymentError::Package)?;
+
+    // Write missing blobs to the CAS before inserting the deployment row, so the
+    // stored deployment never references absent blobs. Orphan blobs from a later
+    // failed insert are acceptable GC input.
+    for file in &to_write {
+        let stored = cas.write_blob(&file.bytes).await.map_err(|err| {
+            anyhow::anyhow!("cannot store deployment file {}: {err}", file.digest)
+        })?;
+        if stored != file.digest {
+            return Err(SubmitDeploymentError::Other(anyhow::anyhow!(
+                "stored deployment file digest mismatch: expected {}, got {stored}",
+                file.digest
+            )));
+        }
+    }
 
     let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
     let now = chrono::Utc::now();
@@ -1842,13 +2055,13 @@ pub(crate) async fn submit_deployment(
         obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
         created_by,
         deployment_toml: deployment_toml.to_string(),
-        files: file_records,
+        files: manifest.file_records(),
     })
-    .await?;
+    .await
+    .map_err(anyhow::Error::from)?;
 
-    let missing = conn.missing_digests(deployment_id).await?;
     info!(%deployment_id, "Deployment submitted");
-    Ok((deployment_id, missing))
+    Ok(deployment_id)
 }
 
 fn compute_content_digest(content: &[u8]) -> ContentDigest {
@@ -4351,5 +4564,140 @@ mod tests {
 
         assert!(err.to_string().contains("shared between component types"));
         Ok(())
+    }
+
+    mod submit_package {
+        use crate::command::server::{
+            MAX_DEPLOYMENT_FILE_BYTES, SuppliedFile, compute_content_digest,
+            validate_submit_package,
+        };
+        use crate::config::manifest::{DeploymentFileRef, ManifestFieldRef};
+        use concepts::ContentDigest;
+        use hashbrown::HashSet;
+
+        fn file_ref(path: &str, content: &[u8]) -> (DeploymentFileRef, ContentDigest) {
+            let digest = compute_content_digest(content);
+            (
+                DeploymentFileRef {
+                    path: path.to_string(),
+                    digest: digest.clone(),
+                    field: ManifestFieldRef {
+                        section: "activity_wasm".to_string(),
+                        component_name: Some("c".to_string()),
+                        field_path: "activity_wasm[name=c].location".to_string(),
+                    },
+                },
+                digest,
+            )
+        }
+
+        #[test]
+        fn attached_blob_is_scheduled_for_write() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "a.wasm".to_string(),
+                supplied_digest: None,
+                content: b"\0asm-bytes".to_vec(),
+            }];
+            let to_write = validate_submit_package(
+                &[expected],
+                supplied,
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect("complete package");
+            assert_eq!(to_write.len(), 1);
+            assert_eq!(to_write[0].path, "a.wasm");
+        }
+
+        #[test]
+        fn cas_hit_needs_no_attached_blob_and_no_write() {
+            let (expected, digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let cas_present = HashSet::from_iter([digest]);
+            let to_write = validate_submit_package(
+                &[expected],
+                Vec::new(),
+                &cas_present,
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect("CAS hit is complete");
+            assert!(to_write.is_empty());
+        }
+
+        #[test]
+        fn missing_blob_reports_field_context() {
+            let (expected, digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let err = validate_submit_package(
+                &[expected],
+                Vec::new(),
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect_err("missing blob");
+            assert_eq!(err.missing_files.len(), 1);
+            assert_eq!(err.missing_files[0].section, "activity_wasm");
+            assert_eq!(
+                err.missing_files[0].digest.as_deref(),
+                Some(digest.to_string().as_str())
+            );
+        }
+
+        #[test]
+        fn unexpected_blob_is_rejected() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "stray.wasm".to_string(),
+                supplied_digest: None,
+                content: b"unexpected".to_vec(),
+            }];
+            // The expected file is missing too, but the unexpected blob is still reported.
+            let err = validate_submit_package(
+                &[expected],
+                supplied,
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect_err("unexpected blob");
+            assert_eq!(err.unexpected_files.len(), 1);
+            assert_eq!(err.unexpected_files[0].path.as_deref(), Some("stray.wasm"));
+        }
+
+        #[test]
+        fn digest_mismatch_is_rejected() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "a.wasm".to_string(),
+                supplied_digest: Some(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ),
+                content: b"\0asm-bytes".to_vec(),
+            }];
+            let err = validate_submit_package(
+                &[expected],
+                supplied,
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect_err("digest mismatch");
+            assert_eq!(err.digest_mismatches.len(), 1);
+            assert_eq!(
+                err.digest_mismatches[0].actual_digest,
+                compute_content_digest(b"\0asm-bytes").to_string()
+            );
+        }
+
+        #[test]
+        fn oversized_blob_is_rejected() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "a.wasm".to_string(),
+                supplied_digest: None,
+                content: b"\0asm-bytes".to_vec(),
+            }];
+            let err = validate_submit_package(&[expected], supplied, &HashSet::new(), 1)
+                .expect_err("oversized blob");
+            assert_eq!(err.oversized_files.len(), 1);
+        }
     }
 }

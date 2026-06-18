@@ -2198,18 +2198,11 @@
       "DeploymentSubmitResponse": {
         "type": "object",
         "required": [
-          "deployment_id",
-          "missing_digests"
+          "deployment_id"
         ],
         "properties": {
           "deployment_id": {
             "type": "string"
-          },
-          "missing_digests": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         }
       },

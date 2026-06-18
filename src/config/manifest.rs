@@ -136,13 +136,11 @@ pub(crate) struct DeploymentManifest {
 pub(crate) struct DeploymentFileRef {
     pub(crate) path: String,
     pub(crate) digest: ContentDigest,
-    #[allow(dead_code)] // surfaced in structured submit errors in later phases
     pub(crate) field: ManifestFieldRef,
 }
 
 /// Locates a file reference within the manifest for contextual error reporting.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // fields surfaced in structured submit errors in later phases
 pub(crate) struct ManifestFieldRef {
     /// TOML section, e.g. `activity_wasm` or `workflow_wasm.backtrace.sources`.
     pub(crate) section: String,
@@ -157,7 +155,10 @@ pub(crate) struct ManifestFieldRef {
 enum ManifestScriptLocation {
     /// Inline `content`, no deployment-owned file.
     Inline,
-    DeploymentFile { path: String, digest: ContentDigest },
+    DeploymentFile {
+        path: String,
+        digest: ContentDigest,
+    },
     Oci,
 }
 
@@ -237,13 +238,6 @@ impl DeploymentManifest {
     }
 }
 
-pub(crate) fn file_records_from_manifest(
-    deployment_toml: &str,
-    deployment_dir: &Path,
-) -> anyhow::Result<Vec<DeploymentFileRecord>> {
-    Ok(DeploymentManifest::try_from_toml(deployment_toml, deployment_dir)?.file_records())
-}
-
 fn parse_manifest(
     deployment_toml: &str,
     deployment_dir: &Path,
@@ -272,10 +266,8 @@ fn collect_script_section(
         let name = component_name(table);
         match classify_script_location(table)? {
             ManifestScriptLocation::DeploymentFile { path, digest } => {
-                let field_path = format!(
-                    "{section}[name={}].location",
-                    name.as_deref().unwrap_or("")
-                );
+                let field_path =
+                    format!("{section}[name={}].location", name.as_deref().unwrap_or(""));
                 files.push(DeploymentFileRef {
                     path,
                     digest,
@@ -309,10 +301,8 @@ fn collect_wasm_section(
         };
         match classify_wasm_location(raw_location, table.get("content_digest"))? {
             ManifestWasmLocation::DeploymentFile { path, digest } => {
-                let field_path = format!(
-                    "{section}[name={}].location",
-                    name.as_deref().unwrap_or("")
-                );
+                let field_path =
+                    format!("{section}[name={}].location", name.as_deref().unwrap_or(""));
                 files.push(DeploymentFileRef {
                     path,
                     digest,
@@ -381,9 +371,7 @@ fn collect_backtrace_section(
     Ok(())
 }
 
-fn classify_script_location(
-    table: &toml_edit::Table,
-) -> anyhow::Result<ManifestScriptLocation> {
+fn classify_script_location(table: &toml_edit::Table) -> anyhow::Result<ManifestScriptLocation> {
     let has_inline_content = table.get("content").and_then(Item::as_str).is_some();
     let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
         // No `location`: inline content (or neither, already rejected by validation).

@@ -315,8 +315,9 @@ async fn submit_deployment(
     Ok(id)
 }
 
-/// Submit the verbatim manifest, upload the blobs the server reports missing, then re-submit with
-/// the same deployment ID to confirm the deployment is complete.
+/// Submit the enriched manifest as a CAS-efficient package: first without file
+/// blobs, and if the server reports missing files, retry the same submit with only
+/// those blobs attached. The requested TOML is identical on both attempts.
 async fn upload_and_submit_manifest(
     client: &mut DeploymentClient,
     prepared: PreparedDeploymentManifest,
@@ -324,54 +325,147 @@ async fn upload_and_submit_manifest(
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
+    // Preflight: no blobs, so digests already in the CAS are not re-uploaded.
+    let missing = match submit_attempt(
+        client,
+        &prepared,
+        verify,
+        description.as_deref(),
+        deployment_id,
+        Vec::new(),
+    )
+    .await?
+    {
+        SubmitAttempt::Stored(id) => return Ok(id),
+        SubmitAttempt::Missing(digests) => digests,
+    };
+
+    // Retry with only the blobs the server is missing.
+    let files = prepared
+        .files
+        .iter()
+        .filter(|file| missing.contains(&file.digest.to_string()))
+        .map(|file| grpc_gen::DeploymentFileContent {
+            path: file.path.clone(),
+            digest: Some(file.digest.to_string()),
+            content: file.bytes.clone(),
+        })
+        .collect();
+    match submit_attempt(
+        client,
+        &prepared,
+        verify,
+        description.as_deref(),
+        deployment_id,
+        files,
+    )
+    .await?
+    {
+        SubmitAttempt::Stored(id) => Ok(id),
+        SubmitAttempt::Missing(digests) => bail!(
+            "server is still missing {} file blob(s) after upload: {}",
+            digests.len(),
+            digests.join(", ")
+        ),
+    }
+}
+
+enum SubmitAttempt {
+    Stored(DeploymentId),
+    /// Digests the server is missing; the deployment was not stored.
+    Missing(Vec<String>),
+}
+
+/// One submit request. A `FAILED_PRECONDITION` carrying only `missing_files`
+/// becomes `Missing`; any other structured issue or status is a hard error.
+async fn submit_attempt(
+    client: &mut DeploymentClient,
+    prepared: &PreparedDeploymentManifest,
+    verify: bool,
+    description: Option<&str>,
+    deployment_id: Option<DeploymentId>,
+    files: Vec<grpc_gen::DeploymentFileContent>,
+) -> anyhow::Result<SubmitAttempt> {
     let resp = client
         .submit_deployment(grpc_gen::SubmitDeploymentRequest {
             deployment_toml: prepared.deployment_toml.clone(),
             created_by: Some("cli".to_string()),
             verify,
-            description: description.clone(),
+            description: description.map(str::to_string),
             deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
+            files,
         })
-        .await?
-        .into_inner();
-    let submitted_id =
-        DeploymentId::try_from(resp.deployment_id.context("missing deployment_id")?)?;
-
-    for missing in &resp.missing_digests {
-        let file = prepared
-            .files
-            .iter()
-            .find(|file| file.digest.to_string() == *missing)
-            .with_context(|| {
-                format!("server requested unknown deployment file digest `{missing}`")
-            })?;
-        client
-            .upload_file(grpc_gen::UploadFileRequest {
-                deployment_id: Some(grpc_gen::DeploymentId::from(submitted_id)),
-                content: file.bytes.clone(),
-            })
-            .await
-            .with_context(|| format!("cannot upload deployment file `{}`", file.path))?;
+        .await;
+    match resp {
+        Ok(resp) => {
+            let resp = resp.into_inner();
+            Ok(SubmitAttempt::Stored(DeploymentId::try_from(
+                resp.deployment_id.context("missing deployment_id")?,
+            )?))
+        }
+        Err(status) => {
+            if let Some(detail) = decode_submit_error_detail(&status) {
+                let only_missing = detail.unexpected_files.is_empty()
+                    && detail.digest_mismatches.is_empty()
+                    && detail.oversized_files.is_empty()
+                    && detail.missing_digest_fields.is_empty()
+                    && !detail.missing_files.is_empty();
+                if only_missing {
+                    let digests = detail
+                        .missing_files
+                        .iter()
+                        .filter_map(|issue| issue.digest.clone())
+                        .collect();
+                    return Ok(SubmitAttempt::Missing(digests));
+                }
+                bail!(
+                    "deployment submit rejected: {}",
+                    format_submit_detail(&detail)
+                );
+            }
+            Err(status.into())
+        }
     }
+}
 
-    let resp = client
-        .submit_deployment(grpc_gen::SubmitDeploymentRequest {
-            deployment_toml: prepared.deployment_toml,
-            created_by: Some("cli".to_string()),
-            verify,
-            description,
-            deployment_id: Some(grpc_gen::DeploymentId::from(submitted_id)),
-        })
-        .await?
-        .into_inner();
-    if !resp.missing_digests.is_empty() {
-        bail!(
-            "server is still missing {} file blob(s) after upload: {}",
-            resp.missing_digests.len(),
-            resp.missing_digests.join(", ")
-        );
+/// Decode the `SubmitDeploymentErrorDetail` attached to a submit status, if present.
+fn decode_submit_error_detail(
+    status: &tonic::Status,
+) -> Option<grpc_gen::SubmitDeploymentErrorDetail> {
+    use prost::Message as _;
+    let details = status.details();
+    if details.is_empty() {
+        return None;
     }
-    DeploymentId::try_from(resp.deployment_id.context("missing deployment_id")?).map_err(Into::into)
+    grpc_gen::SubmitDeploymentErrorDetail::decode(details).ok()
+}
+
+fn format_submit_detail(detail: &grpc_gen::SubmitDeploymentErrorDetail) -> String {
+    let mut lines = Vec::new();
+    for issue in &detail.missing_digest_fields {
+        lines.push(format!("missing content_digest at {}", issue.field_path));
+    }
+    for issue in &detail.missing_files {
+        lines.push(format!(
+            "missing file at {} ({})",
+            issue.field_path, issue.message
+        ));
+    }
+    for issue in &detail.unexpected_files {
+        lines.push(format!("unexpected file {}", issue.field_path));
+    }
+    for mismatch in &detail.digest_mismatches {
+        lines.push(format!(
+            "digest mismatch for {}: supplied {}, actual {}",
+            mismatch.file.as_ref().map_or("", |file| &file.field_path),
+            mismatch.supplied_digest,
+            mismatch.actual_digest
+        ));
+    }
+    for issue in &detail.oversized_files {
+        lines.push(format!("oversized file {}", issue.field_path));
+    }
+    lines.join("; ")
 }
 
 /// Fetch a deployment file blob from the server's content-addressed store.

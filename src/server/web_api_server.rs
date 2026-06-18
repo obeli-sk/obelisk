@@ -3333,7 +3333,6 @@ mod deployment {
     #[derive(Debug, Serialize, ToSchema)]
     pub struct DeploymentSubmitResponse {
         pub deployment_id: String,
-        pub missing_digests: Vec<String>,
     }
 
     /// Submit a new deployment
@@ -3365,7 +3364,9 @@ mod deployment {
                 accept,
             })?;
         let mut termination_watcher = state.termination_watcher.clone();
-        let (deployment_id, missing_digests) = Box::pin(crate::command::server::submit_deployment(
+        // JSON submit cannot attach blobs yet (multipart package support is a later
+        // phase); referenced files must already exist in the CAS or submit fails.
+        let deployment_id = Box::pin(crate::command::server::submit_deployment(
             state.server_verified.clone(),
             &payload.deployment_toml,
             payload.verify,
@@ -3373,21 +3374,29 @@ mod deployment {
             payload.description,
             requested_deployment_id,
             &state.prepared_dirs,
+            Vec::new(),
             state.db_pool.clone(),
             &mut termination_watcher,
         ))
         .await
-        .map_err(|err| HttpResponse {
-            status: StatusCode::BAD_REQUEST,
-            message: format!("{err:#}"),
-            accept,
+        .map_err(|err| {
+            let message = match err {
+                crate::command::server::SubmitDeploymentError::Other(err) => format!("{err:#}"),
+                crate::command::server::SubmitDeploymentError::Package(pkg) => {
+                    format!("{pkg:?}")
+                }
+            };
+            HttpResponse {
+                status: StatusCode::BAD_REQUEST,
+                message,
+                accept,
+            }
         })?;
         Ok(match accept {
             AcceptHeader::Json => pretty_json_response(
                 StatusCode::OK,
                 &DeploymentSubmitResponse {
                     deployment_id: deployment_id.to_string(),
-                    missing_digests: missing_digests.iter().map(ToString::to_string).collect(),
                 },
             ),
             AcceptHeader::Text => HttpResponse {

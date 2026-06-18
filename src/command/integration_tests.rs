@@ -70,8 +70,8 @@ use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
-    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, SubmitDeploymentRequest,
-    SubmitRequest, SwitchDeploymentRequest, UploadFileRequest,
+    GetDeploymentRequest, GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest,
+    SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -984,65 +984,67 @@ impl TestServer {
             .expect("webapi submit deployment request failed")
     }
 
-    /// Submit a manifest over gRPC, upload the missing file blobs, then confirm completeness.
+    /// Submit a manifest over gRPC as a CAS-efficient package: preflight without
+    /// blobs, then retry attaching only the files the server reports missing.
     /// Returns the new deployment ID.
     async fn grpc_upload_and_submit_manifest(
         &self,
         deployment_toml_path: &std::path::Path,
     ) -> DeploymentId {
+        use prost::Message as _;
+
         let prepared =
             crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_toml_path)
                 .await
                 .expect("cannot prepare deployment manifest");
-        let mut grpc_client =
+        let grpc_client =
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap();
-        let resp = grpc_client
-            .submit_deployment(SubmitDeploymentRequest {
-                deployment_toml: prepared.deployment_toml.clone(),
-                created_by: Some("test".to_string()),
-                verify: true,
-                description: None,
-                deployment_id: None,
-            })
-            .await
-            .expect("submit_deployment failed")
-            .into_inner();
-        let deployment_id = resp
-            .deployment_id
-            .clone()
-            .expect("submit_deployment: missing deployment_id");
-        for missing in &resp.missing_digests {
-            let file = prepared
-                .files
-                .iter()
-                .find(|file| file.digest.to_string() == *missing)
-                .unwrap_or_else(|| panic!("server requested unknown digest `{missing}`"));
+
+        let submit = async |files| {
             grpc_client
-                .upload_file(UploadFileRequest {
-                    deployment_id: Some(deployment_id.clone()),
-                    content: file.bytes.clone(),
+                .clone()
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: prepared.deployment_toml.clone(),
+                    created_by: Some("test".to_string()),
+                    verify: true,
+                    description: None,
+                    deployment_id: None,
+                    files,
                 })
                 .await
-                .unwrap_or_else(|e| panic!("cannot upload deployment file `{}`: {e}", file.path));
-        }
-        let resp = grpc_client
-            .submit_deployment(SubmitDeploymentRequest {
-                deployment_toml: prepared.deployment_toml,
-                created_by: Some("test".to_string()),
-                verify: true,
-                description: None,
-                deployment_id: Some(deployment_id),
-            })
-            .await
-            .expect("resubmit_deployment failed")
-            .into_inner();
-        assert!(
-            resp.missing_digests.is_empty(),
-            "server still missing blobs after upload: {:?}",
-            resp.missing_digests
-        );
+        };
+
+        // Preflight: no blobs attached. Succeeds outright when every referenced
+        // digest is already in the CAS.
+        let resp = match submit(Vec::new()).await {
+            Ok(resp) => resp.into_inner(),
+            Err(status) => {
+                let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details())
+                    .expect("submit error must carry SubmitDeploymentErrorDetail");
+                let missing: Vec<String> = detail
+                    .missing_files
+                    .iter()
+                    .filter_map(|issue| issue.digest.clone())
+                    .collect();
+                // Retry with only the missing blobs.
+                let files = prepared
+                    .files
+                    .iter()
+                    .filter(|file| missing.contains(&file.digest.to_string()))
+                    .map(|file| grpc::grpc_gen::DeploymentFileContent {
+                        path: file.path.clone(),
+                        digest: Some(file.digest.to_string()),
+                        content: file.bytes.clone(),
+                    })
+                    .collect();
+                submit(files)
+                    .await
+                    .expect("resubmit with blobs failed")
+                    .into_inner()
+            }
+        };
         resp.deployment_id
             .expect("submit_deployment: missing deployment_id")
             .id
@@ -1164,6 +1166,8 @@ impl TestDeployClient {
                         verify: false,
                         description: None,
                         deployment_id: None,
+                        // The mutated active manifest references only blobs already in the CAS.
+                        files: Vec::new(),
                     })
                     .await
                     .unwrap()
@@ -1909,7 +1913,9 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
 }
 
 #[tokio::test]
-async fn submit_deployment_defers_missing_file_upload_and_upload_is_scoped_grpc() {
+async fn submit_deployment_package_validates_before_persisting_grpc() {
+    use prost::Message as _;
+
     let server = TestServer::start(test_addr!(62)).await;
 
     let dir = tempfile::tempdir().unwrap();
@@ -1936,65 +1942,107 @@ ffqn = "testing:integration/deferred.run"
             .await
             .unwrap();
     let expected_digest = prepared.files[0].digest.to_string();
+    let deployment_id = DeploymentId::generate();
+    let grpc_id = GrpcDeploymentId {
+        id: deployment_id.to_string(),
+    };
 
     let mut grpc_client =
         DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
             .await
             .unwrap();
-    let submit_resp = grpc_client
-        .submit_deployment(SubmitDeploymentRequest {
-            deployment_toml: prepared.deployment_toml.clone(),
-            created_by: Some("test".to_string()),
-            verify: true,
-            description: None,
-            deployment_id: None,
-        })
+    let submit = |files, id| {
+        let mut client = grpc_client.clone();
+        let toml = prepared.deployment_toml.clone();
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: toml,
+                    created_by: Some("test".to_string()),
+                    verify: true,
+                    description: None,
+                    deployment_id: Some(id),
+                    files,
+                })
+                .await
+        }
+    };
+
+    // Preflight with no blobs reports the missing file and stores nothing.
+    let status = submit(Vec::new(), grpc_id.clone())
         .await
-        .expect("submit_deployment failed")
-        .into_inner();
-    assert_eq!(submit_resp.missing_digests, vec![expected_digest]);
-    let deployment_id = submit_resp
-        .deployment_id
+        .expect_err("preflight must report the missing file");
+    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details())
+        .expect("must carry SubmitDeploymentErrorDetail");
+    assert_eq!(detail.missing_files.len(), 1);
+    assert_eq!(
+        detail.missing_files[0].digest.as_deref(),
+        Some(expected_digest.as_str())
+    );
+    assert_eq!(detail.missing_files[0].section, "activity_js");
+    grpc_client
         .clone()
-        .expect("submit_deployment: missing deployment_id");
+        .get_deployment(GetDeploymentRequest {
+            deployment_id: Some(grpc_id.clone()),
+        })
+        .await
+        .expect_err("failed preflight must not persist a deployment");
 
-    grpc_client
-        .upload_file(UploadFileRequest {
-            deployment_id: Some(deployment_id.clone()),
+    // An attached blob not referenced by the manifest is rejected as unexpected.
+    let status = submit(
+        vec![grpc::grpc_gen::DeploymentFileContent {
+            path: "deferred.js".to_string(),
+            digest: None,
             content: b"unexpected".to_vec(),
-        })
-        .await
-        .expect_err("unexpected digest must be rejected");
+        }],
+        grpc_id.clone(),
+    )
+    .await
+    .expect_err("unexpected blob must be rejected");
+    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details()).unwrap();
+    assert_eq!(detail.unexpected_files.len(), 1);
 
-    grpc_client
-        .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(deployment_id.clone()),
-            verify: true,
-            hot_redeploy: true,
-        })
-        .await
-        .expect_err("incomplete deployment must not activate");
-
-    grpc_client
-        .upload_file(UploadFileRequest {
-            deployment_id: Some(deployment_id.clone()),
+    // A client-supplied digest that disagrees with the bytes is rejected.
+    let status = submit(
+        vec![grpc::grpc_gen::DeploymentFileContent {
+            path: "deferred.js".to_string(),
+            digest: Some(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+            ),
             content: prepared.files[0].bytes.clone(),
-        })
-        .await
-        .expect("expected upload must succeed");
+        }],
+        grpc_id.clone(),
+    )
+    .await
+    .expect_err("digest mismatch must be rejected");
+    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details()).unwrap();
+    assert_eq!(detail.digest_mismatches.len(), 1);
 
-    let submit_resp = grpc_client
-        .submit_deployment(SubmitDeploymentRequest {
-            deployment_toml: prepared.deployment_toml,
-            created_by: Some("test".to_string()),
-            verify: true,
-            description: None,
-            deployment_id: Some(deployment_id),
+    // Retry with the correct blob persists the complete deployment.
+    let resp = submit(
+        vec![grpc::grpc_gen::DeploymentFileContent {
+            path: "deferred.js".to_string(),
+            digest: Some(expected_digest.clone()),
+            content: prepared.files[0].bytes.clone(),
+        }],
+        grpc_id.clone(),
+    )
+    .await
+    .expect("submit with correct blob must succeed")
+    .into_inner();
+    assert_eq!(
+        resp.deployment_id.expect("deployment_id").id,
+        deployment_id.to_string()
+    );
+
+    // The stored deployment is complete and now exists.
+    grpc_client
+        .get_deployment(GetDeploymentRequest {
+            deployment_id: Some(grpc_id),
         })
         .await
-        .expect("idempotent resubmit failed")
-        .into_inner();
-    assert!(submit_resp.missing_digests.is_empty());
+        .expect("stored deployment must exist");
 
     server.shutdown().await;
 }

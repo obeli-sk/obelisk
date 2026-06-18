@@ -1703,7 +1703,16 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .map(DeploymentId::try_from)
             .transpose()?;
         let mut termination_watcher = self.termination_watcher.clone();
-        let (deployment_id, missing_digests) = Box::pin(server::submit_deployment(
+        let supplied_files = request
+            .files
+            .into_iter()
+            .map(|file| server::SuppliedFile {
+                path: file.path,
+                supplied_digest: file.digest,
+                content: file.content,
+            })
+            .collect();
+        let result = Box::pin(server::submit_deployment(
             self.server_verified.clone(),
             &request.deployment_toml,
             request.verify,
@@ -1711,15 +1720,23 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             request.description.clone(),
             requested_deployment_id,
             &self.prepared_dirs,
+            supplied_files,
             self.db_pool.clone(),
             &mut termination_watcher,
         ))
-        .await
-        .map_err(|err| tonic::Status::failed_precondition(format!("{err:#}")))?;
+        .await;
+        let deployment_id = match result {
+            Ok(deployment_id) => deployment_id,
+            Err(server::SubmitDeploymentError::Other(err)) => {
+                return Err(tonic::Status::failed_precondition(format!("{err:#}")));
+            }
+            Err(server::SubmitDeploymentError::Package(pkg)) => {
+                return Err(submit_package_status(&pkg));
+            }
+        };
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
             deployment_id: Some(deployment_id.into()),
-            missing_digests: missing_digests.iter().map(ToString::to_string).collect(),
         }))
     }
 
@@ -1796,6 +1813,74 @@ fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
         DeploymentStatus::Enqueued => grpc_gen::DeploymentStatus::Enqueued,
         DeploymentStatus::Active => grpc_gen::DeploymentStatus::Active,
     }
+}
+
+fn file_issue_to_grpc(issue: server::SubmitFileIssue) -> grpc_gen::FileIssue {
+    grpc_gen::FileIssue {
+        section: issue.section,
+        component_name: issue.component_name,
+        field_path: issue.field_path,
+        path: issue.path,
+        digest: issue.digest,
+        message: issue.message,
+    }
+}
+
+/// Build a `FAILED_PRECONDITION` status carrying the prost-encoded
+/// `SubmitDeploymentErrorDetail` so non-interactive clients can map the missing
+/// files back to local blobs and retry without persisting an incomplete deployment.
+fn submit_package_status(pkg: &server::SubmitPackageError) -> tonic::Status {
+    use prost::Message as _;
+    let detail = grpc_gen::SubmitDeploymentErrorDetail {
+        missing_digest_fields: pkg
+            .missing_digest_fields
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+        missing_files: pkg
+            .missing_files
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+        unexpected_files: pkg
+            .unexpected_files
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+        digest_mismatches: pkg
+            .digest_mismatches
+            .iter()
+            .cloned()
+            .map(|mismatch| grpc_gen::DigestMismatch {
+                file: Some(file_issue_to_grpc(mismatch.file)),
+                supplied_digest: mismatch.supplied_digest,
+                actual_digest: mismatch.actual_digest,
+            })
+            .collect(),
+        oversized_files: pkg
+            .oversized_files
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+    };
+    let message = format!(
+        "deployment package is incomplete or invalid: {} missing field(s), {} missing file(s), \
+         {} unexpected file(s), {} digest mismatch(es), {} oversized file(s)",
+        detail.missing_digest_fields.len(),
+        detail.missing_files.len(),
+        detail.unexpected_files.len(),
+        detail.digest_mismatches.len(),
+        detail.oversized_files.len(),
+    );
+    tonic::Status::with_details(
+        tonic::Code::FailedPrecondition,
+        message,
+        detail.encode_to_vec().into(),
+    )
 }
 
 fn file_refs_to_grpc(
