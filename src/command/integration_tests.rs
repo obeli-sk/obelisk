@@ -2153,6 +2153,121 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     server.shutdown().await;
 }
 
+/// Phase 6: the REST `POST /v1/deployments` accepts a `multipart/form-data` package
+/// and reports an incomplete package as a structured `409` so the client retries with
+/// the missing blobs attached.
+#[tokio::test]
+async fn submit_deployment_multipart_package_webapi() {
+    let server = TestServer::start(test_addr!(80)).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        dir.path().join("pkg.js"),
+        "export function run() { return 'ok'; }",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[activity_js]]
+name = "pkg"
+location = "pkg.js"
+ffqn = "testing:integration/pkg.run"
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+    let toml = prepared.deployment_toml.clone();
+    let expected_digest = prepared.files[0].digest.to_string();
+    let content = prepared.files[0].bytes.clone();
+    let url = format!("{}/v1/deployments", server.base_url);
+
+    // Preflight with no file parts: incomplete package, stored nothing, lists the missing file.
+    let resp = server
+        .client
+        .post(&url)
+        .header("Accept", "application/json")
+        .multipart(reqwest::multipart::Form::new().text("deployment_toml", toml.clone()))
+        .send()
+        .await
+        .expect("multipart preflight failed");
+    assert_eq!(
+        resp.status().as_u16(),
+        409,
+        "incomplete package must be 409"
+    );
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["missing_files"].as_array().unwrap().len(), 1);
+    assert_eq!(body["missing_files"][0]["digest"], json!(expected_digest));
+    assert_eq!(body["missing_files"][0]["section"], json!("activity_js"));
+
+    // A blob whose supplied digest disagrees with its bytes is reported as a mismatch.
+    let mismatch_part = reqwest::multipart::Part::bytes(content.clone())
+        .file_name("pkg.js")
+        .mime_str("application/octet-stream")
+        .unwrap();
+    let resp = server
+        .client
+        .post(&url)
+        .header("Accept", "application/json")
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("deployment_toml", toml.clone())
+                .part(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    mismatch_part,
+                ),
+        )
+        .send()
+        .await
+        .expect("multipart mismatch submit failed");
+    assert_eq!(resp.status().as_u16(), 409, "digest mismatch must be 409");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["digest_mismatches"].as_array().unwrap().len(), 1);
+
+    // Retry with the correct blob (field name carries the digest): the package is complete.
+    let part = reqwest::multipart::Part::bytes(content)
+        .file_name("pkg.js")
+        .mime_str("application/octet-stream")
+        .unwrap();
+    let resp = server
+        .client
+        .post(&url)
+        .header("Accept", "application/json")
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("deployment_toml", toml)
+                .part(expected_digest.clone(), part),
+        )
+        .send()
+        .await
+        .expect("multipart retry failed");
+    assert_eq!(resp.status().as_u16(), 200, "complete package must succeed");
+    let body: Value = resp.json().await.unwrap();
+    let deployment_id = body["deployment_id"].as_str().expect("deployment_id");
+
+    // The stored deployment now exists and is retrievable.
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/deployments/{deployment_id}",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("get deployment failed");
+    assert_eq!(resp.status().as_u16(), 200, "stored deployment must exist");
+
+    server.shutdown().await;
+}
+
 // ---- Activity: submit + result ----
 
 #[tokio::test]

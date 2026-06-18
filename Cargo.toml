@@ -237,7 +237,7 @@ anyhow = { version = "1.0", features = ["backtrace"] }
 arbitrary = { version = "1.4.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-trait = "0.1"
-axum = { version = "0.8.9", features = ["http2"] }
+axum = { version = "0.8.9", features = ["http2", "multipart"] }
 axum-accept = "0.0.5"
 axum-extra = { version = "0.12.6", features = ["query"] }
 base64 = "0.22.1"
@@ -298,6 +298,7 @@ rand = "0.9"
 refinery = { version = "0.9.2", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
+    "multipart",
     "rustls-no-provider",
 ] }
 rustls = { version = "0.23", default-features = false, features = [

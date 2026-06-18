@@ -339,7 +339,8 @@
         "tags": [
           "deployments"
         ],
-        "summary": "Submit a new deployment",
+        "summary": "Submit a new deployment.",
+        "description": "Accepts either an `application/json` body (no attached file blobs; referenced\nfiles must already exist in the CAS) or a `multipart/form-data` package whose\nparts carry the manifest and the deployment-owned file blobs. On an incomplete\npackage the server stores nothing and returns a `409` `SubmitPackageErrorBody`\nlisting the missing files to attach and retry.",
         "operationId": "submit_deployment",
         "requestBody": {
           "content": {
@@ -366,7 +367,14 @@
             "description": "Invalid config"
           },
           "409": {
-            "description": "Validation failed"
+            "description": "Incomplete or invalid package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitPackageErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -412,6 +420,7 @@
           "deployments"
         ],
         "summary": "Upload a deployment file blob to the content-addressed store. The request body is the\nraw file content; the response is the server-computed content digest. The digest must be\nreferenced by the deployment.",
+        "description": "Deprecated: attach file blobs to a `multipart/form-data` `POST /v1/deployments`\npackage instead. Retained as admin CAS tooling.",
         "operationId": "upload_file",
         "parameters": [
           {
@@ -2220,6 +2229,25 @@
           }
         }
       },
+      "DigestMismatch": {
+        "type": "object",
+        "required": [
+          "file",
+          "supplied_digest",
+          "actual_digest"
+        ],
+        "properties": {
+          "actual_digest": {
+            "type": "string"
+          },
+          "file": {
+            "$ref": "#/components/schemas/FileIssue"
+          },
+          "supplied_digest": {
+            "type": "string"
+          }
+        }
+      },
       "ExecutionEventsResponse": {
         "type": "object",
         "description": "Response containing execution events",
@@ -2365,6 +2393,44 @@
           "pending_state": {
             "type": "object",
             "description": "Current pending state of the execution"
+          }
+        }
+      },
+      "FileIssue": {
+        "type": "object",
+        "description": "A single file-set problem found while validating a submit package.",
+        "required": [
+          "section",
+          "field_path",
+          "message"
+        ],
+        "properties": {
+          "component_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "field_path": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "section": {
+            "type": "string"
           }
         }
       },
@@ -2747,6 +2813,49 @@
           },
           "result": {
             "type": "object"
+          }
+        }
+      },
+      "SubmitPackageErrorBody": {
+        "type": "object",
+        "description": "Structured `409` body describing why a submit package was rejected. No\ndeployment is stored when this is returned. A client retries the same submit\nwith the `missing_files` blobs attached.",
+        "required": [
+          "missing_digest_fields",
+          "missing_files",
+          "unexpected_files",
+          "digest_mismatches",
+          "oversized_files"
+        ],
+        "properties": {
+          "digest_mismatches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestMismatch"
+            }
+          },
+          "missing_digest_fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
+          },
+          "missing_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
+          },
+          "oversized_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
+          },
+          "unexpected_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
           }
         }
       }
