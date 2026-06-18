@@ -1033,6 +1033,8 @@ message ListDeploymentsRequest {
     bool include_derived = 4;
     // Populate `DeploymentSummary.execution_summary`.
     bool include_execution_counts = 5;
+    // Populate `DeploymentSummary.component_summary`.
+    bool include_component_summary = 6;
 }
 
 enum DeploymentStatus {
@@ -1040,6 +1042,29 @@ enum DeploymentStatus {
     DEPLOYMENT_STATUS_INACTIVE = 1;
     DEPLOYMENT_STATUS_ENQUEUED = 2;
     DEPLOYMENT_STATUS_ACTIVE = 3;
+}
+
+enum DeploymentComponentType {
+    DEPLOYMENT_COMPONENT_TYPE_UNSPECIFIED = 0;
+    DEPLOYMENT_COMPONENT_TYPE_WORKFLOW_WASM = 1;
+    DEPLOYMENT_COMPONENT_TYPE_WORKFLOW_JS = 2;
+    DEPLOYMENT_COMPONENT_TYPE_ACTIVITY_WASM = 3;
+    DEPLOYMENT_COMPONENT_TYPE_ACTIVITY_JS = 4;
+    DEPLOYMENT_COMPONENT_TYPE_ACTIVITY_EXEC = 5;
+    DEPLOYMENT_COMPONENT_TYPE_ACTIVITY_STUB = 6;
+    DEPLOYMENT_COMPONENT_TYPE_ACTIVITY_EXTERNAL = 7;
+    DEPLOYMENT_COMPONENT_TYPE_WEBHOOK_ENDPOINT_WASM = 8;
+    DEPLOYMENT_COMPONENT_TYPE_WEBHOOK_ENDPOINT_JS = 9;
+    DEPLOYMENT_COMPONENT_TYPE_CRON = 10;
+}
+
+message DeploymentComponentCount {
+    DeploymentComponentType component_type = 1;
+    uint32 count = 2;
+}
+
+message DeploymentComponentSummary {
+    repeated DeploymentComponentCount components = 1;
 }
 
 // Execution counts use disjoint buckets: a paused execution is counted only in
@@ -1084,6 +1109,7 @@ message DeploymentSummary {
     reserved 2, 3, 4, 5, 6, 7, 8, 9, 10; // formerly execution count fields
     Deployment deployment = 1;
     optional DeploymentExecutionSummary execution_summary = 11;
+    optional DeploymentComponentSummary component_summary = 12;
 }
 
 message ListDeploymentsResponse {

@@ -114,6 +114,7 @@ impl args::Deployment {
                         pagination: None,
                         include_deployment_toml: false,
                         include_execution_counts: false,
+                        include_component_summary: false,
                         include_derived: false,
                     })
                     .await?
