@@ -1522,6 +1522,11 @@ pub trait DbExternalApi: DbConnection {
         deployment_id: DeploymentId,
     ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead>;
 
+    /// Delete content-addressed file blobs not referenced by any stored deployment,
+    /// returning the number deleted. Such orphans are left behind when a submit writes
+    /// blobs to the store and then fails verification before persisting the deployment.
+    async fn gc_orphan_files(&self) -> Result<u64, DbErrorWrite>;
+
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,

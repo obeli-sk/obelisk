@@ -209,7 +209,7 @@ pub(crate) fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), 
 pub(crate) fn generate_deployment_canonical_schema(
     output: Option<PathBuf>,
 ) -> Result<(), anyhow::Error> {
-    write_schema::<crate::config::toml::DeploymentCanonical>(output)
+    write_schema::<crate::config::toml::DeploymentResolved>(output)
 }
 
 #[cfg(debug_assertions)]

@@ -53,18 +53,17 @@ use wasm_workers::{
 use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
 
 pub(crate) use deployment_config::config::{
-    ActivityExecComponentConfigCanonical, ActivityExternalComponentConfigCanonical,
-    ActivityExternalFileConfigToml, ActivityJsComponentConfigCanonical,
-    ActivityStubComponentConfigCanonical, ActivityStubExtInlineConfigCanonical,
+    ActivityExecComponentConfigResolved, ActivityExternalComponentConfigResolved,
+    ActivityExternalFileConfigToml, ActivityJsComponentConfigResolved,
+    ActivityStubComponentConfigResolved, ActivityStubExtInlineConfigResolved,
     ActivityStubFileConfigToml, ActivityWasmComponentConfigToml, AllowedHostToml,
-    BacktraceSourceCanonical, BlockingStrategyConfigToml, ComponentBacktraceConfigCanonical,
-    ComponentCommon, ComponentLocationToml, ComponentStdOutputToml, ConfigName,
-    DeploymentCanonical, DurationConfig, DurationConfigOptional, ExecConfigToml, ExecSecretsToml,
-    InflightSemaphore, JsParamToml, LockingStrategy, LogLevelToml, MethodsInput, MethodsInputStar,
-    OCI_SCHEMA_PREFIX, ReplaceIn, ScriptLocationCanonical, Unlimited,
-    WorkflowJsComponentConfigCanonical, WorkflowWasmComponentConfigCanonical,
-    default_lock_extension, default_max_output_bytes, default_max_retries,
-    default_retry_exp_backoff,
+    BacktraceSourceResolved, BlockingStrategyConfigToml, ComponentBacktraceConfigResolved,
+    ComponentCommon, ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentResolved,
+    DurationConfig, DurationConfigOptional, ExecConfigToml, ExecSecretsToml, InflightSemaphore,
+    JsParamToml, LockingStrategy, LogLevelToml, MethodsInput, MethodsInputStar, OCI_SCHEMA_PREFIX,
+    ReplaceIn, ScriptLocationResolved, Unlimited, WorkflowJsComponentConfigResolved,
+    WorkflowWasmComponentConfigResolved, default_lock_extension, default_max_output_bytes,
+    default_max_retries, default_retry_exp_backoff,
 };
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
@@ -131,7 +130,7 @@ pub(crate) struct DeploymentTomlValidated {
     pub(crate) deployment_dir: PathBuf,
 }
 impl DeploymentTomlValidated {
-    pub(crate) async fn canonicalize(self) -> Result<DeploymentCanonical, anyhow::Error> {
+    pub(crate) async fn canonicalize(self) -> Result<DeploymentResolved, anyhow::Error> {
         let provider = DiskProvider {
             deployment_dir: self.deployment_dir.clone(),
         };
@@ -141,7 +140,7 @@ impl DeploymentTomlValidated {
     pub(crate) async fn canonicalize_with_provider(
         self,
         provider: &dyn FileProvider,
-    ) -> Result<DeploymentCanonical, anyhow::Error> {
+    ) -> Result<DeploymentResolved, anyhow::Error> {
         resolve_local_refs_to_canonical(self, provider).await
     }
 }
@@ -318,17 +317,16 @@ impl DeploymentToml {
 
     /// Resolve a WASM component file path to an absolute path. A `${DEPLOYMENT_DIR}/<suffix>`
     /// path and a bare relative path are both anchored to the deployment directory and must
-    /// stay within it (no `..` escape); an absolute path is left untouched (out-of-tree
-    /// reference). This makes every relative path in a deployment.toml deployment-relative.
+    /// stay within it (no `..` escape); authored absolute paths are rejected. This makes every
+    /// path in a deployment.toml deployment-relative.
     fn expand_deployment_dir(
         s: &mut String,
         deployment_dir: &std::path::Path,
     ) -> anyhow::Result<()> {
-        // A `${DEPLOYMENT_DIR}/x` path and a bare relative `x` are equivalent; only an
-        // absolute path is left untouched (out-of-tree reference).
+        // A `${DEPLOYMENT_DIR}/x` path and a bare relative `x` are equivalent.
         let candidate = strip_deployment_dir_prefix(s).unwrap_or(s.as_str());
         if std::path::Path::new(candidate).is_absolute() {
-            return Ok(());
+            bail!("absolute local paths are not allowed in deployment manifests: `{s}`");
         }
         let rel = sanitize_deployment_relative_path(candidate)
             .with_context(|| format!("invalid deployment-relative path `{s}`"))?;
@@ -399,10 +397,9 @@ impl DeploymentToml {
             }
         }
         // Script (JS/exec) locations and backtrace sources are NOT expanded here. Their
-        // `${DEPLOYMENT_DIR}` prefix and relative-vs-absolute classification are handled
-        // when resolving to canonical (`resolve_script_toml_to_canonical` /
-        // `resolve_backtrace_to_canonical`), so deployment-owned files (relative, mirrored)
-        // are distinguished from external references (absolute).
+        // `${DEPLOYMENT_DIR}` prefix is handled when resolving to canonical
+        // (`resolve_script_toml_to_canonical` / `resolve_backtrace_to_canonical`), so
+        // deployment-owned files preserve deployment-relative names.
         for c in &mut self.workflows_wasm {
             expand_loc(&mut c.common.location, deployment_dir)?;
         }
@@ -883,7 +880,7 @@ impl HasOptionalNameAndFfqn for ActivityStubExtInlineConfigToml {
 
 /// Location of a JavaScript source file.
 /// Supports local file paths and OCI registry references (`oci://...`).
-/// On-disk format only; replaced by [`ScriptLocationCanonical`] before transmission and hash computation.
+/// On-disk format only; replaced by [`ScriptLocationResolved`] before transmission and hash computation.
 #[derive(Debug, Clone, Hash, JsonSchema, SerializeDisplay, DeserializeFromStr)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
@@ -1081,7 +1078,7 @@ pub(crate) enum ActivityStubConfigVerified {
     Inline(ActivityStubExtInlineConfigVerified),
 }
 
-pub(crate) trait ActivityStubComponentConfigCanonicalExt {
+pub(crate) trait ActivityStubComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -1089,7 +1086,7 @@ pub(crate) trait ActivityStubComponentConfigCanonicalExt {
     ) -> Result<ActivityStubConfigVerified, anyhow::Error>;
 }
 
-impl ActivityStubComponentConfigCanonicalExt for ActivityStubComponentConfigCanonical {
+impl ActivityStubComponentConfigResolvedExt for ActivityStubComponentConfigResolved {
     #[instrument(skip_all, fields(component_name = self.name_str(), component_id))]
     async fn fetch_and_verify(
         self,
@@ -1195,7 +1192,7 @@ pub(crate) enum ActivityExternalConfigVerified {
     Inline(ActivityStubExtInlineConfigVerified),
 }
 
-pub(crate) trait ActivityExternalComponentConfigCanonicalExt {
+pub(crate) trait ActivityExternalComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -1203,7 +1200,7 @@ pub(crate) trait ActivityExternalComponentConfigCanonicalExt {
     ) -> Result<ActivityExternalConfigVerified, anyhow::Error>;
 }
 
-impl ActivityExternalComponentConfigCanonicalExt for ActivityExternalComponentConfigCanonical {
+impl ActivityExternalComponentConfigResolvedExt for ActivityExternalComponentConfigResolved {
     #[instrument(skip_all, fields(component_name = self.name_str(), component_id))]
     async fn fetch_and_verify(
         self,
@@ -1529,7 +1526,7 @@ pub(crate) struct ResolvedExecProgram {
     pub(crate) source_bytes: Vec<u8>,
 }
 
-pub(crate) trait ActivityExecComponentConfigCanonicalExt {
+pub(crate) trait ActivityExecComponentConfigResolvedExt {
     async fn resolve(
         &self,
         wasm_cache_dir: &std::path::Path,
@@ -1542,14 +1539,14 @@ pub(crate) trait ActivityExecComponentConfigCanonicalExt {
     ) -> Result<ActivityExecConfigVerified, anyhow::Error>;
 }
 
-impl ActivityExecComponentConfigCanonicalExt for ActivityExecComponentConfigCanonical {
+impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResolved {
     /// Resolve the canonical program to a form the worker can execute.
     async fn resolve(
         &self,
         wasm_cache_dir: &std::path::Path,
     ) -> anyhow::Result<ResolvedExecProgram> {
         match &self.location {
-            ScriptLocationCanonical::Content { content, .. } => {
+            ScriptLocationResolved::Content { content, .. } => {
                 if let Some(expected) = self.content_digest.as_ref() {
                     let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
                     let actual = ContentDigest(Digest(hash));
@@ -1563,7 +1560,8 @@ impl ActivityExecComponentConfigCanonicalExt for ActivityExecComponentConfigCano
                     source_bytes: content.as_bytes().to_vec(),
                 })
             }
-            ScriptLocationCanonical::ExternalPath { path } => {
+            // Legacy/internal canonical form; new deployment TOML cannot author absolute paths.
+            ScriptLocationResolved::ExternalPath { path } => {
                 let full_path = PathBuf::from(path);
                 let content = tokio::fs::read_to_string(&full_path)
                     .await
@@ -1581,7 +1579,7 @@ impl ActivityExecComponentConfigCanonicalExt for ActivityExecComponentConfigCano
                     source_bytes: content.into_bytes(),
                 })
             }
-            ScriptLocationCanonical::Oci { image } => {
+            ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)
                     .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
                 let exec_cache_dir = wasm_cache_dir.join("exec");
@@ -1874,9 +1872,9 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
     /// Maps a frame-symbol key to a backtrace source file path. On-disk format only;
-    /// resolved to `ComponentBacktraceConfigCanonical` before transmission and hash
+    /// resolved to `ComponentBacktraceConfigResolved` before transmission and hash
     /// computation. A relative path is deployment-dir-relative (a leading
-    /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); an absolute path is out-of-tree.
+    /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, BacktraceSourceToml>")]
     pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceToml>,
@@ -1919,7 +1917,7 @@ pub(crate) struct JsContent {
     pub(crate) file_name: String,
 }
 
-pub(crate) trait JsLocationCanonicalExt {
+pub(crate) trait JsLocationResolvedExt {
     async fn get_content(
         &self,
         wasm_cache_dir: &Path,
@@ -1927,10 +1925,10 @@ pub(crate) trait JsLocationCanonicalExt {
     ) -> anyhow::Result<JsContent>;
 }
 
-impl JsLocationCanonicalExt for ScriptLocationCanonical {
+impl JsLocationResolvedExt for ScriptLocationResolved {
     /// Return the JS source content and file name.
     /// For `Content`, returns them directly (validating digest if provided).
-    /// For `Path`, reads the external file at runtime (validating digest if provided).
+    /// For legacy/internal `ExternalPath`, reads the file at runtime (validating digest if provided).
     /// For `Oci`, pulls from the registry (or cache) under `wasm_cache_dir/js/`.
     async fn get_content(
         &self,
@@ -1938,7 +1936,7 @@ impl JsLocationCanonicalExt for ScriptLocationCanonical {
         expected_digest: Option<&ContentDigest>,
     ) -> anyhow::Result<JsContent> {
         match self {
-            ScriptLocationCanonical::Content { content, file_name } => {
+            ScriptLocationResolved::Content { content, file_name } => {
                 if let Some(expected) = expected_digest {
                     let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
                     let actual = ContentDigest(Digest(hash));
@@ -1947,12 +1945,21 @@ impl JsLocationCanonicalExt for ScriptLocationCanonical {
                         "content digest mismatch for inline JS `{file_name}`: expected {expected}, got {actual}"
                     );
                 }
+                // Report the basename to the JS engine so stack frames (and the source
+                // lookup keyed by them) use the bare file name, matching the `ExternalPath`
+                // and `Oci` variants. The canonical `file_name` keeps its deployment-relative
+                // subpath for `deployment get` export.
+                let file_name = std::path::Path::new(file_name)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(file_name)
+                    .to_string();
                 Ok(JsContent {
                     source: content.clone(),
-                    file_name: file_name.clone(),
+                    file_name,
                 })
             }
-            ScriptLocationCanonical::ExternalPath { path } => {
+            ScriptLocationResolved::ExternalPath { path } => {
                 let full_path = PathBuf::from(path);
                 let source = tokio::fs::read_to_string(&full_path)
                     .await
@@ -1972,7 +1979,7 @@ impl JsLocationCanonicalExt for ScriptLocationCanonical {
                     .to_string();
                 Ok(JsContent { source, file_name })
             }
-            ScriptLocationCanonical::Oci { image } => {
+            ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)
                     .map_err(|e| anyhow::anyhow!("invalid OCI reference in canonical form: {e}"))?;
                 let js_cache_dir = wasm_cache_dir.join("js");
@@ -2027,9 +2034,9 @@ impl WorkflowConfigVerified {
     }
 }
 
-// Canonical component config types live in the `deployment-config` crate.
+// Resolved component config types live in the `deployment-config` crate.
 
-pub(crate) trait ActivityJsComponentConfigCanonicalExt {
+pub(crate) trait ActivityJsComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
         wasm_path: Arc<Path>,
@@ -2040,7 +2047,7 @@ pub(crate) trait ActivityJsComponentConfigCanonicalExt {
     ) -> Result<ActivityJsConfigVerified, anyhow::Error>;
 }
 
-impl ActivityJsComponentConfigCanonicalExt for ActivityJsComponentConfigCanonical {
+impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved {
     #[instrument(skip_all, fields(component_name = self.name.as_str()))]
     async fn fetch_and_verify(
         self,
@@ -2136,7 +2143,7 @@ impl ActivityJsComponentConfigCanonicalExt for ActivityJsComponentConfigCanonica
     }
 }
 
-pub(crate) trait WorkflowWasmComponentConfigCanonicalExt {
+pub(crate) trait WorkflowWasmComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -2148,7 +2155,7 @@ pub(crate) trait WorkflowWasmComponentConfigCanonicalExt {
     ) -> Result<WorkflowConfigVerified, anyhow::Error>;
 }
 
-impl WorkflowWasmComponentConfigCanonicalExt for WorkflowWasmComponentConfigCanonical {
+impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResolved {
     #[instrument(skip_all, fields(component_name = self.common.name.as_str()))]
     async fn fetch_and_verify(
         self,
@@ -2217,7 +2224,7 @@ impl WorkflowWasmComponentConfigCanonicalExt for WorkflowWasmComponentConfigCano
     }
 }
 
-pub(crate) trait WorkflowJsComponentConfigCanonicalExt {
+pub(crate) trait WorkflowJsComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
         wasm_path: Arc<Path>,
@@ -2226,7 +2233,7 @@ pub(crate) trait WorkflowJsComponentConfigCanonicalExt {
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error>;
 }
 
-impl WorkflowJsComponentConfigCanonicalExt for WorkflowJsComponentConfigCanonical {
+impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved {
     #[instrument(skip_all, fields(component_name = self.name.as_str()))]
     async fn fetch_and_verify(
         self,
@@ -2317,16 +2324,16 @@ impl WorkflowJsComponentConfigCanonicalExt for WorkflowJsComponentConfigCanonica
     }
 }
 
-/// Resolve a `DeploymentToml` to `DeploymentCanonical` by reading all local JS and backtrace
+/// Resolve a `DeploymentToml` to `DeploymentResolved` by reading all local JS and backtrace
 /// source files.
 async fn resolve_local_refs_to_canonical(
     deployment: DeploymentTomlValidated,
     provider: &dyn FileProvider,
-) -> anyhow::Result<DeploymentCanonical> {
+) -> anyhow::Result<DeploymentResolved> {
     let deployment_dir = deployment.deployment_dir.clone();
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
     for (a, name) in deployment.activities_js {
-        activities_js.push(ActivityJsComponentConfigCanonical {
+        activities_js.push(ActivityJsComponentConfigResolved {
             location: resolve_script_toml_to_canonical(
                 a.location,
                 a.content,
@@ -2355,7 +2362,7 @@ async fn resolve_local_refs_to_canonical(
 
     let mut workflows_wasm = Vec::with_capacity(deployment.workflows_wasm.len());
     for w in deployment.workflows_wasm {
-        workflows_wasm.push(WorkflowWasmComponentConfigCanonical {
+        workflows_wasm.push(WorkflowWasmComponentConfigResolved {
             common: w.common,
             content_digest: w.content_digest,
             component_digest: w.component_digest,
@@ -2372,7 +2379,7 @@ async fn resolve_local_refs_to_canonical(
 
     let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
     for (w, name) in deployment.workflows_js {
-        workflows_js.push(WorkflowJsComponentConfigCanonical {
+        workflows_js.push(WorkflowJsComponentConfigResolved {
             location: resolve_script_toml_to_canonical(
                 w.location,
                 w.content,
@@ -2398,7 +2405,7 @@ async fn resolve_local_refs_to_canonical(
 
     let mut webhooks_wasm = Vec::with_capacity(deployment.webhooks_wasm.len());
     for w in deployment.webhooks_wasm {
-        webhooks_wasm.push(webhook::WebhookWasmComponentConfigCanonical {
+        webhooks_wasm.push(webhook::WebhookWasmComponentConfigResolved {
             common: w.common,
             content_digest: w.content_digest,
             http_server: w.http_server,
@@ -2415,7 +2422,7 @@ async fn resolve_local_refs_to_canonical(
 
     let mut webhooks_js = Vec::with_capacity(deployment.webhooks_js.len());
     for w in deployment.webhooks_js {
-        webhooks_js.push(webhook::WebhookJsComponentConfigCanonical {
+        webhooks_js.push(webhook::WebhookJsComponentConfigResolved {
             location: resolve_script_toml_to_canonical(
                 w.location,
                 w.content,
@@ -2448,7 +2455,7 @@ async fn resolve_local_refs_to_canonical(
             a.content_digest.as_ref(),
         )
         .await?;
-        activities_exec.push(ActivityExecComponentConfigCanonical {
+        activities_exec.push(ActivityExecComponentConfigResolved {
             name,
             location,
             content_digest: a.content_digest,
@@ -2474,10 +2481,10 @@ async fn resolve_local_refs_to_canonical(
         .into_iter()
         .map(|(c, name)| match c {
             ActivityStubComponentConfigToml::File(f) => {
-                ActivityStubComponentConfigCanonical::File(f)
+                ActivityStubComponentConfigResolved::File(f)
             }
             ActivityStubComponentConfigToml::Inline(i) => {
-                ActivityStubComponentConfigCanonical::Inline(ActivityStubExtInlineConfigCanonical {
+                ActivityStubComponentConfigResolved::Inline(ActivityStubExtInlineConfigResolved {
                     name,
                     ffqn: i.ffqn,
                     params: i.params,
@@ -2491,11 +2498,11 @@ async fn resolve_local_refs_to_canonical(
         .into_iter()
         .map(|(c, name)| match c {
             ActivityExternalComponentConfigToml::File(f) => {
-                ActivityExternalComponentConfigCanonical::File(f)
+                ActivityExternalComponentConfigResolved::File(f)
             }
             ActivityExternalComponentConfigToml::Inline(i) => {
-                ActivityExternalComponentConfigCanonical::Inline(
-                    ActivityStubExtInlineConfigCanonical {
+                ActivityExternalComponentConfigResolved::Inline(
+                    ActivityStubExtInlineConfigResolved {
                         name,
                         ffqn: i.ffqn,
                         params: i.params,
@@ -2506,7 +2513,7 @@ async fn resolve_local_refs_to_canonical(
         })
         .collect();
 
-    let canonical = DeploymentCanonical {
+    let canonical = DeploymentResolved {
         activities_wasm: deployment.activities_wasm,
         activities_stub,
         activities_external,
@@ -2528,7 +2535,7 @@ async fn resolve_local_refs_to_canonical(
 /// retrieved with `deployment get`, which writes every owned source to disk at its
 /// `file_name` and refuses to clobber. Identical re-uses of a name are allowed (they dedupe
 /// to a single file). This surfaces the failure at submit time rather than on a later round-trip.
-fn validate_owned_source_file_names(canonical: &DeploymentCanonical) -> anyhow::Result<()> {
+fn validate_owned_source_file_names(canonical: &DeploymentResolved) -> anyhow::Result<()> {
     fn register<'a>(
         seen: &mut HashMap<&'a str, &'a str>,
         file_name: &'a str,
@@ -2555,7 +2562,7 @@ fn validate_owned_source_file_names(canonical: &DeploymentCanonical) -> anyhow::
         .chain(canonical.workflows_js.iter().map(|c| &c.location))
         .chain(canonical.webhooks_js.iter().map(|c| &c.location));
     for loc in script_locations {
-        if let ScriptLocationCanonical::Content { content, file_name } = loc {
+        if let ScriptLocationResolved::Content { content, file_name } = loc {
             register(&mut seen, file_name, content)?;
         }
     }
@@ -2608,39 +2615,16 @@ pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<Str
     Ok(parts.join("/"))
 }
 
-/// Mirror an absolute path into a safe relative subpath by dropping the root/drive prefix
-/// and keeping the remaining components (e.g. `/home/u/p/src/lib.rs` → `home/u/p/src/lib.rs`).
-/// Rejects `..`. Used to recreate absolute-sourced backtrace files self-contained under the
-/// output directory (their content is captured in the canonical, so this round-trips).
-fn mirror_path_as_relative(path: &str) -> anyhow::Result<String> {
-    use std::path::Component;
-    let mut parts: Vec<&str> = Vec::new();
-    for comp in std::path::Path::new(path).components() {
-        match comp {
-            Component::Normal(s) => parts.push(
-                s.to_str()
-                    .with_context(|| format!("non-UTF8 path component in `{path}`"))?,
-            ),
-            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
-            Component::ParentDir => {
-                bail!("backtrace source path must not contain `..`: `{path}`")
-            }
-        }
-    }
-    ensure!(!parts.is_empty(), "empty backtrace source path: `{path}`");
-    Ok(parts.join("/"))
-}
-
 /// Resolve a script source (JS or exec) TOML location to its canonical form.
 ///
 /// - inline `content` → `Content { content, file_name: default_file_name }` (owned).
 /// - a **relative** `Path` (bare, or `${DEPLOYMENT_DIR}/…`) → read + inline as `Content`,
 ///   with `file_name` preserving the deployment-relative subpath (owned). `..` escapes error.
-/// - an **absolute** `Path` → `Path { path }` (external; read at runtime, not recreated).
+/// - an **absolute** `Path` → rejected.
 /// - an `Oci` reference → `Oci { image }`.
 ///
 /// When `content_digest` is set it is verified here against the relevant bytes (inline
-/// content, the owned file, or the external file). `Oci` digests are verified at runtime.
+/// content or the owned file). `Oci` digests are verified at runtime.
 async fn resolve_script_toml_to_canonical(
     location: Option<JsLocationToml>,
     content: Option<String>,
@@ -2648,38 +2632,30 @@ async fn resolve_script_toml_to_canonical(
     _deployment_dir: &Path,
     provider: &dyn FileProvider,
     content_digest: Option<&ContentDigest>,
-) -> anyhow::Result<ScriptLocationCanonical> {
+) -> anyhow::Result<ScriptLocationResolved> {
     match (location, content) {
         (None, Some(content)) => {
             verify_content_digest(content.as_bytes(), content_digest, &default_file_name)?;
-            Ok(ScriptLocationCanonical::Content {
+            Ok(ScriptLocationResolved::Content {
                 content,
                 file_name: default_file_name,
             })
         }
         (Some(JsLocationToml::Path(path)), None) => {
             if std::path::Path::new(&path).is_absolute() {
-                // External reference: verify digest against its bytes if set.
-                if content_digest.is_some() {
-                    let bytes = tokio::fs::read(&path)
-                        .await
-                        .with_context(|| format!("cannot read external script file {path:?}"))?;
-                    verify_content_digest(&bytes, content_digest, &path)?;
-                }
-                Ok(ScriptLocationCanonical::ExternalPath { path })
-            } else {
-                let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
-                let path = sanitize_deployment_relative_path(path)?;
-                let content = provider.read(&path, content_digest).await?;
-                let content = String::from_utf8(content)
-                    .with_context(|| format!("script file {path:?} is not valid UTF-8"))?;
-                Ok(ScriptLocationCanonical::Content {
-                    content,
-                    file_name: path,
-                })
+                bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
             }
+            let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
+            let path = sanitize_deployment_relative_path(path)?;
+            let content = provider.read(&path, content_digest).await?;
+            let content = String::from_utf8(content)
+                .with_context(|| format!("script file {path:?} is not valid UTF-8"))?;
+            Ok(ScriptLocationResolved::Content {
+                content,
+                file_name: path,
+            })
         }
-        (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationCanonical::Oci {
+        (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationResolved::Oci {
             image: reference.to_string(),
         }),
         (None, None) | (Some(_), Some(_)) => {
@@ -2690,59 +2666,40 @@ async fn resolve_script_toml_to_canonical(
 
 async fn resolve_backtrace_to_canonical(
     backtrace: &ComponentBacktraceConfig,
-    deployment_dir: &Path,
+    _deployment_dir: &Path,
     provider: &dyn FileProvider,
-) -> anyhow::Result<ComponentBacktraceConfigCanonical> {
+) -> anyhow::Result<ComponentBacktraceConfigResolved> {
     let mut frame_files_to_sources = HashMap::new();
     for (key, source) in &backtrace.frame_files_to_sources {
         let path = source.path();
         let content_digest = source.content_digest();
         // Classify the source path like a script: a relative path (bare or
-        // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on
-        // export; an absolute path is recreated self-contained under a root-stripped mirror.
-        let (full_path, file_name, owned_rel_path) =
-            if let Some(rest) = strip_deployment_dir_prefix(path) {
-                let rel = sanitize_deployment_relative_path(rest)?;
-                (deployment_dir.join(&rel), rel.clone(), Some(rel))
-            } else if std::path::Path::new(path).is_absolute() {
-                // Captured content is recreated self-contained under a root-stripped mirror.
-                (PathBuf::from(path), mirror_path_as_relative(path)?, None)
-            } else {
-                let rel = sanitize_deployment_relative_path(path)?;
-                (deployment_dir.join(&rel), rel.clone(), Some(rel))
-            };
-        let content = if let Some(rel) = owned_rel_path {
-            provider.read(&rel, content_digest).await.and_then(|bytes| {
-                String::from_utf8(bytes)
-                    .with_context(|| format!("backtrace source {rel:?} is not valid UTF-8"))
-            })
+        // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on export.
+        let file_name = if let Some(rest) = strip_deployment_dir_prefix(path) {
+            sanitize_deployment_relative_path(rest)?
+        } else if std::path::Path::new(path).is_absolute() {
+            bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
         } else {
-            if !full_path.exists() {
-                warn!("Ignoring missing backtrace source - file does not exist: {full_path:?}");
-                continue;
-            }
-            match tokio::fs::read(&full_path).await {
-                Ok(bytes) => verify_content_digest(&bytes, content_digest, path).and_then(|()| {
-                    String::from_utf8(bytes).with_context(|| {
-                        format!("backtrace source {full_path:?} is not valid UTF-8")
-                    })
-                }),
-                Err(err) => {
-                    Err(err).with_context(|| format!("cannot read backtrace source {full_path:?}"))
-                }
-            }
+            sanitize_deployment_relative_path(path)?
         };
+        let content = provider
+            .read(&file_name, content_digest)
+            .await
+            .and_then(|bytes| {
+                String::from_utf8(bytes)
+                    .with_context(|| format!("backtrace source {file_name:?} is not valid UTF-8"))
+            });
         match content {
             Ok(content) => {
                 frame_files_to_sources
-                    .insert(key.clone(), BacktraceSourceCanonical { content, file_name });
+                    .insert(key.clone(), BacktraceSourceResolved { content, file_name });
             }
             Err(err) => {
-                warn!("Cannot read backtrace source {full_path:?} - {err:?}");
+                warn!("Cannot read backtrace source {file_name:?} - {err:?}");
             }
         }
     }
-    Ok(ComponentBacktraceConfigCanonical {
+    Ok(ComponentBacktraceConfigResolved {
         frame_files_to_sources,
     })
 }
@@ -3022,7 +2979,7 @@ pub(crate) mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentCommonFetchExt,
         ComponentStdOutputToml, ComponentStdOutputTomlExt, ConfigName, JsContent,
-        JsLocationCanonicalExt, JsLocationToml, LogLevelTomlExt, resolve_allowed_hosts,
+        JsLocationResolvedExt, JsLocationToml, LogLevelTomlExt, resolve_allowed_hosts,
         resolve_env_vars_plaintext, validate_no_env_collision,
     };
     use crate::command::server::FrameFilesToSourceContent;
@@ -3034,8 +2991,8 @@ pub(crate) mod webhook {
         storage::LogLevel,
     };
     pub(crate) use deployment_config::config::webhook::{
-        WebhookJsComponentConfigCanonical, WebhookRoute, WebhookRouteDetail,
-        WebhookWasmComponentConfigCanonical, default_external_server_name,
+        WebhookJsComponentConfigResolved, WebhookRoute, WebhookRouteDetail,
+        WebhookWasmComponentConfigResolved, default_external_server_name,
     };
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -3187,7 +3144,7 @@ pub(crate) mod webhook {
         }
     }
 
-    pub(crate) trait WebhookWasmComponentConfigCanonicalExt {
+    pub(crate) trait WebhookWasmComponentConfigResolvedExt {
         async fn fetch_and_verify(
             self,
             wasm_cache_dir: Arc<Path>,
@@ -3197,7 +3154,7 @@ pub(crate) mod webhook {
         ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error>;
     }
 
-    impl WebhookWasmComponentConfigCanonicalExt for WebhookWasmComponentConfigCanonical {
+    impl WebhookWasmComponentConfigResolvedExt for WebhookWasmComponentConfigResolved {
         #[instrument(skip_all, fields(component_name = self.common.name.as_str()), err)]
         async fn fetch_and_verify(
             self,
@@ -3246,7 +3203,7 @@ pub(crate) mod webhook {
         }
     }
 
-    pub(crate) trait WebhookJsComponentConfigCanonicalExt {
+    pub(crate) trait WebhookJsComponentConfigResolvedExt {
         async fn fetch_and_verify(
             self,
             wasm_path: Arc<Path>,
@@ -3255,7 +3212,7 @@ pub(crate) mod webhook {
         ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error>;
     }
 
-    impl WebhookJsComponentConfigCanonicalExt for WebhookJsComponentConfigCanonical {
+    impl WebhookJsComponentConfigResolvedExt for WebhookJsComponentConfigResolved {
         #[instrument(skip_all, fields(component_name = self.name.as_str()))]
         async fn fetch_and_verify(
             self,
@@ -3888,7 +3845,7 @@ name = "my_stub"
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("stub.wasm");
             tokio::fs::write(&path, b"actual").await.unwrap();
-            let stub = ActivityStubComponentConfigCanonical::File(ActivityStubFileConfigToml {
+            let stub = ActivityStubComponentConfigResolved::File(ActivityStubFileConfigToml {
                 common: ComponentCommon {
                     name: ConfigName::new(StrVariant::from("my_stub")).unwrap(),
                     location: ComponentLocationToml::Path(path.to_string_lossy().into_owned()),
@@ -3915,10 +3872,10 @@ name = "my_stub"
 
         use super::super::*;
 
-        fn exec_config_with_secret(value: &str) -> ActivityExecComponentConfigCanonical {
-            ActivityExecComponentConfigCanonical {
+        fn exec_config_with_secret(value: &str) -> ActivityExecComponentConfigResolved {
+            ActivityExecComponentConfigResolved {
                 name: ConfigName::new(StrVariant::from("exec-test")).unwrap(),
-                location: ScriptLocationCanonical::Content {
+                location: ScriptLocationResolved::Content {
                     content: "#!/usr/bin/env bash\necho null\n".into(),
                     file_name: "exec-test".into(),
                 },
@@ -3945,10 +3902,10 @@ name = "my_stub"
         }
 
         fn exec_config_with_source(
-            location: ScriptLocationCanonical,
+            location: ScriptLocationResolved,
             content_digest: Option<ContentDigest>,
-        ) -> ActivityExecComponentConfigCanonical {
-            ActivityExecComponentConfigCanonical {
+        ) -> ActivityExecComponentConfigResolved {
+            ActivityExecComponentConfigResolved {
                 name: ConfigName::new(StrVariant::from("exec-test")).unwrap(),
                 location,
                 content_digest,
@@ -4012,14 +3969,14 @@ name = "my_stub"
         fn fetch_and_verify_activity_exec_hashes_resolved_source_not_oci_reference() {
             let source = b"#!/usr/bin/env bash\necho null\n".to_vec();
             let inline = exec_config_with_source(
-                ScriptLocationCanonical::Content {
+                ScriptLocationResolved::Content {
                     content: String::from_utf8(source.clone()).unwrap(),
                     file_name: "exec-test".into(),
                 },
                 None,
             );
             let oci = exec_config_with_source(
-                ScriptLocationCanonical::Oci {
+                ScriptLocationResolved::Oci {
                     image: "registry.example.com/ns/exec:latest".into(),
                 },
                 None,
@@ -4054,7 +4011,7 @@ name = "my_stub"
         #[tokio::test]
         async fn resolve_activity_exec_validates_inline_content_digest() {
             let config = exec_config_with_source(
-                ScriptLocationCanonical::Content {
+                ScriptLocationResolved::Content {
                     content: "#!/usr/bin/env bash\necho null\n".into(),
                     file_name: "exec-test".into(),
                 },
@@ -4106,7 +4063,7 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 location,
-                ScriptLocationCanonical::Content { content, file_name }
+                ScriptLocationResolved::Content { content, file_name }
                     if content == "export const x = 1;" && file_name == "foo.js"
             );
         }
@@ -4132,7 +4089,7 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 location,
-                ScriptLocationCanonical::Content { content, file_name }
+                ScriptLocationResolved::Content { content, file_name }
                     if content == "owned content" && file_name == "scripts/a.js"
             );
         }
@@ -4159,19 +4116,19 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 location,
-                ScriptLocationCanonical::Content { file_name, .. } if file_name == "scripts/a.js"
+                ScriptLocationResolved::Content { file_name, .. } if file_name == "scripts/a.js"
             );
         }
 
         #[tokio::test]
-        async fn absolute_path_is_external() {
+        async fn absolute_path_is_rejected() {
             let root = tempfile::tempdir().unwrap();
             let provider = disk_provider(root.path());
             let outside = root.path().join("outside.js");
             std::fs::write(&outside, "external content").unwrap();
             let abs = outside.to_string_lossy().into_owned();
 
-            let location = resolve_script_toml_to_canonical(
+            let err = resolve_script_toml_to_canonical(
                 Some(JsLocationToml::Path(abs.clone())),
                 None,
                 "ignored.js".to_string(),
@@ -4180,10 +4137,11 @@ name = "my_stub"
                 None,
             )
             .await
-            .unwrap();
-            assert_matches::assert_matches!(
-                location,
-                ScriptLocationCanonical::ExternalPath { path } if path == abs
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("absolute local paths are not allowed"),
+                "unexpected error: {err}"
             );
         }
 
@@ -4225,7 +4183,7 @@ name = "my_stub"
             .unwrap();
             assert_matches::assert_matches!(
                 location,
-                ScriptLocationCanonical::Oci { image }
+                ScriptLocationResolved::Oci { image }
                     if image == "docker.io/library/example:latest"
             );
         }
@@ -4268,20 +4226,17 @@ name = "my_stub"
         }
 
         #[tokio::test]
-        async fn external_file_content_digest_verified_at_submit() {
-            let root = tempfile::tempdir().unwrap();
-            let inner = root.path().join("inner");
-            std::fs::create_dir_all(&inner).unwrap();
-            let provider = disk_provider(&inner);
-            let outside = root.path().join("outside.js");
-            std::fs::write(&outside, "external content").unwrap();
+        async fn relative_file_content_digest_verified_at_submit() {
+            let dir = tempfile::tempdir().unwrap();
+            let provider = disk_provider(dir.path());
+            std::fs::write(dir.path().join("script.js"), "owned content").unwrap();
 
             let wrong = digest_of(b"nope");
             let err = resolve_script_toml_to_canonical(
-                Some(JsLocationToml::Path(outside.to_string_lossy().into_owned())),
+                Some(JsLocationToml::Path("script.js".to_string())),
                 None,
                 "ignored.js".to_string(),
-                &inner,
+                dir.path(),
                 &provider,
                 Some(&wrong),
             )
@@ -4300,9 +4255,9 @@ name = "my_stub"
 
         fn js_activity(
             name: &str,
-            location: ScriptLocationCanonical,
-        ) -> ActivityJsComponentConfigCanonical {
-            ActivityJsComponentConfigCanonical {
+            location: ScriptLocationResolved,
+        ) -> ActivityJsComponentConfigResolved {
+            ActivityJsComponentConfigResolved {
                 name: ConfigName::new(StrVariant::from(name.to_string())).unwrap(),
                 location,
                 content_digest: None,
@@ -4325,17 +4280,17 @@ name = "my_stub"
         fn submit_rejects_owned_file_name_collision() {
             // Two distinct owned scripts resolving to the same `file_name` must be rejected
             // at submit time, since `deployment get` could never write both to disk.
-            let mut deployment = DeploymentCanonical::default();
+            let mut deployment = DeploymentResolved::default();
             deployment.activities_js.push(js_activity(
                 "a",
-                ScriptLocationCanonical::Content {
+                ScriptLocationResolved::Content {
                     content: "export const a = 1;".to_string(),
                     file_name: "foo".to_string(),
                 },
             ));
             deployment.activities_js.push(js_activity(
                 "b",
-                ScriptLocationCanonical::Content {
+                ScriptLocationResolved::Content {
                     content: "export const b = 2;".to_string(),
                     file_name: "foo".to_string(),
                 },
@@ -4352,11 +4307,11 @@ name = "my_stub"
         #[test]
         fn submit_allows_identical_owned_content_under_same_name() {
             // Same file_name with identical content dedupes on export, so it must pass submit.
-            let mut deployment = DeploymentCanonical::default();
+            let mut deployment = DeploymentResolved::default();
             for name in ["a", "b"] {
                 deployment.activities_js.push(js_activity(
                     name,
-                    ScriptLocationCanonical::Content {
+                    ScriptLocationResolved::Content {
                         content: "export const shared = 1;".to_string(),
                         file_name: "shared.js".to_string(),
                     },
@@ -4396,10 +4351,16 @@ name = "my_stub"
             );
             assert!(err.contains("`..`"), "unexpected error: {err}");
 
-            // Absolute paths are left untouched (out-of-tree reference).
+            // Author-provided absolute paths are rejected.
             let mut abs = "/other/a.wasm".to_string();
-            DeploymentToml::expand_deployment_dir(&mut abs, dir).unwrap();
-            assert_eq!(abs, "/other/a.wasm");
+            let err = format!(
+                "{:#}",
+                DeploymentToml::expand_deployment_dir(&mut abs, dir).unwrap_err()
+            );
+            assert!(
+                err.contains("absolute local paths are not allowed"),
+                "unexpected error: {err}"
+            );
         }
 
         #[tokio::test]
@@ -4471,9 +4432,7 @@ name = "my_stub"
         }
 
         #[tokio::test]
-        async fn absolute_source_is_mirrored_root_stripped() {
-            // An absolute backtrace source path is recreated self-contained under a
-            // root-stripped relative mirror, so it never escapes the output directory.
+        async fn absolute_source_is_rejected() {
             let dir = tempfile::tempdir().unwrap();
             let abs = dir.path().join("nested/lib.rs");
             std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
@@ -4489,16 +4448,14 @@ name = "my_stub"
             let provider = DiskProvider {
                 deployment_dir: other_dir.path().to_path_buf(),
             };
-            let canon = resolve_backtrace_to_canonical(&bt, other_dir.path(), &provider)
+            let err = resolve_backtrace_to_canonical(&bt, other_dir.path(), &provider)
                 .await
-                .unwrap();
-            let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
-            assert_eq!(src.content, "SRC");
-            // Root/drive stripped, remaining components preserved, no leading separator.
-            let expected = mirror_path_as_relative(&abs.to_string_lossy()).unwrap();
-            assert_eq!(src.file_name, expected);
-            assert!(!src.file_name.starts_with('/'));
-            assert!(src.file_name.ends_with("nested/lib.rs"));
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("absolute local paths are not allowed"),
+                "unexpected error: {err}"
+            );
         }
     }
 }

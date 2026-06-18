@@ -1658,6 +1658,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
         use grpc_gen::switch_deployment_response::Outcome;
         let request = request.into_inner();
+        let runtime_config_check = runtime_config_check_from_grpc(request.runtime_config_check());
         let deployment_id: DeploymentId = request
             .deployment_id
             .argument_must_exist("deployment_id")?
@@ -1667,7 +1668,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let outcome = Box::pin(server::switch_deployment(
             self.server_verified.clone(),
             deployment_id,
-            SwitchDeploymentAction::new(request.hot_redeploy, request.verify),
+            SwitchDeploymentAction::new(request.hot_redeploy),
+            runtime_config_check,
             &self.prepared_dirs,
             self.db_pool.clone(),
             &mut termination_watcher,
@@ -1698,28 +1700,46 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         request: tonic::Request<grpc_gen::SubmitDeploymentRequest>,
     ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
         let request = request.into_inner();
+        let runtime_config_check = runtime_config_check_from_grpc(request.runtime_config_check());
         let requested_deployment_id = request
             .deployment_id
             .map(DeploymentId::try_from)
             .transpose()?;
         let mut termination_watcher = self.termination_watcher.clone();
-        let (deployment_id, missing_digests) = Box::pin(server::submit_deployment(
+        let supplied_files = request
+            .files
+            .into_iter()
+            .map(|file| server::SuppliedFile {
+                path: file.path,
+                supplied_digest: file.digest,
+                content: file.content,
+            })
+            .collect();
+        let result = Box::pin(server::submit_deployment(
             self.server_verified.clone(),
             &request.deployment_toml,
-            request.verify,
+            runtime_config_check,
             request.created_by.clone(),
             request.description.clone(),
             requested_deployment_id,
             &self.prepared_dirs,
+            supplied_files,
             self.db_pool.clone(),
             &mut termination_watcher,
         ))
-        .await
-        .map_err(|err| tonic::Status::failed_precondition(format!("{err:#}")))?;
+        .await;
+        let deployment_id = match result {
+            Ok(deployment_id) => deployment_id,
+            Err(server::SubmitDeploymentError::Other(err)) => {
+                return Err(tonic::Status::failed_precondition(format!("{err:#}")));
+            }
+            Err(server::SubmitDeploymentError::Package(pkg)) => {
+                return Err(submit_package_status(&pkg));
+            }
+        };
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
             deployment_id: Some(deployment_id.into()),
-            missing_digests: missing_digests.iter().map(ToString::to_string).collect(),
         }))
     }
 
@@ -1752,18 +1772,21 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     }
 
     #[instrument(skip_all)]
-    async fn upload_file(
+    async fn gc_orphan_files(
         &self,
-        request: tonic::Request<grpc_gen::UploadFileRequest>,
-    ) -> TonicRespResult<grpc_gen::UploadFileResponse> {
-        let request = request.into_inner();
-        let cas = self.db_pool.cas_conn().await.map_err(map_to_status)?;
-        let digest = cas
-            .write_blob(&request.content)
+        _request: tonic::Request<grpc_gen::GcOrphanFilesRequest>,
+    ) -> TonicRespResult<grpc_gen::GcOrphanFilesResponse> {
+        let conn = self
+            .db_pool
+            .external_api_conn()
             .await
-            .map_err(|err| tonic::Status::internal(format!("cannot store file: {err}")))?;
-        Ok(tonic::Response::new(grpc_gen::UploadFileResponse {
-            digest: digest.to_string(),
+            .map_err(map_to_status)?;
+        let deleted_count = conn
+            .gc_orphan_files()
+            .await
+            .map_err(|err| tonic::Status::internal(format!("cannot gc orphan files: {err}")))?;
+        Ok(tonic::Response::new(grpc_gen::GcOrphanFilesResponse {
+            deleted_count,
         }))
     }
 
@@ -1793,6 +1816,87 @@ fn status_to_grpc(status: DeploymentStatus) -> grpc_gen::DeploymentStatus {
         DeploymentStatus::Enqueued => grpc_gen::DeploymentStatus::Enqueued,
         DeploymentStatus::Active => grpc_gen::DeploymentStatus::Active,
     }
+}
+
+fn file_issue_to_grpc(issue: server::SubmitFileIssue) -> grpc_gen::FileIssue {
+    grpc_gen::FileIssue {
+        section: issue.section,
+        component_name: issue.component_name,
+        field_path: issue.field_path,
+        path: issue.path,
+        digest: issue.digest,
+        message: issue.message,
+    }
+}
+
+/// Map the wire `RuntimeConfigCheck` to its server-side counterpart. `UNSPECIFIED`
+/// (the proto3 default for an unset field) is treated as `STRICT`.
+fn runtime_config_check_from_grpc(
+    check: grpc_gen::RuntimeConfigCheck,
+) -> server::RuntimeConfigCheck {
+    match check {
+        grpc_gen::RuntimeConfigCheck::AllowMissing => server::RuntimeConfigCheck::AllowMissing,
+        grpc_gen::RuntimeConfigCheck::Unspecified | grpc_gen::RuntimeConfigCheck::Strict => {
+            server::RuntimeConfigCheck::Strict
+        }
+    }
+}
+
+/// Build a `FAILED_PRECONDITION` status carrying the prost-encoded
+/// `SubmitDeploymentErrorDetail` so non-interactive clients can map the missing
+/// files back to local blobs and retry without persisting an incomplete deployment.
+fn submit_package_status(pkg: &server::SubmitPackageError) -> tonic::Status {
+    use prost::Message as _;
+    let detail = grpc_gen::SubmitDeploymentErrorDetail {
+        missing_digest_fields: pkg
+            .missing_digest_fields
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+        missing_files: pkg
+            .missing_files
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+        unexpected_files: pkg
+            .unexpected_files
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+        digest_mismatches: pkg
+            .digest_mismatches
+            .iter()
+            .cloned()
+            .map(|mismatch| grpc_gen::DigestMismatch {
+                file: Some(file_issue_to_grpc(mismatch.file)),
+                supplied_digest: mismatch.supplied_digest,
+                actual_digest: mismatch.actual_digest,
+            })
+            .collect(),
+        oversized_files: pkg
+            .oversized_files
+            .iter()
+            .cloned()
+            .map(file_issue_to_grpc)
+            .collect(),
+    };
+    let message = format!(
+        "deployment package is incomplete or invalid: {} missing field(s), {} missing file(s), \
+         {} unexpected file(s), {} digest mismatch(es), {} oversized file(s)",
+        detail.missing_digest_fields.len(),
+        detail.missing_files.len(),
+        detail.unexpected_files.len(),
+        detail.digest_mismatches.len(),
+        detail.oversized_files.len(),
+    );
+    tonic::Status::with_details(
+        tonic::Code::FailedPrecondition,
+        message,
+        detail.encode_to_vec().into(),
+    )
 }
 
 fn file_refs_to_grpc(

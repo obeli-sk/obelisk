@@ -102,9 +102,10 @@ pub(crate) enum Deployment {
         /// Submit an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Verify all environment variables before persisting.
+        /// Tolerate missing environment variables / secrets while verifying the
+        /// deployment before persisting it (default: missing config fails).
         #[arg(long)]
-        verify: bool,
+        allow_missing_runtime_config: bool,
         /// Optional human-readable description.
         #[arg(long)]
         description: Option<String>,
@@ -131,9 +132,10 @@ pub(crate) enum Deployment {
         /// Enqueue an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Verify all environment variables before enqueuing.
+        /// Tolerate missing environment variables / secrets while verifying the
+        /// deployment before enqueuing it (default: missing config fails).
         #[arg(long)]
-        verify: bool,
+        allow_missing_runtime_config: bool,
         /// Optional human-readable description for a newly submitted deployment.
         #[arg(long)]
         description: Option<String>,
@@ -176,6 +178,15 @@ pub(crate) enum Deployment {
     },
     /// List recent deployments.
     List {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
+    /// Delete content-addressed file blobs not referenced by any stored deployment.
+    ///
+    /// Such orphans are left behind when a submit writes blobs to the store and then
+    /// fails verification before persisting the deployment.
+    Gc {
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,

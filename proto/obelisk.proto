@@ -46,11 +46,11 @@ service DeploymentRepository {
     rpc SwitchDeployment(SwitchDeploymentRequest) returns (SwitchDeploymentResponse);
     rpc SubmitDeployment(SubmitDeploymentRequest) returns (SubmitDeploymentResponse);
     rpc GetDeployment(GetDeploymentRequest) returns (GetDeploymentResponse);
-    // Upload a deployment file blob to the content-addressed store. Scoped to a
-    // deployment: the server rejects a digest not in that deployment's missing set.
-    rpc UploadFile(UploadFileRequest) returns (UploadFileResponse);
     // Fetch a deployment file blob by content digest.
     rpc GetFile(GetFileRequest) returns (GetFileResponse);
+    // Delete content-addressed file blobs not referenced by any stored deployment
+    // (e.g. orphans left by a submit that failed verification after writing blobs).
+    rpc GcOrphanFiles(GcOrphanFilesRequest) returns (GcOrphanFilesResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -1092,10 +1092,24 @@ message GetCurrentDeploymentIdResponse {
     DeploymentId deployment_id = 1;
 }
 
+// Policy for runtime configuration (environment variables and secrets) that a
+// deployment references but that may be absent from the server's environment.
+// Structural, file, compile, and link validation are always performed regardless
+// of this value.
+enum RuntimeConfigCheck {
+    // Unset; treated as RUNTIME_CONFIG_CHECK_STRICT.
+    RUNTIME_CONFIG_CHECK_UNSPECIFIED = 0;
+    // Missing environment variables or secrets fail the operation.
+    RUNTIME_CONFIG_CHECK_STRICT = 1;
+    // Missing environment variables or secrets are tolerated.
+    RUNTIME_CONFIG_CHECK_ALLOW_MISSING = 2;
+}
+
 message SwitchDeploymentRequest {
     DeploymentId deployment_id = 1;
-    // Run `obelisk server verify` on the deployment config before switching.
-    bool verify = 2;
+    // Runtime config availability policy applied while verifying the deployment.
+    // A hot redeploy rejects RUNTIME_CONFIG_CHECK_ALLOW_MISSING.
+    RuntimeConfigCheck runtime_config_check = 2;
     // Perform a hot redeployment (reload running components without restart).
     bool hot_redeploy = 3;
 }
@@ -1112,34 +1126,74 @@ message SwitchDeploymentResponse {
 
 message SubmitDeploymentRequest {
     // Verbatim deployment manifest (`deployment.toml`), stored byte-for-byte.
-    // Every relative `location =` carries a `content_digest`; the referenced
-    // blobs are uploaded separately via `UploadFile`.
+    // Every deployment-owned relative `location =` must carry a `content_digest`.
     string deployment_toml = 1;
     optional string created_by = 2;
-    // Verify env vars / secrets exist. Resolution itself happens at activation in
-    // the server's environment; this only decides whether a missing one errors now.
-    bool verify = 3;
+    // Runtime config availability policy applied while verifying the deployment
+    // before it is persisted. Defaults to RUNTIME_CONFIG_CHECK_STRICT.
+    RuntimeConfigCheck runtime_config_check = 3;
     optional string description = 4;
     // Optional client-supplied deployment ID for idempotent submission.
     // If a deployment with this ID already exists and its content digest matches
     // the submitted manifest, the submission is a no-op and returns this ID.
     // A digest mismatch is rejected. When unset, a fresh ID is generated.
     optional DeploymentId deployment_id = 5;
-}
-message SubmitDeploymentResponse {
-    DeploymentId deployment_id = 1;
-    // Digests the manifest references that the server does not yet have; the
-    // client must `UploadFile` each before the deployment can be activated.
-    repeated string missing_digests = 2;
+    // Deployment-owned file blobs referenced by the manifest. A blob may be
+    // omitted when its digest already exists in the CAS; if a referenced digest
+    // is neither attached here nor present in the CAS, submit fails with
+    // `SubmitDeploymentErrorDetail.missing_files` and no deployment is stored.
+    repeated DeploymentFileContent files = 6;
 }
 
-message UploadFileRequest {
-    DeploymentId deployment_id = 1;
-    bytes content = 2;
+message DeploymentFileContent {
+    // Deployment-relative path as it appears after normalizing the manifest
+    // reference. Used to attach bytes to a specific manifest reference and to
+    // make validation errors actionable.
+    string path = 1;
+    // Optional client-computed digest for clearer errors and deduplication; the
+    // server always recomputes it from `content` and uses the recomputed value.
+    optional string digest = 2;
+    bytes content = 3;
 }
-message UploadFileResponse {
-    // Server-computed digest of the uploaded content, for confirmation.
-    string digest = 1;
+
+message SubmitDeploymentResponse {
+    DeploymentId deployment_id = 1;
+}
+
+// Structured detail attached (prost-encoded) to a FAILED_PRECONDITION /
+// INVALID_ARGUMENT submit status. Each list points at the offending manifest
+// reference so callers can act without guessing.
+message SubmitDeploymentErrorDetail {
+    // Deployment-owned references whose `content_digest` field is absent.
+    repeated FileIssue missing_digest_fields = 1;
+    // Referenced digests neither attached in the request nor present in CAS.
+    repeated FileIssue missing_files = 2;
+    // Attached blobs whose digest is not referenced by the manifest.
+    repeated FileIssue unexpected_files = 3;
+    // Attached blobs whose recomputed digest disagrees with the supplied one.
+    repeated DigestMismatch digest_mismatches = 4;
+    // Attached blobs exceeding the per-file size limit.
+    repeated FileIssue oversized_files = 5;
+}
+
+message FileIssue {
+    // Example: "activity_js", "workflow_wasm.backtrace.sources".
+    string section = 1;
+    // Component name after name derivation, when available.
+    optional string component_name = 2;
+    // Stable field path, e.g. "activity_js[name=send-email].location".
+    string field_path = 3;
+    // Deployment-relative file path, when the issue is tied to a path.
+    optional string path = 4;
+    // Expected digest, when known. Absent for `missing_digest_fields`.
+    optional string digest = 5;
+    string message = 6;
+}
+
+message DigestMismatch {
+    FileIssue file = 1;
+    string supplied_digest = 2;
+    string actual_digest = 3;
 }
 
 message GetFileRequest {
@@ -1147,6 +1201,13 @@ message GetFileRequest {
 }
 message GetFileResponse {
     bytes content = 1;
+}
+
+message GcOrphanFilesRequest {
+}
+message GcOrphanFilesResponse {
+    // Number of orphan file blobs deleted from the content-addressed store.
+    uint64 deleted_count = 1;
 }
 
 message GetDeploymentRequest {

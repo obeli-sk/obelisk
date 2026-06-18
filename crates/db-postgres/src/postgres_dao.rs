@@ -4819,6 +4819,21 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
+    async fn gc_orphan_files(&self) -> Result<u64, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let deleted = tx
+            .execute(
+                "DELETE FROM t_file WHERE digest NOT IN \
+                 (SELECT digest FROM t_deployment_file)",
+                &[],
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
+    #[instrument(skip(self))]
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,

@@ -4792,6 +4792,25 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip(self))]
+    async fn gc_orphan_files(&self) -> Result<u64, DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let deleted = tx
+                    .execute(
+                        "DELETE FROM t_file WHERE digest NOT IN \
+                         (SELECT digest FROM t_deployment_file)",
+                        [],
+                    )
+                    .map_err(RusqliteError::from)?;
+                Ok(deleted as u64)
+            },
+            TxType::MultipleWrites,
+            "gc_orphan_files",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,

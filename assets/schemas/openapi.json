@@ -339,7 +339,8 @@
         "tags": [
           "deployments"
         ],
-        "summary": "Submit a new deployment",
+        "summary": "Submit a new deployment.",
+        "description": "Accepts either an `application/json` body (no attached file blobs; referenced\nfiles must already exist in the CAS) or a `multipart/form-data` package whose\nparts carry the manifest and the deployment-owned file blobs. On an incomplete\npackage the server stores nothing and returns a `409` `SubmitPackageErrorBody`\nlisting the missing files to attach and retry.",
         "operationId": "submit_deployment",
         "requestBody": {
           "content": {
@@ -355,9 +356,9 @@
           "200": {
             "description": "Deployment submitted",
             "content": {
-              "text/plain": {
+              "application/json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/DeploymentSubmitResponse"
                 }
               }
             }
@@ -366,7 +367,14 @@
             "description": "Invalid config"
           },
           "409": {
-            "description": "Validation failed"
+            "description": "Incomplete or invalid package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitPackageErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -1415,42 +1423,6 @@
         }
       }
     },
-    "/v1/files": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "summary": "Upload a deployment file blob to the content-addressed store. The request body is the\nraw file content; the response is the server-computed content digest.",
-        "operationId": "upload_file",
-        "requestBody": {
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "type": "integer",
-                  "format": "int32",
-                  "minimum": 0
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Stored; returns the content digest",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/files/{digest}": {
       "get": {
         "tags": [
@@ -2160,6 +2132,10 @@
           "deployment_toml"
         ],
         "properties": {
+          "allow_missing_runtime_config": {
+            "type": "boolean",
+            "description": "Tolerate missing environment variables / secrets while verifying the\ndeployment before persisting it. Defaults to strict (missing config fails)."
+          },
           "deployment_id": {
             "type": [
               "string",
@@ -2169,7 +2145,7 @@
           },
           "deployment_toml": {
             "type": "string",
-            "description": "Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must\nalready be uploaded to the content-addressed store."
+            "description": "Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must\nbe uploaded separately after the server returns `missing_digests`."
           },
           "description": {
             "type": [
@@ -2177,10 +2153,17 @@
               "null"
             ],
             "description": "Optional human-readable deployment description"
-          },
-          "verify": {
-            "type": "boolean",
-            "description": "Verify all environment variables before persisting"
+          }
+        }
+      },
+      "DeploymentSubmitResponse": {
+        "type": "object",
+        "required": [
+          "deployment_id"
+        ],
+        "properties": {
+          "deployment_id": {
+            "type": "string"
           }
         }
       },
@@ -2188,13 +2171,32 @@
         "type": "object",
         "description": "Request payload for switching deployment",
         "properties": {
+          "allow_missing_runtime_config": {
+            "type": "boolean",
+            "description": "Tolerate missing environment variables / secrets while verifying. Rejected\nfor a hot redeploy, which requires all runtime config to be available."
+          },
           "hot_redeploy": {
             "type": "boolean",
             "description": "Hot redeploy without restart"
+          }
+        }
+      },
+      "DigestMismatch": {
+        "type": "object",
+        "required": [
+          "file",
+          "supplied_digest",
+          "actual_digest"
+        ],
+        "properties": {
+          "actual_digest": {
+            "type": "string"
           },
-          "verify": {
-            "type": "boolean",
-            "description": "Verify config before switching"
+          "file": {
+            "$ref": "#/components/schemas/FileIssue"
+          },
+          "supplied_digest": {
+            "type": "string"
           }
         }
       },
@@ -2343,6 +2345,44 @@
           "pending_state": {
             "type": "object",
             "description": "Current pending state of the execution"
+          }
+        }
+      },
+      "FileIssue": {
+        "type": "object",
+        "description": "A single file-set problem found while validating a submit package.",
+        "required": [
+          "section",
+          "field_path",
+          "message"
+        ],
+        "properties": {
+          "component_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "field_path": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "section": {
+            "type": "string"
           }
         }
       },
@@ -2725,6 +2765,49 @@
           },
           "result": {
             "type": "object"
+          }
+        }
+      },
+      "SubmitPackageErrorBody": {
+        "type": "object",
+        "description": "Structured `409` body describing why a submit package was rejected. No\ndeployment is stored when this is returned. A client retries the same submit\nwith the `missing_files` blobs attached.",
+        "required": [
+          "missing_digest_fields",
+          "missing_files",
+          "unexpected_files",
+          "digest_mismatches",
+          "oversized_files"
+        ],
+        "properties": {
+          "digest_mismatches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestMismatch"
+            }
+          },
+          "missing_digest_fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
+          },
+          "missing_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
+          },
+          "oversized_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
+          },
+          "unexpected_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileIssue"
+            }
           }
         }
       }

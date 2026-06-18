@@ -15,7 +15,7 @@ use crate::{
 use toml_edit::{DocumentMut, value};
 
 /// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the canonical
-/// `ActivityStubExtInlineConfigCanonical` the tests used to construct in-memory.
+/// `ActivityStubExtInlineConfigResolved` the tests used to construct in-memory.
 fn append_inline_stub(doc: &mut DocumentMut, name: &str, ffqn: &str) {
     let mut table = toml_edit::Table::new();
     table["name"] = value(name);
@@ -70,8 +70,9 @@ use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
-    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, SubmitDeploymentRequest,
-    SubmitRequest, SwitchDeploymentRequest, UploadFileRequest,
+    GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest, GetStatusRequest,
+    ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest,
+    SubmitRequest, SwitchDeploymentRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -81,7 +82,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::fmt::Write as _;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use test_utils::sanitize_json;
 use tokio::{sync::watch, task::JoinHandle};
 use tokio_stream::StreamExt;
@@ -102,6 +106,21 @@ mod populate_js_codegen_cache {
 
 fn get_workspace_dir() -> PathBuf {
     PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry.file_type().unwrap();
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path);
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dst_path).unwrap();
+        }
+    }
 }
 
 /// Fixed ports used by all integration tests.
@@ -133,6 +152,10 @@ pub(crate) use test_addr;
 fn write_test_configs(ip: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let workspace = get_workspace_dir();
     let db_dir = tempfile::tempdir().unwrap();
+    let fixture_src = workspace.join("crates/testing/test-programs");
+    let fixture_dst = db_dir.path().join("crates/testing/test-programs");
+    copy_dir_recursive(&fixture_src.join("js"), &fixture_dst.join("js"));
+    copy_dir_recursive(&fixture_src.join("exec"), &fixture_dst.join("exec"));
     let server_contents = format!(
         r#"api.listening_addr = "{ip}:{API_PORT}"
 webui.enabled = false
@@ -152,7 +175,7 @@ directory = "{db_dir}"
     let server_path = db_dir.path().join("obelisk-test-server.toml");
     std::fs::write(&server_path, server_contents).unwrap();
 
-    let ws = workspace.display();
+    let ws = ".";
     let deployment_contents = format!(
         r#"
 [[activity_js]]
@@ -925,7 +948,7 @@ impl TestServer {
             .client
             .post(format!("{}/v1/deployments", self.base_url))
             .header("Accept", "application/json")
-            .json(&json!({ "deployment_toml": deployment_toml, "verify": false }))
+            .json(&json!({ "deployment_toml": deployment_toml }))
             .send()
             .await
             .expect("webapi submit deployment request failed");
@@ -935,9 +958,9 @@ impl TestServer {
             resp.status()
         );
         let body: Value = resp.json().await.unwrap();
-        body["ok"]
+        body["deployment_id"]
             .as_str()
-            .expect("webapi submit deployment: missing ok field")
+            .expect("webapi submit deployment: missing deployment_id field")
             .parse()
             .expect("webapi submit deployment: invalid deployment id")
     }
@@ -954,7 +977,6 @@ impl TestServer {
             .header("Accept", "application/json")
             .json(&json!({
                 "deployment_toml": deployment_toml,
-                "verify": false,
                 "deployment_id": deployment_id.to_string(),
             }))
             .send()
@@ -962,45 +984,69 @@ impl TestServer {
             .expect("webapi submit deployment request failed")
     }
 
-    /// Upload a manifest's referenced file blobs over gRPC, then submit it, mirroring the
-    /// CLI `deployment apply` upload-then-submit flow. Returns the new deployment ID.
+    /// Submit a manifest over gRPC as a CAS-efficient package: preflight without
+    /// blobs, then retry attaching only the files the server reports missing.
+    /// Returns the new deployment ID.
     async fn grpc_upload_and_submit_manifest(
         &self,
         deployment_toml_path: &std::path::Path,
     ) -> DeploymentId {
+        use prost::Message as _;
+
         let prepared =
             crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_toml_path)
                 .await
                 .expect("cannot prepare deployment manifest");
-        let mut grpc_client =
+        let grpc_client =
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
-                .unwrap();
-        for file in &prepared.files {
+                .unwrap()
+                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+
+        let submit = async |files| {
             grpc_client
-                .upload_file(UploadFileRequest {
+                .clone()
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: prepared.deployment_toml.clone(),
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: RuntimeConfigCheck::Strict as i32,
+                    description: None,
                     deployment_id: None,
-                    content: file.bytes.clone(),
+                    files,
                 })
                 .await
-                .unwrap_or_else(|e| panic!("cannot upload deployment file `{}`: {e}", file.path));
-        }
-        let resp = grpc_client
-            .submit_deployment(SubmitDeploymentRequest {
-                deployment_toml: prepared.deployment_toml,
-                created_by: Some("test".to_string()),
-                verify: true,
-                description: None,
-                deployment_id: None,
-            })
-            .await
-            .expect("submit_deployment failed")
-            .into_inner();
-        assert!(
-            resp.missing_digests.is_empty(),
-            "server still missing blobs after upload: {:?}",
-            resp.missing_digests
-        );
+        };
+
+        // Preflight: no blobs attached. Succeeds outright when every referenced
+        // digest is already in the CAS.
+        let resp = match submit(Vec::new()).await {
+            Ok(resp) => resp.into_inner(),
+            Err(status) => {
+                let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details())
+                    .expect("submit error must carry SubmitDeploymentErrorDetail");
+                let missing: Vec<String> = detail
+                    .missing_files
+                    .iter()
+                    .filter_map(|issue| issue.digest.clone())
+                    .collect();
+                // Retry with only the missing blobs.
+                let files = prepared
+                    .files
+                    .iter()
+                    .filter(|file| missing.contains(&file.digest.to_string()))
+                    .map(|file| grpc::grpc_gen::DeploymentFileContent {
+                        path: file.path.clone(),
+                        digest: Some(file.digest.to_string()),
+                        content: file.bytes.clone(),
+                    })
+                    .collect();
+                submit(files)
+                    .await
+                    .expect("resubmit with blobs failed")
+                    .into_inner()
+            }
+        };
         resp.deployment_id
             .expect("submit_deployment: missing deployment_id")
             .id
@@ -1013,13 +1059,15 @@ impl TestServer {
         let mut grpc_client =
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
-                .unwrap();
+                .unwrap()
+                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
         let resp = grpc_client
             .switch_deployment(SwitchDeploymentRequest {
                 deployment_id: Some(GrpcDeploymentId {
                     id: deployment_id.to_string(),
                 }),
-                verify: true,
+                runtime_config_check: RuntimeConfigCheck::Strict as i32,
                 hot_redeploy: true,
             })
             .await
@@ -1037,7 +1085,7 @@ impl TestServer {
                 self.base_url
             ))
             .header("Accept", "application/json")
-            .json(&json!({ "verify": false, "hot_redeploy": true }))
+            .json(&json!({ "hot_redeploy": true }))
             .send()
             .await
             .expect("webapi switch deployment request failed");
@@ -1114,14 +1162,18 @@ impl TestDeployClient {
                 let mut grpc_client =
                     DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
                         .await
-                        .unwrap();
+                        .unwrap()
+                        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+                        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
                 let submit_resp = grpc_client
                     .submit_deployment(SubmitDeploymentRequest {
                         deployment_toml: new_deployment_toml,
                         created_by: Some("test".to_string()),
-                        verify: false,
+                        runtime_config_check: RuntimeConfigCheck::Strict as i32,
                         description: None,
                         deployment_id: None,
+                        // The mutated active manifest references only blobs already in the CAS.
+                        files: Vec::new(),
                     })
                     .await
                     .unwrap()
@@ -1130,7 +1182,7 @@ impl TestDeployClient {
                 let switch_resp = grpc_client
                     .switch_deployment(SwitchDeploymentRequest {
                         deployment_id: Some(GrpcDeploymentId { id: second_id }),
-                        verify: false,
+                        runtime_config_check: RuntimeConfigCheck::Strict as i32,
                         hot_redeploy: true,
                     })
                     .await
@@ -1827,7 +1879,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         resp1.status()
     );
     let body1: Value = resp1.json().await.unwrap();
-    let returned1: DeploymentId = body1["ok"].as_str().unwrap().parse().unwrap();
+    let returned1: DeploymentId = body1["deployment_id"].as_str().unwrap().parse().unwrap();
     assert_eq!(deployment_id, returned1, "explicit ID must be honored");
 
     // Resubmitting the identical manifest under the same ID is an idempotent no-op.
@@ -1840,7 +1892,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         resp2.status()
     );
     let body2: Value = resp2.json().await.unwrap();
-    let returned2: DeploymentId = body2["ok"].as_str().unwrap().parse().unwrap();
+    let returned2: DeploymentId = body2["deployment_id"].as_str().unwrap().parse().unwrap();
     assert_eq!(
         deployment_id, returned2,
         "no-op resubmit must return same ID"
@@ -1862,6 +1914,493 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         reqwest::StatusCode::BAD_REQUEST,
         "different config under same ID must be rejected as a digest conflict"
     );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn submit_deployment_package_validates_before_persisting_grpc() {
+    use prost::Message as _;
+
+    let server = TestServer::start(test_addr!(62)).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        dir.path().join("deferred.js"),
+        "export function run() { return 'ok'; }",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[activity_js]]
+name = "deferred"
+location = "deferred.js"
+ffqn = "testing:integration/deferred.run"
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+    let expected_digest = prepared.files[0].digest.to_string();
+    let deployment_id = DeploymentId::generate();
+    let grpc_id = GrpcDeploymentId {
+        id: deployment_id.to_string(),
+    };
+
+    let mut grpc_client =
+        DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap()
+            .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+            .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+    let submit = |files, id| {
+        let mut client = grpc_client.clone();
+        let toml = prepared.deployment_toml.clone();
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: toml,
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: RuntimeConfigCheck::Strict as i32,
+                    description: None,
+                    deployment_id: Some(id),
+                    files,
+                })
+                .await
+        }
+    };
+
+    // Preflight with no blobs reports the missing file and stores nothing.
+    let status = submit(Vec::new(), grpc_id.clone())
+        .await
+        .expect_err("preflight must report the missing file");
+    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details())
+        .expect("must carry SubmitDeploymentErrorDetail");
+    assert_eq!(detail.missing_files.len(), 1);
+    assert_eq!(
+        detail.missing_files[0].digest.as_deref(),
+        Some(expected_digest.as_str())
+    );
+    assert_eq!(detail.missing_files[0].section, "activity_js");
+    grpc_client
+        .clone()
+        .get_deployment(GetDeploymentRequest {
+            deployment_id: Some(grpc_id.clone()),
+        })
+        .await
+        .expect_err("failed preflight must not persist a deployment");
+
+    // An attached blob not referenced by the manifest is rejected as unexpected.
+    let status = submit(
+        vec![grpc::grpc_gen::DeploymentFileContent {
+            path: "deferred.js".to_string(),
+            digest: None,
+            content: b"unexpected".to_vec(),
+        }],
+        grpc_id.clone(),
+    )
+    .await
+    .expect_err("unexpected blob must be rejected");
+    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details()).unwrap();
+    assert_eq!(detail.unexpected_files.len(), 1);
+
+    // A client-supplied digest that disagrees with the bytes is rejected.
+    let status = submit(
+        vec![grpc::grpc_gen::DeploymentFileContent {
+            path: "deferred.js".to_string(),
+            digest: Some(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+            ),
+            content: prepared.files[0].bytes.clone(),
+        }],
+        grpc_id.clone(),
+    )
+    .await
+    .expect_err("digest mismatch must be rejected");
+    let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details()).unwrap();
+    assert_eq!(detail.digest_mismatches.len(), 1);
+
+    // Retry with the correct blob persists the complete deployment.
+    let resp = submit(
+        vec![grpc::grpc_gen::DeploymentFileContent {
+            path: "deferred.js".to_string(),
+            digest: Some(expected_digest.clone()),
+            content: prepared.files[0].bytes.clone(),
+        }],
+        grpc_id.clone(),
+    )
+    .await
+    .expect("submit with correct blob must succeed")
+    .into_inner();
+    assert_eq!(
+        resp.deployment_id.expect("deployment_id").id,
+        deployment_id.to_string()
+    );
+
+    // The stored deployment is complete and now exists.
+    grpc_client
+        .get_deployment(GetDeploymentRequest {
+            deployment_id: Some(grpc_id),
+        })
+        .await
+        .expect("stored deployment must exist");
+
+    server.shutdown().await;
+}
+
+/// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
+/// verification. Submit is strict by default and tolerant under `ALLOW_MISSING`; a
+/// hot redeploy is always strict and rejects `ALLOW_MISSING` outright.
+#[tokio::test]
+async fn submit_runtime_config_check_grpc() {
+    let server = TestServer::start(test_addr!(79)).await;
+
+    // A JS activity referencing a bare-name env var guaranteed absent from the server
+    // environment. Inline content needs no attached file blobs.
+    let deployment_toml = r#"
+[[activity_js]]
+name = "needs_env"
+content = "export function run() { return 'ok'; }"
+ffqn = "testing:integration/needs-env.run"
+env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
+"#;
+
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+
+    let submit = |check: RuntimeConfigCheck, id: Option<GrpcDeploymentId>| {
+        let mut client = grpc_client.clone();
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: deployment_toml.to_string(),
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: check as i32,
+                    description: None,
+                    deployment_id: id,
+                    files: Vec::new(),
+                })
+                .await
+        }
+    };
+
+    // Strict submit fails on the missing env var and stores nothing.
+    let status = submit(RuntimeConfigCheck::Strict, None)
+        .await
+        .expect_err("strict submit must reject a missing env var");
+    assert!(
+        status
+            .message()
+            .contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
+        "error must name the missing env var, got: {}",
+        status.message()
+    );
+
+    // ALLOW_MISSING submit tolerates the missing env var and persists.
+    let stored_id = submit(RuntimeConfigCheck::AllowMissing, None)
+        .await
+        .expect("allow-missing submit must persist")
+        .into_inner()
+        .deployment_id
+        .expect("deployment_id")
+        .id;
+    let stored_grpc_id = GrpcDeploymentId { id: stored_id };
+
+    // A hot redeploy with ALLOW_MISSING is rejected outright.
+    let status = grpc_client
+        .clone()
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(stored_grpc_id.clone()),
+            runtime_config_check: RuntimeConfigCheck::AllowMissing as i32,
+            hot_redeploy: true,
+        })
+        .await
+        .expect_err("hot redeploy must reject allow-missing-runtime-config");
+    assert!(
+        status.message().contains("allow-missing-runtime-config"),
+        "error must explain the rejection, got: {}",
+        status.message()
+    );
+
+    // A strict hot redeploy of the same deployment fails because the env var is missing.
+    let status = grpc_client
+        .clone()
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(stored_grpc_id),
+            runtime_config_check: RuntimeConfigCheck::Strict as i32,
+            hot_redeploy: true,
+        })
+        .await
+        .expect_err("strict hot redeploy must fail on the missing env var");
+    assert!(
+        status
+            .message()
+            .contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
+        "error must name the missing env var, got: {}",
+        status.message()
+    );
+
+    server.shutdown().await;
+}
+
+/// Phase 6: the REST `POST /v1/deployments` accepts a `multipart/form-data` package
+/// and reports an incomplete package as a structured `409` so the client retries with
+/// the missing blobs attached.
+#[tokio::test]
+async fn submit_deployment_multipart_package_webapi() {
+    let server = TestServer::start(test_addr!(80)).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        dir.path().join("pkg.js"),
+        "export function run() { return 'ok'; }",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[activity_js]]
+name = "pkg"
+location = "pkg.js"
+ffqn = "testing:integration/pkg.run"
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+    let toml = prepared.deployment_toml.clone();
+    let expected_digest = prepared.files[0].digest.to_string();
+    let content = prepared.files[0].bytes.clone();
+    let url = format!("{}/v1/deployments", server.base_url);
+
+    // Preflight with no file parts: incomplete package, stored nothing, lists the missing file.
+    let resp = server
+        .client
+        .post(&url)
+        .header("Accept", "application/json")
+        .multipart(reqwest::multipart::Form::new().text("deployment_toml", toml.clone()))
+        .send()
+        .await
+        .expect("multipart preflight failed");
+    assert_eq!(
+        resp.status().as_u16(),
+        409,
+        "incomplete package must be 409"
+    );
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["missing_files"].as_array().unwrap().len(), 1);
+    assert_eq!(body["missing_files"][0]["digest"], json!(expected_digest));
+    assert_eq!(body["missing_files"][0]["section"], json!("activity_js"));
+
+    // A blob whose supplied digest disagrees with its bytes is reported as a mismatch.
+    let mismatch_part = reqwest::multipart::Part::bytes(content.clone())
+        .file_name("pkg.js")
+        .mime_str("application/octet-stream")
+        .unwrap();
+    let resp = server
+        .client
+        .post(&url)
+        .header("Accept", "application/json")
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("deployment_toml", toml.clone())
+                .part(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    mismatch_part,
+                ),
+        )
+        .send()
+        .await
+        .expect("multipart mismatch submit failed");
+    assert_eq!(resp.status().as_u16(), 409, "digest mismatch must be 409");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["digest_mismatches"].as_array().unwrap().len(), 1);
+
+    // Retry with the correct blob (field name carries the digest): the package is complete.
+    let part = reqwest::multipart::Part::bytes(content)
+        .file_name("pkg.js")
+        .mime_str("application/octet-stream")
+        .unwrap();
+    let resp = server
+        .client
+        .post(&url)
+        .header("Accept", "application/json")
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("deployment_toml", toml)
+                .part(expected_digest.clone(), part),
+        )
+        .send()
+        .await
+        .expect("multipart retry failed");
+    assert_eq!(resp.status().as_u16(), 200, "complete package must succeed");
+    let body: Value = resp.json().await.unwrap();
+    let deployment_id = body["deployment_id"].as_str().expect("deployment_id");
+
+    // The stored deployment now exists and is retrievable.
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/deployments/{deployment_id}",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("get deployment failed");
+    assert_eq!(resp.status().as_u16(), 200, "stored deployment must exist");
+
+    server.shutdown().await;
+}
+
+/// Phase 8: a submit that writes file blobs and then fails verification leaves orphan
+/// blobs in the CAS. `GcOrphanFiles` deletes blobs not referenced by any stored
+/// deployment while keeping those a valid deployment still references.
+#[tokio::test]
+async fn gc_orphan_files_grpc() {
+    let server = TestServer::start(test_addr!(81)).await;
+
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+
+    // Prepare a deployment-owned JS file (digest-enriched) from disk. `section` selects
+    // `activity_js` or `workflow_js` (a JS workflow validates its source at link time, so
+    // a syntax error there fails submit verification).
+    async fn prepare(
+        section: &str,
+        source: &str,
+    ) -> (
+        tempfile::TempDir,
+        crate::config::manifest::PreparedDeploymentManifest,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("a.js"), source)
+            .await
+            .unwrap();
+        let toml_path = dir.path().join("deployment.toml");
+        tokio::fs::write(
+            &toml_path,
+            format!(
+                r#"
+[[{section}]]
+name = "a"
+location = "a.js"
+ffqn = "testing:integration/a.run"
+"#
+            ),
+        )
+        .await
+        .unwrap();
+        let prepared = crate::config::manifest::prepare_deployment_manifest_from_disk(&toml_path)
+            .await
+            .unwrap();
+        (dir, prepared)
+    }
+
+    let submit_request =
+        |prepared: &crate::config::manifest::PreparedDeploymentManifest| SubmitDeploymentRequest {
+            deployment_toml: prepared.deployment_toml.clone(),
+            created_by: Some("test".to_string()),
+            runtime_config_check: RuntimeConfigCheck::Strict as i32,
+            description: None,
+            deployment_id: Some(GrpcDeploymentId {
+                id: DeploymentId::generate().to_string(),
+            }),
+            files: vec![grpc::grpc_gen::DeploymentFileContent {
+                path: "a.js".to_string(),
+                digest: Some(prepared.files[0].digest.to_string()),
+                content: prepared.files[0].bytes.clone(),
+            }],
+        };
+
+    // A valid deployment: its blob is referenced and must survive GC.
+    let (_good_dir, good) = prepare("activity_js", "export function run() { return 'ok'; }").await;
+    let good_digest = good.files[0].digest.to_string();
+    grpc_client
+        .clone()
+        .submit_deployment(submit_request(&good))
+        .await
+        .expect("valid deployment must persist");
+
+    // An invalid deployment: the blob is written, then verification fails, so no
+    // deployment row references it. It becomes an orphan. A JS workflow validates its
+    // source at link time, so a syntax error fails submit.
+    let (_bad_dir, bad) = prepare("workflow_js", "this is @@@ not valid javascript {{{").await;
+    let bad_digest = bad.files[0].digest.to_string();
+    grpc_client
+        .clone()
+        .submit_deployment(submit_request(&bad))
+        .await
+        .expect_err("invalid deployment must fail verification");
+
+    // Before GC: both blobs are present in the CAS.
+    grpc_client
+        .clone()
+        .get_file(GetFileRequest {
+            digest: good_digest.clone(),
+        })
+        .await
+        .expect("referenced blob present before gc");
+    grpc_client
+        .clone()
+        .get_file(GetFileRequest {
+            digest: bad_digest.clone(),
+        })
+        .await
+        .expect("orphan blob present before gc");
+
+    // GC deletes exactly the orphan.
+    let deleted = grpc_client
+        .clone()
+        .gc_orphan_files(GcOrphanFilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .deleted_count;
+    assert_eq!(deleted, 1, "exactly one orphan blob must be deleted");
+
+    // After GC: the orphan is gone, the referenced blob remains.
+    grpc_client
+        .clone()
+        .get_file(GetFileRequest {
+            digest: good_digest,
+        })
+        .await
+        .expect("referenced blob must survive gc");
+    let status = grpc_client
+        .clone()
+        .get_file(GetFileRequest { digest: bad_digest })
+        .await
+        .expect_err("orphan blob must be gone after gc");
+    assert_eq!(status.code(), tonic::Code::NotFound);
+
+    // A second GC is a no-op.
+    let deleted = grpc_client
+        .clone()
+        .gc_orphan_files(GcOrphanFilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .deleted_count;
+    assert_eq!(deleted, 0, "second gc must delete nothing");
 
     server.shutdown().await;
 }

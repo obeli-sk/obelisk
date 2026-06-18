@@ -637,8 +637,8 @@
               "help": "Submit an empty deployment with no components"
             },
             {
-              "name": "--verify",
-              "help": "Verify all environment variables before persisting"
+              "name": "--allow-missing-runtime-config",
+              "help": "Tolerate missing environment variables / secrets while verifying the deployment before persisting it (default: missing config fails)"
             },
             {
               "name": "--description",
@@ -673,8 +673,8 @@
               "help": "Enqueue an empty deployment with no components"
             },
             {
-              "name": "--verify",
-              "help": "Verify all environment variables before enqueuing"
+              "name": "--allow-missing-runtime-config",
+              "help": "Tolerate missing environment variables / secrets while verifying the deployment before enqueuing it (default: missing config fails)"
             },
             {
               "name": "--description",
@@ -729,6 +729,17 @@
         {
           "name": "list",
           "about": "List recent deployments",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ]
+        },
+        {
+          "name": "gc",
+          "about": "Delete content-addressed file blobs not referenced by any stored deployment",
           "options": [
             {
               "name": "--api-url",

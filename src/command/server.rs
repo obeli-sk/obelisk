@@ -6,15 +6,15 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::config_holder::load_deployment_canonical;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
-use crate::config::toml::ActivityExecComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
-use crate::config::toml::ActivityExternalComponentConfigCanonical;
-use crate::config::toml::ActivityExternalComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityExternalComponentConfigResolved;
+use crate::config::toml::ActivityExternalComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExternalConfigVerified;
-use crate::config::toml::ActivityJsComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityJsComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityJsConfigVerified;
-use crate::config::toml::ActivityStubComponentConfigCanonical;
-use crate::config::toml::ActivityStubComponentConfigCanonicalExt as _;
+use crate::config::toml::ActivityStubComponentConfigResolved;
+use crate::config::toml::ActivityStubComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityStubConfigVerified;
 use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityStubExtInlineConfigVerified;
@@ -27,7 +27,7 @@ use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DatabaseConfigToml;
-use crate::config::toml::DeploymentCanonical;
+use crate::config::toml::DeploymentResolved;
 use crate::config::toml::InflightSemaphoreExt as _;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
@@ -35,18 +35,18 @@ use crate::config::toml::ServerConfigToml;
 use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
 use crate::config::toml::WorkflowConfigVerified;
-use crate::config::toml::WorkflowJsComponentConfigCanonicalExt as _;
+use crate::config::toml::WorkflowJsComponentConfigResolvedExt as _;
 use crate::config::toml::WorkflowJsConfigVerified;
-use crate::config::toml::WorkflowWasmComponentConfigCanonicalExt as _;
+use crate::config::toml::WorkflowWasmComponentConfigResolvedExt as _;
 use crate::config::toml::cron::CronComponentConfigTomlExt as _;
 use crate::config::toml::cron::CronConfigVerified;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::HttpServer;
-use crate::config::toml::webhook::WebhookJsComponentConfigCanonicalExt as _;
+use crate::config::toml::webhook::WebhookJsComponentConfigResolvedExt as _;
 use crate::config::toml::webhook::WebhookJsConfigVerified;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
-use crate::config::toml::webhook::WebhookWasmComponentConfigCanonicalExt as _;
+use crate::config::toml::webhook::WebhookWasmComponentConfigResolvedExt as _;
 use crate::config::toml::webhook::WebhookWasmComponentConfigVerified;
 use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::wasm_cache_metadata_dir;
@@ -73,6 +73,7 @@ use concepts::ReturnTypeExtendable;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
+use concepts::component_id::Digest;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbErrorWrite;
@@ -104,6 +105,7 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use secrecy::SecretString;
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -675,7 +677,7 @@ pub(crate) async fn server_verify(
 pub(crate) async fn deployment_verify_config_compile_link(
     server_verified: ServerVerified,
     prepared_dirs: &PreparedDirs,
-    deployment: DeploymentCanonical,
+    deployment: DeploymentResolved,
     cas: Option<Arc<dyn concepts::cas::Cas>>,
     deployment_id: DeploymentId,
     params: VerifyParams,
@@ -730,14 +732,14 @@ pub(crate) async fn deployment_compile_link(
 pub(crate) async fn deployment_verify_config(
     server_verified: &ServerVerified,
     prepared_dirs: &PreparedDirs,
-    deployment: DeploymentCanonical,
+    deployment: DeploymentResolved,
     cas: Option<Arc<dyn concepts::cas::Cas>>,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
     let deployment =
-        DeploymentResolved::resolve(deployment, cas.as_deref(), &prepared_dirs.wasm_cache_dir)
+        DeploymentRunnable::resolve(deployment, cas.as_deref(), &prepared_dirs.wasm_cache_dir)
             .await?;
     let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
         deployment,
@@ -763,7 +765,7 @@ async fn get_deployment_canonical_from_db(
     database: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
     db_pool_container: &mut DbPoolCloseableContainer,
-) -> anyhow::Result<(DeploymentCanonical, DeploymentId)> {
+) -> anyhow::Result<(DeploymentResolved, DeploymentId)> {
     let conn = if let Some((pool, _)) = db_pool_container.as_ref() {
         pool.external_api_conn()
             .await
@@ -843,7 +845,7 @@ async fn get_deployment_canonical_from_db(
 /// already-canonicalized form used to compile/link this run.
 pub(crate) struct LocalDeployment {
     deployment_toml: String,
-    canonical: DeploymentCanonical,
+    canonical: DeploymentResolved,
     files: Vec<crate::config::manifest::DeploymentManifestFile>,
 }
 
@@ -862,7 +864,7 @@ impl LocalDeployment {
     pub(crate) fn empty() -> Self {
         Self {
             deployment_toml: String::new(),
-            canonical: DeploymentCanonical::default(),
+            canonical: DeploymentResolved::default(),
             files: Vec::new(),
         }
     }
@@ -873,9 +875,9 @@ impl LocalDeployment {
 /// Empty on purpose: a stored manifest has no submitter host to anchor relative paths to.
 /// Deployment-owned references are addressed by content digest in the CAS, so joining a
 /// `${DEPLOYMENT_DIR}` / relative path against an empty root leaves it relative. That keeps
-/// deployment-owned WASM locations relative in the resulting `DeploymentCanonical` (no
+/// deployment-owned WASM locations relative in the resulting `DeploymentResolved` (no
 /// fabricated host paths); they become concrete on-disk paths only later, in
-/// [`DeploymentResolved::resolve`], which materializes their blobs from the CAS.
+/// [`DeploymentRunnable::resolve`], which materializes their blobs from the CAS.
 fn cas_deployment_dir() -> std::path::PathBuf {
     std::path::PathBuf::new()
 }
@@ -912,7 +914,7 @@ async fn canonical_and_files_from_manifest(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_toml: &str,
 ) -> anyhow::Result<(
-    DeploymentCanonical,
+    DeploymentResolved,
     Vec<concepts::storage::DeploymentFileRecord>,
 )> {
     let cas: std::sync::Arc<dyn concepts::cas::Cas> = db_pool
@@ -942,36 +944,38 @@ async fn canonical_and_files_from_manifest(
 async fn canonical_from_manifest(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_toml: &str,
-) -> anyhow::Result<DeploymentCanonical> {
+) -> anyhow::Result<DeploymentResolved> {
     Ok(canonical_and_files_from_manifest(db_pool, deployment_toml)
         .await?
         .0)
 }
 
-/// A [`DeploymentCanonical`] whose every WASM component location is a concrete, runnable
+/// A [`DeploymentResolved`] whose every WASM component location is a concrete, runnable
 /// reference: an absolute on-disk path or an OCI image.
 ///
-/// `DeploymentCanonical` is host-independent: a deployment-owned WASM is a *relative* path
+/// `DeploymentResolved` is host-independent: a deployment-owned WASM is a *relative* path
 /// addressed by content digest in the CAS (a stored manifest carries no submitter host).
 /// Compiling/linking needs real files, so [`Self::resolve`] materializes each deployment-owned
-/// blob from the CAS into the wasm cache and rewrites its location to that path. External
-/// (absolute) paths and OCI references already are concrete and pass through unchanged. The
-/// disk-authored local-run canonical is already all-absolute, so it resolves to itself.
+/// blob from the CAS into the wasm cache and rewrites its location to that path. OCI
+/// references already are concrete and pass through unchanged. The current disk-authored
+/// local-run canonical expands valid relative WASM paths to absolute internal paths, so it
+/// resolves to itself.
 ///
 /// The inner value is private so the only way to obtain one is `resolve`; that makes it
 /// impossible to feed an unresolved (relative-path) canonical into compilation.
-pub(crate) struct DeploymentResolved {
-    deployment: DeploymentCanonical,
+pub(crate) struct DeploymentRunnable {
+    deployment: DeploymentResolved,
 }
 
-impl DeploymentResolved {
+impl DeploymentRunnable {
     /// Resolve every deployment-owned WASM location against the CAS.
     ///
     /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
-    /// `--skip-db`), whose canonical holds only absolute paths and OCI refs; encountering a
-    /// deployment-owned (relative) WASM there is an error because there is no store to read it.
+    /// `--skip-db`), whose current canonical holds internal absolute paths and OCI refs;
+    /// encountering a deployment-owned (relative) WASM there is an error because there is no
+    /// store to read it.
     pub(crate) async fn resolve(
-        mut deployment: DeploymentCanonical,
+        mut deployment: DeploymentResolved,
         cas: Option<&dyn concepts::cas::Cas>,
         wasm_cache_dir: &Path,
     ) -> anyhow::Result<Self> {
@@ -985,7 +989,7 @@ impl DeploymentResolved {
             .await?;
         }
         for c in &mut deployment.activities_stub {
-            if let ActivityStubComponentConfigCanonical::File(f) = c {
+            if let ActivityStubComponentConfigResolved::File(f) = c {
                 materialize_wasm_location(
                     &mut f.common.location,
                     f.content_digest.as_ref(),
@@ -996,7 +1000,7 @@ impl DeploymentResolved {
             }
         }
         for c in &mut deployment.activities_external {
-            if let ActivityExternalComponentConfigCanonical::File(f) = c {
+            if let ActivityExternalComponentConfigResolved::File(f) = c {
                 materialize_wasm_location(
                     &mut f.common.location,
                     f.content_digest.as_ref(),
@@ -1027,14 +1031,14 @@ impl DeploymentResolved {
         Ok(Self { deployment })
     }
 
-    fn into_canonical(self) -> DeploymentCanonical {
+    fn into_canonical(self) -> DeploymentResolved {
         self.deployment
     }
 }
 
 /// Turn a single WASM component location into a concrete on-disk path.
 ///
-/// - `Oci` and absolute `Path`s are already concrete and left untouched.
+/// - `Oci` and already-materialized absolute `Path`s are concrete and left untouched.
 /// - A relative `Path` is deployment-owned: its bytes live in the CAS under `content_digest`.
 ///   Materialize them into `wasm_cache_dir` (keyed by digest, mirroring the OCI pull cache)
 ///   and rewrite the location to that absolute path.
@@ -1273,7 +1277,7 @@ pub(crate) async fn run_internal(
             )
             .await?;
 
-            (new_deployment_id, DeploymentCanonical::default())
+            (new_deployment_id, DeploymentResolved::default())
         }
     };
     let engines = create_engines(&config, &prepared_dirs)?;
@@ -1366,7 +1370,11 @@ pub(crate) async fn run_internal(
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
         .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip),
+        .accept_compressed(CompressionEncoding::Gzip)
+        // Submit requests inline deployment-owned blobs; raise the decode limit
+        // well above tonic's 4 MiB default. `GetFile` responses are likewise large.
+        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE),
     )
     .add_service(
         tonic_reflection::server::Builder::configure()
@@ -1779,73 +1787,298 @@ pub(crate) async fn persist_deployment_component_metadata(
     Ok(())
 }
 
+/// Per-file size limit for deployment-owned blobs attached to a submit request.
+const MAX_DEPLOYMENT_FILE_BYTES: usize = 512 * 1024 * 1024;
+
+/// A deployment-owned blob attached to a submit request.
+pub(crate) struct SuppliedFile {
+    pub(crate) path: String,
+    /// Optional client-computed digest; the server recomputes and uses its own value.
+    pub(crate) supplied_digest: Option<String>,
+    pub(crate) content: Vec<u8>,
+}
+
+/// A single file-set problem found while validating a submit package. Mirrors the
+/// proto `FileIssue` but keeps the command layer free of grpc types.
+#[derive(Debug, Clone)]
+pub(crate) struct SubmitFileIssue {
+    pub(crate) section: String,
+    pub(crate) component_name: Option<String>,
+    pub(crate) field_path: String,
+    pub(crate) path: Option<String>,
+    pub(crate) digest: Option<String>,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SubmitDigestMismatch {
+    pub(crate) file: SubmitFileIssue,
+    pub(crate) supplied_digest: String,
+    pub(crate) actual_digest: String,
+}
+
+/// Structured file-set validation failure. No deployment is stored when returned.
+#[derive(Debug, Default)]
+pub(crate) struct SubmitPackageError {
+    pub(crate) missing_digest_fields: Vec<SubmitFileIssue>,
+    pub(crate) missing_files: Vec<SubmitFileIssue>,
+    pub(crate) unexpected_files: Vec<SubmitFileIssue>,
+    pub(crate) digest_mismatches: Vec<SubmitDigestMismatch>,
+    pub(crate) oversized_files: Vec<SubmitFileIssue>,
+}
+
+impl SubmitPackageError {
+    fn is_empty(&self) -> bool {
+        self.missing_digest_fields.is_empty()
+            && self.missing_files.is_empty()
+            && self.unexpected_files.is_empty()
+            && self.digest_mismatches.is_empty()
+            && self.oversized_files.is_empty()
+    }
+}
+
+/// Submit failure: either a structured file-set error (no deployment stored) or any
+/// other error (parse/idempotency/storage).
+pub(crate) enum SubmitDeploymentError {
+    Package(SubmitPackageError),
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for SubmitDeploymentError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Other(err)
+    }
+}
+
+fn issue_from_ref(
+    file: &crate::config::manifest::DeploymentFileRef,
+    message: &str,
+) -> SubmitFileIssue {
+    SubmitFileIssue {
+        section: file.field.section.clone(),
+        component_name: file.field.component_name.clone(),
+        field_path: file.field.field_path.clone(),
+        path: Some(file.path.clone()),
+        digest: Some(file.digest.to_string()),
+        message: message.to_string(),
+    }
+}
+
+fn supplied_issue(path: &str, digest: &ContentDigest, message: &str) -> SubmitFileIssue {
+    SubmitFileIssue {
+        section: "files".to_string(),
+        component_name: None,
+        field_path: format!("files[path={path}]"),
+        path: Some(path.to_string()),
+        digest: Some(digest.to_string()),
+        message: message.to_string(),
+    }
+}
+
+/// Match attached blobs to the manifest's deployment-owned file refs. Returns the
+/// blobs that must be written to the CAS (referenced, not already present, attached),
+/// or a structured error pointing at each offending reference. Pure: no I/O.
+fn validate_submit_package(
+    expected: &[crate::config::manifest::DeploymentFileRef],
+    supplied: Vec<SuppliedFile>,
+    cas_present: &hashbrown::HashSet<ContentDigest>,
+    max_bytes: usize,
+) -> Result<Vec<crate::config::manifest::DeploymentManifestFile>, SubmitPackageError> {
+    use crate::config::manifest::DeploymentManifestFile;
+
+    let mut err = SubmitPackageError::default();
+    // `expected` is already deduplicated by digest in `DeploymentManifest`.
+    let expected_by_digest: HashMap<ContentDigest, ()> = expected
+        .iter()
+        .map(|file| (file.digest.clone(), ()))
+        .collect();
+
+    let mut provided: HashMap<ContentDigest, Vec<u8>> = HashMap::new();
+    for file in supplied {
+        let actual = compute_content_digest(&file.content);
+        if let Some(supplied_digest) = &file.supplied_digest
+            && supplied_digest.parse::<ContentDigest>().ok().as_ref() != Some(&actual)
+        {
+            err.digest_mismatches.push(SubmitDigestMismatch {
+                file: supplied_issue(
+                    &file.path,
+                    &actual,
+                    "attached blob digest does not match the supplied digest",
+                ),
+                supplied_digest: supplied_digest.clone(),
+                actual_digest: actual.to_string(),
+            });
+            continue;
+        }
+        if file.content.len() > max_bytes {
+            err.oversized_files.push(supplied_issue(
+                &file.path,
+                &actual,
+                &format!("attached blob exceeds the {max_bytes}-byte per-file limit"),
+            ));
+            continue;
+        }
+        if expected_by_digest.contains_key(&actual) {
+            provided.insert(actual, file.content);
+        } else {
+            err.unexpected_files.push(supplied_issue(
+                &file.path,
+                &actual,
+                "attached blob is not referenced by the manifest",
+            ));
+        }
+    }
+
+    let mut to_write = Vec::new();
+    for file in expected {
+        if cas_present.contains(&file.digest) {
+            continue;
+        }
+        if let Some(bytes) = provided.remove(&file.digest) {
+            to_write.push(DeploymentManifestFile {
+                path: file.path.clone(),
+                digest: file.digest.clone(),
+                bytes,
+            });
+        } else {
+            err.missing_files.push(issue_from_ref(
+                file,
+                "referenced file is neither attached nor present in the store",
+            ));
+        }
+    }
+
+    if err.is_empty() {
+        Ok(to_write)
+    } else {
+        Err(err)
+    }
+}
+
 /// Shared logic for submitting a deployment (used by both gRPC and web API).
-/// Parses, verifies, and inserts the deployment record.
+/// Validates the manifest and its file set as a package; persists only a complete
+/// deployment. Compile/link verification still happens when the deployment is activated.
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
     deployment_toml: &str,
-    verify: bool,
+    runtime_config_check: RuntimeConfigCheck,
     created_by: Option<String>,
     description: Option<String>,
     requested_deployment_id: Option<DeploymentId>,
     prepared_dirs: &PreparedDirs,
+    supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
-) -> anyhow::Result<(DeploymentId, Vec<ContentDigest>)> {
+) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
-    // every referenced file because the manifest embeds each file's content digest.
+    // every referenced file because the manifest embeds each file's content digest. It is
+    // used only for idempotency, not returned (the client already has the manifest).
     let digest = DeploymentRecord::compute_digest(deployment_toml);
 
-    let conn = db_pool.external_api_conn().await?;
+    let conn = db_pool
+        .external_api_conn()
+        .await
+        .map_err(anyhow::Error::from)?;
 
     // Idempotent submission: if the caller supplied a deployment ID that already
-    // exists, return it as a no-op when the content digest matches (skipping the
-    // expensive verify/compile/link), and reject a digest mismatch as a conflict.
+    // exists, return it as a no-op when the content digest matches, and reject a
+    // digest mismatch as a conflict. A stored deployment is always complete.
     if let Some(requested_deployment_id) = requested_deployment_id
-        && let Some(existing) = conn.get_deployment(requested_deployment_id).await?
+        && let Some(existing) = conn
+            .get_deployment(requested_deployment_id)
+            .await
+            .map_err(anyhow::Error::from)?
     {
         if existing.digest == digest {
             info!(%requested_deployment_id, "Deployment already exists with matching digest, returning existing ID");
-            let missing = conn.missing_digests(requested_deployment_id).await?;
-            return Ok((requested_deployment_id, missing));
+            return Ok(requested_deployment_id);
         }
-        bail!(
+        return Err(SubmitDeploymentError::Other(anyhow::anyhow!(
             "deployment {requested_deployment_id} already exists with a different content digest \
              (existing {}, submitted {digest}); use a fresh deployment ID",
             existing.digest
-        );
+        )));
     }
 
-    // Canonicalize by reading the referenced blobs from the CAS (the client uploads them
-    // before submit). `${...}` env vars and secrets resolve here, in the server's environment.
-    let (deployment, file_records) =
-        canonical_and_files_from_manifest(&*db_pool, deployment_toml).await?;
+    let manifest = crate::config::manifest::DeploymentManifest::try_from_toml(
+        deployment_toml,
+        &cas_deployment_dir(),
+    )
+    .context("cannot read deployment file references from manifest")?;
 
-    let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
-    let verify_deployment_id = DeploymentId::generate();
-    let server_compiled = deployment_verify_config_compile_link(
+    // A referenced digest already in the CAS need not be attached to the request.
+    let cas = db_pool.cas_conn().await.map_err(anyhow::Error::from)?;
+    let mut cas_present = hashbrown::HashSet::new();
+    for file in &manifest.files {
+        if cas
+            .contains_blob(&file.digest)
+            .await
+            .map_err(|err| anyhow::anyhow!("cannot query CAS for {}: {err}", file.digest))?
+        {
+            cas_present.insert(file.digest.clone());
+        }
+    }
+
+    let to_write = validate_submit_package(
+        &manifest.files,
+        supplied_files,
+        &cas_present,
+        MAX_DEPLOYMENT_FILE_BYTES,
+    )
+    .map_err(SubmitDeploymentError::Package)?;
+
+    // Write missing blobs to the CAS before inserting the deployment row, so the
+    // stored deployment never references absent blobs. Orphan blobs from a later
+    // failed insert are acceptable GC input.
+    for file in &to_write {
+        let stored = cas.write_blob(&file.bytes).await.map_err(|err| {
+            anyhow::anyhow!("cannot store deployment file {}: {err}", file.digest)
+        })?;
+        if stored != file.digest {
+            return Err(SubmitDeploymentError::Other(anyhow::anyhow!(
+                "stored deployment file digest mismatch: expected {}, got {stored}",
+                file.digest
+            )));
+        }
+    }
+
+    // Fully validate the deployment before persisting it, so a stored deployment is
+    // already known-good: canonicalize from the CAS (resolving env vars/secrets),
+    // parse JS, validate WIT/WASM, and compile + link every component. Activation no
+    // longer performs first-time package validation. Blobs already written to the CAS
+    // when verification fails are acceptable GC input; no deployment row is inserted.
+    let canonical = canonical_from_manifest(&*db_pool, deployment_toml)
+        .await
+        .map_err(SubmitDeploymentError::Other)?;
+    let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool
+        .cas_conn()
+        .await
+        .map_err(anyhow::Error::from)?
+        .into();
+    let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
+    let compiled_linked = deployment_verify_config_compile_link(
         server_verified,
         prepared_dirs,
-        deployment,
-        Some(cas),
-        verify_deployment_id,
+        canonical,
+        Some(cas_arc),
+        deployment_id,
         VerifyParams {
             dir_params: PrepareDirsParams {
                 clean_cache: false,
                 clean_codegen_cache: false,
             },
-            ignore_missing_env_vars: !verify,
+            ignore_missing_env_vars: runtime_config_check.ignore_missing_env_vars(),
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
         },
         termination_watcher,
     )
-    .await?;
+    .await
+    .map_err(SubmitDeploymentError::Other)?;
 
-    let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
     let now = chrono::Utc::now();
 
     conn.insert_deployment(DeploymentRecord {
@@ -1858,22 +2091,30 @@ pub(crate) async fn submit_deployment(
         obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
         created_by,
         deployment_toml: deployment_toml.to_string(),
-        files: file_records,
+        files: manifest.file_records(),
     })
-    .await?;
+    .await
+    .map_err(anyhow::Error::from)?;
 
+    // Persist the verified component metadata and backtrace sources so the DB-backed
+    // ListComponents / GetBacktraceSource see this deployment without waiting for a
+    // server restart. Verification above already compiled and linked every component.
     persist_deployment_component_metadata(
         conn.as_ref(),
         deployment_id,
-        &server_compiled.component_registry_ro,
+        &compiled_linked.component_registry_ro,
     )
-    .await?;
+    .await
+    .map_err(SubmitDeploymentError::Other)?;
+    upsert_backtrace_sources(conn.as_ref(), &compiled_linked).await;
 
-    upsert_backtrace_sources(conn.as_ref(), &server_compiled).await;
-
-    let missing = conn.missing_digests(deployment_id).await?;
     info!(%deployment_id, "Deployment submitted");
-    Ok((deployment_id, missing))
+    Ok(deployment_id)
+}
+
+fn compute_content_digest(content: &[u8]) -> ContentDigest {
+    let hash: [u8; 32] = Sha256::digest(content).into();
+    ContentDigest(Digest(hash))
 }
 
 /// Outcome of switching a deployment.
@@ -1899,20 +2140,36 @@ impl From<anyhow::Error> for SwitchError {
     }
 }
 
+/// Policy for runtime configuration (environment variables and secrets) that a
+/// deployment references but that may be absent from the server's environment.
+/// Structural, file, compile, and link validation always runs regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RuntimeConfigCheck {
+    /// Missing environment variables or secrets fail the operation.
+    #[default]
+    Strict,
+    /// Missing environment variables or secrets are tolerated.
+    AllowMissing,
+}
+
+impl RuntimeConfigCheck {
+    /// Whether verification should tolerate missing env vars / secrets.
+    pub(crate) fn ignore_missing_env_vars(self) -> bool {
+        matches!(self, RuntimeConfigCheck::AllowMissing)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SwitchDeploymentAction {
     HotRedeploy,
     VerifyAndStore,
-    Store,
 }
 impl SwitchDeploymentAction {
-    pub(crate) fn new(hot_redeploy: bool, verify: bool) -> SwitchDeploymentAction {
+    pub(crate) fn new(hot_redeploy: bool) -> SwitchDeploymentAction {
         if hot_redeploy {
             SwitchDeploymentAction::HotRedeploy
-        } else if verify {
-            SwitchDeploymentAction::VerifyAndStore
         } else {
-            SwitchDeploymentAction::Store
+            SwitchDeploymentAction::VerifyAndStore
         }
     }
 }
@@ -1923,6 +2180,7 @@ pub(crate) async fn switch_deployment(
     server_verified: ServerVerified,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
+    runtime_config_check: RuntimeConfigCheck,
     prepared_dirs: &PreparedDirs,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
@@ -1931,6 +2189,18 @@ pub(crate) async fn switch_deployment(
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<SwitchOutcome, SwitchError> {
+    // A hot redeploy makes the deployment immediately live, so its runtime config must be
+    // fully available; tolerating missing env vars / secrets here would yield broken
+    // running components.
+    if action == SwitchDeploymentAction::HotRedeploy
+        && runtime_config_check == RuntimeConfigCheck::AllowMissing
+    {
+        return Err(SwitchError::Other(anyhow::anyhow!(
+            "a hot redeploy requires all runtime configuration to be available; \
+             `allow-missing-runtime-config` is not permitted"
+        )));
+    }
+
     let db_conn = db_pool
         .external_api_conn()
         .await
@@ -1942,6 +2212,22 @@ pub(crate) async fn switch_deployment(
         .map_err(|e| SwitchError::Other(e.into()))?
         .ok_or(SwitchError::NotFound)?;
 
+    let missing = db_conn
+        .missing_digests(deployment_id)
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+    if !missing.is_empty() {
+        return Err(SwitchError::Other(anyhow::anyhow!(
+            "deployment {deployment_id} is missing {} referenced file blob(s): {}",
+            missing.len(),
+            missing
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+
     let target_deployment = canonical_from_manifest(&*db_pool, &deployment_record.deployment_toml)
         .await
         .map_err(SwitchError::Other)?;
@@ -1952,6 +2238,16 @@ pub(crate) async fn switch_deployment(
         .map_err(|e| SwitchError::Other(e.into()))?
         .into();
 
+    let verify_params = VerifyParams {
+        dir_params: PrepareDirsParams {
+            clean_cache: false,
+            clean_codegen_cache: false,
+        },
+        ignore_missing_env_vars: runtime_config_check.ignore_missing_env_vars(),
+        suppress_type_checking_errors: false,
+        suppress_linking_errors: false,
+    };
+
     if action == SwitchDeploymentAction::HotRedeploy {
         let server_compiled_linked = deployment_verify_config_compile_link(
             server_verified,
@@ -1959,15 +2255,7 @@ pub(crate) async fn switch_deployment(
             target_deployment,
             Some(cas),
             DeploymentId::generate(),
-            VerifyParams {
-                dir_params: PrepareDirsParams {
-                    clean_cache: false,
-                    clean_codegen_cache: false,
-                },
-                ignore_missing_env_vars: false,
-                suppress_type_checking_errors: false,
-                suppress_linking_errors: false,
-            },
+            verify_params,
             termination_watcher,
         )
         .await?;
@@ -1983,26 +2271,18 @@ pub(crate) async fn switch_deployment(
         )
         .await
     } else {
-        if action == SwitchDeploymentAction::VerifyAndStore {
-            deployment_verify_config_compile_link(
-                server_verified,
-                prepared_dirs,
-                target_deployment,
-                Some(cas),
-                DeploymentId::generate(),
-                VerifyParams {
-                    dir_params: PrepareDirsParams {
-                        clean_cache: false,
-                        clean_codegen_cache: false,
-                    },
-                    ignore_missing_env_vars: false,
-                    suppress_type_checking_errors: false,
-                    suppress_linking_errors: false,
-                },
-                termination_watcher,
-            )
-            .await?;
-        }
+        // Cold switch: validation (compile + link) always runs before enqueuing, so a
+        // deployment queued for the next restart is known-good against the current host.
+        deployment_verify_config_compile_link(
+            server_verified,
+            prepared_dirs,
+            target_deployment,
+            Some(cas),
+            DeploymentId::generate(),
+            verify_params,
+            termination_watcher,
+        )
+        .await?;
         db_conn
             .enqueue_deployment(deployment_id)
             .await
@@ -2496,7 +2776,7 @@ impl DeploymentVerified {
     }
 
     fn verify_no_webui_server_bindings(
-        deployment: &DeploymentCanonical,
+        deployment: &DeploymentResolved,
     ) -> Result<(), anyhow::Error> {
         let mut offending_webhooks = deployment
             .webhooks_wasm
@@ -2524,7 +2804,7 @@ impl DeploymentVerified {
     #[instrument(skip_all)]
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
-        deployment: DeploymentResolved,
+        deployment: DeploymentRunnable,
         http_servers: Vec<webhook::HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
@@ -2554,7 +2834,7 @@ impl DeploymentVerified {
             let target_url = format!("http://{api_listening_addr}");
             deployment
                 .webhooks_wasm
-                .push(webhook::WebhookWasmComponentConfigCanonical {
+                .push(webhook::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
                         location: WEBUI_LOCATION
@@ -2570,7 +2850,7 @@ impl DeploymentVerified {
                         key: "TARGET_URL".to_string(),
                         value: target_url.clone(),
                     }],
-                    backtrace: crate::config::toml::ComponentBacktraceConfigCanonical::default(),
+                    backtrace: crate::config::toml::ComponentBacktraceConfigResolved::default(),
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
                         pattern: target_url,
@@ -4159,7 +4439,7 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            DeploymentResolved, DeploymentVerified, PrepareDirsParams, ServerCompiledLinked,
+            DeploymentRunnable, DeploymentVerified, PrepareDirsParams, ServerCompiledLinked,
             ServerVerified, VerifyParams, compile_activity_inline, create_engines,
             deployment_verify_config, prepare_dirs,
         },
@@ -4242,10 +4522,10 @@ mod tests {
         let params = VerifyParams::default();
         let webui_enabled = None;
 
-        // Verify deployment. The disk-authored canonical holds only absolute paths, so it
-        // resolves to itself without a CAS.
+        // Verify deployment. The current disk-authored canonical holds internal absolute
+        // paths, so it resolves to itself without a CAS.
         let deployment =
-            DeploymentResolved::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
+            DeploymentRunnable::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
         let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
             deployment,
             server_verified.http_servers,
@@ -4321,5 +4601,140 @@ mod tests {
 
         assert!(err.to_string().contains("shared between component types"));
         Ok(())
+    }
+
+    mod submit_package {
+        use crate::command::server::{
+            MAX_DEPLOYMENT_FILE_BYTES, SuppliedFile, compute_content_digest,
+            validate_submit_package,
+        };
+        use crate::config::manifest::{DeploymentFileRef, ManifestFieldRef};
+        use concepts::ContentDigest;
+        use hashbrown::HashSet;
+
+        fn file_ref(path: &str, content: &[u8]) -> (DeploymentFileRef, ContentDigest) {
+            let digest = compute_content_digest(content);
+            (
+                DeploymentFileRef {
+                    path: path.to_string(),
+                    digest: digest.clone(),
+                    field: ManifestFieldRef {
+                        section: "activity_wasm".to_string(),
+                        component_name: Some("c".to_string()),
+                        field_path: "activity_wasm[name=c].location".to_string(),
+                    },
+                },
+                digest,
+            )
+        }
+
+        #[test]
+        fn attached_blob_is_scheduled_for_write() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "a.wasm".to_string(),
+                supplied_digest: None,
+                content: b"\0asm-bytes".to_vec(),
+            }];
+            let to_write = validate_submit_package(
+                &[expected],
+                supplied,
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect("complete package");
+            assert_eq!(to_write.len(), 1);
+            assert_eq!(to_write[0].path, "a.wasm");
+        }
+
+        #[test]
+        fn cas_hit_needs_no_attached_blob_and_no_write() {
+            let (expected, digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let cas_present = HashSet::from_iter([digest]);
+            let to_write = validate_submit_package(
+                &[expected],
+                Vec::new(),
+                &cas_present,
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect("CAS hit is complete");
+            assert!(to_write.is_empty());
+        }
+
+        #[test]
+        fn missing_blob_reports_field_context() {
+            let (expected, digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let err = validate_submit_package(
+                &[expected],
+                Vec::new(),
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect_err("missing blob");
+            assert_eq!(err.missing_files.len(), 1);
+            assert_eq!(err.missing_files[0].section, "activity_wasm");
+            assert_eq!(
+                err.missing_files[0].digest.as_deref(),
+                Some(digest.to_string().as_str())
+            );
+        }
+
+        #[test]
+        fn unexpected_blob_is_rejected() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "stray.wasm".to_string(),
+                supplied_digest: None,
+                content: b"unexpected".to_vec(),
+            }];
+            // The expected file is missing too, but the unexpected blob is still reported.
+            let err = validate_submit_package(
+                &[expected],
+                supplied,
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect_err("unexpected blob");
+            assert_eq!(err.unexpected_files.len(), 1);
+            assert_eq!(err.unexpected_files[0].path.as_deref(), Some("stray.wasm"));
+        }
+
+        #[test]
+        fn digest_mismatch_is_rejected() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "a.wasm".to_string(),
+                supplied_digest: Some(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string(),
+                ),
+                content: b"\0asm-bytes".to_vec(),
+            }];
+            let err = validate_submit_package(
+                &[expected],
+                supplied,
+                &HashSet::new(),
+                MAX_DEPLOYMENT_FILE_BYTES,
+            )
+            .expect_err("digest mismatch");
+            assert_eq!(err.digest_mismatches.len(), 1);
+            assert_eq!(
+                err.digest_mismatches[0].actual_digest,
+                compute_content_digest(b"\0asm-bytes").to_string()
+            );
+        }
+
+        #[test]
+        fn oversized_blob_is_rejected() {
+            let (expected, _digest) = file_ref("a.wasm", b"\0asm-bytes");
+            let supplied = vec![SuppliedFile {
+                path: "a.wasm".to_string(),
+                supplied_digest: None,
+                content: b"\0asm-bytes".to_vec(),
+            }];
+            let err = validate_submit_package(&[expected], supplied, &HashSet::new(), 1)
+                .expect_err("oversized blob");
+            assert_eq!(err.oversized_files.len(), 1);
+        }
     }
 }

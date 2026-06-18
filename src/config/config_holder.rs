@@ -1,4 +1,4 @@
-use crate::config::toml::DeploymentCanonical;
+use crate::config::toml::DeploymentResolved;
 use crate::config::toml::DeploymentTomlValidated;
 
 use super::toml::{DeploymentToml, ServerConfigToml};
@@ -177,7 +177,7 @@ pub(crate) async fn load_deployment_validated(
 
 pub(crate) async fn load_deployment_canonical(
     deployment_toml: &Path,
-) -> Result<DeploymentCanonical, anyhow::Error> {
+) -> Result<DeploymentResolved, anyhow::Error> {
     load_deployment_validated(deployment_toml)
         .await?
         .canonicalize()

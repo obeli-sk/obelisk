@@ -12,13 +12,22 @@ use grpc::to_channel;
 use std::path::PathBuf;
 use tonic::transport::Channel;
 
+/// Map the CLI `--allow-missing-runtime-config` flag to the wire enum.
+fn runtime_config_check_from_bool(allow_missing: bool) -> grpc_gen::RuntimeConfigCheck {
+    if allow_missing {
+        grpc_gen::RuntimeConfigCheck::AllowMissing
+    } else {
+        grpc_gen::RuntimeConfigCheck::Strict
+    }
+}
+
 impl args::Deployment {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             args::Deployment::Submit {
                 file,
                 empty,
-                verify,
+                allow_missing_runtime_config,
                 description,
                 deployment_id,
                 api_url,
@@ -29,7 +38,7 @@ impl args::Deployment {
                 let id = upload_and_submit_manifest(
                     &mut client,
                     prepared,
-                    verify,
+                    runtime_config_check_from_bool(allow_missing_runtime_config),
                     description,
                     deployment_id,
                 )
@@ -41,18 +50,20 @@ impl args::Deployment {
             args::Deployment::Enqueue {
                 source,
                 empty,
-                verify,
+                allow_missing_runtime_config,
                 description,
                 deployment_id,
                 api_url,
             } => {
+                let runtime_config_check =
+                    runtime_config_check_from_bool(allow_missing_runtime_config);
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let id = submit_deployment(
                     &mut client,
                     source,
                     empty,
-                    false, // will be verified in switch
+                    runtime_config_check,
                     description,
                     deployment_id,
                 )
@@ -60,7 +71,7 @@ impl args::Deployment {
                 switch_deployment(
                     &mut client,
                     id,
-                    verify,
+                    runtime_config_check,
                     false, // hot
                 )
                 .await
@@ -73,13 +84,15 @@ impl args::Deployment {
                 deployment_id,
                 api_url,
             } => {
+                // A hot redeploy always requires runtime config to be available.
+                let runtime_config_check = grpc_gen::RuntimeConfigCheck::Strict;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let id = submit_deployment(
                     &mut client,
                     source,
                     empty,
-                    false, // will be verified in switch
+                    runtime_config_check,
                     description,
                     deployment_id,
                 )
@@ -87,7 +100,7 @@ impl args::Deployment {
                 switch_deployment(
                     &mut client,
                     id,
-                    true, // does not matter, will be verified in any case
+                    runtime_config_check,
                     true, // hot
                 )
                 .await
@@ -138,6 +151,17 @@ impl args::Deployment {
                         dep.description.unwrap_or_default()
                     );
                 }
+                Ok(())
+            }
+
+            args::Deployment::Gc { api_url } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_deployment_repository_client(channel).await?;
+                let resp = client
+                    .gc_orphan_files(grpc_gen::GcOrphanFilesRequest {})
+                    .await?
+                    .into_inner();
+                println!("Deleted {} orphan file blob(s).", resp.deleted_count);
                 Ok(())
             }
 
@@ -291,7 +315,7 @@ async fn submit_deployment(
     client: &mut DeploymentClient,
     source: Option<DeploymentSource>,
     empty: bool,
-    verify: bool,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
@@ -309,49 +333,169 @@ async fn submit_deployment(
         Some(DeploymentSource::File(path)) => prepare_deployment_manifest_from_disk(&path).await?,
         None => prepare_manifest_from_file_or_empty(None, empty).await?,
     };
-    let id =
-        upload_and_submit_manifest(client, prepared, verify, description, deployment_id).await?;
+    let id = upload_and_submit_manifest(
+        client,
+        prepared,
+        runtime_config_check,
+        description,
+        deployment_id,
+    )
+    .await?;
     println!("Submitted as {id}");
     Ok(id)
 }
 
-/// Upload the manifest's referenced file blobs to the content-addressed store, then submit the
-/// verbatim manifest. The server is content-addressed and idempotent, so re-uploading a blob it
-/// already has is a no-op.
+/// Submit the enriched manifest as a CAS-efficient package: first without file
+/// blobs, and if the server reports missing files, retry the same submit with only
+/// those blobs attached. The requested TOML is identical on both attempts.
 async fn upload_and_submit_manifest(
     client: &mut DeploymentClient,
     prepared: PreparedDeploymentManifest,
-    verify: bool,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
-    for file in &prepared.files {
-        client
-            .upload_file(grpc_gen::UploadFileRequest {
-                deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
-                content: file.bytes.clone(),
-            })
-            .await
-            .with_context(|| format!("cannot upload deployment file `{}`", file.path))?;
+    // Preflight: no blobs, so digests already in the CAS are not re-uploaded.
+    let missing = match submit_attempt(
+        client,
+        &prepared,
+        runtime_config_check,
+        description.as_deref(),
+        deployment_id,
+        Vec::new(),
+    )
+    .await?
+    {
+        SubmitAttempt::Stored(id) => return Ok(id),
+        SubmitAttempt::Missing(digests) => digests,
+    };
+
+    // Retry with only the blobs the server is missing.
+    let files = prepared
+        .files
+        .iter()
+        .filter(|file| missing.contains(&file.digest.to_string()))
+        .map(|file| grpc_gen::DeploymentFileContent {
+            path: file.path.clone(),
+            digest: Some(file.digest.to_string()),
+            content: file.bytes.clone(),
+        })
+        .collect();
+    match submit_attempt(
+        client,
+        &prepared,
+        runtime_config_check,
+        description.as_deref(),
+        deployment_id,
+        files,
+    )
+    .await?
+    {
+        SubmitAttempt::Stored(id) => Ok(id),
+        SubmitAttempt::Missing(digests) => bail!(
+            "server is still missing {} file blob(s) after upload: {}",
+            digests.len(),
+            digests.join(", ")
+        ),
     }
+}
+
+enum SubmitAttempt {
+    Stored(DeploymentId),
+    /// Digests the server is missing; the deployment was not stored.
+    Missing(Vec<String>),
+}
+
+/// One submit request. A `FAILED_PRECONDITION` carrying only `missing_files`
+/// becomes `Missing`; any other structured issue or status is a hard error.
+async fn submit_attempt(
+    client: &mut DeploymentClient,
+    prepared: &PreparedDeploymentManifest,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
+    description: Option<&str>,
+    deployment_id: Option<DeploymentId>,
+    files: Vec<grpc_gen::DeploymentFileContent>,
+) -> anyhow::Result<SubmitAttempt> {
     let resp = client
         .submit_deployment(grpc_gen::SubmitDeploymentRequest {
-            deployment_toml: prepared.deployment_toml,
+            deployment_toml: prepared.deployment_toml.clone(),
             created_by: Some("cli".to_string()),
-            verify,
-            description,
+            runtime_config_check: runtime_config_check.into(),
+            description: description.map(str::to_string),
             deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
+            files,
         })
-        .await?
-        .into_inner();
-    if !resp.missing_digests.is_empty() {
-        bail!(
-            "server is still missing {} file blob(s) after upload: {}",
-            resp.missing_digests.len(),
-            resp.missing_digests.join(", ")
-        );
+        .await;
+    match resp {
+        Ok(resp) => {
+            let resp = resp.into_inner();
+            Ok(SubmitAttempt::Stored(DeploymentId::try_from(
+                resp.deployment_id.context("missing deployment_id")?,
+            )?))
+        }
+        Err(status) => {
+            if let Some(detail) = decode_submit_error_detail(&status) {
+                let only_missing = detail.unexpected_files.is_empty()
+                    && detail.digest_mismatches.is_empty()
+                    && detail.oversized_files.is_empty()
+                    && detail.missing_digest_fields.is_empty()
+                    && !detail.missing_files.is_empty();
+                if only_missing {
+                    let digests = detail
+                        .missing_files
+                        .iter()
+                        .filter_map(|issue| issue.digest.clone())
+                        .collect();
+                    return Ok(SubmitAttempt::Missing(digests));
+                }
+                bail!(
+                    "deployment submit rejected: {}",
+                    format_submit_detail(&detail)
+                );
+            }
+            Err(status.into())
+        }
     }
-    DeploymentId::try_from(resp.deployment_id.context("missing deployment_id")?).map_err(Into::into)
+}
+
+/// Decode the `SubmitDeploymentErrorDetail` attached to a submit status, if present.
+fn decode_submit_error_detail(
+    status: &tonic::Status,
+) -> Option<grpc_gen::SubmitDeploymentErrorDetail> {
+    use prost::Message as _;
+    let details = status.details();
+    if details.is_empty() {
+        return None;
+    }
+    grpc_gen::SubmitDeploymentErrorDetail::decode(details).ok()
+}
+
+fn format_submit_detail(detail: &grpc_gen::SubmitDeploymentErrorDetail) -> String {
+    let mut lines = Vec::new();
+    for issue in &detail.missing_digest_fields {
+        lines.push(format!("missing content_digest at {}", issue.field_path));
+    }
+    for issue in &detail.missing_files {
+        lines.push(format!(
+            "missing file at {} ({})",
+            issue.field_path, issue.message
+        ));
+    }
+    for issue in &detail.unexpected_files {
+        lines.push(format!("unexpected file {}", issue.field_path));
+    }
+    for mismatch in &detail.digest_mismatches {
+        lines.push(format!(
+            "digest mismatch for {}: supplied {}, actual {}",
+            mismatch.file.as_ref().map_or("", |file| &file.field_path),
+            mismatch.supplied_digest,
+            mismatch.actual_digest
+        ));
+    }
+    for issue in &detail.oversized_files {
+        lines.push(format!("oversized file {}", issue.field_path));
+    }
+    lines.join("; ")
 }
 
 /// Fetch a deployment file blob from the server's content-addressed store.
@@ -369,13 +513,13 @@ async fn fetch_file(client: &mut DeploymentClient, digest: &str) -> anyhow::Resu
 async fn switch_deployment(
     client: &mut DeploymentClient,
     id: DeploymentId,
-    verify: bool,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
     hot: bool,
 ) -> anyhow::Result<()> {
     let resp = client
         .switch_deployment(grpc_gen::SwitchDeploymentRequest {
             deployment_id: Some(grpc_gen::DeploymentId::from(id)),
-            verify,
+            runtime_config_check: runtime_config_check.into(),
             hot_redeploy: hot,
         })
         .await?

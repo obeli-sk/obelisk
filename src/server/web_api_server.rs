@@ -5,7 +5,7 @@ use crate::{
         components::{component_wit, components_list},
         deployment::{
             get_current_deployment_id, get_deployment, get_file, list_deployments,
-            submit_deployment, switch_deployment, upload_file,
+            submit_deployment, switch_deployment,
         },
         functions::{function_wit, functions_list},
     },
@@ -112,7 +112,6 @@ pub(crate) struct WebApiState {
         deployment::get_deployment,
         deployment::submit_deployment,
         deployment::switch_deployment,
-        deployment::upload_file,
         deployment::get_file,
     ),
     components(schemas(
@@ -139,6 +138,10 @@ pub(crate) struct WebApiState {
         components::ParameterTypeLite,
         functions::FunctionOutput,
         deployment::DeploymentStateSer,
+        deployment::DeploymentSubmitResponse,
+        deployment::SubmitPackageErrorBody,
+        deployment::FileIssue,
+        deployment::DigestMismatch,
         backtrace::BacktraceInfoSer,
     ))
 )]
@@ -240,7 +243,6 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/deployments", routing::get(list_deployments))
         .route("/deployments", routing::post(submit_deployment))
         .route("/deployments/{deployment-id}", routing::get(get_deployment))
-        .route("/files", routing::post(upload_file))
         .route("/files/{digest}", routing::get(get_file))
         .route(
             "/deployments/{deployment-id}/switch",
@@ -3018,12 +3020,22 @@ mod functions {
 
 mod deployment {
     use crate::{
-        command::server::SwitchDeploymentAction,
+        command::server::{self, RuntimeConfigCheck, SwitchDeploymentAction},
         server::web_api_server::{
             AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
             pretty_json_response,
         },
     };
+    use http::header;
+
+    /// Map the REST `allow_missing_runtime_config` flag to the runtime config policy.
+    fn runtime_config_check_from_bool(allow_missing: bool) -> RuntimeConfigCheck {
+        if allow_missing {
+            RuntimeConfigCheck::AllowMissing
+        } else {
+            RuntimeConfigCheck::Strict
+        }
+    }
     use axum::{
         Json,
         extract::{Path, Query, State},
@@ -3314,38 +3326,240 @@ mod deployment {
     #[derive(Deserialize, ToSchema)]
     pub struct DeploymentSubmitPayload {
         /// Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must
-        /// already be uploaded to the content-addressed store.
+        /// be uploaded separately after the server returns `missing_digests`.
         pub deployment_toml: String,
         /// Optional human-readable deployment description
         pub description: Option<String>,
-        /// Verify all environment variables before persisting
+        /// Tolerate missing environment variables / secrets while verifying the
+        /// deployment before persisting it. Defaults to strict (missing config fails).
         #[serde(default)]
-        pub verify: bool,
+        pub allow_missing_runtime_config: bool,
         /// Optional client-supplied deployment ID for idempotent submission.
         /// If a deployment with this ID already exists and its content digest
         /// matches, the submission is a no-op; a digest mismatch is rejected.
         pub deployment_id: Option<String>,
     }
 
-    /// Submit a new deployment
+    #[derive(Debug, Serialize, ToSchema)]
+    pub struct DeploymentSubmitResponse {
+        pub deployment_id: String,
+    }
+
+    /// A single file-set problem found while validating a submit package.
+    #[derive(Debug, Serialize, ToSchema)]
+    pub struct FileIssue {
+        pub section: String,
+        pub component_name: Option<String>,
+        pub field_path: String,
+        pub path: Option<String>,
+        pub digest: Option<String>,
+        pub message: String,
+    }
+
+    #[derive(Debug, Serialize, ToSchema)]
+    pub struct DigestMismatch {
+        pub file: FileIssue,
+        pub supplied_digest: String,
+        pub actual_digest: String,
+    }
+
+    /// Structured `409` body describing why a submit package was rejected. No
+    /// deployment is stored when this is returned. A client retries the same submit
+    /// with the `missing_files` blobs attached.
+    #[derive(Debug, Serialize, ToSchema)]
+    pub struct SubmitPackageErrorBody {
+        pub missing_digest_fields: Vec<FileIssue>,
+        pub missing_files: Vec<FileIssue>,
+        pub unexpected_files: Vec<FileIssue>,
+        pub digest_mismatches: Vec<DigestMismatch>,
+        pub oversized_files: Vec<FileIssue>,
+    }
+
+    impl From<&server::SubmitFileIssue> for FileIssue {
+        fn from(issue: &server::SubmitFileIssue) -> Self {
+            FileIssue {
+                section: issue.section.clone(),
+                component_name: issue.component_name.clone(),
+                field_path: issue.field_path.clone(),
+                path: issue.path.clone(),
+                digest: issue.digest.clone(),
+                message: issue.message.clone(),
+            }
+        }
+    }
+
+    impl From<&server::SubmitPackageError> for SubmitPackageErrorBody {
+        fn from(pkg: &server::SubmitPackageError) -> Self {
+            SubmitPackageErrorBody {
+                missing_digest_fields: pkg.missing_digest_fields.iter().map(Into::into).collect(),
+                missing_files: pkg.missing_files.iter().map(Into::into).collect(),
+                unexpected_files: pkg.unexpected_files.iter().map(Into::into).collect(),
+                digest_mismatches: pkg
+                    .digest_mismatches
+                    .iter()
+                    .map(|m| DigestMismatch {
+                        file: (&m.file).into(),
+                        supplied_digest: m.supplied_digest.clone(),
+                        actual_digest: m.actual_digest.clone(),
+                    })
+                    .collect(),
+                oversized_files: pkg.oversized_files.iter().map(Into::into).collect(),
+            }
+        }
+    }
+
+    /// Parsed inputs for a submit request, from either a JSON body or a multipart package.
+    struct SubmitInputs {
+        deployment_toml: String,
+        description: Option<String>,
+        allow_missing_runtime_config: bool,
+        deployment_id: Option<String>,
+        files: Vec<server::SuppliedFile>,
+    }
+
+    /// Parse a `multipart/form-data` submit package. Text fields `deployment_toml`,
+    /// `description`, `allow_missing_runtime_config`, and `deployment_id` carry the
+    /// manifest and options. Every other part is a deployment-owned file blob: its
+    /// `filename` is the deployment-relative path and its form-field `name` is the
+    /// claimed `sha256:...` content digest (or `file` when unknown).
+    async fn parse_multipart_submit(
+        mut multipart: axum::extract::Multipart,
+        accept: AcceptHeader,
+    ) -> Result<SubmitInputs, HttpResponse> {
+        let bad = |message: String| HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            message,
+            accept,
+        };
+        let mut deployment_toml = None;
+        let mut description = None;
+        let mut allow_missing_runtime_config = false;
+        let mut deployment_id = None;
+        let mut files = Vec::new();
+        while let Some(field) = multipart
+            .next_field()
+            .await
+            .map_err(|err| bad(format!("invalid multipart body: {err}")))?
+        {
+            let name = field.name().unwrap_or_default().to_string();
+            let file_name = field.file_name().map(str::to_string);
+            match name.as_str() {
+                "deployment_toml" => {
+                    deployment_toml =
+                        Some(field.text().await.map_err(|err| {
+                            bad(format!("invalid `deployment_toml` field: {err}"))
+                        })?);
+                }
+                "description" => {
+                    description = Some(
+                        field
+                            .text()
+                            .await
+                            .map_err(|err| bad(format!("invalid `description` field: {err}")))?,
+                    );
+                }
+                "allow_missing_runtime_config" => {
+                    let value = field.text().await.map_err(|err| {
+                        bad(format!(
+                            "invalid `allow_missing_runtime_config` field: {err}"
+                        ))
+                    })?;
+                    allow_missing_runtime_config = value.trim() == "true";
+                }
+                "deployment_id" => {
+                    deployment_id = Some(
+                        field
+                            .text()
+                            .await
+                            .map_err(|err| bad(format!("invalid `deployment_id` field: {err}")))?,
+                    );
+                }
+                // Any other part is a file blob. `name` is the claimed digest (or `file`).
+                _ => {
+                    let supplied_digest = (name != "file").then_some(name);
+                    let path = file_name.unwrap_or_default();
+                    let content = field
+                        .bytes()
+                        .await
+                        .map_err(|err| bad(format!("cannot read file blob `{path}`: {err}")))?
+                        .to_vec();
+                    files.push(server::SuppliedFile {
+                        path,
+                        supplied_digest,
+                        content,
+                    });
+                }
+            }
+        }
+        Ok(SubmitInputs {
+            deployment_toml: deployment_toml
+                .ok_or_else(|| bad("missing `deployment_toml` field".to_string()))?,
+            description,
+            allow_missing_runtime_config,
+            deployment_id,
+            files,
+        })
+    }
+
+    /// Submit a new deployment.
+    ///
+    /// Accepts either an `application/json` body (no attached file blobs; referenced
+    /// files must already exist in the CAS) or a `multipart/form-data` package whose
+    /// parts carry the manifest and the deployment-owned file blobs. On an incomplete
+    /// package the server stores nothing and returns a `409` `SubmitPackageErrorBody`
+    /// listing the missing files to attach and retry.
     #[utoipa::path(
         post,
         path = "/v1/deployments",
         tag = "deployments",
         request_body = DeploymentSubmitPayload,
         responses(
-            (status = 200, description = "Deployment submitted", body = String),
+            (status = 200, description = "Deployment submitted", body = DeploymentSubmitResponse),
             (status = 400, description = "Invalid config"),
-            (status = 409, description = "Validation failed")
+            (status = 409, description = "Incomplete or invalid package", body = SubmitPackageErrorBody)
         )
     )]
     #[instrument(skip_all)]
     pub(crate) async fn submit_deployment(
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,
-        Json(payload): Json<DeploymentSubmitPayload>,
+        request: axum::extract::Request,
     ) -> Result<Response, HttpResponse> {
-        let requested_deployment_id = payload
+        use axum::extract::FromRequest as _;
+
+        let is_multipart = request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("multipart/form-data"));
+
+        let inputs = if is_multipart {
+            let multipart = axum::extract::Multipart::from_request(request, &*state)
+                .await
+                .map_err(|err| HttpResponse {
+                    status: StatusCode::BAD_REQUEST,
+                    message: format!("invalid multipart request: {err}"),
+                    accept,
+                })?;
+            parse_multipart_submit(multipart, accept).await?
+        } else {
+            let Json(payload) = Json::<DeploymentSubmitPayload>::from_request(request, &*state)
+                .await
+                .map_err(|err| HttpResponse {
+                    status: StatusCode::BAD_REQUEST,
+                    message: format!("invalid JSON body: {err}"),
+                    accept,
+                })?;
+            SubmitInputs {
+                deployment_toml: payload.deployment_toml,
+                description: payload.description,
+                allow_missing_runtime_config: payload.allow_missing_runtime_config,
+                deployment_id: payload.deployment_id,
+                files: Vec::new(),
+            }
+        };
+
+        let requested_deployment_id = inputs
             .deployment_id
             .as_deref()
             .map(str::parse::<DeploymentId>)
@@ -3356,65 +3570,56 @@ mod deployment {
                 accept,
             })?;
         let mut termination_watcher = state.termination_watcher.clone();
-        let (deployment_id, _missing_digests) =
-            Box::pin(crate::command::server::submit_deployment(
-                state.server_verified.clone(),
-                &payload.deployment_toml,
-                payload.verify,
-                Some("web-api".to_string()),
-                payload.description,
-                requested_deployment_id,
-                &state.prepared_dirs,
-                state.db_pool.clone(),
-                &mut termination_watcher,
-            ))
-            .await
-            .map_err(|err| HttpResponse {
-                status: StatusCode::BAD_REQUEST,
-                message: format!("{err:#}"),
-                accept,
-            })?;
-        Ok(HttpResponse {
-            status: StatusCode::OK,
-            message: deployment_id.to_string(),
-            accept,
-        }
-        .into_response())
-    }
+        let result = Box::pin(crate::command::server::submit_deployment(
+            state.server_verified.clone(),
+            &inputs.deployment_toml,
+            runtime_config_check_from_bool(inputs.allow_missing_runtime_config),
+            Some("web-api".to_string()),
+            inputs.description,
+            requested_deployment_id,
+            &state.prepared_dirs,
+            inputs.files,
+            state.db_pool.clone(),
+            &mut termination_watcher,
+        ))
+        .await;
 
-    /// Upload a deployment file blob to the content-addressed store. The request body is the
-    /// raw file content; the response is the server-computed content digest.
-    #[utoipa::path(
-        post,
-        path = "/v1/files",
-        tag = "deployments",
-        request_body(content = Vec<u8>, content_type = "application/octet-stream"),
-        responses(
-            (status = 200, description = "Stored; returns the content digest", body = String)
-        )
-    )]
-    #[instrument(skip_all)]
-    pub(crate) async fn upload_file(
-        state: State<Arc<WebApiState>>,
-        accept: AcceptHeader,
-        body: axum::body::Bytes,
-    ) -> Result<Response, HttpResponse> {
-        let cas = state
-            .db_pool
-            .cas_conn()
-            .await
-            .map_err(|e| ErrorWrapper(e, accept))?;
-        let digest = cas.write_blob(&body).await.map_err(|err| HttpResponse {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: format!("cannot store file: {err}"),
-            accept,
-        })?;
-        Ok(HttpResponse {
-            status: StatusCode::OK,
-            message: digest.to_string(),
-            accept,
-        }
-        .into_response())
+        let deployment_id = match result {
+            Ok(deployment_id) => deployment_id,
+            Err(server::SubmitDeploymentError::Other(err)) => {
+                return Err(HttpResponse {
+                    status: StatusCode::BAD_REQUEST,
+                    message: format!("{err:#}"),
+                    accept,
+                });
+            }
+            Err(server::SubmitDeploymentError::Package(pkg)) => {
+                let body = SubmitPackageErrorBody::from(&pkg);
+                return Ok(match accept {
+                    AcceptHeader::Json => pretty_json_response(StatusCode::CONFLICT, &body),
+                    AcceptHeader::Text => HttpResponse {
+                        status: StatusCode::CONFLICT,
+                        message: format!("{pkg:?}"),
+                        accept,
+                    }
+                    .into_response(),
+                });
+            }
+        };
+        Ok(match accept {
+            AcceptHeader::Json => pretty_json_response(
+                StatusCode::OK,
+                &DeploymentSubmitResponse {
+                    deployment_id: deployment_id.to_string(),
+                },
+            ),
+            AcceptHeader::Text => HttpResponse {
+                status: StatusCode::OK,
+                message: deployment_id.to_string(),
+                accept,
+            }
+            .into_response(),
+        })
     }
 
     /// Fetch a deployment file blob by content digest.
@@ -3459,9 +3664,10 @@ mod deployment {
     /// Request payload for switching deployment
     #[derive(Deserialize, ToSchema)]
     pub struct DeploymentSwitchPayload {
-        /// Verify config before switching
+        /// Tolerate missing environment variables / secrets while verifying. Rejected
+        /// for a hot redeploy, which requires all runtime config to be available.
         #[serde(default)]
-        pub verify: bool,
+        pub allow_missing_runtime_config: bool,
         /// Hot redeploy without restart
         #[serde(default)]
         pub hot_redeploy: bool,
@@ -3494,7 +3700,8 @@ mod deployment {
         let outcome = Box::pin(crate::command::server::switch_deployment(
             state.server_verified.clone(),
             deployment_id,
-            SwitchDeploymentAction::new(payload.hot_redeploy, payload.verify),
+            SwitchDeploymentAction::new(payload.hot_redeploy),
+            runtime_config_check_from_bool(payload.allow_missing_runtime_config),
             &state.prepared_dirs,
             state.db_pool.clone(),
             &mut termination_watcher,
