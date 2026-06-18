@@ -3021,12 +3021,21 @@ mod functions {
 
 mod deployment {
     use crate::{
-        command::server::SwitchDeploymentAction,
+        command::server::{RuntimeConfigCheck, SwitchDeploymentAction},
         server::web_api_server::{
             AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
             pretty_json_response,
         },
     };
+
+    /// Map the REST `allow_missing_runtime_config` flag to the runtime config policy.
+    fn runtime_config_check_from_bool(allow_missing: bool) -> RuntimeConfigCheck {
+        if allow_missing {
+            RuntimeConfigCheck::AllowMissing
+        } else {
+            RuntimeConfigCheck::Strict
+        }
+    }
     use axum::{
         Json,
         extract::{Path, Query, State},
@@ -3321,9 +3330,10 @@ mod deployment {
         pub deployment_toml: String,
         /// Optional human-readable deployment description
         pub description: Option<String>,
-        /// Deprecated for submit: verification happens when the deployment is activated.
+        /// Tolerate missing environment variables / secrets while verifying the
+        /// deployment before persisting it. Defaults to strict (missing config fails).
         #[serde(default)]
-        pub verify: bool,
+        pub allow_missing_runtime_config: bool,
         /// Optional client-supplied deployment ID for idempotent submission.
         /// If a deployment with this ID already exists and its content digest
         /// matches, the submission is a no-op; a digest mismatch is rejected.
@@ -3369,7 +3379,7 @@ mod deployment {
         let deployment_id = Box::pin(crate::command::server::submit_deployment(
             state.server_verified.clone(),
             &payload.deployment_toml,
-            payload.verify,
+            runtime_config_check_from_bool(payload.allow_missing_runtime_config),
             Some("web-api".to_string()),
             payload.description,
             requested_deployment_id,
@@ -3489,9 +3499,10 @@ mod deployment {
     /// Request payload for switching deployment
     #[derive(Deserialize, ToSchema)]
     pub struct DeploymentSwitchPayload {
-        /// Verify config before switching
+        /// Tolerate missing environment variables / secrets while verifying. Rejected
+        /// for a hot redeploy, which requires all runtime config to be available.
         #[serde(default)]
-        pub verify: bool,
+        pub allow_missing_runtime_config: bool,
         /// Hot redeploy without restart
         #[serde(default)]
         pub hot_redeploy: bool,
@@ -3524,7 +3535,8 @@ mod deployment {
         let outcome = Box::pin(crate::command::server::switch_deployment(
             state.server_verified.clone(),
             deployment_id,
-            SwitchDeploymentAction::new(payload.hot_redeploy, payload.verify),
+            SwitchDeploymentAction::new(payload.hot_redeploy),
+            runtime_config_check_from_bool(payload.allow_missing_runtime_config),
             &state.prepared_dirs,
             state.db_pool.clone(),
             &mut termination_watcher,

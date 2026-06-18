@@ -71,7 +71,7 @@ use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
     GetDeploymentRequest, GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest,
-    SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
+    RuntimeConfigCheck, SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -947,7 +947,7 @@ impl TestServer {
             .client
             .post(format!("{}/v1/deployments", self.base_url))
             .header("Accept", "application/json")
-            .json(&json!({ "deployment_toml": deployment_toml, "verify": false }))
+            .json(&json!({ "deployment_toml": deployment_toml }))
             .send()
             .await
             .expect("webapi submit deployment request failed");
@@ -976,7 +976,6 @@ impl TestServer {
             .header("Accept", "application/json")
             .json(&json!({
                 "deployment_toml": deployment_toml,
-                "verify": false,
                 "deployment_id": deployment_id.to_string(),
             }))
             .send()
@@ -1010,7 +1009,7 @@ impl TestServer {
                 .submit_deployment(SubmitDeploymentRequest {
                     deployment_toml: prepared.deployment_toml.clone(),
                     created_by: Some("test".to_string()),
-                    verify: true,
+                    runtime_config_check: RuntimeConfigCheck::Strict as i32,
                     description: None,
                     deployment_id: None,
                     files,
@@ -1067,7 +1066,7 @@ impl TestServer {
                 deployment_id: Some(GrpcDeploymentId {
                     id: deployment_id.to_string(),
                 }),
-                verify: true,
+                runtime_config_check: RuntimeConfigCheck::Strict as i32,
                 hot_redeploy: true,
             })
             .await
@@ -1085,7 +1084,7 @@ impl TestServer {
                 self.base_url
             ))
             .header("Accept", "application/json")
-            .json(&json!({ "verify": false, "hot_redeploy": true }))
+            .json(&json!({ "hot_redeploy": true }))
             .send()
             .await
             .expect("webapi switch deployment request failed");
@@ -1169,7 +1168,7 @@ impl TestDeployClient {
                     .submit_deployment(SubmitDeploymentRequest {
                         deployment_toml: new_deployment_toml,
                         created_by: Some("test".to_string()),
-                        verify: false,
+                        runtime_config_check: RuntimeConfigCheck::Strict as i32,
                         description: None,
                         deployment_id: None,
                         // The mutated active manifest references only blobs already in the CAS.
@@ -1182,7 +1181,7 @@ impl TestDeployClient {
                 let switch_resp = grpc_client
                     .switch_deployment(SwitchDeploymentRequest {
                         deployment_id: Some(GrpcDeploymentId { id: second_id }),
-                        verify: false,
+                        runtime_config_check: RuntimeConfigCheck::Strict as i32,
                         hot_redeploy: true,
                     })
                     .await
@@ -1967,7 +1966,7 @@ ffqn = "testing:integration/deferred.run"
                 .submit_deployment(SubmitDeploymentRequest {
                     deployment_toml: toml,
                     created_by: Some("test".to_string()),
-                    verify: true,
+                    runtime_config_check: RuntimeConfigCheck::Strict as i32,
                     description: None,
                     deployment_id: Some(id),
                     files,
@@ -2051,6 +2050,105 @@ ffqn = "testing:integration/deferred.run"
         })
         .await
         .expect("stored deployment must exist");
+
+    server.shutdown().await;
+}
+
+/// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
+/// verification. Submit is strict by default and tolerant under `ALLOW_MISSING`; a
+/// hot redeploy is always strict and rejects `ALLOW_MISSING` outright.
+#[tokio::test]
+async fn submit_runtime_config_check_grpc() {
+    let server = TestServer::start(test_addr!(79)).await;
+
+    // A JS activity referencing a bare-name env var guaranteed absent from the server
+    // environment. Inline content needs no attached file blobs.
+    let deployment_toml = r#"
+[[activity_js]]
+name = "needs_env"
+content = "export function run() { return 'ok'; }"
+ffqn = "testing:integration/needs-env.run"
+env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
+"#;
+
+    let mut grpc_client =
+        DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap()
+            .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+            .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+
+    let submit = |check: RuntimeConfigCheck, id: Option<GrpcDeploymentId>| {
+        let mut client = grpc_client.clone();
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: deployment_toml.to_string(),
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: check as i32,
+                    description: None,
+                    deployment_id: id,
+                    files: Vec::new(),
+                })
+                .await
+        }
+    };
+
+    // Strict submit fails on the missing env var and stores nothing.
+    let status = submit(RuntimeConfigCheck::Strict, None)
+        .await
+        .expect_err("strict submit must reject a missing env var");
+    assert!(
+        status
+            .message()
+            .contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
+        "error must name the missing env var, got: {}",
+        status.message()
+    );
+
+    // ALLOW_MISSING submit tolerates the missing env var and persists.
+    let stored_id = submit(RuntimeConfigCheck::AllowMissing, None)
+        .await
+        .expect("allow-missing submit must persist")
+        .into_inner()
+        .deployment_id
+        .expect("deployment_id")
+        .id;
+    let stored_grpc_id = GrpcDeploymentId { id: stored_id };
+
+    // A hot redeploy with ALLOW_MISSING is rejected outright.
+    let status = grpc_client
+        .clone()
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(stored_grpc_id.clone()),
+            runtime_config_check: RuntimeConfigCheck::AllowMissing as i32,
+            hot_redeploy: true,
+        })
+        .await
+        .expect_err("hot redeploy must reject allow-missing-runtime-config");
+    assert!(
+        status.message().contains("allow-missing-runtime-config"),
+        "error must explain the rejection, got: {}",
+        status.message()
+    );
+
+    // A strict hot redeploy of the same deployment fails because the env var is missing.
+    let status = grpc_client
+        .clone()
+        .switch_deployment(SwitchDeploymentRequest {
+            deployment_id: Some(stored_grpc_id),
+            runtime_config_check: RuntimeConfigCheck::Strict as i32,
+            hot_redeploy: true,
+        })
+        .await
+        .expect_err("strict hot redeploy must fail on the missing env var");
+    assert!(
+        status
+            .message()
+            .contains("OBELISK_PHASE5_DEFINITELY_MISSING_VAR"),
+        "error must name the missing env var, got: {}",
+        status.message()
+    );
 
     server.shutdown().await;
 }

@@ -12,13 +12,22 @@ use grpc::to_channel;
 use std::path::PathBuf;
 use tonic::transport::Channel;
 
+/// Map the CLI `--allow-missing-runtime-config` flag to the wire enum.
+fn runtime_config_check_from_bool(allow_missing: bool) -> grpc_gen::RuntimeConfigCheck {
+    if allow_missing {
+        grpc_gen::RuntimeConfigCheck::AllowMissing
+    } else {
+        grpc_gen::RuntimeConfigCheck::Strict
+    }
+}
+
 impl args::Deployment {
     pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
         match self {
             args::Deployment::Submit {
                 file,
                 empty,
-                verify,
+                allow_missing_runtime_config,
                 description,
                 deployment_id,
                 api_url,
@@ -29,7 +38,7 @@ impl args::Deployment {
                 let id = upload_and_submit_manifest(
                     &mut client,
                     prepared,
-                    verify,
+                    runtime_config_check_from_bool(allow_missing_runtime_config),
                     description,
                     deployment_id,
                 )
@@ -41,18 +50,20 @@ impl args::Deployment {
             args::Deployment::Enqueue {
                 source,
                 empty,
-                verify,
+                allow_missing_runtime_config,
                 description,
                 deployment_id,
                 api_url,
             } => {
+                let runtime_config_check =
+                    runtime_config_check_from_bool(allow_missing_runtime_config);
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let id = submit_deployment(
                     &mut client,
                     source,
                     empty,
-                    false, // will be verified in switch
+                    runtime_config_check,
                     description,
                     deployment_id,
                 )
@@ -60,7 +71,7 @@ impl args::Deployment {
                 switch_deployment(
                     &mut client,
                     id,
-                    verify,
+                    runtime_config_check,
                     false, // hot
                 )
                 .await
@@ -73,13 +84,15 @@ impl args::Deployment {
                 deployment_id,
                 api_url,
             } => {
+                // A hot redeploy always requires runtime config to be available.
+                let runtime_config_check = grpc_gen::RuntimeConfigCheck::Strict;
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let id = submit_deployment(
                     &mut client,
                     source,
                     empty,
-                    false, // will be verified in switch
+                    runtime_config_check,
                     description,
                     deployment_id,
                 )
@@ -87,7 +100,7 @@ impl args::Deployment {
                 switch_deployment(
                     &mut client,
                     id,
-                    true, // does not matter, will be verified in any case
+                    runtime_config_check,
                     true, // hot
                 )
                 .await
@@ -291,7 +304,7 @@ async fn submit_deployment(
     client: &mut DeploymentClient,
     source: Option<DeploymentSource>,
     empty: bool,
-    verify: bool,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
@@ -309,8 +322,14 @@ async fn submit_deployment(
         Some(DeploymentSource::File(path)) => prepare_deployment_manifest_from_disk(&path).await?,
         None => prepare_manifest_from_file_or_empty(None, empty).await?,
     };
-    let id =
-        upload_and_submit_manifest(client, prepared, verify, description, deployment_id).await?;
+    let id = upload_and_submit_manifest(
+        client,
+        prepared,
+        runtime_config_check,
+        description,
+        deployment_id,
+    )
+    .await?;
     println!("Submitted as {id}");
     Ok(id)
 }
@@ -321,7 +340,7 @@ async fn submit_deployment(
 async fn upload_and_submit_manifest(
     client: &mut DeploymentClient,
     prepared: PreparedDeploymentManifest,
-    verify: bool,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
@@ -329,7 +348,7 @@ async fn upload_and_submit_manifest(
     let missing = match submit_attempt(
         client,
         &prepared,
-        verify,
+        runtime_config_check,
         description.as_deref(),
         deployment_id,
         Vec::new(),
@@ -354,7 +373,7 @@ async fn upload_and_submit_manifest(
     match submit_attempt(
         client,
         &prepared,
-        verify,
+        runtime_config_check,
         description.as_deref(),
         deployment_id,
         files,
@@ -381,7 +400,7 @@ enum SubmitAttempt {
 async fn submit_attempt(
     client: &mut DeploymentClient,
     prepared: &PreparedDeploymentManifest,
-    verify: bool,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
     description: Option<&str>,
     deployment_id: Option<DeploymentId>,
     files: Vec<grpc_gen::DeploymentFileContent>,
@@ -390,7 +409,7 @@ async fn submit_attempt(
         .submit_deployment(grpc_gen::SubmitDeploymentRequest {
             deployment_toml: prepared.deployment_toml.clone(),
             created_by: Some("cli".to_string()),
-            verify,
+            runtime_config_check: runtime_config_check.into(),
             description: description.map(str::to_string),
             deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
             files,
@@ -483,13 +502,13 @@ async fn fetch_file(client: &mut DeploymentClient, digest: &str) -> anyhow::Resu
 async fn switch_deployment(
     client: &mut DeploymentClient,
     id: DeploymentId,
-    verify: bool,
+    runtime_config_check: grpc_gen::RuntimeConfigCheck,
     hot: bool,
 ) -> anyhow::Result<()> {
     let resp = client
         .switch_deployment(grpc_gen::SwitchDeploymentRequest {
             deployment_id: Some(grpc_gen::DeploymentId::from(id)),
-            verify,
+            runtime_config_check: runtime_config_check.into(),
             hot_redeploy: hot,
         })
         .await?

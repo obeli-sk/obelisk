@@ -1964,7 +1964,7 @@ fn validate_submit_package(
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
     deployment_toml: &str,
-    _verify: bool,
+    runtime_config_check: RuntimeConfigCheck,
     created_by: Option<String>,
     description: Option<String>,
     requested_deployment_id: Option<DeploymentId>,
@@ -2071,7 +2071,7 @@ pub(crate) async fn submit_deployment(
                 clean_cache: false,
                 clean_codegen_cache: false,
             },
-            ignore_missing_env_vars: false,
+            ignore_missing_env_vars: runtime_config_check.ignore_missing_env_vars(),
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
         },
@@ -2175,20 +2175,36 @@ impl From<anyhow::Error> for SwitchError {
     }
 }
 
+/// Policy for runtime configuration (environment variables and secrets) that a
+/// deployment references but that may be absent from the server's environment.
+/// Structural, file, compile, and link validation always runs regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RuntimeConfigCheck {
+    /// Missing environment variables or secrets fail the operation.
+    #[default]
+    Strict,
+    /// Missing environment variables or secrets are tolerated.
+    AllowMissing,
+}
+
+impl RuntimeConfigCheck {
+    /// Whether verification should tolerate missing env vars / secrets.
+    pub(crate) fn ignore_missing_env_vars(self) -> bool {
+        matches!(self, RuntimeConfigCheck::AllowMissing)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SwitchDeploymentAction {
     HotRedeploy,
     VerifyAndStore,
-    Store,
 }
 impl SwitchDeploymentAction {
-    pub(crate) fn new(hot_redeploy: bool, verify: bool) -> SwitchDeploymentAction {
+    pub(crate) fn new(hot_redeploy: bool) -> SwitchDeploymentAction {
         if hot_redeploy {
             SwitchDeploymentAction::HotRedeploy
-        } else if verify {
-            SwitchDeploymentAction::VerifyAndStore
         } else {
-            SwitchDeploymentAction::Store
+            SwitchDeploymentAction::VerifyAndStore
         }
     }
 }
@@ -2199,6 +2215,7 @@ pub(crate) async fn switch_deployment(
     server_verified: ServerVerified,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
+    runtime_config_check: RuntimeConfigCheck,
     prepared_dirs: &PreparedDirs,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
@@ -2207,6 +2224,18 @@ pub(crate) async fn switch_deployment(
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<SwitchOutcome, SwitchError> {
+    // A hot redeploy makes the deployment immediately live, so its runtime config must be
+    // fully available; tolerating missing env vars / secrets here would yield broken
+    // running components.
+    if action == SwitchDeploymentAction::HotRedeploy
+        && runtime_config_check == RuntimeConfigCheck::AllowMissing
+    {
+        return Err(SwitchError::Other(anyhow::anyhow!(
+            "a hot redeploy requires all runtime configuration to be available; \
+             `allow-missing-runtime-config` is not permitted"
+        )));
+    }
+
     let db_conn = db_pool
         .external_api_conn()
         .await
@@ -2244,6 +2273,16 @@ pub(crate) async fn switch_deployment(
         .map_err(|e| SwitchError::Other(e.into()))?
         .into();
 
+    let verify_params = VerifyParams {
+        dir_params: PrepareDirsParams {
+            clean_cache: false,
+            clean_codegen_cache: false,
+        },
+        ignore_missing_env_vars: runtime_config_check.ignore_missing_env_vars(),
+        suppress_type_checking_errors: false,
+        suppress_linking_errors: false,
+    };
+
     if action == SwitchDeploymentAction::HotRedeploy {
         let server_compiled_linked = deployment_verify_config_compile_link(
             server_verified,
@@ -2251,15 +2290,7 @@ pub(crate) async fn switch_deployment(
             target_deployment,
             Some(cas),
             DeploymentId::generate(),
-            VerifyParams {
-                dir_params: PrepareDirsParams {
-                    clean_cache: false,
-                    clean_codegen_cache: false,
-                },
-                ignore_missing_env_vars: false,
-                suppress_type_checking_errors: false,
-                suppress_linking_errors: false,
-            },
+            verify_params,
             termination_watcher,
         )
         .await?;
@@ -2275,26 +2306,18 @@ pub(crate) async fn switch_deployment(
         )
         .await
     } else {
-        if action == SwitchDeploymentAction::VerifyAndStore {
-            deployment_verify_config_compile_link(
-                server_verified,
-                prepared_dirs,
-                target_deployment,
-                Some(cas),
-                DeploymentId::generate(),
-                VerifyParams {
-                    dir_params: PrepareDirsParams {
-                        clean_cache: false,
-                        clean_codegen_cache: false,
-                    },
-                    ignore_missing_env_vars: false,
-                    suppress_type_checking_errors: false,
-                    suppress_linking_errors: false,
-                },
-                termination_watcher,
-            )
-            .await?;
-        }
+        // Cold switch: validation (compile + link) always runs before enqueuing, so a
+        // deployment queued for the next restart is known-good against the current host.
+        deployment_verify_config_compile_link(
+            server_verified,
+            prepared_dirs,
+            target_deployment,
+            Some(cas),
+            DeploymentId::generate(),
+            verify_params,
+            termination_watcher,
+        )
+        .await?;
         db_conn
             .enqueue_deployment(deployment_id)
             .await

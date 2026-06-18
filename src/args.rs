@@ -102,9 +102,10 @@ pub(crate) enum Deployment {
         /// Submit an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Deprecated for submit: verification happens when the deployment is activated.
+        /// Tolerate missing environment variables / secrets while verifying the
+        /// deployment before persisting it (default: missing config fails).
         #[arg(long)]
-        verify: bool,
+        allow_missing_runtime_config: bool,
         /// Optional human-readable description.
         #[arg(long)]
         description: Option<String>,
@@ -131,9 +132,10 @@ pub(crate) enum Deployment {
         /// Enqueue an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Verify all environment variables before enqueuing.
+        /// Tolerate missing environment variables / secrets while verifying the
+        /// deployment before enqueuing it (default: missing config fails).
         #[arg(long)]
-        verify: bool,
+        allow_missing_runtime_config: bool,
         /// Optional human-readable description for a newly submitted deployment.
         #[arg(long)]
         description: Option<String>,

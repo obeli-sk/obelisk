@@ -1658,6 +1658,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
         use grpc_gen::switch_deployment_response::Outcome;
         let request = request.into_inner();
+        let runtime_config_check = runtime_config_check_from_grpc(request.runtime_config_check());
         let deployment_id: DeploymentId = request
             .deployment_id
             .argument_must_exist("deployment_id")?
@@ -1667,7 +1668,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let outcome = Box::pin(server::switch_deployment(
             self.server_verified.clone(),
             deployment_id,
-            SwitchDeploymentAction::new(request.hot_redeploy, request.verify),
+            SwitchDeploymentAction::new(request.hot_redeploy),
+            runtime_config_check,
             &self.prepared_dirs,
             self.db_pool.clone(),
             &mut termination_watcher,
@@ -1698,6 +1700,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         request: tonic::Request<grpc_gen::SubmitDeploymentRequest>,
     ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
         let request = request.into_inner();
+        let runtime_config_check = runtime_config_check_from_grpc(request.runtime_config_check());
         let requested_deployment_id = request
             .deployment_id
             .map(DeploymentId::try_from)
@@ -1715,7 +1718,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let result = Box::pin(server::submit_deployment(
             self.server_verified.clone(),
             &request.deployment_toml,
-            request.verify,
+            runtime_config_check,
             request.created_by.clone(),
             request.description.clone(),
             requested_deployment_id,
@@ -1823,6 +1826,19 @@ fn file_issue_to_grpc(issue: server::SubmitFileIssue) -> grpc_gen::FileIssue {
         path: issue.path,
         digest: issue.digest,
         message: issue.message,
+    }
+}
+
+/// Map the wire `RuntimeConfigCheck` to its server-side counterpart. `UNSPECIFIED`
+/// (the proto3 default for an unset field) is treated as `STRICT`.
+fn runtime_config_check_from_grpc(
+    check: grpc_gen::RuntimeConfigCheck,
+) -> server::RuntimeConfigCheck {
+    match check {
+        grpc_gen::RuntimeConfigCheck::AllowMissing => server::RuntimeConfigCheck::AllowMissing,
+        grpc_gen::RuntimeConfigCheck::Unspecified | grpc_gen::RuntimeConfigCheck::Strict => {
+            server::RuntimeConfigCheck::Strict
+        }
     }
 }
 

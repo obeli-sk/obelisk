@@ -1093,10 +1093,24 @@ message GetCurrentDeploymentIdResponse {
     DeploymentId deployment_id = 1;
 }
 
+// Policy for runtime configuration (environment variables and secrets) that a
+// deployment references but that may be absent from the server's environment.
+// Structural, file, compile, and link validation are always performed regardless
+// of this value.
+enum RuntimeConfigCheck {
+    // Unset; treated as RUNTIME_CONFIG_CHECK_STRICT.
+    RUNTIME_CONFIG_CHECK_UNSPECIFIED = 0;
+    // Missing environment variables or secrets fail the operation.
+    RUNTIME_CONFIG_CHECK_STRICT = 1;
+    // Missing environment variables or secrets are tolerated.
+    RUNTIME_CONFIG_CHECK_ALLOW_MISSING = 2;
+}
+
 message SwitchDeploymentRequest {
     DeploymentId deployment_id = 1;
-    // Run `obelisk server verify` on the deployment config before switching.
-    bool verify = 2;
+    // Runtime config availability policy applied while verifying the deployment.
+    // A hot redeploy rejects RUNTIME_CONFIG_CHECK_ALLOW_MISSING.
+    RuntimeConfigCheck runtime_config_check = 2;
     // Perform a hot redeployment (reload running components without restart).
     bool hot_redeploy = 3;
 }
@@ -1116,8 +1130,9 @@ message SubmitDeploymentRequest {
     // Every deployment-owned relative `location =` must carry a `content_digest`.
     string deployment_toml = 1;
     optional string created_by = 2;
-    // Deprecated for submit: verification happens when the deployment is activated.
-    bool verify = 3;
+    // Runtime config availability policy applied while verifying the deployment
+    // before it is persisted. Defaults to RUNTIME_CONFIG_CHECK_STRICT.
+    RuntimeConfigCheck runtime_config_check = 3;
     optional string description = 4;
     // Optional client-supplied deployment ID for idempotent submission.
     // If a deployment with this ID already exists and its content digest matches
