@@ -41,7 +41,7 @@ jobs:
           ref: ${{ github.event.inputs.ref }}
           persist-credentials: false
 
-      - uses: nixbuild/nix-quick-install-action@v34
+      - uses: nixbuild/nix-quick-install-action@v35
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           nix_conf: |
