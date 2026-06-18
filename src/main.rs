@@ -35,6 +35,12 @@ pub(crate) fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("", "obelisk", "obelisk")
 }
 
+/// Maximum encoded gRPC message size for the deployment repository service. Submit
+/// requests inline deployment-owned file blobs and `GetFile` returns them, so the
+/// default 4 MiB tonic limit is far too small. This caps both the server's decoding
+/// and the client's encoding/decoding for that service.
+pub(crate) const MAX_GRPC_MESSAGE_SIZE: usize = 512 * 1024 * 1024;
+
 type ExecutionRepositoryClient = grpc_gen::execution_repository_client::ExecutionRepositoryClient<
     tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
 >;
@@ -66,7 +72,9 @@ async fn get_deployment_repository_client(
         )
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Gzip),
+        .accept_compressed(CompressionEncoding::Gzip)
+        .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE),
     )
 }
 

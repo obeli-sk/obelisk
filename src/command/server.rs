@@ -1371,7 +1371,11 @@ pub(crate) async fn run_internal(
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
         .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip),
+        .accept_compressed(CompressionEncoding::Gzip)
+        // Submit requests inline deployment-owned blobs; raise the decode limit
+        // well above tonic's 4 MiB default. `GetFile` responses are likewise large.
+        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE),
     )
     .add_service(
         tonic_reflection::server::Builder::configure()
@@ -1958,16 +1962,16 @@ fn validate_submit_package(
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit_deployment(
-    _server_verified: ServerVerified,
+    server_verified: ServerVerified,
     deployment_toml: &str,
     _verify: bool,
     created_by: Option<String>,
     description: Option<String>,
     requested_deployment_id: Option<DeploymentId>,
-    _prepared_dirs: &PreparedDirs,
+    prepared_dirs: &PreparedDirs,
     supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
-    _termination_watcher: &mut watch::Receiver<()>,
+    termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
@@ -2041,6 +2045,39 @@ pub(crate) async fn submit_deployment(
             )));
         }
     }
+
+    // Fully validate the deployment before persisting it, so a stored deployment is
+    // already known-good: canonicalize from the CAS (resolving env vars/secrets),
+    // parse JS, validate WIT/WASM, and compile + link every component. Activation no
+    // longer performs first-time package validation. Blobs already written to the CAS
+    // when verification fails are acceptable GC input; no deployment row is inserted.
+    let canonical = canonical_from_manifest(&*db_pool, deployment_toml)
+        .await
+        .map_err(SubmitDeploymentError::Other)?;
+    let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool
+        .cas_conn()
+        .await
+        .map_err(anyhow::Error::from)?
+        .into();
+    deployment_verify_config_compile_link(
+        server_verified,
+        prepared_dirs,
+        canonical,
+        Some(cas_arc),
+        DeploymentId::generate(),
+        VerifyParams {
+            dir_params: PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
+            ignore_missing_env_vars: false,
+            suppress_type_checking_errors: false,
+            suppress_linking_errors: false,
+        },
+        termination_watcher,
+    )
+    .await
+    .map_err(SubmitDeploymentError::Other)?;
 
     let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
     let now = chrono::Utc::now();

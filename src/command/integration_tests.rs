@@ -1000,7 +1000,9 @@ impl TestServer {
         let grpc_client =
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
-                .unwrap();
+                .unwrap()
+                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
 
         let submit = async |files| {
             grpc_client
@@ -1057,7 +1059,9 @@ impl TestServer {
         let mut grpc_client =
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
-                .unwrap();
+                .unwrap()
+                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
         let resp = grpc_client
             .switch_deployment(SwitchDeploymentRequest {
                 deployment_id: Some(GrpcDeploymentId {
@@ -1158,7 +1162,9 @@ impl TestDeployClient {
                 let mut grpc_client =
                     DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
                         .await
-                        .unwrap();
+                        .unwrap()
+                        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+                        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
                 let submit_resp = grpc_client
                     .submit_deployment(SubmitDeploymentRequest {
                         deployment_toml: new_deployment_toml,
@@ -1950,7 +1956,9 @@ ffqn = "testing:integration/deferred.run"
     let mut grpc_client =
         DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
             .await
-            .unwrap();
+            .unwrap()
+            .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+            .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
     let submit = |files, id| {
         let mut client = grpc_client.clone();
         let toml = prepared.deployment_toml.clone();
