@@ -46,12 +46,11 @@ service DeploymentRepository {
     rpc SwitchDeployment(SwitchDeploymentRequest) returns (SwitchDeploymentResponse);
     rpc SubmitDeployment(SubmitDeploymentRequest) returns (SubmitDeploymentResponse);
     rpc GetDeployment(GetDeploymentRequest) returns (GetDeploymentResponse);
-    // Deprecated: deployment file blobs are attached to `SubmitDeployment` via
-    // `DeploymentFileContent`. Retained as admin-only CAS tooling; not used by the
-    // normal deployment submit flow.
-    rpc UploadFile(UploadFileRequest) returns (UploadFileResponse);
     // Fetch a deployment file blob by content digest.
     rpc GetFile(GetFileRequest) returns (GetFileResponse);
+    // Delete content-addressed file blobs not referenced by any stored deployment
+    // (e.g. orphans left by a submit that failed verification after writing blobs).
+    rpc GcOrphanFiles(GcOrphanFilesRequest) returns (GcOrphanFilesResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -1197,20 +1196,18 @@ message DigestMismatch {
     string actual_digest = 3;
 }
 
-message UploadFileRequest {
-    DeploymentId deployment_id = 1;
-    bytes content = 2;
-}
-message UploadFileResponse {
-    // Server-computed digest of the uploaded content, for confirmation.
-    string digest = 1;
-}
-
 message GetFileRequest {
     string digest = 1;
 }
 message GetFileResponse {
     bytes content = 1;
+}
+
+message GcOrphanFilesRequest {
+}
+message GcOrphanFilesResponse {
+    // Number of orphan file blobs deleted from the content-addressed store.
+    uint64 deleted_count = 1;
 }
 
 message GetDeploymentRequest {

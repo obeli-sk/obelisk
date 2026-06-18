@@ -70,8 +70,9 @@ use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
-    GetDeploymentRequest, GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest,
-    RuntimeConfigCheck, SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
+    GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest, GetStatusRequest,
+    ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest,
+    SubmitRequest, SwitchDeploymentRequest,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -2071,12 +2072,11 @@ ffqn = "testing:integration/needs-env.run"
 env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
 "#;
 
-    let mut grpc_client =
-        DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-            .await
-            .unwrap()
-            .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-            .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
 
     let submit = |check: RuntimeConfigCheck, id: Option<GrpcDeploymentId>| {
         let mut client = grpc_client.clone();
@@ -2264,6 +2264,143 @@ ffqn = "testing:integration/pkg.run"
         .await
         .expect("get deployment failed");
     assert_eq!(resp.status().as_u16(), 200, "stored deployment must exist");
+
+    server.shutdown().await;
+}
+
+/// Phase 8: a submit that writes file blobs and then fails verification leaves orphan
+/// blobs in the CAS. `GcOrphanFiles` deletes blobs not referenced by any stored
+/// deployment while keeping those a valid deployment still references.
+#[tokio::test]
+async fn gc_orphan_files_grpc() {
+    let server = TestServer::start(test_addr!(81)).await;
+
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+
+    // Prepare a deployment-owned JS file (digest-enriched) from disk. `section` selects
+    // `activity_js` or `workflow_js` (a JS workflow validates its source at link time, so
+    // a syntax error there fails submit verification).
+    async fn prepare(
+        section: &str,
+        source: &str,
+    ) -> (
+        tempfile::TempDir,
+        crate::config::manifest::PreparedDeploymentManifest,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("a.js"), source)
+            .await
+            .unwrap();
+        let toml_path = dir.path().join("deployment.toml");
+        tokio::fs::write(
+            &toml_path,
+            format!(
+                r#"
+[[{section}]]
+name = "a"
+location = "a.js"
+ffqn = "testing:integration/a.run"
+"#
+            ),
+        )
+        .await
+        .unwrap();
+        let prepared = crate::config::manifest::prepare_deployment_manifest_from_disk(&toml_path)
+            .await
+            .unwrap();
+        (dir, prepared)
+    }
+
+    let submit_request =
+        |prepared: &crate::config::manifest::PreparedDeploymentManifest| SubmitDeploymentRequest {
+            deployment_toml: prepared.deployment_toml.clone(),
+            created_by: Some("test".to_string()),
+            runtime_config_check: RuntimeConfigCheck::Strict as i32,
+            description: None,
+            deployment_id: Some(GrpcDeploymentId {
+                id: DeploymentId::generate().to_string(),
+            }),
+            files: vec![grpc::grpc_gen::DeploymentFileContent {
+                path: "a.js".to_string(),
+                digest: Some(prepared.files[0].digest.to_string()),
+                content: prepared.files[0].bytes.clone(),
+            }],
+        };
+
+    // A valid deployment: its blob is referenced and must survive GC.
+    let (_good_dir, good) = prepare("activity_js", "export function run() { return 'ok'; }").await;
+    let good_digest = good.files[0].digest.to_string();
+    grpc_client
+        .clone()
+        .submit_deployment(submit_request(&good))
+        .await
+        .expect("valid deployment must persist");
+
+    // An invalid deployment: the blob is written, then verification fails, so no
+    // deployment row references it. It becomes an orphan. A JS workflow validates its
+    // source at link time, so a syntax error fails submit.
+    let (_bad_dir, bad) = prepare("workflow_js", "this is @@@ not valid javascript {{{").await;
+    let bad_digest = bad.files[0].digest.to_string();
+    grpc_client
+        .clone()
+        .submit_deployment(submit_request(&bad))
+        .await
+        .expect_err("invalid deployment must fail verification");
+
+    // Before GC: both blobs are present in the CAS.
+    grpc_client
+        .clone()
+        .get_file(GetFileRequest {
+            digest: good_digest.clone(),
+        })
+        .await
+        .expect("referenced blob present before gc");
+    grpc_client
+        .clone()
+        .get_file(GetFileRequest {
+            digest: bad_digest.clone(),
+        })
+        .await
+        .expect("orphan blob present before gc");
+
+    // GC deletes exactly the orphan.
+    let deleted = grpc_client
+        .clone()
+        .gc_orphan_files(GcOrphanFilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .deleted_count;
+    assert_eq!(deleted, 1, "exactly one orphan blob must be deleted");
+
+    // After GC: the orphan is gone, the referenced blob remains.
+    grpc_client
+        .clone()
+        .get_file(GetFileRequest {
+            digest: good_digest,
+        })
+        .await
+        .expect("referenced blob must survive gc");
+    let status = grpc_client
+        .clone()
+        .get_file(GetFileRequest { digest: bad_digest })
+        .await
+        .expect_err("orphan blob must be gone after gc");
+    assert_eq!(status.code(), tonic::Code::NotFound);
+
+    // A second GC is a no-op.
+    let deleted = grpc_client
+        .clone()
+        .gc_orphan_files(GcOrphanFilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .deleted_count;
+    assert_eq!(deleted, 0, "second gc must delete nothing");
 
     server.shutdown().await;
 }

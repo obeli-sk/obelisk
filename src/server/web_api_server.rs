@@ -5,7 +5,7 @@ use crate::{
         components::{component_wit, components_list},
         deployment::{
             get_current_deployment_id, get_deployment, get_file, list_deployments,
-            submit_deployment, switch_deployment, upload_file,
+            submit_deployment, switch_deployment,
         },
         functions::{function_wit, functions_list},
     },
@@ -112,7 +112,6 @@ pub(crate) struct WebApiState {
         deployment::get_deployment,
         deployment::submit_deployment,
         deployment::switch_deployment,
-        deployment::upload_file,
         deployment::get_file,
     ),
     components(schemas(
@@ -244,10 +243,6 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/deployments", routing::get(list_deployments))
         .route("/deployments", routing::post(submit_deployment))
         .route("/deployments/{deployment-id}", routing::get(get_deployment))
-        .route(
-            "/deployments/{deployment-id}/files",
-            routing::post(upload_file),
-        )
         .route("/files/{digest}", routing::get(get_file))
         .route(
             "/deployments/{deployment-id}/switch",
@@ -3625,48 +3620,6 @@ mod deployment {
             }
             .into_response(),
         })
-    }
-
-    /// Upload a deployment file blob to the content-addressed store. The request body is the
-    /// raw file content; the response is the server-computed content digest. The digest must be
-    /// referenced by the deployment.
-    ///
-    /// Deprecated: attach file blobs to a `multipart/form-data` `POST /v1/deployments`
-    /// package instead. Retained as admin CAS tooling.
-    #[utoipa::path(
-        post,
-        path = "/v1/deployments/{deployment_id}/files",
-        tag = "deployments",
-        params(("deployment_id" = String, Path, description = "Deployment ID that references the file")),
-        request_body(content = Vec<u8>, content_type = "application/octet-stream"),
-        responses(
-            (status = 200, description = "Stored; returns the content digest", body = String)
-        )
-    )]
-    #[instrument(skip_all)]
-    pub(crate) async fn upload_file(
-        state: State<Arc<WebApiState>>,
-        accept: AcceptHeader,
-        Path(deployment_id): Path<DeploymentId>,
-        body: axum::body::Bytes,
-    ) -> Result<Response, HttpResponse> {
-        let digest = crate::command::server::upload_deployment_file(
-            state.db_pool.clone(),
-            deployment_id,
-            &body,
-        )
-        .await
-        .map_err(|err| HttpResponse {
-            status: StatusCode::BAD_REQUEST,
-            message: format!("{err:#}"),
-            accept,
-        })?;
-        Ok(HttpResponse {
-            status: StatusCode::OK,
-            message: digest.to_string(),
-            accept,
-        }
-        .into_response())
     }
 
     /// Fetch a deployment file blob by content digest.

@@ -58,7 +58,6 @@ use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
 use anyhow::bail;
-use anyhow::ensure;
 use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::ContentDigest;
@@ -2116,40 +2115,6 @@ pub(crate) async fn submit_deployment(
 fn compute_content_digest(content: &[u8]) -> ContentDigest {
     let hash: [u8; 32] = Sha256::digest(content).into();
     ContentDigest(Digest(hash))
-}
-
-pub(crate) async fn upload_deployment_file(
-    db_pool: Arc<dyn DbPool>,
-    deployment_id: DeploymentId,
-    content: &[u8],
-) -> anyhow::Result<ContentDigest> {
-    let digest = compute_content_digest(content);
-    let conn = db_pool
-        .external_api_conn()
-        .await
-        .context("cannot get external api connection for deployment file upload")?;
-    let deployment = conn
-        .get_deployment(deployment_id)
-        .await?
-        .with_context(|| format!("deployment {deployment_id} not found"))?;
-    ensure!(
-        deployment.files.iter().any(|file| file.digest == digest),
-        "uploaded file digest {digest} is not referenced by deployment {deployment_id}"
-    );
-
-    let cas = db_pool
-        .cas_conn()
-        .await
-        .context("cannot get CAS connection for deployment file upload")?;
-    let stored = cas
-        .write_blob(content)
-        .await
-        .with_context(|| format!("cannot store deployment file {digest}"))?;
-    ensure!(
-        stored == digest,
-        "stored deployment file digest mismatch: expected {digest}, got {stored}"
-    );
-    Ok(stored)
 }
 
 /// Outcome of switching a deployment.

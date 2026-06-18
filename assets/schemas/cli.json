@@ -738,6 +738,17 @@
           ]
         },
         {
+          "name": "gc",
+          "about": "Delete content-addressed file blobs not referenced by any stored deployment",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ]
+        },
+        {
           "name": "active",
           "about": "Print the ID of the currently active deployment",
           "options": [

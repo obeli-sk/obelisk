@@ -414,54 +414,6 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}/files": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "summary": "Upload a deployment file blob to the content-addressed store. The request body is the\nraw file content; the response is the server-computed content digest. The digest must be\nreferenced by the deployment.",
-        "description": "Deprecated: attach file blobs to a `multipart/form-data` `POST /v1/deployments`\npackage instead. Retained as admin CAS tooling.",
-        "operationId": "upload_file",
-        "parameters": [
-          {
-            "name": "deployment_id",
-            "in": "path",
-            "description": "Deployment ID that references the file",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "type": "integer",
-                  "format": "int32",
-                  "minimum": 0
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Stored; returns the content digest",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/deployments/{deployment_id}/switch": {
       "put": {
         "tags": [

@@ -182,6 +182,15 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
+    /// Delete content-addressed file blobs not referenced by any stored deployment.
+    ///
+    /// Such orphans are left behind when a submit writes blobs to the store and then
+    /// fails verification before persisting the deployment.
+    Gc {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+    },
     /// Print the ID of the currently active deployment.
     Active {
         /// Output as JSON instead of plain text.

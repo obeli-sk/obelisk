@@ -1772,21 +1772,21 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     }
 
     #[instrument(skip_all)]
-    async fn upload_file(
+    async fn gc_orphan_files(
         &self,
-        request: tonic::Request<grpc_gen::UploadFileRequest>,
-    ) -> TonicRespResult<grpc_gen::UploadFileResponse> {
-        let request = request.into_inner();
-        let deployment_id: DeploymentId = request
-            .deployment_id
-            .argument_must_exist("deployment_id")?
-            .try_into()?;
-        let digest =
-            server::upload_deployment_file(self.db_pool.clone(), deployment_id, &request.content)
-                .await
-                .map_err(|err| tonic::Status::failed_precondition(format!("{err:#}")))?;
-        Ok(tonic::Response::new(grpc_gen::UploadFileResponse {
-            digest: digest.to_string(),
+        _request: tonic::Request<grpc_gen::GcOrphanFilesRequest>,
+    ) -> TonicRespResult<grpc_gen::GcOrphanFilesResponse> {
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let deleted_count = conn
+            .gc_orphan_files()
+            .await
+            .map_err(|err| tonic::Status::internal(format!("cannot gc orphan files: {err}")))?;
+        Ok(tonic::Response::new(grpc_gen::GcOrphanFilesResponse {
+            deleted_count,
         }))
     }
 

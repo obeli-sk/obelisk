@@ -154,6 +154,17 @@ impl args::Deployment {
                 Ok(())
             }
 
+            args::Deployment::Gc { api_url } => {
+                let channel = to_channel(&api_url).await?;
+                let mut client = get_deployment_repository_client(channel).await?;
+                let resp = client
+                    .gc_orphan_files(grpc_gen::GcOrphanFilesRequest {})
+                    .await?
+                    .into_inner();
+                println!("Deleted {} orphan file blob(s).", resp.deleted_count);
+                Ok(())
+            }
+
             args::Deployment::Active { api_url, json } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
