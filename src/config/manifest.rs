@@ -117,32 +117,131 @@ pub(crate) fn compute_manifest_digest(deployment_toml: &str) -> ContentDigest {
     ContentDigest(Digest(hash))
 }
 
+/// A validated, digest-bearing projection of a stored deployment manifest.
+///
+/// This stage carries no file bytes. It proves the manifest is structurally valid
+/// and classifies every component location, so the requested TOML is storeable
+/// as-is. The deployment-owned file references it collects are the CAS objects the
+/// stored TOML depends on. See `meta/designs/deployment-submit-package-state-pipeline.md`.
+#[derive(Debug, Clone)]
+pub(crate) struct DeploymentManifest {
+    #[allow(dead_code)] // consumed by submit/storage paths in later phases
+    pub(crate) deployment_toml: String,
+    pub(crate) files: Vec<DeploymentFileRef>,
+}
+
+/// A deployment-owned file reference: a deployment-relative path and its required
+/// digest, plus field context for contextual submit errors.
+#[derive(Debug, Clone)]
+pub(crate) struct DeploymentFileRef {
+    pub(crate) path: String,
+    pub(crate) digest: ContentDigest,
+    #[allow(dead_code)] // surfaced in structured submit errors in later phases
+    pub(crate) field: ManifestFieldRef,
+}
+
+/// Locates a file reference within the manifest for contextual error reporting.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // fields surfaced in structured submit errors in later phases
+pub(crate) struct ManifestFieldRef {
+    /// TOML section, e.g. `activity_wasm` or `workflow_wasm.backtrace.sources`.
+    pub(crate) section: String,
+    /// Component `name`, when present.
+    pub(crate) component_name: Option<String>,
+    /// Stable field path, e.g. `activity_wasm[name=a].location` or
+    /// `workflow_wasm[name=w].backtrace.sources[.../src/lib.rs]`.
+    pub(crate) field_path: String,
+}
+
+/// Classification of a script (JS/exec) component `location` / `content`.
+enum ManifestScriptLocation {
+    /// Inline `content`, no deployment-owned file.
+    Inline,
+    DeploymentFile { path: String, digest: ContentDigest },
+    Oci,
+}
+
+/// Classification of a WASM component `location`. WASM has no inline form, so a
+/// deployment-owned file cannot be disguised as a generic path.
+enum ManifestWasmLocation {
+    DeploymentFile { path: String, digest: ContentDigest },
+    Oci,
+}
+
+const WASM_SECTIONS: &[&str] = &[
+    "activity_wasm",
+    "activity_stub",
+    "activity_external",
+    "workflow_wasm",
+    "webhook_endpoint_wasm",
+];
+const BACKTRACE_SECTIONS: &[&str] = &["workflow_wasm", "webhook_endpoint_wasm"];
+const SCRIPT_SECTIONS: &[&str] = &[
+    "activity_js",
+    "workflow_js",
+    "webhook_endpoint_js",
+    "activity_exec",
+];
+
+impl DeploymentManifest {
+    /// Parse and structurally validate `deployment_toml`, then classify every
+    /// component location into a digest-bearing, deployment-relative file set.
+    /// No file I/O happens here. Absolute local paths are rejected.
+    pub(crate) fn try_from_toml(
+        deployment_toml: &str,
+        deployment_dir: &Path,
+    ) -> anyhow::Result<Self> {
+        parse_manifest(deployment_toml, deployment_dir)?;
+
+        let doc = deployment_toml
+            .parse::<DocumentMut>()
+            .context("cannot parse deployment manifest as TOML")?;
+
+        // Section order matches the historical record collection so digest
+        // deduplication keeps the same first-seen path for colliding contents.
+        let mut files = Vec::new();
+        collect_wasm_section(&doc, "activity_wasm", &mut files)?;
+        collect_wasm_section(&doc, "activity_stub", &mut files)?;
+        collect_wasm_section(&doc, "activity_external", &mut files)?;
+        collect_wasm_section(&doc, "workflow_wasm", &mut files)?;
+        collect_backtrace_section(&doc, "workflow_wasm", &mut files)?;
+        collect_wasm_section(&doc, "webhook_endpoint_wasm", &mut files)?;
+        collect_backtrace_section(&doc, "webhook_endpoint_wasm", &mut files)?;
+        collect_script_section(&doc, "activity_js", &mut files)?;
+        collect_script_section(&doc, "workflow_js", &mut files)?;
+        collect_script_section(&doc, "webhook_endpoint_js", &mut files)?;
+        collect_script_section(&doc, "activity_exec", &mut files)?;
+
+        debug_assert!(
+            WASM_SECTIONS.len() + SCRIPT_SECTIONS.len() + BACKTRACE_SECTIONS.len() == 11,
+            "section lists drifted from collection order"
+        );
+
+        let mut seen = HashSet::new();
+        files.retain(|file| seen.insert(file.digest.clone()));
+        Ok(Self {
+            deployment_toml: deployment_toml.to_string(),
+            files,
+        })
+    }
+
+    /// Indexed projection of deployment-owned files for `t_deployment_file`.
+    pub(crate) fn file_records(&self) -> Vec<DeploymentFileRecord> {
+        self.files
+            .iter()
+            .map(|file| DeploymentFileRecord {
+                path: file.path.clone(),
+                digest: file.digest.clone(),
+            })
+            .collect()
+    }
+}
+
 pub(crate) fn file_records_from_manifest(
     deployment_toml: &str,
     deployment_dir: &Path,
 ) -> anyhow::Result<Vec<DeploymentFileRecord>> {
-    parse_manifest(deployment_toml, deployment_dir)?;
-
-    let doc = deployment_toml
-        .parse::<DocumentMut>()
-        .context("cannot parse deployment manifest as TOML")?;
-
-    let mut files = Vec::new();
-    collect_wasm_ref_records(&doc, "activity_wasm", &mut files)?;
-    collect_wasm_ref_records(&doc, "activity_stub", &mut files)?;
-    collect_wasm_ref_records(&doc, "activity_external", &mut files)?;
-    collect_wasm_ref_records(&doc, "workflow_wasm", &mut files)?;
-    collect_backtrace_ref_records(&doc, "workflow_wasm", &mut files)?;
-    collect_wasm_ref_records(&doc, "webhook_endpoint_wasm", &mut files)?;
-    collect_backtrace_ref_records(&doc, "webhook_endpoint_wasm", &mut files)?;
-    collect_script_ref_records(&doc, "activity_js", &mut files)?;
-    collect_script_ref_records(&doc, "workflow_js", &mut files)?;
-    collect_script_ref_records(&doc, "webhook_endpoint_js", &mut files)?;
-    collect_script_ref_records(&doc, "activity_exec", &mut files)?;
-
-    let mut seen = HashSet::new();
-    files.retain(|file| seen.insert(file.digest.clone()));
-    Ok(files)
+    Ok(DeploymentManifest::try_from_toml(deployment_toml, deployment_dir)?.file_records())
 }
 
 fn parse_manifest(
@@ -156,72 +255,92 @@ fn parse_manifest(
         .context("cannot validate deployment manifest")
 }
 
-fn collect_script_ref_records(
+fn component_name(table: &toml_edit::Table) -> Option<String> {
+    table.get("name").and_then(Item::as_str).map(str::to_string)
+}
+
+fn collect_script_section(
     doc: &DocumentMut,
     section: &str,
-    files: &mut Vec<DeploymentFileRecord>,
+    files: &mut Vec<DeploymentFileRef>,
 ) -> anyhow::Result<()> {
     let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
         return Ok(());
     };
 
-    for table in components.iter() {
-        let has_inline_content = table.get("content").and_then(Item::as_str).is_some();
-        let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
-            continue;
-        };
-        ensure!(
-            !has_inline_content,
-            "exactly one of `location` or `content` must be set for script components"
-        );
-        collect_file_ref_record(table, raw_location, files)?;
+    for table in components {
+        let name = component_name(table);
+        match classify_script_location(table)? {
+            ManifestScriptLocation::DeploymentFile { path, digest } => {
+                let field_path = format!(
+                    "{section}[name={}].location",
+                    name.as_deref().unwrap_or("")
+                );
+                files.push(DeploymentFileRef {
+                    path,
+                    digest,
+                    field: ManifestFieldRef {
+                        section: section.to_string(),
+                        component_name: name,
+                        field_path,
+                    },
+                });
+            }
+            ManifestScriptLocation::Inline | ManifestScriptLocation::Oci => {}
+        }
     }
 
     Ok(())
 }
 
-fn collect_wasm_ref_records(
+fn collect_wasm_section(
     doc: &DocumentMut,
     section: &str,
-    files: &mut Vec<DeploymentFileRecord>,
+    files: &mut Vec<DeploymentFileRef>,
 ) -> anyhow::Result<()> {
     let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
         return Ok(());
     };
 
-    for table in components.iter() {
+    for table in components {
+        let name = component_name(table);
         let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
             continue;
         };
-        collect_file_ref_record(table, raw_location, files)?;
+        match classify_wasm_location(raw_location, table.get("content_digest"))? {
+            ManifestWasmLocation::DeploymentFile { path, digest } => {
+                let field_path = format!(
+                    "{section}[name={}].location",
+                    name.as_deref().unwrap_or("")
+                );
+                files.push(DeploymentFileRef {
+                    path,
+                    digest,
+                    field: ManifestFieldRef {
+                        section: section.to_string(),
+                        component_name: name,
+                        field_path,
+                    },
+                });
+            }
+            ManifestWasmLocation::Oci => {}
+        }
     }
 
     Ok(())
 }
 
-fn collect_file_ref_record(
-    table: &toml_edit::Table,
-    raw_location: &str,
-    files: &mut Vec<DeploymentFileRecord>,
-) -> anyhow::Result<()> {
-    let Some(path) = deployment_owned_path(raw_location)? else {
-        return Ok(());
-    };
-    let digest = required_content_digest(table.get("content_digest"), &path)?;
-    files.push(DeploymentFileRecord { path, digest });
-    Ok(())
-}
-
-fn collect_backtrace_ref_records(
+fn collect_backtrace_section(
     doc: &DocumentMut,
     section: &str,
-    files: &mut Vec<DeploymentFileRecord>,
+    files: &mut Vec<DeploymentFileRef>,
 ) -> anyhow::Result<()> {
     let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
         return Ok(());
     };
 
-    for table in components.iter() {
+    for table in components {
+        let name = component_name(table);
         let Some(sources) = table
             .get("backtrace")
             .and_then(Item::as_table_like)
@@ -231,7 +350,7 @@ fn collect_backtrace_ref_records(
             continue;
         };
 
-        for (_, source) in sources.iter() {
+        for (key, source) in sources.iter() {
             let Some(raw_path) = backtrace_source_path(source) else {
                 continue;
             };
@@ -244,11 +363,52 @@ fn collect_backtrace_ref_records(
                     .and_then(|table| table.get("content_digest")),
                 &path,
             )?;
-            files.push(DeploymentFileRecord { path, digest });
+            files.push(DeploymentFileRef {
+                path,
+                digest,
+                field: ManifestFieldRef {
+                    section: format!("{section}.backtrace.sources"),
+                    component_name: name.clone(),
+                    field_path: format!(
+                        "{section}[name={}].backtrace.sources[{key}]",
+                        name.as_deref().unwrap_or("")
+                    ),
+                },
+            });
         }
     }
 
     Ok(())
+}
+
+fn classify_script_location(
+    table: &toml_edit::Table,
+) -> anyhow::Result<ManifestScriptLocation> {
+    let has_inline_content = table.get("content").and_then(Item::as_str).is_some();
+    let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
+        // No `location`: inline content (or neither, already rejected by validation).
+        return Ok(ManifestScriptLocation::Inline);
+    };
+    ensure!(
+        !has_inline_content,
+        "exactly one of `location` or `content` must be set for script components"
+    );
+    let Some(path) = deployment_owned_path(raw_location)? else {
+        return Ok(ManifestScriptLocation::Oci);
+    };
+    let digest = required_content_digest(table.get("content_digest"), &path)?;
+    Ok(ManifestScriptLocation::DeploymentFile { path, digest })
+}
+
+fn classify_wasm_location(
+    raw_location: &str,
+    content_digest: Option<&Item>,
+) -> anyhow::Result<ManifestWasmLocation> {
+    let Some(path) = deployment_owned_path(raw_location)? else {
+        return Ok(ManifestWasmLocation::Oci);
+    };
+    let digest = required_content_digest(content_digest, &path)?;
+    Ok(ManifestWasmLocation::DeploymentFile { path, digest })
 }
 
 fn required_content_digest(item: Option<&Item>, path: &str) -> anyhow::Result<ContentDigest> {
@@ -639,6 +799,58 @@ ffqn = "ns:pkg/ifc.external"
 
         assert!(
             err.contains("absolute local paths are not allowed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn manifest_classifies_files_with_field_context() {
+        let manifest = r#"
+[[activity_wasm]]
+name = "act"
+location = "components/a.wasm"
+content_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+[[workflow_wasm]]
+name = "wf"
+location = "components/w.wasm"
+content_digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+[workflow_wasm.backtrace.sources]
+".../src/lib.rs" = { path = "src/lib.rs", content_digest = "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
+"#;
+
+        let deployment_dir = Path::new("/does-not-matter");
+        let manifest = DeploymentManifest::try_from_toml(manifest, deployment_dir).unwrap();
+
+        assert_eq!(manifest.files.len(), 3);
+        let act = &manifest.files[0];
+        assert_eq!(act.path, "components/a.wasm");
+        assert_eq!(act.field.section, "activity_wasm");
+        assert_eq!(act.field.component_name.as_deref(), Some("act"));
+        assert_eq!(act.field.field_path, "activity_wasm[name=act].location");
+
+        let backtrace = &manifest.files[2];
+        assert_eq!(backtrace.path, "src/lib.rs");
+        assert_eq!(backtrace.field.section, "workflow_wasm.backtrace.sources");
+        assert_eq!(
+            backtrace.field.field_path,
+            "workflow_wasm[name=wf].backtrace.sources[.../src/lib.rs]"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_deployment_owned_wasm_without_digest() {
+        let manifest = r#"
+[[activity_wasm]]
+name = "act"
+location = "components/a.wasm"
+"#;
+        let err = DeploymentManifest::try_from_toml(manifest, Path::new("/x"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("must set `content_digest`"),
             "unexpected error: {err}"
         );
     }
