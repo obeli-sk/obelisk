@@ -2059,12 +2059,13 @@ pub(crate) async fn submit_deployment(
         .await
         .map_err(anyhow::Error::from)?
         .into();
-    deployment_verify_config_compile_link(
+    let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
+    let compiled_linked = deployment_verify_config_compile_link(
         server_verified,
         prepared_dirs,
         canonical,
         Some(cas_arc),
-        DeploymentId::generate(),
+        deployment_id,
         VerifyParams {
             dir_params: PrepareDirsParams {
                 clean_cache: false,
@@ -2079,7 +2080,6 @@ pub(crate) async fn submit_deployment(
     .await
     .map_err(SubmitDeploymentError::Other)?;
 
-    let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
     let now = chrono::Utc::now();
 
     conn.insert_deployment(DeploymentRecord {
@@ -2096,6 +2096,18 @@ pub(crate) async fn submit_deployment(
     })
     .await
     .map_err(anyhow::Error::from)?;
+
+    // Persist the verified component metadata and backtrace sources so the DB-backed
+    // ListComponents / GetBacktraceSource see this deployment without waiting for a
+    // server restart. Verification above already compiled and linked every component.
+    persist_deployment_component_metadata(
+        conn.as_ref(),
+        deployment_id,
+        &compiled_linked.component_registry_ro,
+    )
+    .await
+    .map_err(SubmitDeploymentError::Other)?;
+    upsert_backtrace_sources(conn.as_ref(), &compiled_linked).await;
 
     info!(%deployment_id, "Deployment submitted");
     Ok(deployment_id)
