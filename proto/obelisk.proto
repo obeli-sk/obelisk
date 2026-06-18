@@ -1029,9 +1029,10 @@ message ListDeploymentsRequest {
         OlderThan older_than = 2;
     };
     bool include_deployment_toml = 3;
-    // Count child executions in the `DeploymentSummary` buckets as well;
-    // by default only top-level executions are counted.
+    // Count child executions in the buckets too; only applies when `include_execution_counts` is set.
     bool include_derived = 4;
+    // Populate the `DeploymentSummary` buckets; when unset the counts are zero and the COUNTs skipped.
+    bool include_execution_counts = 5;
 }
 
 enum DeploymentStatus {

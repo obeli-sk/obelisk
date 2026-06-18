@@ -14,10 +14,11 @@ use concepts::{
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
-        DeploymentComponentRecord, DeploymentFileRecord, DeploymentRecord, DeploymentState,
-        DeploymentStatus, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
+        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
         LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
@@ -1674,7 +1675,7 @@ async fn list_deployment_states(
     current_time: DateTime<Utc>,
     pagination: Pagination<Option<DeploymentId>>,
     include_deployment_toml: bool,
-    include_derived: bool,
+    execution_counts: DeploymentExecutionCounts,
 ) -> Result<Vec<DeploymentState>, DbErrorRead> {
     // Helper for numbered params ($1, $2, ...)
     let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
@@ -1683,22 +1684,27 @@ async fn list_deployment_states(
         format!("${}", params.len())
     };
 
-    // Base params
-    let p_now = add_param(Box::new(current_time));
-
     let deployment_toml_col = if include_deployment_toml {
         "d.deployment_toml"
     } else {
         "NULL::TEXT AS deployment_toml"
     };
 
-    let mut sql = format!(
-        "
-        SELECT
-            d.deployment_id,
-            d.description,
-            d.digest,
-
+    let include_execution_counts =
+        matches!(execution_counts, DeploymentExecutionCounts::Count { .. });
+    // Without counts, skip the `COUNT(*) FILTER`s (and the `t_state` join feeding them) and report zeros.
+    let (count_cols, count_join) = if let DeploymentExecutionCounts::Count { include_derived } =
+        execution_counts
+    {
+        let p_now = add_param(Box::new(current_time));
+        let join_top_level = if include_derived {
+            ""
+        } else {
+            " AND s.is_top_level = true"
+        };
+        (
+            format!(
+                "
             COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}' AND s.is_paused = false) AS locked,
 
             COUNT(*) FILTER (
@@ -1731,19 +1737,40 @@ async fn list_deployment_states(
                 WHERE s.state = '{STATE_FINISHED}'
                   AND s.result_kind IS NOT NULL
                   AND s.result_kind NOT IN ('{RESULT_KIND_JSON_OK}'::jsonb, '{RESULT_KIND_JSON_ERROR}'::jsonb)
-            ) AS finished_execution_failure,
+            ) AS finished_execution_failure,"
+            ),
+            format!(
+                "\n        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id{join_top_level}"
+            ),
+        )
+    } else {
+        (
+            "
+            0::BIGINT AS locked,
+            0::BIGINT AS pending,
+            0::BIGINT AS scheduled,
+            0::BIGINT AS blocked,
+            0::BIGINT AS paused,
+            0::BIGINT AS finished_ok,
+            0::BIGINT AS finished_error,
+            0::BIGINT AS finished_execution_failure,"
+                .to_string(),
+            String::new(),
+        )
+    };
 
+    let mut sql = format!(
+        "
+        SELECT
+            d.deployment_id,
+            d.description,
+            d.digest,
+{count_cols}
             {deployment_toml_col},
             d.created_at,
             d.last_active_at,
             d.status
-        FROM t_deployment d
-        LEFT JOIN t_state s ON s.deployment_id = d.deployment_id{join_top_level}",
-        join_top_level = if include_derived {
-            ""
-        } else {
-            " AND s.is_top_level = true"
-        }
+        FROM t_deployment d{count_join}"
     );
 
     // Pagination
@@ -1766,9 +1793,17 @@ async fn list_deployment_states(
         ("ASC", "DESC")
     };
 
+    // GROUP BY only needed to collapse the rows multiplied by the `t_state` join.
+    if include_execution_counts {
+        write!(
+            sql,
+            " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status"
+        )
+        .expect("writing to string");
+    }
     write!(
         sql,
-        " GROUP BY d.deployment_id, d.description, d.digest, d.deployment_toml, d.created_at, d.last_active_at, d.status ORDER BY d.deployment_id {inner_order} LIMIT {}",
+        " ORDER BY d.deployment_id {inner_order} LIMIT {}",
         pagination.length()
     )
     .expect("writing to string");
@@ -4678,7 +4713,7 @@ impl DbExternalApi for PostgresConnection {
         current_time: DateTime<Utc>,
         pagination: Pagination<Option<DeploymentId>>,
         include_deployment_toml: bool,
-        include_derived: bool,
+        execution_counts: DeploymentExecutionCounts,
     ) -> Result<Vec<DeploymentState>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
@@ -4687,7 +4722,7 @@ impl DbExternalApi for PostgresConnection {
             current_time,
             pagination,
             include_deployment_toml,
-            include_derived,
+            execution_counts,
         )
         .await?;
         tx.commit().await?;
