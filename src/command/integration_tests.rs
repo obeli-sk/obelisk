@@ -3927,10 +3927,10 @@ async fn activity_exec_stdin_secrets() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    // Secrets are serialized as a JSON object to stdin; the script wraps it as a JSON string.
+    // Secrets are serialized as a JSON object under the `secrets` key to stdin; the script wraps it as a JSON string.
     let ok_val = body["ok"].as_str().expect("expected ok string");
     let parsed: Value = serde_json::from_str(ok_val).expect("inner value must be valid JSON");
-    assert_eq!(parsed, json!({ "MY_SECRET": "s3cret_value" }));
+    assert_eq!(parsed, json!({ "secrets": { "MY_SECRET": "s3cret_value" } }));
     server.shutdown().await;
 }
 

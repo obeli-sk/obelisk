@@ -160,7 +160,7 @@
 ## Default: 4096.
 # max_output_bytes = 4096
 ## Secrets: resolved from host environment variables at startup and piped to the child's stdin as JSON.
-## The child receives `{"KEY":"value",...}` on stdin. Use `jq .KEY /dev/stdin` or equivalent to parse.
+## The child receives `{"secrets":{"KEY":"value",...}}` on stdin. Use `jq .secrets.KEY /dev/stdin` or equivalent to parse.
 # [activity_exec.secrets]
 # env_vars = [{name = "MY_SECRET", value = "${HOST_SECRET_VAR}"}] # Values support interpolation.
 

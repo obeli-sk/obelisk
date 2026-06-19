@@ -3824,16 +3824,17 @@ fn prespawn_activity_exec(
     let program = activity_exec.program;
 
     // Compute stdin_content from resolved secrets.
-    // Secrets are serialized as a JSON object and piped to the child's stdin.
+    // Secrets are serialized as a JSON object under the `secrets` key and piped to the child's stdin.
     let stdin_content = activity_exec.secrets.map(|secrets| {
         use secrecy::ExposeSecret;
-        let mut obj = serde_json::Map::new();
+        let mut secrets_obj = serde_json::Map::new();
         for (name, secret_val) in &secrets.env_vars {
-            obj.insert(
+            secrets_obj.insert(
                 name.clone(),
                 serde_json::Value::String(secret_val.expose_secret().to_string()),
             );
         }
+        let obj = serde_json::json!({ "secrets": secrets_obj });
         SecretString::from(serde_json::to_string(&obj).expect("JSON map serialization cannot fail"))
     });
 
