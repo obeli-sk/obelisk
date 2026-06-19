@@ -83,6 +83,8 @@ pub enum ComponentMetadataAnnotation {
         max_output_bytes: u64,
         #[serde(default)]
         secrets: Option<ExecSecretsToml>,
+        #[serde(default)]
+        params_via_stdin: bool,
     },
     #[serde(rename = "webhook_endpoint_wasm")]
     WebhookEndpointWasm {

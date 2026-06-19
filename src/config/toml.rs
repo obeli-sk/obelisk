@@ -1518,6 +1518,11 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Secrets pushed to stdin. See `ExecSecretsToml`.
     #[serde(default)]
     pub(crate) secrets: Option<ExecSecretsToml>,
+    /// Pass parameters to the program via the stdin JSON `parameters` array instead
+    /// of argv. Use this for large payloads that would exceed the `execve` argument-size
+    /// limit. Defaults to `false` (parameters passed as command-line arguments).
+    #[serde(default)]
+    pub(crate) params_via_stdin: bool,
 }
 
 #[derive(Debug)]
@@ -1696,6 +1701,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
             forward_stdout: self.forward_stdout.into_std_output_config(),
             forward_stderr: self.forward_stderr.into_std_output_config(),
             secrets: resolved_secrets,
+            params_via_stdin: self.params_via_stdin,
             component_id: component_id.clone(),
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
@@ -1725,6 +1731,7 @@ pub(crate) struct ActivityExecConfigVerified {
     pub(crate) forward_stdout: Option<StdOutputConfig>,
     pub(crate) forward_stderr: Option<StdOutputConfig>,
     pub(crate) secrets: Option<ResolvedExecSecrets>,
+    pub(crate) params_via_stdin: bool,
     pub(crate) component_id: ComponentId,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -2472,6 +2479,7 @@ async fn resolve_local_refs_to_canonical(
             env_vars: a.env_vars,
             max_output_bytes: a.max_output_bytes,
             secrets: a.secrets,
+            params_via_stdin: a.params_via_stdin,
         });
     }
 
@@ -3898,6 +3906,7 @@ name = "my_stub"
                         value: value.into(),
                     }],
                 }),
+                params_via_stdin: false,
             }
         }
 
@@ -3922,6 +3931,7 @@ name = "my_stub"
                 env_vars: vec![],
                 max_output_bytes: default_max_output_bytes(),
                 secrets: None,
+                params_via_stdin: false,
             }
         }
 

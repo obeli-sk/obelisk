@@ -256,6 +256,7 @@ fn find_component_for_push(
                     return_type: cfg.return_type.clone(),
                     max_output_bytes: cfg.max_output_bytes,
                     secrets: cfg.secrets.clone(),
+                    params_via_stdin: cfg.params_via_stdin,
                 },
             })
         }
@@ -486,6 +487,7 @@ fn build_component_table(
         return_type,
         max_output_bytes,
         secrets,
+        params_via_stdin,
     } = metadata
     {
         t["location"] = value(location_raw);
@@ -505,6 +507,9 @@ fn build_component_table(
             t["env_vars"] = Item::Value(toml_edit::Value::Array(arr));
         }
         t["max_output_bytes"] = value(i64::try_from(*max_output_bytes).unwrap_or(i64::MAX));
+        if *params_via_stdin {
+            t["params_via_stdin"] = value(true);
+        }
         if let Some(secrets) = secrets
             && !secrets.env_vars.is_empty()
         {
@@ -948,6 +953,7 @@ mod tests {
             return_type: Some("result<string>".to_string()),
             max_output_bytes: 1024,
             secrets: None,
+            params_via_stdin: false,
         };
         let content_digest: ContentDigest =
             "sha256:1111111111111111111111111111111111111111111111111111111111111111"

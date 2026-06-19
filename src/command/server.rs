@@ -103,7 +103,6 @@ use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
-use secrecy::SecretString;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::fmt::Debug;
@@ -3823,19 +3822,9 @@ fn prespawn_activity_exec(
 
     let program = activity_exec.program;
 
-    // Compute stdin_content from resolved secrets.
-    // Secrets are serialized as a JSON object and piped to the child's stdin.
-    let stdin_content = activity_exec.secrets.map(|secrets| {
-        use secrecy::ExposeSecret;
-        let mut obj = serde_json::Map::new();
-        for (name, secret_val) in &secrets.env_vars {
-            obj.insert(
-                name.clone(),
-                serde_json::Value::String(secret_val.expose_secret().to_string()),
-            );
-        }
-        SecretString::from(serde_json::to_string(&obj).expect("JSON map serialization cannot fail"))
-    });
+    // The worker nests these secrets under the `secrets` key of the stdin JSON document
+    // at execution time.
+    let secrets = activity_exec.secrets.map(|secrets| secrets.env_vars);
 
     let worker = ActivityExecWorkerCompiled::new(
         program,
@@ -3846,7 +3835,8 @@ fn prespawn_activity_exec(
         activity_exec.max_output_bytes,
         activity_exec.forward_stdout,
         activity_exec.forward_stderr,
-        stdin_content,
+        secrets,
+        activity_exec.params_via_stdin,
     )
     .with_context(|| format!("cannot create exec activity worker for {component_id}"))?;
     let wit = worker.wit();

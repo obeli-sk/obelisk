@@ -491,6 +491,21 @@ params = [
 return_type = "result<record {{ a: u32, b: u32 }}, string>"
 
 [[activity_exec]]
+ffqn = "testing:integration/exec-stdin-args.echo-args"
+content = '''#!/usr/bin/env bash
+set -euo pipefail
+# Receives params via the stdin JSON `params` array instead of argv.
+jq -c '{{a: .params[0], b: .params[1]}}' /dev/stdin
+'''
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<record {{ a: u32, b: u32 }}, string>"
+env_vars = ["PATH"] # for jq
+params_via_stdin = true
+
+[[activity_exec]]
 ffqn = "testing:integration/exec-stream.stream-test"
 content = '''#!/usr/bin/env bash
 echo "line1" >&2
@@ -3927,10 +3942,13 @@ async fn activity_exec_stdin_secrets() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
-    // Secrets are serialized as a JSON object to stdin; the script wraps it as a JSON string.
+    // Secrets are serialized as a JSON object under the `secrets` key to stdin; the script wraps it as a JSON string.
     let ok_val = body["ok"].as_str().expect("expected ok string");
     let parsed: Value = serde_json::from_str(ok_val).expect("inner value must be valid JSON");
-    assert_eq!(parsed, json!({ "MY_SECRET": "s3cret_value" }));
+    assert_eq!(
+        parsed,
+        json!({ "secrets": { "MY_SECRET": "s3cret_value" } })
+    );
     server.shutdown().await;
 }
 
@@ -3971,6 +3989,23 @@ async fn activity_exec_args_passthrough() {
     let body: Value = resp.json().await.unwrap();
     // The bash script receives JSON-serialized params as positional args ($1=10, $2=20)
     // and echoes them back as a JSON record: {"a": 10, "b": 20}
+    assert_eq!(body, json!({ "ok": { "a": 10, "b": 20 } }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_exec_args_via_stdin() {
+    let server = TestServer::start(test_addr!(82)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/exec-stdin-args.echo-args",
+            vec![json!(10), json!(20)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    // With params_via_stdin, params arrive in the stdin JSON `params` array
+    // (argv carries none); the script echoes them back as {"a": 10, "b": 20}.
     assert_eq!(body, json!({ "ok": { "a": 10, "b": 20 } }));
     server.shutdown().await;
 }
