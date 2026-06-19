@@ -194,6 +194,10 @@
           ],
           "default": null
         },
+        "params_via_stdin": {
+          "type": "boolean",
+          "default": false
+        },
         "component_type": {
           "type": "string",
           "const": "activity_exec"

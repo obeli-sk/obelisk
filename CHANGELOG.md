@@ -12,8 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(deployment)* Verify a user-supplied `content_digest` at submit time, in addition to runtime.
 - *(deployment)* Reject at submit time deployments where two distinct deployment-owned sources (inline/owned scripts or backtrace sources) resolve to the same `file_name`, since `deployment get` could not recreate both on disk.
 - *(cli)* `deployment active` prints the ID of the currently active deployment.
+- *(deployment)* `activity_exec` components gained `params_via_stdin` (default `false`). When enabled,
+  parameters are passed to the program via the stdin JSON `params` array instead of argv, allowing
+  payloads larger than the `execve` argument-size limit.
 
 ### Changed
+
+- *(deployment)* [**breaking**] **`activity_exec` secrets stdin format changed.** Secrets are now nested under a
+  `secrets` key (`{"secrets":{"KEY":"value",...}}`) instead of being the top-level object, so they can
+  coexist with the new `params` key. Scripts that parsed `.KEY` from stdin must now read `.secrets.KEY`.
 
 - *(cli)* `deployment show <ID>` now prints the reconstructed `deployment.toml` (with local file
   references, the same TOML `deployment get` writes) instead of the raw canonical config. Pass a

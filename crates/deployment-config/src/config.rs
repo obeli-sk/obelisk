@@ -570,6 +570,8 @@ pub struct ActivityExecComponentConfigResolved {
     pub env_vars: Vec<EnvVarConfig>,
     pub max_output_bytes: u64,
     pub secrets: Option<ExecSecretsToml>,
+    #[serde(default)]
+    pub params_via_stdin: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, PartialEq)]

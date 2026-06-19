@@ -55,6 +55,13 @@ expression: components
   {
     "component_id": {
       "component_type": "activity",
+      "name": "exec-stdin-args.echo-args",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "activity",
       "name": "exec-stdin.expose-secrets",
       "component_digest": "sha256:<REDACTED>"
     }

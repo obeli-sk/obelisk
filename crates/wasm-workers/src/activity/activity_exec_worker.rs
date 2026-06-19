@@ -17,6 +17,7 @@ use concepts::{
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
+use indexmap::IndexMap;
 use secrecy::{ExposeSecret, SecretString};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,7 +32,7 @@ pub enum ExecProgram {
     /// Inline script content. Written to a temp file at each execution.
     Inline(String),
     /// Path to an immutable cached script file (from OCI). Executed directly.
-    CachedFile(PathBuf),
+    CachedFile(PathBuf), // TODO: Use for CAS as well
 }
 
 /// Compiled exec activity. No WASM engine needed.
@@ -44,8 +45,12 @@ pub struct ActivityExecWorkerCompiled {
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfig>,
     forward_stderr: Option<StdOutputConfig>,
-    /// Pre-computed stdin content from resolved secrets. Written to the child's stdin pipe.
-    stdin_content: Option<SecretString>,
+    /// Resolved secrets, nested under the `secrets` key of the stdin JSON.
+    /// `None` when no secrets are configured.
+    secrets: Option<IndexMap<String, SecretString>>,
+    /// When `true`, parameters are passed via the stdin JSON `params` array
+    /// instead of argv, sidestepping the `execve` argument-size limit.
+    params_via_stdin: bool,
     user_wasm_component: WasmComponent,
 }
 
@@ -60,7 +65,8 @@ impl ActivityExecWorkerCompiled {
         max_output_bytes: u64,
         forward_stdout: Option<StdOutputConfig>,
         forward_stderr: Option<StdOutputConfig>,
-        stdin_content: Option<SecretString>,
+        secrets: Option<IndexMap<String, SecretString>>,
+        params_via_stdin: bool,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
         let user_wasm_component = WasmComponent::new_from_fn_signature(
             &user_ffqn,
@@ -78,7 +84,8 @@ impl ActivityExecWorkerCompiled {
             max_output_bytes,
             forward_stdout,
             forward_stderr,
-            stdin_content,
+            secrets,
+            params_via_stdin,
             user_wasm_component,
         })
     }
@@ -124,7 +131,8 @@ impl ActivityExecWorkerCompiled {
             max_output_bytes: self.max_output_bytes,
             forward_stdout: stdout_config,
             forward_stderr: stderr_config,
-            stdin_content: self.stdin_content,
+            secrets: self.secrets,
+            params_via_stdin: self.params_via_stdin,
             cancel_registry,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
         }
@@ -141,7 +149,8 @@ pub struct ActivityExecWorker {
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfigWithSender>,
     forward_stderr: Option<StdOutputConfigWithSender>,
-    stdin_content: Option<SecretString>,
+    secrets: Option<IndexMap<String, SecretString>>,
+    params_via_stdin: bool,
     cancel_registry: CancelRegistry,
     user_exports_noext: Vec<FunctionMetadata>,
 }
@@ -241,17 +250,53 @@ impl Worker for ActivityExecWorker {
             }
         };
 
+        let json_params = ctx
+            .params
+            .as_json_values()
+            .expect("params come from database, not wasmtime");
+        assert_eq!(
+            self.user_params.len(),
+            json_params.len(),
+            "type checked in Params::from_json_values"
+        );
+
+        // Assemble the stdin JSON document `{ "secrets": {...}, "params": [...] }`.
+        // The `secrets` key is included when secrets are configured; the `params`
+        // key is included when `params_via_stdin` is set (otherwise params go to argv).
+        let stdin_content: Option<SecretString> = if self.params_via_stdin || self.secrets.is_some()
         {
+            let mut obj = serde_json::Map::new();
+            if let Some(secrets) = &self.secrets {
+                let secrets_obj = secrets
+                    .iter()
+                    .map(|(name, value)| {
+                        (
+                            name.clone(),
+                            serde_json::Value::String(value.expose_secret().to_string()),
+                        )
+                    })
+                    .collect();
+                obj.insert(
+                    "secrets".to_string(),
+                    serde_json::Value::Object(secrets_obj),
+                );
+            }
+            if self.params_via_stdin {
+                obj.insert(
+                    "params".to_string(),
+                    serde_json::Value::Array(json_params.to_vec()),
+                );
+            }
+            Some(SecretString::from(
+                serde_json::to_string(&obj).expect("JSON map serialization cannot fail"),
+            ))
+        } else {
+            None
+        };
+
+        // When params are passed via stdin, argv carries no parameters.
+        if !self.params_via_stdin {
             // Serialize each user parameter as a JSON string for command-line args.
-            let json_params = ctx
-                .params
-                .as_json_values()
-                .expect("params come from database, not wasmtime");
-            assert_eq!(
-                self.user_params.len(),
-                json_params.len(),
-                "type checked in Params::from_json_values"
-            );
             param_args.extend(json_params.iter().map(|v| {
                 serde_json::to_string(v).expect("serde_json::Value must be serializable")
             }));
@@ -272,7 +317,7 @@ impl Worker for ActivityExecWorker {
         // Capture stdout/stderr, optionally pipe stdin.
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
-        if self.stdin_content.is_some() {
+        if stdin_content.is_some() {
             cmd.stdin(std::process::Stdio::piped());
         }
 
@@ -288,8 +333,8 @@ impl Worker for ActivityExecWorker {
             )
         })?;
 
-        // Write stdin content if configured (e.g. resolved secrets).
-        if let Some(ref stdin_content) = self.stdin_content {
+        // Write stdin content if configured (resolved secrets and/or parameters).
+        if let Some(ref stdin_content) = stdin_content {
             use tokio::io::AsyncWriteExt;
             let mut child_stdin = child.stdin.take().expect("stdin was piped");
             child_stdin

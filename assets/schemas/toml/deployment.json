@@ -838,6 +838,11 @@
             }
           ],
           "default": null
+        },
+        "params_via_stdin": {
+          "description": "Pass parameters to the program via the stdin JSON `parameters` array instead\nof argv. Use this for large payloads that would exceed the `execve` argument-size\nlimit. Defaults to `false` (parameters passed as command-line arguments).",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false,

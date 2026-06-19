@@ -772,6 +772,10 @@
               "type": "null"
             }
           ]
+        },
+        "params_via_stdin": {
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false,

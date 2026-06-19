@@ -159,6 +159,11 @@
 ## Not used when return_type is result (default), since the response carries no data.
 ## Default: 4096.
 # max_output_bytes = 4096
+## Pass parameters via the stdin JSON `params` array instead of argv.
+## Use for large payloads that would exceed the `execve` argument-size limit.
+## The child receives `{"params":[...]}` on stdin (alongside `secrets`, if configured).
+## Default: false.
+# params_via_stdin = false
 ## Secrets: resolved from host environment variables at startup and piped to the child's stdin as JSON.
 ## The child receives `{"secrets":{"KEY":"value",...}}` on stdin. Use `jq .secrets.KEY /dev/stdin` or equivalent to parse.
 # [activity_exec.secrets]
