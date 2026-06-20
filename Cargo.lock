@@ -15,8 +15,8 @@ dependencies = [
  "obeli-sk-boa-runtime",
  "serde_json",
  "tracing",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -456,15 +456,15 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "camino"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
+checksum = "b4ce8d3bd5823c7504d3f579f13e7b2f3da252fcb938c594d5680ee508bf846f"
 dependencies = [
  "serde_core",
 ]
@@ -563,9 +563,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.64"
+version = "1.2.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad887fd958be91b5098c0248def011f4523ab786cd411be668777e55063501f"
+checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -770,9 +770,9 @@ checksum = "baf0a07a401f374238ab8e2f11a104d2851bf9ce711ec69804834de8af45c7af"
 
 [[package]]
 name = "config"
-version = "0.15.23"
+version = "0.15.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f316c6237b2d38be61949ecd15268a4c6ca32570079394a2444d9ce2c72a72d8"
+checksum = "0b34d0237145f33580b89724f75d16950efd3e2c91b2d823917ecb69ec7f84f0"
 dependencies = [
  "async-trait",
  "indexmap 2.14.0",
@@ -1905,16 +1905,14 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
+checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
- "wasip2",
- "wasip3",
 ]
 
 [[package]]
@@ -4156,7 +4154,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
  "chacha20",
- "getrandom 0.4.2",
+ "getrandom 0.4.3",
  "rand_core 0.10.1",
 ]
 
@@ -5116,9 +5114,9 @@ checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
 
 [[package]]
 name = "syn"
-version = "2.0.117"
+version = "2.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+checksum = "1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5164,7 +5162,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand 2.4.1",
- "getrandom 0.4.2",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5202,8 +5200,8 @@ name = "test-programs-fibo-activity"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5218,8 +5216,8 @@ name = "test-programs-fibo-webhook"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -5237,8 +5235,8 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "serde_json",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5253,8 +5251,8 @@ name = "test-programs-fibo-workflow-outer"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5269,8 +5267,8 @@ name = "test-programs-http-get-activity"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -5286,8 +5284,8 @@ name = "test-programs-http-get-webhook"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -5303,8 +5301,8 @@ name = "test-programs-http-get-workflow"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5319,8 +5317,8 @@ name = "test-programs-serde-activity"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5335,8 +5333,8 @@ name = "test-programs-serde-workflow"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5351,8 +5349,8 @@ name = "test-programs-sleep-activity"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5367,8 +5365,8 @@ name = "test-programs-sleep-webhook"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -5385,8 +5383,8 @@ version = "0.38.3"
 dependencies = [
  "anyhow",
  "assert_matches",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5401,8 +5399,8 @@ name = "test-programs-stub-activity"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -5417,8 +5415,8 @@ name = "test-programs-stub-workflow"
 version = "0.38.3"
 dependencies = [
  "anyhow",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -6276,16 +6274,7 @@ version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
- "wit-bindgen 0.57.1",
-]
-
-[[package]]
-name = "wasip3"
-version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5428f8bf88ea5ddc08faddef2ac4a67e390b88186c703ce6dbd955e1c145aca5"
-dependencies = [
- "wit-bindgen 0.51.0",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -6915,8 +6904,8 @@ dependencies = [
  "obeli-sk-boa-runtime",
  "serde",
  "serde_json",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
  "wstd",
 ]
 
@@ -6929,9 +6918,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31141ce3fc3e300ae89b78c0dd67f9708061d1d2eda54b8209346fd6be9a92c"
+checksum = "0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -6942,14 +6931,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.7",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
+checksum = "bf85cb06032201fa7c6f829d7db5a7e5aa45bcc0655327713065f6f0576731bf"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -7257,32 +7246,12 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7249219f66ced02969388cf2bb044a09756a083d0fab1e566056b04d9fbcaa5"
-dependencies = [
- "wit-bindgen-rust-macro 0.51.0",
-]
-
-[[package]]
-name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 dependencies = [
  "bitflags",
- "wit-bindgen-rust-macro 0.57.1",
-]
-
-[[package]]
-name = "wit-bindgen-core"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea61de684c3ea68cb082b7a88508a8b27fcc8b797d738bfc99a82facf1d752dc"
-dependencies = [
- "anyhow",
- "heck",
- "wit-parser 0.244.0",
+ "wit-bindgen-rust-macro",
 ]
 
 [[package]]
@@ -7298,22 +7267,6 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-rust"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7c566e0f4b284dd6561c786d9cb0142da491f46a9fbed79ea69cdad5db17f21"
-dependencies = [
- "anyhow",
- "heck",
- "indexmap 2.14.0",
- "prettyplease",
- "syn",
- "wasm-metadata 0.244.0",
- "wit-bindgen-core 0.51.0",
- "wit-component 0.244.0",
-]
-
-[[package]]
-name = "wit-bindgen-rust"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5007dae772945b7a5003d69d90a3a4a78929d41f19d004e980c4259a6af4484"
@@ -7324,23 +7277,8 @@ dependencies = [
  "prettyplease",
  "syn",
  "wasm-metadata 0.247.0",
- "wit-bindgen-core 0.57.1",
+ "wit-bindgen-core",
  "wit-component 0.247.0",
-]
-
-[[package]]
-name = "wit-bindgen-rust-macro"
-version = "0.51.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c0f9bfd77e6a48eccf51359e3ae77140a7f50b1e2ebfe62422d8afdaffab17a"
-dependencies = [
- "anyhow",
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn",
- "wit-bindgen-core 0.51.0",
- "wit-bindgen-rust 0.51.0",
 ]
 
 [[package]]
@@ -7355,8 +7293,8 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
- "wit-bindgen-core 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen-core",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -7494,8 +7432,8 @@ dependencies = [
  "futures-lite 2.6.1",
  "obeli-sk-boa-engine",
  "serde_json",
- "wit-bindgen 0.57.1",
- "wit-bindgen-rust 0.57.1",
+ "wit-bindgen",
+ "wit-bindgen-rust",
 ]
 
 [[package]]
@@ -7519,9 +7457,9 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "wstd"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0903606f1acdecad11576768ecc61ce215d6848652ac16c0e4592bb265e4200e"
+checksum = "d91b0401ae0769f12801304fa4985034d1b07f21733642a36bd0c43388c1cf87"
 dependencies = [
  "anyhow",
  "async-task",
@@ -7541,9 +7479,9 @@ dependencies = [
 
 [[package]]
 name = "wstd-macro"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6a9df01a7fb39fbe7e9b5ef76f586f06425dd6f2be350de4781936f72f9899d"
+checksum = "8023c13a2eb552dfad21984b1947ada6c8d3a8d73a0d5ff57dc5d200aa2e06b9"
 dependencies = [
  "quote",
  "syn",
