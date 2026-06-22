@@ -101,7 +101,7 @@ tracing-opentelemetry.workspace = true
 
 ## tokio-console
 console-subscriber = { workspace = true, optional = true }
-
+tikv-jemallocator = "0.7.0"
 
 [dev-dependencies]
 test-utils.workspace = true
@@ -468,3 +468,6 @@ pkg-fmt = "tgz"
 
 [profile.dev]
 debug = "line-tables-only"
+
+[profile.dev.package.tikv-jemalloc-sys]
+opt-level = 1
