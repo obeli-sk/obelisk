@@ -680,6 +680,22 @@ impl WorkflowWorker {
         let instance = match view.instance_pre.instantiate_async(&mut store).await {
             Ok(instance) => instance,
             Err(err) => {
+                // The epoch deadline callback can fire during instantiation (e.g. while running
+                // the component's `start` function), surfacing as an instantiation error.
+                // See `epoch_deadline_callback` above for thrown errors.
+                if let Some(wf_err) = err.downcast_ref::<WorkflowFunctionError>() {
+                    match wf_err {
+                        WorkflowFunctionError::LockExpired => {
+                            let version = store.into_data().db_connection.version().clone();
+                            return Err(WorkflowError::LockExpired(version));
+                        }
+                        WorkflowFunctionError::ExecutorClosing => {
+                            let version = store.into_data().db_connection.version().clone();
+                            return Err(WorkflowError::ExecutorClosing(version));
+                        }
+                        _ => {}
+                    }
+                }
                 let reason = err.to_string();
                 let db_connection = store.into_data().db_connection;
                 let version = db_connection.version().clone();
