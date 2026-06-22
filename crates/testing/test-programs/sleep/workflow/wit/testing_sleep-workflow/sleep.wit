@@ -5,6 +5,9 @@ interface workflow {
     use obelisk:types/execution@4.2.0.{execution-id};
 
     sleep-host-activity: func(duration: duration) -> result;
+
+    sleep-host-activity-schedule-many: func(n: u64, schedule-at: schedule-at, duration-secs: u64) -> result;
+
     sleep-schedule-at: func(schedule-at: schedule-at) -> result;
     sleep-activity: func(duration: duration) -> result;
     sleep-random: func(min-millis: u64, max-millis-inclusive: u64) -> result;

@@ -39,8 +39,8 @@ skip = [
     { name = "thiserror", version = "1" },
     { name = "thiserror-impl", version = "1" },
     { name = "wast", version = "35" },
-    # val-json uses wast 248 for test parsing; wat 1.249 (via wasm-compose) uses wast 249
-    { name = "wast", version = "248" },
+    # wat 1.252 (via wasm-compose) pulls wast 252; canonical wasm-tools suite is 251
+    { name = "wast", version = "252" },
     # wasmtime-internal-cache uses toml 0.9 and its transitive deps
     { name = "toml", version = "0.9" },
     { name = "toml_datetime", version = "0.7" },
@@ -72,11 +72,9 @@ skip = [
     { name = "wasm-metadata", version = "0.244" },
     { name = "wit-component", version = "0.244" },
     { name = "wit-parser", version = "0.244" },
-    # wasm-compose 0.248 (wasmtime dep) uses wasm-tools 0.248, but its `wat` dep
-    # pulls in wasm-tools 0.249 — canonical is 0.249, 0.248 are skipped
-    { name = "wasmparser", version = "0.248" },
-    { name = "wasm-encoder", version = "0.248" },
-    { name = "wit-parser", version = "0.248" },
+    # wasm-compose 0.251 (wasmtime dep) uses wasm-tools 0.251, but its `wat` dep
+    # pulls in wasm-tools 0.252 — canonical is 0.251, 0.252 is skipped
+    { name = "wasm-encoder", version = "0.252" },
     # oci-spec (via oci-client) requires strum 0.27 and darling 0.20
     { name = "strum", version = "0.27" },
     { name = "strum_macros", version = "0.27" },
@@ -95,7 +93,4 @@ skip = [
 ignore = [
     # paste is unmaintained; also pulled in by utoipa-axum so unavoidable
     { id = "RUSTSEC-2024-0436" },
-    # proc-macro-error2 is unmaintained; pulled in by getset through
-    # oci-spec/oci-client, with no maintained release available yet
-    { id = "RUSTSEC-2026-0173" },
 ]

@@ -7,6 +7,7 @@ package root:component;
 world root {
     import obelisk:types/time@4.2.0;
     import obelisk:types/execution@4.2.0;
+    import obelisk:types/backtrace@4.2.0;
     import obelisk:types/join-set@4.2.0;
     import obelisk:workflow/workflow-support@5.1.0;
     import testing:sleep/sleep;
@@ -212,6 +213,8 @@ package obelisk:workflow@5.1.0 {
         use obelisk:types/time@4.2.0.{schedule-at};
         use obelisk:types/execution@4.2.0.{delay-id, response-id};
         use obelisk:types/time@4.2.0.{datetime};
+        use obelisk:types/backtrace@4.2.0.{wasm-backtrace};
+        use obelisk:types/execution@4.2.0.{execution-id, function, submit-config, schedule-json-error};
 
         variant join-next-try-error {
             all-processed,
@@ -233,6 +236,10 @@ package obelisk:workflow@5.1.0 {
         join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
 
         join-next-try: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-try-error>;
+
+        execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
+
+        schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
     }
 }
 
@@ -274,6 +281,8 @@ package testing:sleep-workflow {
 
         sleep-host-activity: func(duration: duration) -> result;
 
+        sleep-host-activity-schedule-many: func(n: u64, schedule-at: schedule-at, duration-secs: u64) -> result;
+
         sleep-schedule-at: func(schedule-at: schedule-at) -> result;
 
         sleep-activity: func(duration: duration) -> result;
@@ -311,6 +320,12 @@ package testing:sleep-workflow-obelisk-ext {
         sleep-host-activity-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
 
         sleep-host-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
+
+        sleep-host-activity-schedule-many-submit: func(join-set: borrow<join-set>, n: u64, schedule-at: schedule-at, duration-secs: u64) -> execution-id;
+
+        sleep-host-activity-schedule-many-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+
+        sleep-host-activity-schedule-many-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-schedule-at-submit: func(join-set: borrow<join-set>, schedule-at: schedule-at) -> execution-id;
 
@@ -387,6 +402,8 @@ package testing:sleep-workflow-obelisk-schedule {
         use obelisk:types/execution@4.2.0.{execution-id};
 
         sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
+
+        sleep-host-activity-schedule-many-schedule: func(schedule-at-a: schedule-at, n: u64, schedule-at: schedule-at, duration-secs: u64) -> execution-id;
 
         sleep-schedule-at-schedule: func(schedule-at-a: schedule-at, schedule-at: schedule-at) -> execution-id;
 

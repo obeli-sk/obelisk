@@ -102,14 +102,14 @@ impl RunnableComponent {
     > {
         let mut exported_ffqn_to_index = hashbrown::HashMap::new();
         for FunctionMetadata { ffqn, .. } in exim.get_exports(false) {
-            let Some(ifc_export_index) = wasmtime_component.get_export_index(None, &ffqn.ifc_fqn)
+            let Some(ifc_export_index) = wasmtime_component.get_export_index(None, &*ffqn.ifc_fqn)
             else {
                 return Err(DecodeError::new_without_source(format!(
                     "cannot find exported interface {ffqn}"
                 )));
             };
             let Some(fn_export_index) =
-                wasmtime_component.get_export_index(Some(&ifc_export_index), &ffqn.function_name)
+                wasmtime_component.get_export_index(Some(&ifc_export_index), &*ffqn.function_name)
             else {
                 return Err(DecodeError::new_without_source(format!(
                     "cannot find exported function {ffqn}"

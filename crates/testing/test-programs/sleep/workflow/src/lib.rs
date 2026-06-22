@@ -1,7 +1,7 @@
-use crate::generated::obelisk::log::log;
 use assert_matches::assert_matches;
 use generated::export;
 use generated::exports::testing::sleep_workflow::workflow::Guest;
+use generated::obelisk::log::log;
 use generated::obelisk::types::execution::ResponseId;
 use generated::obelisk::types::time::Duration as DurationEnum;
 use generated::obelisk::types::time::ScheduleAt;
@@ -20,8 +20,33 @@ export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn sleep_host_activity(duration: DurationEnum) -> Result<(), ()> {
+        // Required by `advance_forwards_captured_application_logs`.
         log::info("changed");
         workflow_support::sleep(ScheduleAt::In(duration)).expect("not cancelled");
+        Ok(())
+    }
+
+    fn sleep_host_activity_schedule_many(
+        n: u64,
+        schedule_at: ScheduleAt,
+        duration_secs: u64,
+    ) -> Result<(), ()> {
+        let params = format!(r#"[{{"seconds":{}}}]"#, duration_secs);
+        for _ in 0..n {
+            let exe = workflow_support::execution_id_generate(None);
+            workflow_support::schedule_json(
+                &exe,
+                schedule_at,
+                &generated::obelisk::types::execution::Function {
+                    interface_name: "testing:sleep-workflow/workflow".to_string(),
+                    function_name: "sleep-host-activity".to_string(),
+                },
+                &params,
+                None,
+                None,
+            )
+            .unwrap();
+        }
         Ok(())
     }
 

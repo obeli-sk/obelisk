@@ -14,6 +14,9 @@ use grpc::{grpc_gen, injector::TracingInjector};
 use tonic::{codec::CompressionEncoding, transport::Channel};
 use tracing::error;
 
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     rustls::crypto::ring::default_provider()
