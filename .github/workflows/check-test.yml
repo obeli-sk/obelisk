@@ -31,9 +31,9 @@ jobs:
       matrix:
         include:
           - report: junit-default.xml
-            script: "scripts/test.sh"
+            features: ""
           - report: junit-js-local.xml
-            script: "scripts/test-js-local.sh"
+            features: "-F activity-js-local,workflow-js-local,webhook-js-local"
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -60,8 +60,7 @@ jobs:
             cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             cargo-target-${{ matrix.report }}-${{ runner.os }}-
 
-      # Test WASMs are content-hashed by filename and don't change, so they
-      # share one global cache across matrix jobs, branches, and Cargo.lock bumps.
+      # Test WASMs are content-hashed by filename and don't change often, so they share one global cache.
       - id: wasm-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -74,8 +73,13 @@ jobs:
         id: build-tests
         run: nix develop --command cargo nextest run --workspace --no-run
 
+      - name: Populate codegen cache
+        run: nix develop --command scripts/test-phase1.sh
+        env:
+          ADDITIONAL_FEATURES: ${{ matrix.features }}
+
       - name: Run tests
-        run: nix develop --command ${{ matrix.script }}
+        run: nix develop --command scripts/test-phase2.sh
         env:
           CI: true
           TEST_POSTGRES_HOST: "localhost"
@@ -83,6 +87,7 @@ jobs:
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
           CARGO_INSTA_TEST: true # reject unreferenced snapshots
+          ADDITIONAL_FEATURES: ${{ matrix.features }}
 
       # Reduce cache size — hashed WASMs are cached separately (target/wasm-cache/).
       - name: Clean build artifacts before caching
