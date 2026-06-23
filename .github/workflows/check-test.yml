@@ -31,9 +31,9 @@ jobs:
       matrix:
         include:
           - report: junit-default.xml
-            script: "scripts/test.sh"
+            features: ""
           - report: junit-js-local.xml
-            script: "scripts/test-js-local.sh"
+            features: "-F activity-js-local,workflow-js-local,webhook-js-local"
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -53,18 +53,34 @@ jobs:
         with:
           path: |
             target
-            test-codegen-cache
+            !target/wasm-cache
           key: cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             cargo-target-${{ matrix.report }}-${{ runner.os }}-
 
+      # Test WASMs are content-hashed by filename and don't change often, so they share one global cache.
+      - id: wasm-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/wasm-cache
+            test-codegen-cache
+          key: wasm-cache-${{ matrix.report }}-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            wasm-cache-${{ matrix.report }}-${{ runner.os }}-
+
       - name: Build tests
         id: build-tests
         run: nix develop --command cargo nextest run --workspace --no-run
 
+      - name: Populate codegen cache
+        run: nix develop --command scripts/test-phase1.sh
+        env:
+          ADDITIONAL_FEATURES: ${{ matrix.features }}
+
       - name: Run tests
-        run: nix develop --command ${{ matrix.script }}
+        run: nix develop --command scripts/test-phase2.sh
         env:
           CI: true
           TEST_POSTGRES_HOST: "localhost"
@@ -72,8 +88,9 @@ jobs:
           TEST_POSTGRES_PASSWORD: "postgres"
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
           CARGO_INSTA_TEST: true # reject unreferenced snapshots
+          ADDITIONAL_FEATURES: ${{ matrix.features }}
 
-      # Reduce cache size — hashed WASMs are in target/wasm-cache/
+      # Reduce cache size — hashed WASMs are cached separately (target/wasm-cache/).
       - name: Clean build artifacts before caching
         if: always()
         run: |
@@ -85,8 +102,17 @@ jobs:
         with:
           path: |
             target
-            test-codegen-cache
+            !target/wasm-cache
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save wasm cache
+        if: always() && steps.build-tests.outcome == 'success'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/wasm-cache
+            test-codegen-cache
+          key: ${{ steps.wasm-cache.outputs.cache-primary-key }}
 
       # Report results
       - name: Rename test report

@@ -162,7 +162,7 @@ webui.enabled = false
 external.listening_addr = "{ip}:{WEBHOOK_PORT}"
 
 [wasm.codegen_cache]
-directory = "${{CACHE_DIR}}/codegen-it"
+directory = "{codegen_cache}"
 
 [database.sqlite]
 directory = "{db_dir}"
@@ -170,6 +170,7 @@ directory = "{db_dir}"
         ip = ip,
         API_PORT = API_PORT,
         WEBHOOK_PORT = WEBHOOK_PORT,
+        codegen_cache = workspace.join("test-codegen-cache").display(),
         db_dir = db_dir.path().display(),
     );
     let server_path = db_dir.path().join("obelisk-test-server.toml");
