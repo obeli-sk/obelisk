@@ -314,11 +314,19 @@ enum ThreadCommand {
 #[derive(Clone)]
 pub struct SqlitePool(SqlitePoolInner);
 
+/// Notification channel where subscriber blocks waiting for a response. Writer thread
+/// ensures serializability - subscriber ensures there are no missed responses. Senders
+/// notify outside of the writer thread, making ordering not guaranteed. Subscriber must
+/// therefore refetch from its own watermark.
 type ResponseSubscribers =
-    Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<ResponseWithCursor>, u64)>>>;
+    Arc<Mutex<HashMap<ExecutionId, (oneshot::Sender<()>, u64 /* unique_tag */)>>>;
 type PendingSubscribers = Arc<Mutex<PendingFfqnSubscribersHolder>>;
-type ExecutionFinishedSubscribers =
-    Mutex<HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>>;
+type ExecutionFinishedSubscribers = Mutex<
+    HashMap<
+        ExecutionId,
+        HashMap<u64 /* unique_tag */, oneshot::Sender<SupportedFunctionReturnValue>>,
+    >,
+>;
 
 #[derive(Clone)]
 struct SqlitePoolInner {
@@ -3081,9 +3089,9 @@ impl SqlitePool {
         // Notify response subscribers.
         if !responses.is_empty() {
             let mut guard = self.0.response_subscribers.lock().unwrap();
-            for (execution_id, response) in responses {
+            for (execution_id, _response) in responses {
                 if let Some((sender, _)) = guard.remove(&execution_id) {
-                    let _ = sender.send(response);
+                    let _ = sender.send(());
                 }
             }
         }
@@ -5189,17 +5197,26 @@ impl DbConnection for SqlitePool {
         match resp_or_receiver {
             itertools::Either::Left(resp) => Ok(resp), // no need for cleanup
             itertools::Either::Right(receiver) => {
-                let res = tokio::select! {
-                    resp = receiver => {
-                        match resp {
-                            Ok(resp) => Ok(vec![resp]),
-                            Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
-                        }
-                    }
+                let woken = tokio::select! {
+                    resp = receiver => match resp {
+                        Ok(()) => Ok(()),
+                        Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
+                    },
                     outcome = timeout_fut => Err(DbErrorReadWithTimeout::Timeout(outcome)),
                 };
                 cleanup();
-                res
+                woken?;
+                // Re-fetch from the `last_response` watermark.
+                let execution_id = execution_id.clone();
+                self.transaction(
+                    move |tx| {
+                        Self::get_responses_after(tx, &execution_id, last_response)
+                            .map_err(DbErrorReadWithTimeout::from)
+                    },
+                    TxType::Other, // read only
+                    "subscribe_to_next_responses_refetch",
+                )
+                .await
             }
         }
     }
