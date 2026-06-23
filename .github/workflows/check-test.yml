@@ -53,11 +53,22 @@ jobs:
         with:
           path: |
             target
+            !target/wasm-cache
             test-codegen-cache
           key: cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             cargo-target-${{ matrix.report }}-${{ runner.os }}-
+
+      # Test WASMs are content-hashed by filename and don't change, so they
+      # share one global cache across matrix jobs, branches, and Cargo.lock bumps.
+      - id: wasm-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: target/wasm-cache
+          key: wasm-cache-${{ runner.os }}-${{ github.run_id }}-${{ matrix.report }}
+          restore-keys: |
+            wasm-cache-${{ runner.os }}-
 
       - name: Build tests
         id: build-tests
@@ -73,7 +84,7 @@ jobs:
           TEST_POSTGRES_DATABASE_PREFIX: "obelisk_test"
           CARGO_INSTA_TEST: true # reject unreferenced snapshots
 
-      # Reduce cache size — hashed WASMs are in target/wasm-cache/
+      # Reduce cache size — hashed WASMs are cached separately (target/wasm-cache/).
       - name: Clean build artifacts before caching
         if: always()
         run: |
@@ -85,8 +96,16 @@ jobs:
         with:
           path: |
             target
+            !target/wasm-cache
             test-codegen-cache
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save wasm cache
+        if: always() && steps.build-tests.outcome == 'success'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: target/wasm-cache
+          key: ${{ steps.wasm-cache.outputs.cache-primary-key }}
 
       # Report results
       - name: Rename test report
