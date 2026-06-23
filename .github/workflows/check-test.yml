@@ -66,9 +66,9 @@ jobs:
           path: |
             target/wasm-cache
             test-codegen-cache
-          key: wasm-cache-${{ runner.os }}-${{ github.run_id }}-${{ matrix.report }}
+          key: wasm-cache-${{ matrix.report }}-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            wasm-cache-${{ runner.os }}-
+            wasm-cache-${{ matrix.report }}-${{ runner.os }}-
 
       - name: Build tests
         id: build-tests
