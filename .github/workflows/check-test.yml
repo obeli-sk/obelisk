@@ -48,17 +48,6 @@ jobs:
       - name: Populate the nix store
         run: nix develop --command echo
 
-      - id: cargo-cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target
-            !target/wasm-cache
-          key: cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
-            cargo-target-${{ matrix.report }}-${{ runner.os }}-
-
       # Test WASMs are content-hashed by filename and don't change often, so they share one global cache.
       - id: wasm-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -69,6 +58,8 @@ jobs:
           key: wasm-cache-${{ matrix.report }}-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             wasm-cache-${{ matrix.report }}-${{ runner.os }}-
+
+      - uses: kunobi-ninja/kache-action@v1
 
       - name: Build tests
         id: build-tests
@@ -95,15 +86,6 @@ jobs:
         if: always()
         run: |
           rm -rf target/debug/incremental target/release_testprograms target/release_wasm_runtime
-
-      - name: Save cargo cache
-        if: always() && steps.cargo-cache.outputs.cache-hit != 'true' && steps.build-tests.outcome == 'success'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target
-            !target/wasm-cache
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - name: Save wasm cache
         if: always() && steps.build-tests.outcome == 'success'
