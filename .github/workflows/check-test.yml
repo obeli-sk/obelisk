@@ -54,7 +54,6 @@ jobs:
           path: |
             target
             !target/wasm-cache
-            test-codegen-cache
           key: cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             cargo-target-${{ matrix.report }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
@@ -64,7 +63,9 @@ jobs:
       - id: wasm-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: target/wasm-cache
+          path: |
+            target/wasm-cache
+            test-codegen-cache
           key: wasm-cache-${{ runner.os }}-${{ github.run_id }}-${{ matrix.report }}
           restore-keys: |
             wasm-cache-${{ runner.os }}-
@@ -102,14 +103,15 @@ jobs:
           path: |
             target
             !target/wasm-cache
-            test-codegen-cache
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
       - name: Save wasm cache
         if: always() && steps.build-tests.outcome == 'success'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: target/wasm-cache
+          path: |
+            target/wasm-cache
+            test-codegen-cache
           key: ${{ steps.wasm-cache.outputs.cache-primary-key }}
 
       # Report results
