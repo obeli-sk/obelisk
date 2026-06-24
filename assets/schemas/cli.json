@@ -769,7 +769,7 @@
           "options": [
             {
               "name": "--json",
-              "help": "Print the raw canonical config JSON instead of the reconstructed TOML"
+              "help": "Print the stored TOML manifest as JSON instead of TOML"
             },
             {
               "name": "--api-url",
@@ -854,7 +854,7 @@
         },
         {
           "name": "deployment-canonical-schema",
-          "about": "Generate the canonical deployment schema (stored in the database) in JSON schema format",
+          "about": "Generate the resolved deployment schema in JSON schema format",
           "positionals": [
             {
               "name": "output",

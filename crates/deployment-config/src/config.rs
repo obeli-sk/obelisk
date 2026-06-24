@@ -1,9 +1,9 @@
 //! Deployment configuration data model shared between the obelisk server and the webui.
 //!
-//! Contains the canonical deployment configuration ([`DeploymentResolved`]), the wire
-//! format used for hash computation, deployment submission and DB storage (`config_json`),
-//! plus the data types it is composed of. Some of these types double as the TOML
-//! representation (their original `*Toml` names are kept).
+//! Contains the resolved deployment configuration ([`DeploymentResolved`]), the stored
+//! manifest representation used for deployment submission and DB storage, plus the data
+//! types it is composed of. Some of these types double as the TOML representation
+//! (their original `*Toml` names are kept).
 //!
 //! Behavior that requires the server runtime (OCI fetching, executor configuration,
 //! env var resolution) lives in the obelisk binary as extension traits.

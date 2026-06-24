@@ -1595,7 +1595,7 @@ pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<Deploymen
 pub struct DeploymentState {
     pub deployment_id: DeploymentId,
     pub description: Option<String>,
-    /// Content digest derived from the deployment's canonical config JSON.
+    /// Content digest = `sha256(deployment_toml)`.
     pub digest: ContentDigest,
     pub locked: u32,
     // In `PendingAt` state, scheduled to present or past

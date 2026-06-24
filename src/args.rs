@@ -205,7 +205,8 @@ pub(crate) enum Deployment {
     ///
     /// By default prints the reconstructed `deployment.toml` (with local file references,
     /// the same TOML `deployment get` writes to disk). Pass a FILE to print a single source
-    /// file as `deployment get` would serialize it, or `--json` for the raw canonical config.
+    /// file as `deployment get` would serialize it, or `--json` to render the stored TOML
+    /// manifest as JSON.
     Show {
         /// Deployment ID
         #[arg(value_name = "ID")]
@@ -214,7 +215,7 @@ pub(crate) enum Deployment {
         /// path as shown in the TOML (e.g. `scripts/run.sh`).
         #[arg(value_name = "FILE", conflicts_with = "json")]
         file: Option<String>,
-        /// Print the raw canonical config JSON instead of the reconstructed TOML.
+        /// Print the stored TOML manifest as JSON instead of TOML.
         #[arg(long)]
         json: bool,
         /// Address of the obelisk server
@@ -253,7 +254,7 @@ pub(crate) enum Generate {
         /// Filename to write the schema to, defaults to <stdout>.
         output: Option<PathBuf>,
     },
-    /// Generate the canonical deployment schema (stored in the database) in JSON schema format.
+    /// Generate the resolved deployment schema in JSON schema format.
     #[cfg(debug_assertions)]
     DeploymentCanonicalSchema {
         /// Filename to write the schema to, defaults to <stdout>.
