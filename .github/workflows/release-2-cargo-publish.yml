@@ -45,7 +45,7 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
-  cache-default:
+  cachix-push:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -91,7 +91,7 @@ jobs:
 
   call_child:
     needs:
-      - cache-default
+      - cachix-push
       - cargo-publish
     if: ${{ !contains(inputs.extra-args, '--dry-run') }}
     uses: ./.github/workflows/release-3-create-github-release.yml

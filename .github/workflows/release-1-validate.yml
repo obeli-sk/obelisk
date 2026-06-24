@@ -22,22 +22,6 @@ on:
         description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
         required: true
         type: boolean
-  workflow_call:
-    inputs:
-      ref:
-        description: "The ref (branch or SHA) to process"
-        required: false
-        type: string
-        default: "latest"
-      extra-args:
-        description: "Extra args to be used with cargo publish e.g. `--dry-run` or `--no-verify`"
-        type: string
-        required: false
-        default: ""
-      skip_latest:
-        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
-        required: true
-        type: boolean
 
 defaults:
   run:
