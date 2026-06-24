@@ -73,6 +73,8 @@ mod embedded {
     refinery::embed_migrations!("migrations");
 }
 
+const JOIN_SET_RESPONSE_LOCK_NAMESPACE: i32 = 0x4f42_4c52; // "OBLR"
+
 #[derive(Debug, Clone)]
 pub struct PostgresConfig {
     pub host: String,
@@ -2511,11 +2513,25 @@ async fn append(
     }
 }
 
+async fn lock_join_set_response_append_order(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<(), DbErrorWrite> {
+    tx.execute(
+        "SELECT pg_advisory_xact_lock($1, hashtext($2))",
+        &[&JOIN_SET_RESPONSE_LOCK_NAMESPACE, &execution_id.to_string()],
+    )
+    .await?;
+    Ok(())
+}
+
 async fn append_response(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     event: JoinSetResponseEventOuter,
 ) -> Result<AppendNotifier, DbErrorWrite> {
+    lock_join_set_response_append_order(tx, execution_id).await?;
+
     let join_set_id = &event.event.join_set_id;
 
     let (delay_id, delay_success) = match &event.event.event {
