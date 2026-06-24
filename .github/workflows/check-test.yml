@@ -59,7 +59,9 @@ jobs:
           restore-keys: |
             wasm-cache-${{ matrix.report }}-${{ runner.os }}-
 
-      - uses: kunobi-ninja/kache-action@v1
+      - uses: kunobi-ninja/kache-action@a257c055543c2840700a9bbca8f9c3094a421b1b # main, post-v1: adds pr-comment input
+        with:
+          pr-comment: false
 
       - name: Build tests
         id: build-tests
