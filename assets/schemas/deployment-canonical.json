@@ -653,7 +653,7 @@
       ]
     },
     "ScriptLocationResolved": {
-      "description": "Resolved location of a script source (JS or exec) after file-provider resolution.\n\n- `Content` is owned by the deployment (inline content, or a file that lived under\n  the deployment directory and was read from disk/CAS); `file_name` is the\n  deployment-relative path (which may include subfolders), used for source names and\n  backtraces.\n- `Path` is an external local file that the deployment merely references; it is read\n  at runtime.\n- `Oci` is an external registry reference.",
+      "description": "Resolved location of a script source (JS or exec) after file-provider resolution.\n\n- `Content` is owned by the deployment (inline content, or a file that lived under\n  the deployment directory and was read from disk/CAS); `file_name` is the\n  deployment-relative path (which may include subfolders), used for source names and\n  backtraces.\n- `Oci` is an external registry reference.",
       "oneOf": [
         {
           "type": "object",
@@ -664,19 +664,6 @@
           },
           "required": [
             "content"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "description": "External local file, read at runtime, not recreated on export.",
-          "type": "object",
-          "properties": {
-            "external_path": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "external_path"
           ],
           "additionalProperties": false
         },
