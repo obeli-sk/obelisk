@@ -3083,7 +3083,7 @@ mod deployment {
         pub deployment_id: DeploymentId,
         /// Optional human-readable deployment description
         pub description: Option<String>,
-        /// Content digest derived from the deployment's canonical config JSON
+        /// Content digest = `sha256(deployment_toml)`
         pub digest: String,
         /// Deployment lifecycle status
         pub status: DeploymentStatusSer,

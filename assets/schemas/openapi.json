@@ -2125,7 +2125,7 @@
           },
           "digest": {
             "type": "string",
-            "description": "Content digest derived from the deployment's canonical config JSON"
+            "description": "Content digest = `sha256(deployment_toml)`"
           },
           "finished_error": {
             "type": "integer",

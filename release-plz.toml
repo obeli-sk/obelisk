@@ -13,8 +13,12 @@ git_release_enable = true
 changelog_update = true
 changelog_include = [
     "obeli-sk-concepts",
+    "obeli-sk-db-common",
+    "obeli-sk-db-postgres",
     "obeli-sk-db-sqlite",
+    "obeli-sk-deployment-config",
     "obeli-sk-executor",
+    "obeli-sk-grpc",
     "obeli-sk-utils",
     "obeli-sk-val-json",
     "obeli-sk-wasm-workers",
