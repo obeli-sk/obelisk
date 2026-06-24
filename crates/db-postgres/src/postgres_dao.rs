@@ -147,8 +147,11 @@ async fn create_database(
 }
 
 // All mutexes here have a very short critical section completely controlled by this module, thus using std mutex.
+/// Notification channel where subscriber blocks waiting for a response. Senders
+/// notify after commit, making ordering not guaranteed. Subscriber must
+/// therefore refetch from its own watermark.
 type ResponseSubscribers =
-    Arc<std::sync::Mutex<HashMap<ExecutionId, (oneshot::Sender<ResponseWithCursor>, u64)>>>;
+    Arc<std::sync::Mutex<HashMap<ExecutionId, (oneshot::Sender<()>, u64 /* unique_tag */)>>>;
 type PendingSubscribers = Arc<std::sync::Mutex<PendingFfqnSubscribersHolder>>;
 type ExecutionFinishedSubscribers = std::sync::Mutex<
     HashMap<ExecutionId, HashMap<u64, oneshot::Sender<SupportedFunctionReturnValue>>>,
@@ -3289,9 +3292,9 @@ impl PostgresConnection {
         // Notify response subscribers.
         if !responses.is_empty() {
             let mut guard = self.response_subscribers.lock().unwrap();
-            for (execution_id, response) in responses {
+            for (execution_id, _response) in responses {
                 if let Some((sender, _)) = guard.remove(&execution_id) {
-                    let _ = sender.send(response);
+                    let _ = sender.send(());
                 }
             }
         }
@@ -3940,18 +3943,22 @@ impl DbConnection for PostgresConnection {
             }
         };
 
-        let res = tokio::select! {
-            resp = receiver => {
-                match resp {
-                    Ok(resp) => Ok(vec![resp]),
-                    Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
-                }
-            }
+        let woken = tokio::select! {
+            resp = receiver => match resp {
+                Ok(()) => Ok(()),
+                Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
+            },
             outcome = timeout_fut => Err(DbErrorReadWithTimeout::Timeout(outcome)),
         };
 
         cleanup();
-        res
+        woken?;
+
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let responses = get_responses_after(&tx, execution_id, last_response).await?;
+        tx.commit().await?;
+        Ok(responses)
     }
 
     #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
