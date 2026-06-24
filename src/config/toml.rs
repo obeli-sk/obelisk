@@ -1565,25 +1565,6 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                     source_bytes: content.as_bytes().to_vec(),
                 })
             }
-            // Legacy/internal canonical form; new deployment TOML cannot author absolute paths.
-            ScriptLocationResolved::ExternalPath { path } => {
-                let full_path = PathBuf::from(path);
-                let content = tokio::fs::read_to_string(&full_path)
-                    .await
-                    .with_context(|| format!("cannot read external exec file {full_path:?}"))?;
-                if let Some(expected) = self.content_digest.as_ref() {
-                    let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
-                    let actual = ContentDigest(Digest(hash));
-                    ensure!(
-                        *expected == actual,
-                        "content digest mismatch for external exec file {full_path:?}: expected {expected}, got {actual}"
-                    );
-                }
-                Ok(ResolvedExecProgram {
-                    program: ExecProgram::Inline(content.clone()),
-                    source_bytes: content.into_bytes(),
-                })
-            }
             ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)
                     .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
@@ -1935,7 +1916,6 @@ pub(crate) trait JsLocationResolvedExt {
 impl JsLocationResolvedExt for ScriptLocationResolved {
     /// Return the JS source content and file name.
     /// For `Content`, returns them directly (validating digest if provided).
-    /// For legacy/internal `ExternalPath`, reads the file at runtime (validating digest if provided).
     /// For `Oci`, pulls from the registry (or cache) under `wasm_cache_dir/js/`.
     async fn get_content(
         &self,
@@ -1953,9 +1933,8 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                     );
                 }
                 // Report the basename to the JS engine so stack frames (and the source
-                // lookup keyed by them) use the bare file name, matching the `ExternalPath`
-                // and `Oci` variants. The canonical `file_name` keeps its deployment-relative
-                // subpath for `deployment get` export.
+                // lookup keyed by them) use the bare file name. The canonical `file_name`
+                // keeps its deployment-relative subpath for `deployment get` export.
                 let file_name = std::path::Path::new(file_name)
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -1965,26 +1944,6 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                     source: content.clone(),
                     file_name,
                 })
-            }
-            ScriptLocationResolved::ExternalPath { path } => {
-                let full_path = PathBuf::from(path);
-                let source = tokio::fs::read_to_string(&full_path)
-                    .await
-                    .with_context(|| format!("cannot read external JS file {full_path:?}"))?;
-                if let Some(expected) = expected_digest {
-                    let hash: [u8; 32] = Sha256::digest(source.as_bytes()).into();
-                    let actual = ContentDigest(Digest(hash));
-                    ensure!(
-                        *expected == actual,
-                        "content digest mismatch for external JS file {full_path:?}: expected {expected}, got {actual}"
-                    );
-                }
-                let file_name = full_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(path)
-                    .to_string();
-                Ok(JsContent { source, file_name })
             }
             ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)

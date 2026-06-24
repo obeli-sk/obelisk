@@ -372,10 +372,10 @@
 ## Every local file path in this file (component `location`, `backtrace.sources` values) is resolved the same way:
 ##   - A relative path (e.g. "components/a.wasm", "scripts/x.js") is relative to the directory
 ##     containing this deployment.toml. It must stay within that directory ("../" escapes are rejected).
-##   - An absolute path (e.g. "/opt/wasm/a.wasm") references a file anywhere on the host (out-of-tree, not portable).
+##   - An absolute path (e.g. "/opt/wasm/a.wasm") is rejected.
 ## For JS/exec components, deployment-relative sources are read and inlined at deploy time so the deployment is
-## self-contained; absolute paths stay external references read at runtime. `obelisk deployment get` recreates the
-## deployment-relative files (mirroring subfolders) but cannot recreate WASM bytes or out-of-tree absolute paths.
+## self-contained. `obelisk deployment get` recreates the deployment-relative files (mirroring subfolders) but
+## cannot recreate WASM bytes.
 ##
 ## For backwards compatibility a relative path may be prefixed with `${DEPLOYMENT_DIR}/`; this is
 ## equivalent to a bare relative path (the directory containing this deployment.toml) and is no longer needed.

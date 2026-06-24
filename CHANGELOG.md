@@ -8,10 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(cli)* `deployment get <ID> [--output DIR] [--force]` retrieves a stored deployment to disk as a re-submittable `deployment.toml` plus its source files. Owned scripts and backtrace sources are recreated (subfolders mirrored, relative to the deployment directory); WASM bytes and external (absolute-path) scripts are referenced but not recreated.
+- *(cli)* `deployment get <ID> [--output DIR] [--force]` retrieves a stored deployment to disk as a re-submittable
+`deployment.toml` plus its source files. Owned scripts and backtrace sources are recreated (subfolders mirrored,
+relative to the deployment directory); WASM bytes are referenced but not recreated.
 - *(deployment)* Verify a user-supplied `content_digest` at submit time, in addition to runtime.
-- *(deployment)* Reject at submit time deployments where two distinct deployment-owned sources (inline/owned scripts or backtrace sources) resolve to the same `file_name`, since `deployment get` could not recreate both on disk.
-- *(cli)* `deployment active` prints the ID of the currently active deployment.
+- *(deployment)* Reject at submit time deployments where two distinct deployment-owned sources
+ (inline/owned scripts or backtrace sources) resolve to the same `file_name`, since `deployment get`
+ could not recreate both on disk.
+ - *(cli)* `deployment active` prints the ID of the currently active deployment.
 - *(deployment)* `activity_exec` components gained `params_via_stdin` (default `false`). When enabled,
   parameters are passed to the program via the stdin JSON `params` array instead of argv, allowing
   payloads larger than the `execve` argument-size limit.
@@ -32,7 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory containing the file. The explicit `${DEPLOYMENT_DIR}/` prefix is still accepted for
   backwards compatibility but is no longer needed and has been removed from the bundled
   example/testing configs.
-- *(deployment)* **Canonical deployment format changed.** JS and exec sources now share one `ScriptLocationCanonical` (`Content`/`Path`/`Oci`): a relative location (bare or `${DEPLOYMENT_DIR}/…`) is deployment-owned and inlined, an absolute location is an external reference read at runtime, and `..` escapes are rejected. The `activity_exec` canonical field `source` was renamed to `location`, its inline `Content` gained a `file_name`, and its OCI image no longer carries the `oci://` prefix. Workflow/webhook backtrace sources retain their source path for recreation (canonical value is now `{ content, file_name }`). As a result, previously stored deployments that contain `activity_exec` components or backtrace sources will not deserialize and must be re-submitted.
+- *(deployment)* [**breaking**] Deployment-local paths are now required for JS/exec sources and
+  backtrace source files. Relative paths are resolved from the directory containing `deployment.toml`
+  and must stay inside that directory; absolute local paths and `..` escapes are rejected. JS/exec
+  sources referenced by relative path are read and stored with the deployment, so `deployment get`
+  can recreate them later. Existing deployments that used absolute JS/exec source paths, or older
+  stored deployment records using the previous source-file format, must be re-submitted.
 
 ## [0.38.3](https://github.com/obeli-sk/obelisk/compare/v0.38.2...v0.38.3)
 

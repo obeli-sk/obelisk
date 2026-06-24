@@ -466,17 +466,12 @@ impl ActivityExternalComponentConfigResolved {
 ///   the deployment directory and was read from disk/CAS); `file_name` is the
 ///   deployment-relative path (which may include subfolders), used for source names and
 ///   backtraces.
-/// - `Path` is an external local file that the deployment merely references; it is read
-///   at runtime.
 /// - `Oci` is an external registry reference.
 #[derive(Debug, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScriptLocationResolved {
     #[schemars(with = "String")]
     Content { content: String, file_name: String },
-    /// External local file, read at runtime, not recreated on export.
-    #[schemars(with = "String")]
-    ExternalPath { path: String },
     /// OCI-sourced script. No `oci://` prefix.
     #[schemars(with = "String")]
     Oci { image: String },
