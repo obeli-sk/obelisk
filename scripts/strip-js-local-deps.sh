@@ -17,4 +17,4 @@ sed -i 's/"workflow-js-local" = \["dep:workflow-js-runtime-builder"\]/"workflow-
 # Remove the js-local test matrix entry from the CI workflow
 sed -i '/junit-js-local.xml/,+1d' .github/workflows/check-test.yml
 
-cargo check
+cargo metadata
