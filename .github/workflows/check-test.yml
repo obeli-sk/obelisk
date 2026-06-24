@@ -24,15 +24,18 @@ defaults:
 
 jobs:
   ci-test:
+    name: ci-test ${{ matrix.name }}
     runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - report: junit-default.xml
+          - name: test.sh
+            report: junit-default.xml
             features: ""
-          - report: junit-js-local.xml
+          - name: test-js-local.sh
+            report: junit-js-local.xml
             features: "-F activity-js-local,workflow-js-local,webhook-js-local"
 
     steps:
