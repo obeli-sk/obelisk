@@ -24,15 +24,18 @@ defaults:
 
 jobs:
   ci-test:
+    name: ci-test ${{ matrix.name }}
     runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - report: junit-default.xml
+          - name: test.sh
+            report: junit-default.xml
             features: ""
-          - report: junit-js-local.xml
+          - name: test-js-local.sh
+            report: junit-js-local.xml
             features: "-F activity-js-local,workflow-js-local,webhook-js-local"
 
     steps:
@@ -59,7 +62,9 @@ jobs:
           restore-keys: |
             wasm-cache-${{ matrix.report }}-${{ runner.os }}-
 
-      - uses: kunobi-ninja/kache-action@v1
+      - uses: kunobi-ninja/kache-action@a257c055543c2840700a9bbca8f9c3094a421b1b # main, post-v1: adds pr-comment input
+        with:
+          pr-comment: false
 
       - name: Build tests
         id: build-tests
