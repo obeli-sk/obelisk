@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.1](https://github.com/obeli-sk/obelisk/compare/v0.39.0...v0.39.1)
+
+Re-release because `cargo publish` failed on an interal error.
+
 ## [0.39.0](https://github.com/obeli-sk/obelisk/compare/v0.38.3...v0.39.0)
 
 This release makes deployments more self-contained and easier to inspect. Obelisk now stores
