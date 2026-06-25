@@ -87,7 +87,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
         run: |
-          nix develop --command cargo publish --workspace --locked ${{ inputs.extra-args }}
+          nix develop .#publish --command cargo publish --workspace --locked ${{ inputs.extra-args }}
 
   call_child:
     needs:
