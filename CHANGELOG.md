@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.3](https://github.com/obeli-sk/obelisk/compare/v0.39.2...v0.39.3)
+
+Re-release because `cargo publish` failed on an internal error.
+
 ## [0.39.2](https://github.com/obeli-sk/obelisk/compare/v0.39.1...v0.39.2)
 
 Re-release because `cargo publish` failed on an internal error.
