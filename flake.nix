@@ -197,6 +197,22 @@
                 cargo-zigbuild
             ];
           };
+          # Used only by release-2-cargo-publish to get a cargo with the
+          # workspace-publish fix (rust-lang/cargo#17071), which is missing
+          # from the 1.96.0 stable toolchain pinned in rust-toolchain.toml.
+          # TODO: remove this devshell once rust-toolchain.toml is on >= 1.98
+          # (the first stable with the fix) and revert release-2 to the
+          # default `nix develop`.
+          devShells.publish = pkgs.mkShell {
+            nativeBuildInputs = with pkgs;
+              [
+                (rust-bin.beta.latest.default.override {
+                  targets = [ "wasm32-unknown-unknown" "wasm32-wasip2" ];
+                })
+                pkg-config
+                protobuf
+              ];
+          };
           packages = rec {
             obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml;
             obeliskLibcNix = makeObelisk "release" null ./rust-toolchain.toml;

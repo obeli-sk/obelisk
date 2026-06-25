@@ -6,42 +6,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.3](https://github.com/obeli-sk/obelisk/compare/v0.39.2...v0.39.3)
+
+Re-release because `cargo publish` failed on an internal error.
+
+## [0.39.2](https://github.com/obeli-sk/obelisk/compare/v0.39.1...v0.39.2)
+
+Re-release because `cargo publish` failed on an internal error.
+
+## [0.39.1](https://github.com/obeli-sk/obelisk/compare/v0.39.0...v0.39.1)
+
+Re-release because `cargo publish` failed on an interal error.
+
+## [0.39.0](https://github.com/obeli-sk/obelisk/compare/v0.38.3...v0.39.0)
+
+This release makes deployments more self-contained and easier to inspect. Obelisk now stores
+deployment TOML and deployment-owned source files, can reconstruct deployments back to disk, verifies
+deployment packages earlier, and exposes more deployment metadata through the CLI, gRPC, and web API.
+It also includes important database fixes for response ordering and missed notifications.
+
 ### Added
 
-- *(cli)* `deployment get <ID> [--output DIR] [--force]` retrieves a stored deployment to disk as a re-submittable
-`deployment.toml` plus its source files. Owned scripts and backtrace sources are recreated (subfolders mirrored,
-relative to the deployment directory); WASM bytes are referenced but not recreated.
-- *(deployment)* Verify a user-supplied `content_digest` at submit time, in addition to runtime.
-- *(deployment)* Reject at submit time deployments where two distinct deployment-owned sources
- (inline/owned scripts or backtrace sources) resolve to the same `file_name`, since `deployment get`
- could not recreate both on disk.
- - *(cli)* `deployment active` prints the ID of the currently active deployment.
-- *(deployment)* `activity_exec` components gained `params_via_stdin` (default `false`). When enabled,
-  parameters are passed to the program via the stdin JSON `params` array instead of argv, allowing
-  payloads larger than the `execve` argument-size limit.
+- *(cli)* `deployment get <ID> [--output DIR] [--force]` retrieves a stored deployment as a
+  re-submittable `deployment.toml` plus deployment-owned source files - ([c9b4ecd](https://github.com/obeli-sk/obelisk/commit/c9b4ecd716f4914fa9d4acbd67fb5a50d0f38e19))
+- *(cli)* `deployment show <ID>` can show reconstructed deployment TOML or a specific stored source
+  file; pass `--json` to render the stored TOML manifest as JSON - ([d4294b0](https://github.com/obeli-sk/obelisk/commit/d4294b0d47e8e77851811c666158c08f4efb4b87))
+- *(cli)* `deployment active` prints the active deployment ID - ([dd2279b](https://github.com/obeli-sk/obelisk/commit/dd2279b030b0da24d8f810c60d33829f5db7f6fe))
+- *(deployment)* REST accepts multipart deployment packages and verifies deployment packages before
+  persisting them - ([4fdb2fc](https://github.com/obeli-sk/obelisk/commit/4fdb2fc64233b08f5f877e07115081c405882710)), ([8378c30](https://github.com/obeli-sk/obelisk/commit/8378c3075ae01940462c55153457ea11c84f59a6)), ([f5f088b](https://github.com/obeli-sk/obelisk/commit/f5f088b634fae3dc2b7aa57156d6bff3a4284f58))
+- *(deployment)* Deployment records now include optional descriptions, deployment digests, WASM
+  content digests, and backtrace source digests - ([886f298](https://github.com/obeli-sk/obelisk/commit/886f298a0d2df43e8473f8f188002e3e4a667b0c)), ([4baf221](https://github.com/obeli-sk/obelisk/commit/4baf2218ab80141d003058cefdb5fa95b97ce871)), ([988f61e](https://github.com/obeli-sk/obelisk/commit/988f61e9c1d80f30cea79ae7462514add6374aa1)), ([f7a5a2e](https://github.com/obeli-sk/obelisk/commit/f7a5a2e51a4dcade3887113829485c9c43f1eb7a))
+- *(grpc,webapi)* Deployment and execution list APIs expose component summaries and support broader
+  filtering - ([5a29d42](https://github.com/obeli-sk/obelisk/commit/5a29d42a36aa4b6ffafd9aee4858a9b9e1672cc6)), ([f39f595](https://github.com/obeli-sk/obelisk/commit/f39f595ecd36b2247e708deee175db80027f672e))
+- *(toml)* `activity_exec.params_via_stdin` passes activity parameters through stdin, avoiding
+  `execve` argument-size limits - ([e4f52f8](https://github.com/obeli-sk/obelisk/commit/e4f52f8bbf25fc77276daae7fa6c6bb571329f44))
+
+### Fixed
+
+- *(pg)* Avoid nondeterministic response replay caused by out-of-order response IDs and missed
+  watermark refetches - ([75e09b1](https://github.com/obeli-sk/obelisk/commit/75e09b199d37faec6841e68870499700ae0c50cc)), ([4d59e0f](https://github.com/obeli-sk/obelisk/commit/4d59e0f880074202d084f957d11250dd5ab8826a))
+- *(sqlite)* Avoid needless waits for unlock on unordered response notifications - ([7d61726](https://github.com/obeli-sk/obelisk/commit/7d61726ecca28c315fa8a1e67eff50d6ee54e743))
+- *(toml)* Disallow configuration that lets the Web UI hijack the server listener - ([e700e3d](https://github.com/obeli-sk/obelisk/commit/e700e3d7dd64401eb24fc2c4e99cef35fe8ec51d))
+- *(webapi)* Paginate logs by index and serialize log cursors as opaque strings - ([1a6e0c1](https://github.com/obeli-sk/obelisk/commit/1a6e0c13d2751d872b0385261389fdc67f7f9d43))
+- *(webhook)* Persist the execution ID on the first app log - ([c56caf8](https://github.com/obeli-sk/obelisk/commit/c56caf83661c950ddb09f99746f60b1d3cdd07be))
 
 ### Changed
 
-- *(deployment)* [**breaking**] **`activity_exec` secrets stdin format changed.** Secrets are now nested under a
-  `secrets` key (`{"secrets":{"KEY":"value",...}}`) instead of being the top-level object, so they can
-  coexist with the new `params` key. Scripts that parsed `.KEY` from stdin must now read `.secrets.KEY`.
-
-- *(cli)* `deployment show <ID>` now prints the reconstructed `deployment.toml` (with local file
-  references, the same TOML `deployment get` writes) instead of the raw canonical config. Pass a
-  FILE argument to print a single deployment-owned source file as `deployment get` would serialize
-  it, or `--json` to print the raw canonical config as before.
-
-- *(deployment)* The `${DEPLOYMENT_DIR}/` path prefix is now implicit: a bare relative path in a
-  deployment.toml (component `location`, `backtrace.sources`) is already resolved relative to the
-  directory containing the file. The explicit `${DEPLOYMENT_DIR}/` prefix is still accepted for
-  backwards compatibility but is no longer needed and has been removed from the bundled
-  example/testing configs.
-- *(deployment)* [**breaking**] Deployment-local paths are now required for JS/exec sources and
-  backtrace source files. Relative paths are resolved from the directory containing `deployment.toml`
-  and must stay inside that directory; absolute local paths and `..` escapes are rejected. JS/exec
-  sources referenced by relative path are read and stored with the deployment, so `deployment get`
-  can recreate them later. Existing deployments that used absolute JS/exec source paths, or older
-  stored deployment records using the previous source-file format, must be re-submitted.
+- *(deployment)* `deployment.toml` is now the stored source of truth, and deployment-owned files are
+  stored in a content-addressed store - ([0b76c74](https://github.com/obeli-sk/obelisk/commit/0b76c748b71b23f777e48fa8104b83a00bc7e8dd)), ([91e8125](https://github.com/obeli-sk/obelisk/commit/91e81253be12605e401d963b434d2c9549071ba7))
+- *(deployment)* The `${DEPLOYMENT_DIR}/` prefix is now implicit for deployment-local paths. The
+  prefix is still accepted for compatibility, but bare relative paths are resolved from the
+  `deployment.toml` directory - ([208779a](https://github.com/obeli-sk/obelisk/commit/208779aa4304a7496dd87a84b97ea0971ab8808b))
+- *(deployment)* [**breaking**] JS and exec source files and backtrace source files must now be
+  deployment-local. Absolute local paths and `..` escapes are rejected, and referenced source files
+  are stored with the deployment - ([d187edd](https://github.com/obeli-sk/obelisk/commit/d187eddb41f164c15d3960eda39b72169cf9d912)), ([c1dd1a5](https://github.com/obeli-sk/obelisk/commit/c1dd1a51c9b6d1ca49333b70d2a69ae3c43e164e)), ([386bcb4](https://github.com/obeli-sk/obelisk/commit/386bcb47c9c6ff2ed256253793763f428c54ec51))
+- *(deployment)* [**breaking**] `activity_exec` secrets passed over stdin are now nested under
+  `"secrets"` instead of being the top-level JSON object - ([3874aba](https://github.com/obeli-sk/obelisk/commit/3874aba4596bce800358132bf7921d6b470fbbd9))
+- *(grpc)* [**breaking**] Deployment execution summaries are now optional in gRPC responses - ([746c211](https://github.com/obeli-sk/obelisk/commit/746c2114ac30a61e8a04aabc84a49f5e4ebf6cff))
+- *(webapi)* [**breaking**] The top-level error variant serializes as `err` again, and structural
+  endpoints now default to JSON output - ([b315a3a](https://github.com/obeli-sk/obelisk/commit/b315a3a373b65b9991e7502c3492ff5dfb3bc424)), ([02625d6](https://github.com/obeli-sk/obelisk/commit/02625d6ed7cf38372fa6a0e34bff2e3bd9855622))
+- *(api,cli)* Deployment submission can provide an optional deployment ID for idempotency, and
+  deployment list calls can skip execution counts - ([2c9b894](https://github.com/obeli-sk/obelisk/commit/2c9b894e9877ea3b3b078f353a5042ff07040a5f)), ([607fc42](https://github.com/obeli-sk/obelisk/commit/607fc42767f63208ee40ff22ebcaaad98af07729))
+- *(js)* JavaScript runtime errors are more consistent, and mixed imports are verified during
+  linking - ([34eca8b](https://github.com/obeli-sk/obelisk/commit/34eca8b5aa6f127e7450f89e25c7435287cfad78)), ([c08b817](https://github.com/obeli-sk/obelisk/commit/c08b817f3318870a3222e494f76360a43a6c4e13))
 
 ## [0.38.3](https://github.com/obeli-sk/obelisk/compare/v0.38.2...v0.38.3)
 
