@@ -539,7 +539,7 @@ pub(crate) mod tests {
     use crate::engines::PoolingOptions;
     use crate::engines::{EngineConfig, Engines};
     use crate::http_hooks::ConfigSectionHint;
-    use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+    use crate::http_request_policy::{AllowedHostConfig, HostPattern};
     use assert_matches::assert_matches;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, RunId};
     use concepts::storage::Locked;
@@ -610,8 +610,7 @@ pub(crate) mod tests {
 
             fuel: None,
             allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                pattern: HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods)
-                    .unwrap(),
+                pattern: HostPattern::parse_with_all_methods_and_paths(allowed_host).unwrap(),
                 secret_env_mappings: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
             }]),
@@ -1722,7 +1721,7 @@ pub(crate) mod tests {
         #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
         locking_strategy: LockingStrategy,
     ) {
-        use crate::http_request_policy::{AllowedHostConfig, MethodsPattern, ReplacementLocation};
+        use crate::http_request_policy::{AllowedHostConfig, ReplacementLocation};
         use hashbrown::HashSet;
         use secrecy::SecretString;
         use wiremock::{
@@ -1739,8 +1738,7 @@ pub(crate) mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let server_address = listener.local_addr().unwrap();
         let allowed_host = format!("http://127.0.0.1:{port}", port = server_address.port());
-        let host_pattern =
-            HostPattern::parse_with_methods(&allowed_host, MethodsPattern::AllMethods).unwrap();
+        let host_pattern = HostPattern::parse_with_all_methods_and_paths(&allowed_host).unwrap();
 
         // Create worker with secret configuration
         let (worker, component_id) = new_activity_worker_with_config(

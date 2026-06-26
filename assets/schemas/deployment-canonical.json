@@ -369,6 +369,16 @@
             }
           ]
         },
+        "path_prefixes": {
+          "description": "Allowed URL path prefixes, matched literally against the request path.\n- Required. Use `path_prefixes = [\"/\"]` to allow all paths.\n- Each entry must start with `/`. `\"/foo\"` matches `/foo`, `/foobar`, and\n  `/foo/x`; `\"/foo/\"` matches only `/foo/...`. Query strings are ignored.\n- Omitting it, or `path_prefixes = []`, allows nothing (warning emitted).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
         "secrets": {
           "description": "Optional secrets for this host.",
           "anyOf": [

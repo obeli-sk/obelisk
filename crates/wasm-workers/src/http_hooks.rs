@@ -58,6 +58,7 @@ fn generate_toml_snippet(
         scheme,
         host,
         port,
+        path,
     } = err
     {
         let pattern = format_host_pattern(scheme, host, *port);
@@ -66,7 +67,8 @@ fn generate_toml_snippet(
              To allow this request, add the following to your configuration:\n\n\
              [[{section}.allowed_host]]\n\
              pattern = \"{pattern}\"\n\
-             methods = [\"{method}\"]",
+             methods = [\"{method}\"]\n\
+             path_prefixes = [\"{path}\"]",
             section = config_section_hint,
             method = method.as_str()
         ))
