@@ -79,6 +79,9 @@ pub struct HostPattern {
     pub port: PortPattern,
     /// Allowed HTTP methods.
     pub methods: MethodsPattern,
+    /// Allowed URL path prefixes. A request is allowed if its path starts with
+    /// any of these prefixes. Empty list matches no URL.
+    pub path_prefixes: Vec<String>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -87,11 +90,15 @@ pub enum HostPatternError {
     Wildcard { host: String },
     #[error("host pattern must not contain a path: `{input}`")]
     ContainsPath { input: String },
+    #[error("path prefix must start with `/`: `{prefix}`")]
+    PathPrefix { prefix: String },
 }
 
 impl HostPattern {
-    /// Parse a host specification string into a `HostPattern`.
-    /// Rules:
+    /// Parse a host specification string into a `HostPattern` with the given
+    /// allowed `methods` and `path_prefixes`.
+    ///
+    /// Host rules:
     /// - No scheme → HTTPS assumed
     /// - `*://` prefix → matches both http and https
     /// - No port → default for scheme (443 for HTTPS, 80 for HTTP)
@@ -102,18 +109,35 @@ impl HostPattern {
     /// - `*://*` matches any scheme, any host, default ports only (80 for http, 443 for https)
     /// - `*://*:*` matches any scheme, any host, any port
     ///
+    /// Each path prefix must start with `/`; matching is a literal string prefix
+    /// (`"/foo"` matches `/foobar` and `/foo/x`, `"/foo/"` only matches `/foo/...`).
+    ///
     /// # Errors
-    /// Returns an error if the wildcard is in the middle of the host.
-    pub fn parse_with_methods(
+    /// Returns an error if the host wildcard is misplaced, the host contains a
+    /// path, or a path prefix does not start with `/`.
+    pub fn parse_with(
         input: &str,
         methods: MethodsPattern,
+        path_prefixes: Vec<String>,
     ) -> Result<Self, HostPatternError> {
-        let mut host_pattern = Self::parse(input)?;
-        host_pattern.methods = methods;
-        Ok(host_pattern)
+        if let Some(prefix) = path_prefixes.iter().find(|p| !p.starts_with('/')) {
+            return Err(HostPatternError::PathPrefix {
+                prefix: prefix.clone(),
+            });
+        }
+
+        let (scheme, host_pattern, port) = Self::parse(input)?;
+
+        Ok(HostPattern {
+            scheme,
+            host_pattern,
+            port,
+            methods,
+            path_prefixes,
+        })
     }
 
-    fn parse(input: &str) -> Result<Self, HostPatternError> {
+    fn parse(input: &str) -> Result<(SchemePattern, String, PortPattern), HostPatternError> {
         // Check for `*://` prefix (any scheme)
         let (scheme, rest) = if let Some(rest) = input.strip_prefix("*://") {
             (SchemePattern::Any, rest)
@@ -156,13 +180,15 @@ impl HostPattern {
         if host.contains('*') && !host.starts_with('*') && !host.ends_with('*') {
             return Err(HostPatternError::Wildcard { host });
         }
+        Ok((scheme, host, port))
+    }
 
-        Ok(HostPattern {
-            scheme,
-            host_pattern: host,
-            port,
-            methods: MethodsPattern::AllMethods,
-        })
+    /// Check if a request path is allowed by this pattern's path prefixes.
+    #[must_use]
+    fn path_matches(&self, path: &str) -> bool {
+        self.path_prefixes
+            .iter()
+            .any(|prefix| path.starts_with(prefix.as_str()))
     }
 
     /// Check if a (scheme, host, port, method) tuple matches this pattern.
@@ -231,6 +257,11 @@ impl fmt::Display for HostPattern {
                 write!(f, " [{}]", method_strs.join(", "))?;
             }
         }
+
+        // Write path prefixes (omit the default "all paths")
+        if self.path_prefixes != ["/"] {
+            write!(f, " path_prefixes=[{}]", self.path_prefixes.join(", "))?;
+        }
         Ok(())
     }
 }
@@ -272,25 +303,27 @@ pub fn is_text_content_type(content_type: &str) -> bool {
         || ct.starts_with("application/x-www-form-urlencoded")
 }
 
-/// Extract (scheme, host, port) from a URI.
-fn extract_request_target(uri: &hyper::Uri) -> Option<(String, String, u16)> {
+/// Extract (scheme, host, port, path) from a URI.
+fn extract_request_target(uri: &hyper::Uri) -> Option<(String, String, u16, String)> {
     let scheme = uri.scheme_str().unwrap_or("https").to_string();
     let host = uri.host()?.to_string();
     let default_port = if scheme == "https" { 443 } else { 80 };
     let port = uri.port_u16().unwrap_or(default_port);
-    Some((scheme, host, port))
+    let path = uri.path().to_string();
+    Some((scheme, host, port, path))
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PolicyError {
     #[error("outgoing HTTP request has no host in URI: {0}")]
     RequestHasNoHost(Uri),
-    #[error("outgoing HTTP {method} request to {scheme}://{host}:{port} denied")]
+    #[error("outgoing HTTP {method} request to {scheme}://{host}:{port}{path} denied")]
     RequestDenied {
         method: Method,
         scheme: String,
         host: String,
         port: u16,
+        path: String,
     },
 }
 impl From<PolicyError> for ErrorCode {
@@ -306,16 +339,18 @@ impl HttpRequestPolicy {
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) -> Result<(), PolicyError> {
-        let Some((scheme, host, port)) = extract_request_target(request.uri()) else {
+        let Some((scheme, host, port, path)) = extract_request_target(request.uri()) else {
             return Err(PolicyError::RequestHasNoHost(request.uri().clone()));
         };
         let method = request.method().clone();
 
-        // 1. Find matching host entries (check host + method)
+        // 1. Find matching host entries (check host + method + path)
         let matching: Vec<&AllowedHostPolicy> = self
             .hosts
             .iter()
-            .filter(|h| h.pattern.matches(&scheme, &host, port, &method))
+            .filter(|h| {
+                h.pattern.matches(&scheme, &host, port, &method) && h.pattern.path_matches(&path)
+            })
             .collect();
         if matching.is_empty() {
             return Err(PolicyError::RequestDenied {
@@ -323,6 +358,7 @@ impl HttpRequestPolicy {
                 scheme,
                 host,
                 port,
+                path,
             });
         }
 
@@ -387,12 +423,14 @@ impl HttpRequestPolicy {
 
     /// Get body secrets applicable for the request's target host and method.
     fn body_secrets_for(&self, uri: &hyper::Uri, method: &Method) -> Vec<&PlaceholderSecret> {
-        let Some((scheme, host, port)) = extract_request_target(uri) else {
+        let Some((scheme, host, port, path)) = extract_request_target(uri) else {
             return Vec::new();
         };
         self.hosts
             .iter()
-            .filter(|h| h.pattern.matches(&scheme, &host, port, method))
+            .filter(|h| {
+                h.pattern.matches(&scheme, &host, port, method) && h.pattern.path_matches(&path)
+            })
             .flat_map(|h| h.secrets.iter())
             .filter(|s| s.replace_in.contains(&ReplacementLocation::Body))
             .collect()
@@ -485,88 +523,118 @@ pub struct AllowedHostConfig {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_host_pattern_bare_hostname() {
-        let p = HostPattern::parse("api.openai.com").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Https);
-        assert_eq!(p.host_pattern, "api.openai.com");
-        assert_eq!(p.port, PortPattern::Default);
-        assert!(p.matches("https", "api.openai.com", 443, &Method::GET));
-        assert!(!p.matches("http", "api.openai.com", 80, &Method::GET));
+    impl HostPattern {
+        pub(crate) fn parse_with_methods_and_all_paths(
+            input: &str,
+            methods: MethodsPattern,
+        ) -> Result<Self, HostPatternError> {
+            Self::parse_with(input, methods, vec!["/".to_string()])
+        }
+
+        pub(crate) fn parse_with_all_methods_and_paths(
+            input: &str,
+        ) -> Result<Self, HostPatternError> {
+            Self::parse_with(input, MethodsPattern::AllMethods, vec!["/".to_string()])
+        }
     }
 
     #[test]
-    fn parse_host_pattern_with_scheme_and_port() {
-        let p = HostPattern::parse("http://localhost:8080").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Http);
-        assert_eq!(p.host_pattern, "localhost");
-        assert_eq!(p.port, PortPattern::Specific(8080));
-        assert!(p.matches("http", "localhost", 8080, &Method::GET));
-        assert!(!p.matches("https", "localhost", 8080, &Method::GET));
+    fn parse_fields() {
+        // (input, scheme, host_pattern, port)
+        let cases = [
+            (
+                "api.openai.com",
+                SchemePattern::Https,
+                "api.openai.com",
+                PortPattern::Default,
+            ),
+            (
+                "http://localhost:8080",
+                SchemePattern::Http,
+                "localhost",
+                PortPattern::Specific(8080),
+            ),
+            (
+                "http://example.com",
+                SchemePattern::Http,
+                "example.com",
+                PortPattern::Default,
+            ),
+            (
+                "internal.corp.com:8443",
+                SchemePattern::Https,
+                "internal.corp.com",
+                PortPattern::Specific(8443),
+            ),
+            ("*://*", SchemePattern::Any, "*", PortPattern::Default),
+            ("*://*:*", SchemePattern::Any, "*", PortPattern::Any),
+            (
+                "http://localhost:*",
+                SchemePattern::Http,
+                "localhost",
+                PortPattern::Any,
+            ),
+            (
+                "http://192.*:*",
+                SchemePattern::Http,
+                "192.*",
+                PortPattern::Any,
+            ),
+        ];
+        for (input, scheme, host, port) in cases {
+            let p = HostPattern::parse_with_all_methods_and_paths(input).unwrap();
+            assert_eq!(p.scheme, scheme, "{input}");
+            assert_eq!(p.host_pattern, host, "{input}");
+            assert_eq!(p.port, port, "{input}");
+        }
     }
 
     #[test]
-    fn parse_host_pattern_http_default_port() {
-        let p = HostPattern::parse("http://example.com").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Http);
-        assert_eq!(p.host_pattern, "example.com");
-        assert_eq!(p.port, PortPattern::Default);
-        assert!(p.matches("http", "example.com", 80, &Method::GET));
-        assert!(!p.matches("http", "example.com", 8080, &Method::GET));
+    fn matches_scheme_host_port() {
+        // (pattern, scheme, host, port, expected)
+        let cases = [
+            ("api.openai.com", "https", "api.openai.com", 443, true), // bare = https only
+            ("api.openai.com", "http", "api.openai.com", 80, false),
+            ("http://localhost:8080", "http", "localhost", 8080, true),
+            ("http://localhost:8080", "https", "localhost", 8080, false),
+            ("http://example.com", "http", "example.com", 80, true),
+            ("http://example.com", "http", "example.com", 8080, false), // default port only
+            ("*.example.com", "https", "api.example.com", 443, true),
+            ("*.example.com", "https", "foo.bar.example.com", 443, true),
+            ("*.example.com", "https", "example.com", 443, false), // no bare apex
+            ("192.168.1.*", "https", "192.168.1.100", 443, true),
+            ("192.168.1.*", "https", "192.168.2.100", 443, false),
+            ("*", "https", "anything.com", 443, true), // all https, default port
+            ("*", "http", "anything.com", 80, false),
+            ("http://*", "http", "anything.com", 80, true),
+            ("http://*", "https", "anything.com", 443, false),
+            ("*://*", "http", "foo.com", 80, true), // any scheme, default ports only
+            ("*://*", "https", "foo.com", 443, true),
+            ("*://*", "http", "foo.com", 8080, false),
+            ("*://*", "https", "foo.com", 8443, false),
+            ("*://*:*", "http", "foo.com", 8080, true), // any scheme, any port
+            ("*://*:*", "https", "foo.com", 8443, true),
+            ("http://localhost:*", "http", "localhost", 3000, true), // http only, any port
+            ("http://localhost:*", "https", "localhost", 443, false),
+            ("http://localhost:*", "http", "other.com", 80, false),
+            ("http://192.*:*", "http", "192.0.0.1", 3000, true), // wildcard host + any port
+            ("http://192.*:*", "http", "10.0.0.1", 80, false),
+            ("http://192.*:*", "https", "192.168.1.1", 443, false),
+        ];
+        for (pattern, scheme, host, port, expected) in cases {
+            let p = HostPattern::parse_with_all_methods_and_paths(pattern).unwrap();
+            assert_eq!(
+                p.matches(scheme, host, port, &Method::GET),
+                expected,
+                "pattern={pattern} req={scheme}://{host}:{port}"
+            );
+        }
     }
 
     #[test]
-    fn parse_host_pattern_wildcard_prefix() {
-        let p = HostPattern::parse("*.example.com").unwrap();
-        assert!(p.matches("https", "api.example.com", 443, &Method::GET));
-        assert!(p.matches("https", "foo.bar.example.com", 443, &Method::POST));
-        assert!(!p.matches("https", "example.com", 443, &Method::GET));
-    }
-
-    #[test]
-    fn parse_host_pattern_wildcard_suffix() {
-        let p = HostPattern::parse("192.168.1.*").unwrap();
-        assert!(p.matches("https", "192.168.1.100", 443, &Method::GET));
-        assert!(!p.matches("https", "192.168.2.100", 443, &Method::GET));
-    }
-
-    #[test]
-    fn parse_host_pattern_wildcard_all_https() {
-        let p = HostPattern::parse("*").unwrap();
-        assert!(p.matches("https", "anything.com", 443, &Method::GET));
-        assert!(!p.matches("http", "anything.com", 80, &Method::GET));
-    }
-
-    #[test]
-    fn parse_host_pattern_wildcard_http() {
-        let p = HostPattern::parse("http://*").unwrap();
-        assert!(!p.matches("https", "anything.com", 443, &Method::GET));
-        assert!(p.matches("http", "anything.com", 80, &Method::GET));
-    }
-
-    #[test]
-    fn parse_host_pattern_wildcard_middle_rejected() {
-        assert!(HostPattern::parse("foo.*.com").is_err());
-    }
-
-    #[test]
-    fn parse_host_pattern_trailing_slash_rejected() {
-        assert!(HostPattern::parse("http://localhost:8080/").is_err());
-        assert!(HostPattern::parse("https://api.example.com/v1").is_err());
-        assert!(HostPattern::parse("example.com/path").is_err());
-    }
-
-    #[test]
-    fn parse_host_pattern_https_non_default_port() {
-        let p = HostPattern::parse("internal.corp.com:8443").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Https);
-        assert_eq!(p.host_pattern, "internal.corp.com");
-        assert_eq!(p.port, PortPattern::Specific(8443));
-    }
-
-    #[test]
-    fn host_pattern_method_restriction() {
-        let p = HostPattern::parse_with_methods(
+    fn method_restriction() {
+        // Specific subset: only listed methods match.
+        let p = HostPattern::parse_with_methods_and_all_paths(
             "api.example.com",
             MethodsPattern::Specific(vec![Method::GET, Method::HEAD]),
         )
@@ -574,147 +642,131 @@ mod tests {
         assert!(p.matches("https", "api.example.com", 443, &Method::GET));
         assert!(p.matches("https", "api.example.com", 443, &Method::HEAD));
         assert!(!p.matches("https", "api.example.com", 443, &Method::POST));
-        assert!(!p.matches("https", "api.example.com", 443, &Method::DELETE));
-    }
 
-    #[test]
-    fn host_pattern_all_methods_allows_all() {
-        let p = HostPattern::parse("api.example.com").unwrap();
+        // All methods match.
+        let p = HostPattern::parse_with_all_methods_and_paths("api.example.com").unwrap();
         assert_eq!(p.methods, MethodsPattern::AllMethods);
-        assert!(p.matches("https", "api.example.com", 443, &Method::GET));
-        assert!(p.matches("https", "api.example.com", 443, &Method::POST));
         assert!(p.matches("https", "api.example.com", 443, &Method::DELETE));
-        assert!(p.matches("https", "api.example.com", 443, &Method::PUT));
-    }
 
-    #[test]
-    fn host_pattern_empty_methods_matches_nothing() {
-        let p =
-            HostPattern::parse_with_methods("api.example.com", MethodsPattern::Specific(vec![]))
-                .unwrap();
+        // Empty list matches nothing.
+        let p = HostPattern::parse_with_methods_and_all_paths(
+            "api.example.com",
+            MethodsPattern::Specific(vec![]),
+        )
+        .unwrap();
         assert!(!p.matches("https", "api.example.com", 443, &Method::GET));
-        assert!(!p.matches("https", "api.example.com", 443, &Method::POST));
-        assert!(!p.matches("https", "api.example.com", 443, &Method::DELETE));
     }
 
     #[test]
-    fn display_host_pattern_with_methods() {
-        let p = HostPattern::parse_with_methods(
+    fn parse_rejects_invalid() {
+        // Host wildcard in the middle, or a path embedded in the host pattern.
+        for input in [
+            "foo.*.com",
+            "http://localhost:8080/",
+            "https://api.example.com/v1",
+            "example.com/path",
+        ] {
+            assert!(
+                HostPattern::parse_with_all_methods_and_paths(input).is_err(),
+                "{input}"
+            );
+        }
+        // Path prefix must start with `/`.
+        let err = HostPattern::parse_with(
+            "api.example.com",
+            MethodsPattern::AllMethods,
+            vec!["foo".to_string()],
+        )
+        .unwrap_err();
+        assert!(matches!(err, HostPatternError::PathPrefix { .. }));
+    }
+
+    #[test]
+    fn path_matches() {
+        // Default is "all paths".
+        let p = HostPattern::parse_with_all_methods_and_paths("api.example.com").unwrap();
+        assert_eq!(p.path_prefixes, vec!["/".to_string()]);
+
+        // (prefixes, path, expected) - matching is a literal string prefix.
+        let cases: [(&[&str], &str, bool); 13] = [
+            (&["/"], "/", true),
+            (&["/"], "/v1/chat", true),
+            (&["/foo"], "/foo", true),
+            (&["/foo"], "/foobar", true), // not segment-aware
+            (&["/foo"], "/foo/bar", true),
+            (&["/foo"], "/bar", false),
+            (&["/foo"], "/", false),
+            (&["/foo/"], "/foo/bar", true),
+            (&["/foo/"], "/foo", false), // bare prefix not covered by "/foo/"
+            (&["/foo/"], "/foobar", false),
+            (&["/v1/", "/health"], "/v1/chat", true),
+            (&["/v1/", "/health"], "/healthz", true),
+            (&["/v1/", "/health"], "/v2/chat", false),
+        ];
+        for (prefixes, path, expected) in cases {
+            let p = HostPattern::parse_with(
+                "api.example.com",
+                MethodsPattern::AllMethods,
+                prefixes.iter().map(|s| (*s).to_string()).collect(),
+            )
+            .unwrap();
+            assert_eq!(
+                p.path_matches(path),
+                expected,
+                "prefixes={prefixes:?} path={path}"
+            );
+        }
+    }
+
+    #[test]
+    fn display_host_pattern() {
+        // Scheme/host/port rendering (all methods + default paths are omitted).
+        let host_cases = [
+            ("api.openai.com", "https://api.openai.com"),
+            ("http://localhost:8080", "http://localhost:8080"),
+            ("internal.corp.com:8443", "https://internal.corp.com:8443"),
+            ("*://*", "*://*"),
+            ("*://*:*", "*://*:*"),
+            ("http://localhost:*", "http://localhost:*"),
+        ];
+        for (input, expected) in host_cases {
+            let p = HostPattern::parse_with_all_methods_and_paths(input).unwrap();
+            assert_eq!(p.to_string(), expected, "{input}");
+        }
+
+        // Methods and non-default path prefixes are appended.
+        let p = HostPattern::parse_with_methods_and_all_paths(
             "api.example.com",
             MethodsPattern::Specific(vec![Method::GET, Method::POST]),
         )
         .unwrap();
         assert_eq!(p.to_string(), "https://api.example.com [GET, POST]");
-    }
 
-    #[test]
-    fn parse_host_pattern_any_scheme_default_ports() {
-        // `*://*` matches any scheme, any host, default ports only
-        let p = HostPattern::parse("*://*").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Any);
-        assert_eq!(p.host_pattern, "*");
-        assert_eq!(p.port, PortPattern::Default);
-
-        // Should match http on port 80
-        assert!(p.matches("http", "foo.com", 80, &Method::GET));
-        // Should match https on port 443
-        assert!(p.matches("https", "foo.com", 443, &Method::GET));
-        // Should NOT match http on non-default port
-        assert!(!p.matches("http", "foo.com", 8080, &Method::GET));
-        // Should NOT match https on non-default port
-        assert!(!p.matches("https", "foo.com", 8443, &Method::GET));
-    }
-
-    #[test]
-    fn parse_host_pattern_any_scheme_any_port() {
-        // `*://*:*` matches any scheme, any host, any port
-        let p = HostPattern::parse("*://*:*").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Any);
-        assert_eq!(p.host_pattern, "*");
-        assert_eq!(p.port, PortPattern::Any);
-
-        // Should match everything
-        assert!(p.matches("http", "foo.com", 80, &Method::GET));
-        assert!(p.matches("https", "foo.com", 443, &Method::GET));
-        assert!(p.matches("http", "foo.com", 8080, &Method::GET));
-        assert!(p.matches("https", "foo.com", 8443, &Method::GET));
-        assert!(p.matches("http", "localhost", 3000, &Method::POST));
-    }
-
-    #[test]
-    fn parse_host_pattern_any_port_specific_scheme() {
-        // `http://localhost:*` matches http, localhost, any port
-        let p = HostPattern::parse("http://localhost:*").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Http);
-        assert_eq!(p.host_pattern, "localhost");
-        assert_eq!(p.port, PortPattern::Any);
-
-        assert!(p.matches("http", "localhost", 80, &Method::GET));
-        assert!(p.matches("http", "localhost", 8080, &Method::GET));
-        assert!(p.matches("http", "localhost", 3000, &Method::GET));
-        assert!(!p.matches("https", "localhost", 443, &Method::GET));
-        assert!(!p.matches("http", "other.com", 80, &Method::GET));
-    }
-
-    #[test]
-    fn parse_host_pattern_wildcard_host_any_port() {
-        // `http://192.*:*` matches http, any host starting with 192., any port
-        let p = HostPattern::parse("http://192.*:*").unwrap();
-        assert_eq!(p.scheme, SchemePattern::Http);
-        assert_eq!(p.host_pattern, "192.*");
-        assert_eq!(p.port, PortPattern::Any);
-
-        assert!(p.matches("http", "192.168.1.1", 80, &Method::GET));
-        assert!(p.matches("http", "192.168.1.1", 8080, &Method::GET));
-        assert!(p.matches("http", "192.0.0.1", 3000, &Method::POST));
-        assert!(!p.matches("https", "192.168.1.1", 443, &Method::GET));
-        assert!(!p.matches("http", "10.0.0.1", 80, &Method::GET));
-    }
-
-    #[test]
-    fn display_host_pattern_any_scheme() {
-        let p = HostPattern::parse("*://*").unwrap();
-        assert_eq!(p.to_string(), "*://*");
-
-        let p = HostPattern::parse("*://*:*").unwrap();
-        assert_eq!(p.to_string(), "*://*:*");
-
-        let p = HostPattern::parse("http://localhost:*").unwrap();
-        assert_eq!(p.to_string(), "http://localhost:*");
-    }
-
-    #[test]
-    fn display_host_pattern_empty_methods() {
-        let p =
-            HostPattern::parse_with_methods("api.example.com", MethodsPattern::Specific(vec![]))
-                .unwrap();
+        let p = HostPattern::parse_with_methods_and_all_paths(
+            "api.example.com",
+            MethodsPattern::Specific(vec![]),
+        )
+        .unwrap();
         assert_eq!(p.to_string(), "https://api.example.com [NONE]");
+
+        let p = HostPattern::parse_with(
+            "api.example.com",
+            MethodsPattern::AllMethods,
+            vec!["/v1/".to_string(), "/health".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            p.to_string(),
+            "https://api.example.com path_prefixes=[/v1/, /health]"
+        );
     }
 
     #[test]
-    fn generate_placeholder_format() {
+    fn generate_placeholder_format_and_uniqueness() {
         let p = generate_placeholder();
         assert!(p.starts_with("OBELISK_SECRET_"));
         assert_eq!(p.len(), 15 + 64); // prefix + 64 hex chars
-    }
-
-    #[test]
-    fn generate_placeholder_unique() {
-        let p1 = generate_placeholder();
-        let p2 = generate_placeholder();
-        assert_ne!(p1, p2);
-    }
-
-    #[test]
-    fn display_host_pattern() {
-        let p = HostPattern::parse("api.openai.com").unwrap();
-        assert_eq!(p.to_string(), "https://api.openai.com");
-
-        let p = HostPattern::parse("http://localhost:8080").unwrap();
-        assert_eq!(p.to_string(), "http://localhost:8080");
-
-        let p = HostPattern::parse("internal.corp.com:8443").unwrap();
-        assert_eq!(p.to_string(), "https://internal.corp.com:8443");
+        assert_ne!(p, generate_placeholder());
     }
 
     #[test]
