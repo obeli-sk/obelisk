@@ -391,10 +391,10 @@ wit-bindgen-rust = "0.57.1"
 wstd = "0.6.7"
 
 # otlp
-opentelemetry = "0.31.0"
-opentelemetry-http = "0.31.0"
+opentelemetry = "0.32.0"
+opentelemetry-http = "0.32.0"
 opentelemetry_sdk = { version = "0.32.1", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.1", default-features = false, features = [
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
     "tls",
     "tls-roots",
     "grpc-tonic",
@@ -403,7 +403,7 @@ opentelemetry-otlp = { version = "0.31.1", default-features = false, features = 
     "metrics",
 ] }
 opentelemetry-semantic-conventions = "0.32.1"
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.33"
 
 [workspace.lints]
 # lower the priority to allow overriding later
