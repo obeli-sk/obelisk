@@ -50,7 +50,6 @@ max_retries = 0
 [[activity_js.allowed_host]]
 pattern = "http://localhost:5005"
 methods = ["GET"]
-path_prefixes = ["/"]
 
 [[workflow_js]]
 location = "crates/testing/test-programs/js/workflow/fetch_components.js"
@@ -131,7 +130,6 @@ routes = [{ methods = ["GET"], route = "/fetch" }]
 [[webhook_endpoint_js.allowed_host]]
 pattern = "http://localhost:5005"
 methods = ["GET"]
-path_prefixes = ["/"]
 
 [[webhook_endpoint_js]]
 name = "webhook_js_call_activity"

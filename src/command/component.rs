@@ -807,7 +807,6 @@ mod tests {
                     "GET".to_string(),
                     "POST".to_string(),
                 ])),
-                path_prefixes: Some(vec!["/v1".to_string()]),
                 secrets: Some(AllowedHostSecretsToml {
                     env_vars: vec![EnvVarConfig::Key("API_KEY".to_string())],
                     replace_in: vec![ReplaceIn::Headers],

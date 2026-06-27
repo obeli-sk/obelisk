@@ -3371,27 +3371,7 @@ fn resolve_allowed_hosts(
                     )));
                 }
             };
-            // Resolve path prefixes (deny-by-default, like methods):
-            // omitted or `[]` => deny & skip; `"/"` => allow all paths.
-            let path_prefixes = match entry.path_prefixes {
-                None => {
-                    warn!(
-                        "allowed_host `{}` has no `path_prefixes` field - no requests will be allowed; \
-                         use `path_prefixes = [\"/\"]` to allow all paths",
-                        entry.pattern
-                    );
-                    return None;
-                }
-                Some(list) if list.is_empty() => {
-                    warn!(
-                        "allowed_host `{}` has empty `path_prefixes = []` - no requests will be allowed",
-                        entry.pattern
-                    );
-                    return None;
-                }
-                Some(list) => list,
-            };
-            let pattern = match HostPattern::parse_with(&pattern_str, methods, path_prefixes) {
+            let pattern = match HostPattern::parse_with_methods(&pattern_str, methods) {
                 Ok(p) => p,
                 Err(e) => return Some(Err(e.into())),
             };

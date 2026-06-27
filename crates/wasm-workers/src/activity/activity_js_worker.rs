@@ -354,8 +354,9 @@ mod tests {
         }
 
         fn with_allowed_host(mut self, host: &str) -> Self {
-            use crate::http_request_policy::{AllowedHostConfig, HostPattern};
-            let pattern = HostPattern::parse_with_all_methods_and_paths(host).unwrap();
+            use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+            let pattern =
+                HostPattern::parse_with_methods(host, MethodsPattern::AllMethods).unwrap();
             self.allowed_hosts.push(AllowedHostConfig {
                 pattern,
                 secret_env_mappings: Vec::new(),
