@@ -296,12 +296,12 @@ pub struct AllowedHostToml {
     /// - `methods = ["GET", "POST"]` to allow specific methods.
     /// - `methods = []` to allow nothing (warning emitted).
     pub methods: Option<MethodsInput>,
-    /// Allowed URL path prefixes, matched literally against the request path.
-    /// - Required. Use `path_prefixes = ["/"]` to allow all paths.
-    /// - Each entry must start with `/`. `"/foo"` matches `/foo`, `/foobar`, and
-    ///   `/foo/x`; `"/foo/"` matches only `/foo/...`. Query strings are ignored.
-    /// - Omitting it, or `path_prefixes = []`, allows nothing (warning emitted).
-    pub path_prefixes: Option<Vec<String>>,
+    /// Optional regex restriction checked against `METHOD URL` with query params removed.
+    /// For example, `GET https://api.example.com/v1/items`.
+    /// Supports `${VAR}` and `${VAR:-default}` env var interpolation.
+    /// Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
+    /// Omit to allow all paths accepted by the host and method restrictions.
+    pub request_url_regex: Option<String>,
     /// Optional secrets for this host.
     #[serde(default)]
     pub secrets: Option<AllowedHostSecretsToml>,

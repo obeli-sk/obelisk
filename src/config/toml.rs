@@ -22,6 +22,7 @@ use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use hashbrown::HashMap;
 use log::{LoggingConfig, LoggingStyle};
+use regex::Regex;
 use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -3303,6 +3304,8 @@ enum ResolveAllowedHostsError {
     InvalidMethod(String),
     #[error("use `methods = \"*\"` to allow all methods, not `methods = [\"*\"]`")]
     InvalidMethodStar,
+    #[error("cannot parse request_url_regex `{pattern}`: {err}")]
+    InvalidRequestUrlRegex { pattern: String, err: regex::Error },
 }
 
 fn resolve_allowed_hosts(
@@ -3371,27 +3374,36 @@ fn resolve_allowed_hosts(
                     )));
                 }
             };
-            // Resolve path prefixes (deny-by-default, like methods):
-            // omitted or `[]` => deny & skip; `"/"` => allow all paths.
-            let path_prefixes = match entry.path_prefixes {
-                None => {
-                    warn!(
-                        "allowed_host `{}` has no `path_prefixes` field - no requests will be allowed; \
-                         use `path_prefixes = [\"/\"]` to allow all paths",
-                        entry.pattern
-                    );
-                    return None;
+            let request_url_regex = match entry.request_url_regex {
+                Some(pattern) => {
+                    let pattern = match interpolate_env_vars_plaintext(&pattern) {
+                        Ok(s) => s,
+                        Err(EnvVarMissing(var)) => {
+                            if ignore_missing_env_vars {
+                                warn!(
+                                    "allowed_host request_url_regex `{}` references missing env var `{var}`, skipping",
+                                    pattern
+                                );
+                                return None;
+                            }
+                            return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
+                                EnvVarsMissing(vec![var]),
+                            )));
+                        }
+                    };
+                    match Regex::new(&pattern) {
+                        Ok(regex) => Some(regex),
+                        Err(err) => {
+                            return Some(Err(ResolveAllowedHostsError::InvalidRequestUrlRegex {
+                                pattern,
+                                err,
+                            }));
+                        }
+                    }
                 }
-                Some(list) if list.is_empty() => {
-                    warn!(
-                        "allowed_host `{}` has empty `path_prefixes = []` - no requests will be allowed",
-                        entry.pattern
-                    );
-                    return None;
-                }
-                Some(list) => list,
+                None => None,
             };
-            let pattern = match HostPattern::parse_with(&pattern_str, methods, path_prefixes) {
+            let pattern = match HostPattern::parse_with_methods(&pattern_str, methods) {
                 Ok(p) => p,
                 Err(e) => return Some(Err(e.into())),
             };
@@ -3434,6 +3446,7 @@ fn resolve_allowed_hosts(
 
             Some(Ok(AllowedHostConfig {
                 pattern,
+                request_url_regex,
                 secret_env_mappings,
                 replace_in,
             }))
@@ -3757,6 +3770,61 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 "#;
             let result = toml::from_str::<TestConfig>(toml_str);
             assert!(result.is_err(), "Should fail on `extra_stuff`");
+        }
+    }
+
+    mod allowed_hosts {
+        use super::super::*;
+
+        fn allowed_host_with_regex(request_url_regex: &str) -> AllowedHostToml {
+            AllowedHostToml {
+                pattern: "api.example.com".to_string(),
+                methods: Some(MethodsInput::List(vec!["GET".to_string()])),
+                request_url_regex: Some(request_url_regex.to_string()),
+                secrets: None,
+            }
+        }
+
+        #[test]
+        fn request_url_regex_interpolates_env_vars() {
+            let hosts = resolve_allowed_hosts(
+                vec![allowed_host_with_regex(
+                    r"^GET https://${OBELISK_TEST_REQUEST_URL_REGEX_DOMAIN:-api\.example\.com}/v1/",
+                )],
+                false,
+            )
+            .unwrap();
+
+            let regex = hosts[0].request_url_regex.as_ref().unwrap();
+            assert!(regex.is_match("GET https://api.example.com/v1/items"));
+            assert!(!regex.is_match("GET https://apiXexampleYcom/v1/items"));
+        }
+
+        #[test]
+        fn request_url_regex_missing_env_var_fails_when_not_ignored() {
+            const VAR: &str = "OBELISK_TEST_MISSING_REQUEST_URL_REGEX_DOMAIN_9E5F58E0";
+            let error = resolve_allowed_hosts(
+                vec![allowed_host_with_regex(&format!(
+                    "^GET https://${{{VAR}}}/"
+                ))],
+                false,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(VAR), "unexpected error: {error}");
+        }
+
+        #[test]
+        fn request_url_regex_missing_env_var_skips_when_ignored() {
+            const VAR: &str = "OBELISK_TEST_MISSING_REQUEST_URL_REGEX_DOMAIN_IGNORED_9E5F58E0";
+            let hosts = resolve_allowed_hosts(
+                vec![allowed_host_with_regex(&format!(
+                    "^GET https://${{{VAR}}}/"
+                ))],
+                true,
+            )
+            .unwrap();
+            assert!(hosts.is_empty());
         }
     }
 

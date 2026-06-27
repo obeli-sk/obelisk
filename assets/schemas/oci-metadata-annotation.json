@@ -283,15 +283,12 @@
             }
           ]
         },
-        "path_prefixes": {
-          "description": "Allowed URL path prefixes, matched literally against the request path.\n- Required. Use `path_prefixes = [\"/\"]` to allow all paths.\n- Each entry must start with `/`. `\"/foo\"` matches `/foo`, `/foobar`, and\n  `/foo/x`; `\"/foo/\"` matches only `/foo/...`. Query strings are ignored.\n- Omitting it, or `path_prefixes = []`, allows nothing (warning emitted).",
+        "request_url_regex": {
+          "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions.",
           "type": [
-            "array",
+            "string",
             "null"
-          ],
-          "items": {
-            "type": "string"
-          }
+          ]
         },
         "secrets": {
           "description": "Optional secrets for this host.",

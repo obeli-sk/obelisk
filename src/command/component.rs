@@ -614,6 +614,9 @@ fn build_component_table(
             if let Some(ref methods) = host.methods {
                 host_table["methods"] = serialize_methods_input(methods);
             }
+            if let Some(ref request_url_regex) = host.request_url_regex {
+                host_table["request_url_regex"] = value(request_url_regex);
+            }
             if let Some(ref secrets) = host.secrets {
                 let mut secrets_table = Table::new();
                 if !secrets.env_vars.is_empty() {
@@ -807,7 +810,7 @@ mod tests {
                     "GET".to_string(),
                     "POST".to_string(),
                 ])),
-                path_prefixes: Some(vec!["/v1".to_string()]),
+                request_url_regex: Some("^GET https://api\\.example\\.com/v1".to_string()),
                 secrets: Some(AllowedHostSecretsToml {
                     env_vars: vec![EnvVarConfig::Key("API_KEY".to_string())],
                     replace_in: vec![ReplaceIn::Headers],

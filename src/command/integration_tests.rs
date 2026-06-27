@@ -220,7 +220,6 @@ return_type = "result<string, string>"
 [[activity_js.allowed_host]]
 pattern = "http://{ip}:{API_PORT}"
 methods = ["GET"]
-path_prefixes = ["/"]
 
 [[activity_js]]
 name = "test_read_env_activity"
@@ -541,7 +540,6 @@ routes = [{{ methods = ["GET"], route = "/fetch-allowed" }}]
 [[webhook_endpoint_js.allowed_host]]
 pattern = "http://{ip}:{API_PORT}"
 methods = ["GET"]
-path_prefixes = ["/"]
 
 [[webhook_endpoint_js]]
 name = "test_fetch_denied_webhook"
