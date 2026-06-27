@@ -3787,16 +3787,13 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 
         #[test]
         fn request_url_regex_interpolates_env_vars() {
-            const VAR: &str = "OBELISK_TEST_REQUEST_URL_REGEX_DOMAIN";
-            unsafe { std::env::set_var(VAR, r"api\.example\.com") };
             let hosts = resolve_allowed_hosts(
-                vec![allowed_host_with_regex(&format!(
-                    r"^GET https://${{{VAR}}}/v1/"
-                ))],
+                vec![allowed_host_with_regex(
+                    r"^GET https://${OBELISK_TEST_REQUEST_URL_REGEX_DOMAIN:-api\.example\.com}/v1/",
+                )],
                 false,
             )
             .unwrap();
-            unsafe { std::env::remove_var(VAR) };
 
             let regex = hosts[0].request_url_regex.as_ref().unwrap();
             assert!(regex.is_match("GET https://api.example.com/v1/items"));
@@ -3805,8 +3802,7 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 
         #[test]
         fn request_url_regex_missing_env_var_fails_when_not_ignored() {
-            const VAR: &str = "OBELISK_TEST_MISSING_REQUEST_URL_REGEX_DOMAIN";
-            unsafe { std::env::remove_var(VAR) };
+            const VAR: &str = "OBELISK_TEST_MISSING_REQUEST_URL_REGEX_DOMAIN_9E5F58E0";
             let error = resolve_allowed_hosts(
                 vec![allowed_host_with_regex(&format!(
                     "^GET https://${{{VAR}}}/"
@@ -3820,8 +3816,7 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 
         #[test]
         fn request_url_regex_missing_env_var_skips_when_ignored() {
-            const VAR: &str = "OBELISK_TEST_MISSING_REQUEST_URL_REGEX_DOMAIN_IGNORED";
-            unsafe { std::env::remove_var(VAR) };
+            const VAR: &str = "OBELISK_TEST_MISSING_REQUEST_URL_REGEX_DOMAIN_IGNORED_9E5F58E0";
             let hosts = resolve_allowed_hosts(
                 vec![allowed_host_with_regex(&format!(
                     "^GET https://${{{VAR}}}/"
