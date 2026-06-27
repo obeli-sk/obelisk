@@ -739,6 +739,17 @@ mod tests {
     }
 
     #[test]
+    fn request_match_input_preserves_non_default_port() {
+        let uri: Uri = "https://api.example.com:8443/v1/items?token=secret"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            request_match_input(&uri, &Method::GET).as_deref(),
+            Some("GET https://api.example.com:8443/v1/items")
+        );
+    }
+
+    #[test]
     fn request_url_regex_restricts_query_stripped_method_url() {
         let policy = AllowedHostPolicy {
             pattern: HostPattern::parse_with_methods(
