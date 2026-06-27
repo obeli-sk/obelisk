@@ -22,6 +22,7 @@ use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use hashbrown::HashMap;
 use log::{LoggingConfig, LoggingStyle};
+use regex::Regex;
 use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -3303,6 +3304,8 @@ enum ResolveAllowedHostsError {
     InvalidMethod(String),
     #[error("use `methods = \"*\"` to allow all methods, not `methods = [\"*\"]`")]
     InvalidMethodStar,
+    #[error("cannot parse request_url_regex `{pattern}`: {err}")]
+    InvalidRequestUrlRegex { pattern: String, err: regex::Error },
 }
 
 fn resolve_allowed_hosts(
@@ -3371,6 +3374,18 @@ fn resolve_allowed_hosts(
                     )));
                 }
             };
+            let request_url_regex = match entry.request_url_regex {
+                Some(pattern) => match Regex::new(&pattern) {
+                    Ok(regex) => Some(regex),
+                    Err(err) => {
+                        return Some(Err(ResolveAllowedHostsError::InvalidRequestUrlRegex {
+                            pattern,
+                            err,
+                        }));
+                    }
+                },
+                None => None,
+            };
             let pattern = match HostPattern::parse_with_methods(&pattern_str, methods) {
                 Ok(p) => p,
                 Err(e) => return Some(Err(e.into())),
@@ -3414,6 +3429,7 @@ fn resolve_allowed_hosts(
 
             Some(Ok(AllowedHostConfig {
                 pattern,
+                request_url_regex,
                 secret_env_mappings,
                 replace_in,
             }))

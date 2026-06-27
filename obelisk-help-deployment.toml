@@ -55,11 +55,18 @@
 ## - `methods = []` allows nothing (config warning)
 ## - Omitting `methods` entirely allows nothing (config warning)
 ##
+## Optional request URL regex restriction:
+## - Checked after host and method matching.
+## - The request is matched as `METHOD URL` with query params removed,
+##   for example `GET https://api.example.com/v1/items`.
+## - Omit `request_url_regex` to allow all paths accepted by host and method restrictions.
+##
 ## Multiple entries can match the same request; they form a union (secrets are merged).
 ## The `pattern` field supports `${VAR}` and `${VAR:-default}` env var interpolation.
 # [[activity_wasm.allowed_host]]
 # pattern = "api.github.com"
 # methods = "*"
+# request_url_regex = "^GET https://api\\.github\\.com/repos/"
 ## Optional secrets: injected via placeholder replacement in outgoing HTTP requests.
 ## WASM receives an opaque placeholder instead of the real value.
 ## The runtime replaces placeholders with real values only for requests to this host.
@@ -111,6 +118,7 @@
 # [[activity_js.allowed_host]]
 # pattern = "api.example.com"
 # methods = ["GET", "POST"]
+# request_url_regex = "^(GET|POST) https://api\\.example\\.com/v1/"
 # [activity_js.allowed_host.secrets]
 # env_vars = ["API_KEY"]
 # replace_in = ["headers"]
@@ -321,6 +329,7 @@
 # [[webhook_endpoint_wasm.allowed_host]]
 # pattern = "api.example.com"
 # methods = ["GET", "POST"]
+# request_url_regex = "^(GET|POST) https://api\\.example\\.com/v1/"
 # [webhook_endpoint_wasm.allowed_host.secrets]
 # env_vars = ["API_KEY"]
 # replace_in = ["headers"]
@@ -355,6 +364,7 @@
 # [[webhook_endpoint_js.allowed_host]]
 # pattern = "api.example.com"
 # methods = ["GET", "POST"]
+# request_url_regex = "^(GET|POST) https://api\\.example\\.com/v1/"
 # [webhook_endpoint_js.allowed_host.secrets]
 # env_vars = ["API_KEY"]
 # replace_in = ["headers"]

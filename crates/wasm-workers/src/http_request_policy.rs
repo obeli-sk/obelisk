@@ -1,6 +1,7 @@
 use hyper::Uri;
 use hyper::http::Method;
 use rand::RngCore;
+use regex::Regex;
 use secrecy::{ExposeSecret, SecretString};
 use std::fmt;
 use tracing::{debug, trace};
@@ -253,7 +254,25 @@ fn match_wildcard(pattern: &str, value: &str) -> bool {
 #[derive(Clone, Debug)]
 pub struct AllowedHostPolicy {
     pub pattern: HostPattern,
+    pub request_url_regex: Option<Regex>,
     pub secrets: Vec<PlaceholderSecret>,
+}
+
+impl AllowedHostPolicy {
+    fn matches_request(
+        &self,
+        scheme: &str,
+        host: &str,
+        port: u16,
+        method: &Method,
+        request_match: &str,
+    ) -> bool {
+        self.pattern.matches(scheme, host, port, method)
+            && self
+                .request_url_regex
+                .as_ref()
+                .is_none_or(|regex| regex.is_match(request_match))
+    }
 }
 
 /// Per-component HTTP outgoing request policy.
@@ -272,25 +291,34 @@ pub fn is_text_content_type(content_type: &str) -> bool {
         || ct.starts_with("application/x-www-form-urlencoded")
 }
 
-/// Extract (scheme, host, port) from a URI.
-fn extract_request_target(uri: &hyper::Uri) -> Option<(String, String, u16)> {
+/// Extract (scheme, host, port, path) from a URI.
+fn extract_request_target(uri: &hyper::Uri) -> Option<(String, String, u16, String)> {
     let scheme = uri.scheme_str().unwrap_or("https").to_string();
     let host = uri.host()?.to_string();
     let default_port = if scheme == "https" { 443 } else { 80 };
     let port = uri.port_u16().unwrap_or(default_port);
-    Some((scheme, host, port))
+    let path = uri.path().to_string();
+    Some((scheme, host, port, path))
+}
+
+fn request_match_input(uri: &hyper::Uri, method: &Method) -> Option<String> {
+    let scheme = uri.scheme_str().unwrap_or("https");
+    let authority = uri.authority()?.as_str();
+    Some(format!("{method} {scheme}://{authority}{}", uri.path()))
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PolicyError {
     #[error("outgoing HTTP request has no host in URI: {0}")]
     RequestHasNoHost(Uri),
-    #[error("outgoing HTTP {method} request to {scheme}://{host}:{port} denied")]
+    #[error("outgoing HTTP request {request_url} denied")]
     RequestDenied {
         method: Method,
         scheme: String,
         host: String,
         port: u16,
+        path: String,
+        request_url: String,
     },
 }
 impl From<PolicyError> for ErrorCode {
@@ -306,16 +334,18 @@ impl HttpRequestPolicy {
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) -> Result<(), PolicyError> {
-        let Some((scheme, host, port)) = extract_request_target(request.uri()) else {
+        let Some((scheme, host, port, path)) = extract_request_target(request.uri()) else {
             return Err(PolicyError::RequestHasNoHost(request.uri().clone()));
         };
+        let request_match = request_match_input(request.uri(), request.method())
+            .ok_or_else(|| PolicyError::RequestHasNoHost(request.uri().clone()))?;
         let method = request.method().clone();
 
-        // 1. Find matching host entries (check host + method)
+        // 1. Find matching host entries (check host + method + optional request regex)
         let matching: Vec<&AllowedHostPolicy> = self
             .hosts
             .iter()
-            .filter(|h| h.pattern.matches(&scheme, &host, port, &method))
+            .filter(|h| h.matches_request(&scheme, &host, port, &method, &request_match))
             .collect();
         if matching.is_empty() {
             return Err(PolicyError::RequestDenied {
@@ -323,6 +353,8 @@ impl HttpRequestPolicy {
                 scheme,
                 host,
                 port,
+                path,
+                request_url: request_match,
             });
         }
 
@@ -387,12 +419,15 @@ impl HttpRequestPolicy {
 
     /// Get body secrets applicable for the request's target host and method.
     fn body_secrets_for(&self, uri: &hyper::Uri, method: &Method) -> Vec<&PlaceholderSecret> {
-        let Some((scheme, host, port)) = extract_request_target(uri) else {
+        let Some((scheme, host, port, _path)) = extract_request_target(uri) else {
+            return Vec::new();
+        };
+        let Some(request_match) = request_match_input(uri, method) else {
             return Vec::new();
         };
         self.hosts
             .iter()
-            .filter(|h| h.pattern.matches(&scheme, &host, port, method))
+            .filter(|h| h.matches_request(&scheme, &host, port, method, &request_match))
             .flat_map(|h| h.secrets.iter())
             .filter(|s| s.replace_in.contains(&ReplacementLocation::Body))
             .collect()
@@ -475,6 +510,7 @@ pub fn generate_placeholder() -> String {
 #[derive(Clone, Debug)]
 pub struct AllowedHostConfig {
     pub pattern: HostPattern,
+    pub request_url_regex: Option<Regex>,
     /// `(env_key_for_wasm, real_value)` pairs.
     pub secret_env_mappings: Vec<(String, SecretString)>,
     /// Where in the request to perform replacement.
@@ -689,6 +725,52 @@ mod tests {
             HostPattern::parse_with_methods("api.example.com", MethodsPattern::Specific(vec![]))
                 .unwrap();
         assert_eq!(p.to_string(), "https://api.example.com [NONE]");
+    }
+
+    #[test]
+    fn request_match_input_omits_query_params() {
+        let uri: Uri = "https://api.example.com/v1/items?token=secret"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            request_match_input(&uri, &Method::GET).as_deref(),
+            Some("GET https://api.example.com/v1/items")
+        );
+    }
+
+    #[test]
+    fn request_url_regex_restricts_query_stripped_method_url() {
+        let policy = AllowedHostPolicy {
+            pattern: HostPattern::parse_with_methods(
+                "api.example.com",
+                MethodsPattern::Specific(vec![Method::GET]),
+            )
+            .unwrap(),
+            request_url_regex: Some(Regex::new(r"^GET https://api\.example\.com/v1/").unwrap()),
+            secrets: Vec::new(),
+        };
+
+        assert!(policy.matches_request(
+            "https",
+            "api.example.com",
+            443,
+            &Method::GET,
+            "GET https://api.example.com/v1/items"
+        ));
+        assert!(!policy.matches_request(
+            "https",
+            "api.example.com",
+            443,
+            &Method::GET,
+            "GET https://api.example.com/v2/items"
+        ));
+        assert!(!policy.matches_request(
+            "https",
+            "api.example.com",
+            443,
+            &Method::POST,
+            "POST https://api.example.com/v1/items"
+        ));
     }
 
     #[test]

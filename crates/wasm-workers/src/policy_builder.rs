@@ -28,6 +28,7 @@ pub(crate) fn build_http_policy(
                 .collect();
             AllowedHostPolicy {
                 pattern: host_config.pattern.clone(),
+                request_url_regex: host_config.request_url_regex.clone(),
                 secrets,
             }
         })

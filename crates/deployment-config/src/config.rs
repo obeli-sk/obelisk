@@ -296,6 +296,10 @@ pub struct AllowedHostToml {
     /// - `methods = ["GET", "POST"]` to allow specific methods.
     /// - `methods = []` to allow nothing (warning emitted).
     pub methods: Option<MethodsInput>,
+    /// Optional regex restriction checked against `METHOD URL` with query params removed.
+    /// For example, `GET https://api.example.com/v1/items`.
+    /// Omit to allow all paths accepted by the host and method restrictions.
+    pub request_url_regex: Option<String>,
     /// Optional secrets for this host.
     #[serde(default)]
     pub secrets: Option<AllowedHostSecretsToml>,

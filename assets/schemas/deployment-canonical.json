@@ -369,6 +369,13 @@
             }
           ]
         },
+        "request_url_regex": {
+          "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nOmit to allow all paths accepted by the host and method restrictions.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "secrets": {
           "description": "Optional secrets for this host.",
           "anyOf": [

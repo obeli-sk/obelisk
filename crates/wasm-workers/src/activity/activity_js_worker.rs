@@ -359,6 +359,7 @@ mod tests {
                 HostPattern::parse_with_methods(host, MethodsPattern::AllMethods).unwrap();
             self.allowed_hosts.push(AllowedHostConfig {
                 pattern,
+                request_url_regex: None,
                 secret_env_mappings: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
             });

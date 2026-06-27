@@ -2476,6 +2476,7 @@ pub(crate) mod tests {
                                 MethodsPattern::AllMethods,
                             )
                             .unwrap(),
+                            request_url_regex: None,
                             secret_env_mappings: Vec::new(),
                             replace_in: hashbrown::HashSet::new(),
                         }]),
@@ -2918,6 +2919,7 @@ pub(crate) mod tests {
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from(vec![AllowedHostConfig {
                             pattern: host_pattern,
+                            request_url_regex: None,
                             secret_env_mappings: Vec::new(),
                             replace_in: hashbrown::HashSet::new(),
                         }]),

@@ -58,21 +58,30 @@ fn generate_toml_snippet(
         scheme,
         host,
         port,
+        request_url,
+        ..
     } = err
     {
         let pattern = format_host_pattern(scheme, host, *port);
+        let request_url_regex =
+            toml_basic_string_escape(&format!("^{}$", regex::escape(request_url)));
         Some(format!(
             "{err}\n\
              To allow this request, add the following to your configuration:\n\n\
              [[{section}.allowed_host]]\n\
              pattern = \"{pattern}\"\n\
-             methods = [\"{method}\"]",
+             methods = [\"{method}\"]\n\
+             request_url_regex = \"{request_url_regex}\"",
             section = config_section_hint,
             method = method.as_str()
         ))
     } else {
         None
     }
+}
+
+fn toml_basic_string_escape(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 impl WasiHttpHooks for HttpHooks {

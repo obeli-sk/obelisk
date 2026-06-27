@@ -2854,6 +2854,7 @@ impl DeploymentVerified {
                     allowed_hosts: vec![AllowedHostToml {
                         pattern: target_url,
                         methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+                        request_url_regex: None,
                         secrets: None,
                     }],
                 });

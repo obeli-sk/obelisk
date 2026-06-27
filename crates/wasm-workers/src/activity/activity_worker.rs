@@ -612,6 +612,7 @@ pub(crate) mod tests {
             allowed_hosts: Arc::from(vec![AllowedHostConfig {
                 pattern: HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods)
                     .unwrap(),
+                request_url_regex: None,
                 secret_env_mappings: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
             }]),
@@ -1759,6 +1760,7 @@ pub(crate) mod tests {
                     fuel: None,
                     allowed_hosts: Arc::from(vec![AllowedHostConfig {
                         pattern: host_pattern,
+                        request_url_regex: None,
                         secret_env_mappings: vec![(
                             SECRET_ENV_VAR.to_string(),
                             SecretString::from(SECRET_VALUE.to_string()),
