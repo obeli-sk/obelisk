@@ -59,6 +59,8 @@
 ## - Checked after host and method matching.
 ## - The request is matched as `METHOD URL` with query params removed,
 ##   for example `GET https://api.example.com/v1/items`.
+## - Supports `${VAR}` and `${VAR:-default}` env var interpolation.
+## - Env var values are regex syntax; use regex-escaped values when precision matters.
 ## - Omit `request_url_regex` to allow all paths accepted by host and method restrictions.
 ##
 ## Multiple entries can match the same request; they form a union (secrets are merged).

@@ -298,6 +298,8 @@ pub struct AllowedHostToml {
     pub methods: Option<MethodsInput>,
     /// Optional regex restriction checked against `METHOD URL` with query params removed.
     /// For example, `GET https://api.example.com/v1/items`.
+    /// Supports `${VAR}` and `${VAR:-default}` env var interpolation.
+    /// Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
     /// Omit to allow all paths accepted by the host and method restrictions.
     pub request_url_regex: Option<String>,
     /// Optional secrets for this host.
