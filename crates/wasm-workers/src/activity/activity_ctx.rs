@@ -19,7 +19,6 @@ pub struct ActivityCtx {
     http_ctx: WasiHttpCtx,
     component_logger: ComponentLogger,
     pub(crate) http_hooks: HttpHooks,
-    pub(crate) executor_close_watcher: tokio::sync::watch::Receiver<bool>,
 }
 
 impl wasmtime::component::HasData for ActivityCtx {
@@ -109,7 +108,6 @@ pub(crate) fn store(
             config_section_hint: config.config_section_hint,
         },
         component_logger,
-        executor_close_watcher: ctx.executor_close_watcher,
     };
     Store::new(engine, ctx)
 }

@@ -22,9 +22,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
 use utils::wasm_tools::ExIm;
+use wasmtime::Store;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
-use wasmtime::{Store, UpdateDeadline};
 
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
@@ -179,10 +179,6 @@ impl Worker for ActivityWorker {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Context: {ctx:?}");
         assert!(ctx.event_history.is_empty());
-        let cancelation_token = self
-            .cancel_registry
-            .obtain_cancellation_token(ctx.execution_id.clone());
-
         let started_at = self.clock_fn.now();
         ctx.worker_span.record(
             "execution_deadline",
@@ -193,6 +189,11 @@ impl Worker for ActivityWorker {
         let params = ctx.params.clone();
         let version = ctx.version.clone();
         let worker_span = ctx.worker_span.clone();
+
+        let interrupt_token = self
+            .cancel_registry
+            .obtain_interrupt_token(ctx.execution_id.clone());
+        let mut executor_close_watcher = ctx.executor_close_watcher.clone();
 
         let (mut store, deadline_duration) = match self.create_store(ctx, started_at) {
             Ok(store) => store,
@@ -250,12 +251,17 @@ impl Worker for ActivityWorker {
                     version,
                 });
             }
-            _signal = cancelation_token => {
+            _ = interrupt_token => {
                 // Either paused or cancelled by CancelRegistry, or timed out by `expired_timers_watcher`
                 // and Sender removed from CancelRegistry using its watcher.
                 // TODO: Add http traces
                 debug!("Activity run interrupted, DB must have been updated");
                 return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+            }
+            _ = executor_close_watcher.changed() => {
+                debug!("Executor is closing");
+                // Executor will append the Unlocked event.
+                return WorkerResult::Err(WorkerError::ExecutorClosing(version.clone()))
             }
         }
     }
@@ -303,19 +309,8 @@ impl ActivityWorker {
                 .expect("engine must have `consume_fuel` enabled");
         }
 
-        // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|store_ctx| {
-            let executor_closing = *store_ctx.data().executor_close_watcher.borrow();
-            if executor_closing {
-                info!("Executor closing");
-                Ok(UpdateDeadline::Interrupt) // Interpreted as executor closing in `process_res`
-            } else {
-                Ok(UpdateDeadline::YieldCustom(
-                    1,
-                    Box::pin(tokio::task::yield_now()),
-                ))
-            }
-        });
+        // Configure epoch callback to yield to tokio periodically.
+        store.epoch_deadline_async_yield_and_update(1);
 
         let deadline_delta = lock_expires_at - started_at;
         let Ok(deadline_duration) = deadline_delta.to_std() else {
@@ -465,8 +460,6 @@ impl ActivityWorker {
                             version: version.clone(),
                             http_client_traces,
                         }
-                    } else if *trap == wasmtime::Trap::Interrupt {
-                        WorkerError::ExecutorClosing(version.clone())
                     } else {
                         WorkerError::ActivityTrap {
                             reason: trap.to_string(),

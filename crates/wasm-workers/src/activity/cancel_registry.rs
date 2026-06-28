@@ -20,7 +20,11 @@ pub const CANCEL_RETRIES: u8 = 5;
 /// which writes the new state to db (no matter whether registered or not)
 /// and triggers the cancellation token.
 pub struct CancelRegistry {
-    tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, oneshot::Sender<()>>>>,
+    tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
+}
+
+struct ActivityInfo {
+    interrupt_sender: oneshot::Sender<()>,
 }
 
 impl Default for CancelRegistry {
@@ -82,36 +86,34 @@ impl CancelRegistry {
         }
         if !finished.is_empty() {
             let mut guard = self.tokens.lock().unwrap();
+            // Cleanup old entries.
             for execution_id in finished {
-                if let Some(sender) = guard.remove(&execution_id) {
-                    let _ = sender.send(());
+                if let Some(info) = guard.remove(&execution_id) {
+                    let _ = info.interrupt_sender.send(());
                 }
             }
         }
     }
 
-    pub(crate) fn obtain_cancellation_token(
+    pub(crate) fn obtain_interrupt_token(
         &self,
         execution_id: ExecutionId,
     ) -> oneshot::Receiver<()> {
-        // Cleanup old entries.
         let mut guard = self.tokens.lock().unwrap();
-        guard.retain(|_key, sender| !sender.is_closed());
-
-        let (sender, receiver) = oneshot::channel();
-        guard.insert(execution_id, sender);
+        let (interrupt_sender, receiver) = oneshot::channel();
+        guard.insert(execution_id, ActivityInfo { interrupt_sender });
         receiver
     }
 
     /// Best-effort local interrupt for an activity currently running in this process.
     /// Unlike `cancel_activity`, this does not write terminal cancellation state to the DB.
     pub fn interrupt_running_activity(&self, execution_id: &ExecutionId) {
-        let sender = {
+        let info = {
             let mut guard = self.tokens.lock().unwrap();
             guard.remove(execution_id)
         };
-        if let Some(sender) = sender {
-            let _ = sender.send(());
+        if let Some(info) = info {
+            let _ = info.interrupt_sender.send(());
         }
     }
 

@@ -359,7 +359,7 @@ impl Worker for ActivityExecWorker {
         // Register cancellation token.
         let cancel_token = self
             .cancel_registry
-            .obtain_cancellation_token(ctx.execution_id.clone());
+            .obtain_interrupt_token(ctx.execution_id.clone());
 
         // Skip stdout collection when return_type is `result` (unit ok and err variants).
         let max_stdout_bytes = if self.user_return_type.type_wrapper_tl.is_result_of_units() {

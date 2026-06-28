@@ -2163,15 +2163,6 @@ pub(crate) enum SwitchDeploymentAction {
     HotRedeploy,
     VerifyAndStore,
 }
-impl SwitchDeploymentAction {
-    pub(crate) fn new(hot_redeploy: bool) -> SwitchDeploymentAction {
-        if hot_redeploy {
-            SwitchDeploymentAction::HotRedeploy
-        } else {
-            SwitchDeploymentAction::VerifyAndStore
-        }
-    }
-}
 
 #[expect(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(%deployment_id))]
@@ -2311,14 +2302,21 @@ async fn switch_hot_redeploy(
             "server is being shut down"
         )));
     }
+
     debug!("Closing old executors");
     let old = std::mem::take(&mut write_guard_ctx.exec_task_handles);
+    let worker_tasks_handles =
+        futures_util::future::join_all(old.into_iter().map(|exec| exec.close_outer_task())).await;
+
+    debug!("Waiting for workers");
     futures_util::future::join_all(
-        old.iter()
-            .map(executor::executor::ExecutorTaskHandle::close),
+        worker_tasks_handles
+            .into_iter()
+            .map(|handle| handle.close()),
     )
     .await;
 
+    debug!("Swapping webhook registry");
     webhook_registry.swap(
         server_compiled_linked
             .http_servers_to_webhooks_and_state
@@ -2575,7 +2573,17 @@ impl ServerInit {
             deployment_lock.closed = true;
             std::mem::take(&mut deployment_lock.exec_task_handles)
         };
-        futures_util::future::join_all(executors.iter().map(ExecutorTaskHandle::close)).await;
+        let worker_tasks_handles = futures_util::future::join_all(
+            executors.into_iter().map(|exec| exec.close_outer_task()),
+        )
+        .await;
+        debug!("Waiting for workers");
+        futures_util::future::join_all(
+            worker_tasks_handles
+                .into_iter()
+                .map(|handle| handle.close()),
+        )
+        .await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.
         drop(db_pool);
@@ -2587,6 +2595,7 @@ impl ServerInit {
         drop(webhook_registry);
         drop(log_forwarder_sender);
         drop(log_db_forarder); // Some activity messages might not be stored.
+        debug!("Closing db");
         db_close.await;
     }
 }
