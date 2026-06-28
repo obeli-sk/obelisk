@@ -628,6 +628,8 @@ mod tests {
     use val_json::wast_val::WastVal;
     use wasmtime::Engine;
 
+    type ExecTaskAndClose = (ExecTask, tokio::sync::watch::Sender<bool>);
+
     const FIBO_10_OUTPUT: u64 = 55;
 
     fn drain_forwarded_log_messages(
@@ -1121,7 +1123,7 @@ mod tests {
         worker: WorkflowJsWorker,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         new_js_workflow_exec_task_with_locking_strategy(
             worker,
             clock_fn,
@@ -1135,7 +1137,7 @@ mod tests {
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
             worker,
             clock_fn,
@@ -1151,7 +1153,7 @@ mod tests {
         db_pool: Arc<dyn DbPool>,
         locking_strategy: LockingStrategy,
         executor_id: ExecutorId,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
@@ -1364,7 +1366,7 @@ mod tests {
             workflow_engine.clone(),
         );
 
-        let workflow_exec =
+        let (workflow_exec, _workflow_close_tx) =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
 
         let execution_id = ExecutionId::generate();
@@ -1413,7 +1415,7 @@ mod tests {
 
         if activity_should_win {
             info!("Step 2: Run activity to complete the fibo(10) child execution");
-            let activity_exec = new_activity_fibo(
+            let (activity_exec, _activity_close_tx) = new_activity_fibo(
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 TokioSleep,
@@ -1585,6 +1587,8 @@ mod tests {
     /// Helper for running JS workflow tests with reduced boilerplate.
     struct JsWorkflowTestHarness {
         workflow_exec: ExecTask,
+        #[expect(dead_code)]
+        workflow_close_tx: tokio::sync::watch::Sender<bool>,
         execution_id: ExecutionId,
         db_connection: Box<dyn DbConnectionTest>,
         sim_clock: SimClock,
@@ -1643,7 +1647,7 @@ mod tests {
                 workflow_engine,
             );
 
-            let workflow_exec =
+            let (workflow_exec, workflow_close_tx) =
                 new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
 
             let execution_id = ExecutionId::generate();
@@ -1670,6 +1674,7 @@ mod tests {
 
             Self {
                 workflow_exec,
+                workflow_close_tx,
                 execution_id,
                 db_connection,
                 sim_clock,
@@ -2342,27 +2347,30 @@ mod tests {
             second_upgrade_component_id.component_digest
         );
 
-        let original_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
-            original_worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            LockingStrategy::Auto,
-            ExecutorId::from_parts(0, 9004),
-        );
-        let first_upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
-            first_upgrade_worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            LockingStrategy::Auto,
-            ExecutorId::from_parts(0, 9005),
-        );
-        let second_upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
-            second_upgrade_worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            LockingStrategy::Auto,
-            ExecutorId::from_parts(0, 9006),
-        );
+        let (original_exec, _original_close_tx) =
+            new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+                original_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                LockingStrategy::Auto,
+                ExecutorId::from_parts(0, 9004),
+            );
+        let (first_upgrade_exec, _first_upgrade_close_tx) =
+            new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+                first_upgrade_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                LockingStrategy::Auto,
+                ExecutorId::from_parts(0, 9005),
+            );
+        let (second_upgrade_exec, _second_upgrade_close_tx) =
+            new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+                second_upgrade_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                LockingStrategy::Auto,
+                ExecutorId::from_parts(0, 9006),
+            );
 
         let execution_id = ExecutionId::from_parts(0, 9004);
         let created_at = sim_clock.now();
@@ -2607,20 +2615,22 @@ mod tests {
             upgrade_component_id.component_digest
         );
 
-        let original_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
-            original_worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            LockingStrategy::Auto,
-            ExecutorId::from_parts(0, 9009),
-        );
-        let upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
-            upgrade_worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            LockingStrategy::Auto,
-            ExecutorId::from_parts(0, 9010),
-        );
+        let (original_exec, _original_close_tx) =
+            new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+                original_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                LockingStrategy::Auto,
+                ExecutorId::from_parts(0, 9009),
+            );
+        let (upgrade_exec, _upgrade_close_tx) =
+            new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+                upgrade_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                LockingStrategy::Auto,
+                ExecutorId::from_parts(0, 9010),
+            );
 
         let execution_id = ExecutionId::from_parts(0, 9010);
         let created_at = sim_clock.now();
@@ -2751,13 +2761,14 @@ mod tests {
             upgrade_component_id.component_digest
         );
 
-        let upgrade_exec = new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
-            upgrade_worker,
-            sim_clock.clone_box(),
-            db_pool.clone(),
-            LockingStrategy::Auto,
-            ExecutorId::from_parts(0, 9011),
-        );
+        let (upgrade_exec, _upgrade_close_tx) =
+            new_js_workflow_exec_task_with_locking_strategy_and_executor_id(
+                upgrade_worker,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+                LockingStrategy::Auto,
+                ExecutorId::from_parts(0, 9011),
+            );
 
         let execution_id = ExecutionId::from_parts(0, 9011);
         let created_at = sim_clock.now();
@@ -2886,7 +2897,7 @@ mod tests {
             workflow_engine.clone(),
         );
 
-        let workflow_exec =
+        let (workflow_exec, _workflow_close_tx) =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
 
         let execution_id = ExecutionId::generate();
@@ -3046,7 +3057,7 @@ mod tests {
             workflow_engine.clone(),
         );
 
-        let workflow_exec =
+        let (workflow_exec, _workflow_close_tx) =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
 
         let execution_id = ExecutionId::from_parts(0, 0);
@@ -3570,7 +3581,7 @@ mod tests {
                 }
                 ReplayResponse::Blocked => match harness.idle_action {
                     Some(WorkflowJsAdvanceIdleAction::TickFiboActivity) => {
-                        let activity_exec = new_activity_fibo(
+                        let (activity_exec, _activity_close_tx) = new_activity_fibo(
                             harness.db_pool.clone(),
                             harness.sim_clock.clone_box(),
                             TokioSleep,

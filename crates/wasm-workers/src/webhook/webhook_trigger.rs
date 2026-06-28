@@ -52,7 +52,7 @@ use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{Linker, Val};
-use wasmtime::{Engine, Store, UpdateDeadline};
+use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::WasiHttpCtx;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
@@ -1705,8 +1705,8 @@ impl WebhookEndpointCtx {
                 .expect("engine must have `consume_fuel` enabled");
         }
 
-        // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
+        // Yield to tokio periodically
+        store.epoch_deadline_async_yield_and_update(1);
         store
     }
 
@@ -2121,7 +2121,11 @@ pub(crate) mod tests {
             db_pool: Arc<dyn DbPool>,
             server_addr: SocketAddr,
             activity_exec: ExecTask,
+            #[expect(dead_code)]
+            activity_close_tx: tokio::sync::watch::Sender<bool>,
             workflow_exec: ExecTask,
+            #[expect(dead_code)]
+            workflow_close_tx: tokio::sync::watch::Sender<bool>,
             sim_clock: SimClock,
             db_close: DbPoolCloseableWrapper,
             #[expect(dead_code)]
@@ -2138,7 +2142,7 @@ pub(crate) mod tests {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
                 let (guard, db_pool, db_close) = db.set_up().await;
-                let activity_exec = new_activity_fibo(
+                let (activity_exec, activity_close_tx) = new_activity_fibo(
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     TokioSleep,
@@ -2161,7 +2165,7 @@ pub(crate) mod tests {
                 let cancel_registry = CancelRegistry::new();
                 let engine =
                     Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
-                let workflow_exec = new_workflow_fibo(
+                let (workflow_exec, workflow_close_tx) = new_workflow_fibo(
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     JoinNextBlockingStrategy::Interrupt,
@@ -2234,7 +2238,9 @@ pub(crate) mod tests {
                     db_pool,
                     server_addr,
                     activity_exec,
+                    activity_close_tx,
                     workflow_exec,
+                    workflow_close_tx,
                     sim_clock,
                     db_close,
                     server_termination_sender,
@@ -2417,13 +2423,14 @@ pub(crate) mod tests {
                 .await;
 
             // Set up fibo workflow/activity workers (needed for schedule call)
-            let activity_exec = crate::activity::activity_worker::tests::new_activity_fibo(
-                db_pool.clone(),
-                sim_clock.clone_box(),
-                TokioSleep,
-                locking_strategy,
-            )
-            .await;
+            let (activity_exec, _activity_close_tx) =
+                crate::activity::activity_worker::tests::new_activity_fibo(
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    locking_strategy,
+                )
+                .await;
 
             let (workflow_runnable, workflow_component_id) =
                 compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
@@ -2600,13 +2607,14 @@ pub(crate) mod tests {
                 .await;
 
             // Set up activity/workflow workers
-            let activity_exec = crate::activity::activity_worker::tests::new_activity_fibo(
-                db_pool.clone(),
-                sim_clock.clone_box(),
-                TokioSleep,
-                LockingStrategy::ByComponentDigest,
-            )
-            .await;
+            let (activity_exec, _activity_close_tx) =
+                crate::activity::activity_worker::tests::new_activity_fibo(
+                    db_pool.clone(),
+                    sim_clock.clone_box(),
+                    TokioSleep,
+                    LockingStrategy::ByComponentDigest,
+                )
+                .await;
 
             let (workflow_runnable, workflow_component_id) =
                 compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
@@ -3238,6 +3246,8 @@ pub(crate) mod tests {
             server_set: tokio::task::JoinSet<Result<(), WebhookServerError>>,
             server_addr: SocketAddr,
             activity_exec: executor::executor::ExecTask,
+            #[expect(dead_code)]
+            activity_close_tx: tokio::sync::watch::Sender<bool>,
             sim_clock: SimClock,
             db_pool: Arc<dyn concepts::storage::DbPool>,
             #[expect(dead_code)]
@@ -3257,7 +3267,7 @@ pub(crate) mod tests {
                 let (_guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
 
                 // Set up fibo activity worker
-                let activity_exec = new_activity_fibo(
+                let (activity_exec, activity_close_tx) = new_activity_fibo(
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     TokioSleep,
@@ -3348,6 +3358,7 @@ pub(crate) mod tests {
                     server_set,
                     server_addr,
                     activity_exec,
+                    activity_close_tx,
                     sim_clock,
                     db_pool,
                     db_close,

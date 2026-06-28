@@ -1630,6 +1630,8 @@ pub(crate) mod tests {
         matchers::{method, path},
     };
 
+    type ExecTaskAndClose = (ExecTask, tokio::sync::watch::Sender<bool>);
+
     pub const FIBOA_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
     ); // fiboa: func(n: u8, iterations: u32) -> u64;
@@ -1782,7 +1784,7 @@ pub(crate) mod tests {
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         let worker = compile_workflow_worker(
             wasm_path,
             db_pool.clone(),
@@ -1814,7 +1816,7 @@ pub(crate) mod tests {
         fn_registry: &Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         new_workflow_exec_task(
             db_pool,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
@@ -1860,7 +1862,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             join_next_blocking_strategy,
@@ -1925,7 +1927,7 @@ pub(crate) mod tests {
 
         info!("Execution should call the activity and finish");
 
-        let activity_exec = new_activity_fibo(
+        let (activity_exec, _activity_close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,
@@ -1989,7 +1991,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             join_next_blocking_strategy,
@@ -2053,7 +2055,7 @@ pub(crate) mod tests {
 
         info!("Running activity to complete the child execution");
 
-        let activity_exec = new_activity_fibo(
+        let (activity_exec, _activity_close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,
@@ -2105,7 +2107,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
@@ -2173,7 +2175,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
@@ -2239,7 +2241,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
@@ -2283,7 +2285,7 @@ pub(crate) mod tests {
         // We need to run the activity executor to cancel/complete the activity.
 
         info!("Running activity executor to process the child activity");
-        let activity_exec = new_activity_fibo(
+        let (activity_exec, _activity_close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,
@@ -2327,7 +2329,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
@@ -2381,7 +2383,7 @@ pub(crate) mod tests {
         .unwrap();
 
         info!("Running activity that returns error (n > 40)");
-        let activity_exec = new_activity_fibo(
+        let (activity_exec, _activity_close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,
@@ -2425,7 +2427,7 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
@@ -2590,7 +2592,7 @@ pub(crate) mod tests {
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection().await.unwrap();
         let sim_clock = SimClock::epoch();
-        let sleep_exec = {
+        let (sleep_exec, _sleep_close_tx) = {
             let fn_registry = TestingFnRegistry::new_from_components(vec![
                 compile_activity(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
@@ -2723,7 +2725,7 @@ pub(crate) mod tests {
         let db_connection = db_pool.connection().await.unwrap();
 
         let executor_id = ExecutorId::generate();
-        let sleep_exec = {
+        let (sleep_exec, _sleep_close_tx) = {
             let cancel_registry = CancelRegistry::new();
             let worker = compile_workflow_worker(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
@@ -2887,7 +2889,7 @@ pub(crate) mod tests {
             compile_workflow(test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW)
                 .await,
         ]);
-        let activity_exec = new_activity(
+        let (activity_exec, _activity_close_tx) = new_activity(
             db_pool.clone(),
             test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),
@@ -2897,7 +2899,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        let workflow_exec = new_workflow_exec_task(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_serde_workflow_builder::TEST_PROGRAMS_SERDE_WORKFLOW,
             sim_clock.clone_box(),
@@ -2993,7 +2995,7 @@ pub(crate) mod tests {
             )
             .await,
         ]);
-        let activity_exec = new_activity_with_config(
+        let (activity_exec, _activity_close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone_box(),
@@ -3004,7 +3006,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        let workflow_exec = new_workflow_exec_task(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone_box(),
@@ -3097,7 +3099,7 @@ pub(crate) mod tests {
             .await,
         ]);
 
-        let activity_exec = new_activity_with_config(
+        let (activity_exec, _activity_close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone_box(),
@@ -3107,7 +3109,7 @@ pub(crate) mod tests {
             LockingStrategy::ByComponentDigest,
         )
         .await;
-        let workflow_exec = new_workflow_exec_task(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone_box(),
@@ -3236,7 +3238,7 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
@@ -3321,7 +3323,7 @@ pub(crate) mod tests {
             )
             .await,
         ]);
-        let activity_exec = new_activity(
+        let (activity_exec, _activity_close_tx) = new_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.clone_box(),
@@ -3331,7 +3333,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        let workflow_exec = new_workflow_exec_task(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_exec_task(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             sim_clock.clone_box(),
@@ -3451,7 +3453,7 @@ pub(crate) mod tests {
             .unwrap();
         let executor_id = ExecutorId::generate();
 
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
@@ -3666,7 +3668,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
@@ -3961,7 +3963,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
 
-            let direct_exec_task = ExecTask::new_test(
+            let (direct_exec_task, _direct_close_tx) = ExecTask::new_test(
                 ExecConfig {
                     batch_size: 1,
                     lock_expiry: Duration::from_secs(1),
@@ -4124,7 +4126,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
@@ -4290,7 +4292,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let exec_workflow = ExecTask::new_test(
+        let (exec_workflow, _workflow_close_tx) = ExecTask::new_test(
             ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
@@ -4346,7 +4348,7 @@ pub(crate) mod tests {
                 activity_component_id_first.component_digest,
                 activity_component_id.component_digest
             );
-            let exec_activity = ExecTask::new_all_ffqns_test(
+            let (exec_activity, _activity_close_tx) = ExecTask::new_all_ffqns_test(
                 activity_worker,
                 ExecConfig {
                     batch_size: 1,
@@ -4491,7 +4493,7 @@ pub(crate) mod tests {
             (workflow_runnable.clone(), workflow_component_id),
         ]);
         let cancel_registry = CancelRegistry::new();
-        let workflow_exec = new_workflow_fibo(
+        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
@@ -4567,7 +4569,7 @@ pub(crate) mod tests {
         }
         assert_matches!(next_events.last().unwrap(), HistoryEvent::JoinNext { .. });
 
-        let activity_exec = new_activity_fibo(
+        let (activity_exec, _activity_close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,
@@ -5057,7 +5059,7 @@ pub(crate) mod tests {
             min_level: concepts::storage::LogLevel::Debug,
             log_sender: log_sender.clone(),
         });
-        let activity_exec = new_activity_fibo(
+        let (activity_exec, _activity_close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,

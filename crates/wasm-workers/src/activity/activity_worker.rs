@@ -22,9 +22,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
 use utils::wasm_tools::ExIm;
+use wasmtime::Store;
 use wasmtime::component::{ComponentExportIndex, InstancePre, Type};
 use wasmtime::{Engine, component::Val};
-use wasmtime::{Store, UpdateDeadline};
 
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
@@ -179,10 +179,6 @@ impl Worker for ActivityWorker {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Context: {ctx:?}");
         assert!(ctx.event_history.is_empty());
-        let cancelation_token = self
-            .cancel_registry
-            .obtain_cancellation_token(ctx.execution_id.clone());
-
         let started_at = self.clock_fn.now();
         ctx.worker_span.record(
             "execution_deadline",
@@ -193,6 +189,11 @@ impl Worker for ActivityWorker {
         let params = ctx.params.clone();
         let version = ctx.version.clone();
         let worker_span = ctx.worker_span.clone();
+
+        let interrupt_token = self
+            .cancel_registry
+            .obtain_interrupt_token(ctx.execution_id.clone());
+        let mut executor_close_watcher = ctx.executor_close_watcher.clone();
 
         let (mut store, deadline_duration) = match self.create_store(ctx, started_at) {
             Ok(store) => store,
@@ -250,12 +251,17 @@ impl Worker for ActivityWorker {
                     version,
                 });
             }
-            _signal = cancelation_token => {
+            _ = interrupt_token => {
                 // Either paused or cancelled by CancelRegistry, or timed out by `expired_timers_watcher`
                 // and Sender removed from CancelRegistry using its watcher.
                 // TODO: Add http traces
                 debug!("Activity run interrupted, DB must have been updated");
                 return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+            }
+            _ = executor_close_watcher.changed() => {
+                debug!("Executor is closing");
+                // Executor will append the Unlocked event.
+                return WorkerResult::Err(WorkerError::ExecutorClosing(version.clone()))
             }
         }
     }
@@ -303,19 +309,8 @@ impl ActivityWorker {
                 .expect("engine must have `consume_fuel` enabled");
         }
 
-        // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|store_ctx| {
-            let executor_closing = *store_ctx.data().executor_close_watcher.borrow();
-            if executor_closing {
-                info!("Executor closing");
-                Ok(UpdateDeadline::Interrupt) // Interpreted as executor closing in `process_res`
-            } else {
-                Ok(UpdateDeadline::YieldCustom(
-                    1,
-                    Box::pin(tokio::task::yield_now()),
-                ))
-            }
-        });
+        // Configure epoch callback to yield to tokio periodically.
+        store.epoch_deadline_async_yield_and_update(1);
 
         let deadline_delta = lock_expires_at - started_at;
         let Ok(deadline_duration) = deadline_delta.to_std() else {
@@ -465,8 +460,6 @@ impl ActivityWorker {
                             version: version.clone(),
                             http_client_traces,
                         }
-                    } else if *trap == wasmtime::Trap::Interrupt {
-                        WorkerError::ExecutorClosing(version.clone())
                     } else {
                         WorkerError::ActivityTrap {
                             reason: trap.to_string(),
@@ -572,6 +565,8 @@ pub(crate) mod tests {
         wast_val::{WastVal, WastValWithType},
     };
 
+    pub(crate) type ExecTaskAndClose = (ExecTask, tokio::sync::watch::Sender<bool>);
+
     pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
     ); // sleep-loop: func(millis: u64, iterations: u32);
@@ -663,7 +658,7 @@ pub(crate) mod tests {
         sleep: impl Sleep + 'static,
         retry_config: ComponentRetryConfig,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         new_activity_with_config(
             db_pool,
             wasm_path,
@@ -684,7 +679,7 @@ pub(crate) mod tests {
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         retry_config: ComponentRetryConfig,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (worker, component_id) = new_activity_worker_with_config(
             wasm_path,
@@ -713,7 +708,7 @@ pub(crate) mod tests {
         clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         new_activity(
             db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -779,7 +774,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([ffqn.clone()]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -963,7 +958,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let exec = new_activity_fibo(
+        let (exec, _close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,
@@ -1051,6 +1046,8 @@ pub(crate) mod tests {
             .map(|_| {
                 let fibo_worker = fibo_worker.clone();
                 let execution_id = ExecutionId::generate();
+                let (executor_close_tx, executor_close_watcher) =
+                    tokio::sync::watch::channel(false);
                 let ctx = WorkerContext {
                     execution_id: execution_id.clone(),
                     metadata: concepts::ExecutionMetadata::empty(),
@@ -1071,9 +1068,13 @@ pub(crate) mod tests {
                         lock_expires_at: Now.now() + lock_expiry,
                         retry_config: ComponentRetryConfig::ZERO,
                     },
-                    executor_close_watcher: tokio::sync::watch::channel(false).1,
+                    executor_close_watcher,
                 };
-                tokio::spawn(async move { fibo_worker.run(ctx).await })
+                tokio::spawn(async move {
+                    let res = fibo_worker.run(ctx).await;
+                    drop(executor_close_tx);
+                    res
+                })
             })
             .collect::<Vec<_>>();
         let mut limit_reached = 0;
@@ -1139,7 +1140,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([SLEEP_LOOP_ACTIVITY_FFQN]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1220,6 +1221,7 @@ pub(crate) mod tests {
 
         let executed_at = sim_clock.now();
         let version = Version::new(10);
+        let (_executor_close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
@@ -1244,7 +1246,7 @@ pub(crate) mod tests {
                 lock_expires_at: executed_at + TIMEOUT,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            executor_close_watcher,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
@@ -1277,6 +1279,7 @@ pub(crate) mod tests {
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
         let version = Version::new(10);
+        let (_executor_close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
@@ -1301,7 +1304,7 @@ pub(crate) mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            executor_close_watcher,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
@@ -1365,7 +1368,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1497,7 +1500,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1654,7 +1657,7 @@ pub(crate) mod tests {
             locking_strategy: LockingStrategy::ByComponentDigest,
         };
         let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1791,7 +1794,7 @@ pub(crate) mod tests {
         let secret_get_ffqn: FunctionFqn =
             FunctionFqn::new_static("testing:http/http-get", "secret-get");
         let ffqns = Arc::from([secret_get_ffqn.clone()]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1877,7 +1880,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let exec = new_activity_with_config(
+        let (exec, _close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),
@@ -1951,7 +1954,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let exec = new_activity_with_config(
+        let (exec, _close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),
@@ -2031,7 +2034,7 @@ pub(crate) mod tests {
             max_retries: Some(1),
             retry_exp_backoff: Duration::from_millis(10),
         };
-        let exec = new_activity_with_config(
+        let (exec, _close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),

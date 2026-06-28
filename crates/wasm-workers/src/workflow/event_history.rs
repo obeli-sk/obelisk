@@ -430,6 +430,7 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
+            // Break on `executor_close_watcher` or when timeout is reached.
             while let Some(timeout_fut) =
                 self.deadline_tracker.track(self.subscription_interruption)
             {

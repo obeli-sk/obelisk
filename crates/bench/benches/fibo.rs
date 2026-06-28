@@ -321,10 +321,10 @@ mod bench {
         });
 
         tokio.block_on(async move {
-            workflow_exec_task.close().await;
+            workflow_exec_task.close_outer_task().await;
         });
         tokio.block_on(async move {
-            activity_exec_task.close().await;
+            activity_exec_task.close_outer_task().await;
         });
 
         tokio.block_on(async move { db_close.close().await });

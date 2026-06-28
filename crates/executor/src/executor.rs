@@ -27,7 +27,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::task::{AbortHandle, JoinHandle};
+use tokio::task::JoinHandle;
 use tracing::{Instrument, Level, Span, debug, error, info, info_span, instrument, trace, warn};
 
 #[derive(Debug, Clone)]
@@ -80,41 +80,57 @@ pub enum WorkerType {
 
 #[derive(derive_more::Debug)]
 pub struct ExecutorTaskHandle {
+    // Signals close() -> event loop to shut down
     #[debug(skip)]
     is_closing: Arc<AtomicBool>,
     #[debug(skip)]
-    abort_handle: AbortHandle,
+    join_handle: JoinHandle<()>,
     component_id: ComponentId,
     executor_id: ExecutorId,
     deployment_id: DeploymentId,
+    // Signals close() -> workers to shut down
+    executor_closing_signal_sender: tokio::sync::watch::Sender<bool>,
+    /// Tracks the number of worker tasks currently in-flight.
+    worker_count_rx: tokio::sync::watch::Receiver<usize>,
+}
+
+pub struct WorkerTasksHandle {
+    component_id: ComponentId,
+    executor_id: ExecutorId,
+    deployment_id: DeploymentId,
+    // Signals close() -> workers to shut down
     executor_closing_signal_sender: tokio::sync::watch::Sender<bool>,
     /// Tracks the number of worker tasks currently in-flight.
     worker_count_rx: tokio::sync::watch::Receiver<usize>,
 }
 
 impl ExecutorTaskHandle {
+    /// Shut down the executor task, return worker tasks handle untouched.
     #[instrument(name = "executor.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id,
         deployment_id = %self.deployment_id))]
-    pub async fn close(&self) {
-        trace!("Gracefully closing");
+    pub async fn close_outer_task(mut self) -> WorkerTasksHandle {
+        debug!("Gracefully closing executor task");
         self.is_closing.store(true, Ordering::Relaxed);
-        while !self.abort_handle.is_finished() {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-        trace!("Signaling workflow tasks to unlock");
-        let _ = self.executor_closing_signal_sender.send(true);
-        let mut worker_count_rx = self.worker_count_rx.clone();
+
         loop {
             tokio::select! {
                 () = tokio::time::sleep(Duration::from_secs(5)) => {
-                    info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
+                    info!("Waiting for executor to shut down");
                 }
-                _ = worker_count_rx.wait_for(|&count| count == 0) => {
+                _ = &mut self.join_handle => {
                     break;
                 }
             }
         }
-        debug!("Gracefully closed");
+        let worker_tasks = *self.worker_count_rx.borrow();
+        debug!("Gracefully closed executor task, {worker_tasks} workers are in progress");
+        WorkerTasksHandle {
+            component_id: self.component_id,
+            executor_id: self.executor_id,
+            deployment_id: self.deployment_id,
+            executor_closing_signal_sender: self.executor_closing_signal_sender,
+            worker_count_rx: self.worker_count_rx,
+        }
     }
 
     #[must_use]
@@ -123,14 +139,25 @@ impl ExecutorTaskHandle {
     }
 }
 
-impl Drop for ExecutorTaskHandle {
-    #[instrument(level = Level::DEBUG, name = "executor.drop", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id))]
-    fn drop(&mut self) {
-        if self.abort_handle.is_finished() {
-            return;
+impl WorkerTasksHandle {
+    /// Signal to worker tasks, then wait for all tasks to finish.
+    #[instrument(name = "WorkerTasksHandle.close", skip_all, fields(executor_id = %self.executor_id, component_id = %self.component_id,
+        deployment_id = %self.deployment_id))]
+    pub async fn close(self) {
+        debug!("Signaling worker tasks to unlock");
+        let _ = self.executor_closing_signal_sender.send(true);
+        let mut worker_count_rx = self.worker_count_rx.clone();
+        loop {
+            tokio::select! {
+                () = tokio::time::sleep(Duration::from_secs(1)) => {
+                    info!("Waiting for {} workers to shut down", *self.worker_count_rx.borrow());
+                }
+                _ = worker_count_rx.wait_for(|&count| count == 0) => {
+                    break;
+                }
+            }
         }
-        warn!("Aborting the executor task");
-        self.abort_handle.abort();
+        debug!("All worker tasks are finished");
     }
 }
 
@@ -184,17 +211,21 @@ impl ExecTask {
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         ffqns: Arc<[FunctionFqn]>,
-    ) -> Self {
+    ) -> (Self, tokio::sync::watch::Sender<bool>) {
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
-        ExecTask {
-            worker,
-            locking_strategy_holder: config.locking_strategy.holder(ffqns),
-            config,
-            clock_fn,
-            db_pool,
-            worker_count_tx,
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
-        }
+        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        (
+            ExecTask {
+                worker,
+                locking_strategy_holder: config.locking_strategy.holder(ffqns),
+                config,
+                clock_fn,
+                db_pool,
+                worker_count_tx,
+                executor_close_watcher,
+            },
+            close_tx,
+        )
     }
 
     #[cfg(feature = "test")]
@@ -203,18 +234,22 @@ impl ExecTask {
         config: ExecConfig,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
-    ) -> Self {
+    ) -> (Self, tokio::sync::watch::Sender<bool>) {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
-        Self {
-            worker,
-            locking_strategy_holder: config.locking_strategy.holder(ffqns),
-            config,
-            clock_fn,
-            db_pool,
-            worker_count_tx,
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
-        }
+        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        (
+            Self {
+                worker,
+                locking_strategy_holder: config.locking_strategy.holder(ffqns),
+                config,
+                clock_fn,
+                db_pool,
+                worker_count_tx,
+                executor_close_watcher,
+            },
+            close_tx,
+        )
     }
 
     #[cfg(feature = "test")]
@@ -255,7 +290,7 @@ impl ExecTask {
         let (worker_count_tx, worker_count_rx) = tokio::sync::watch::channel(0);
         let (executor_closing_signal_sender, executor_close_watcher) =
             tokio::sync::watch::channel(false);
-        let abort_handle = tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
             let lock_strategy_holder = config.locking_strategy.holder(ffqns);
             let task = ExecTask {
@@ -272,7 +307,14 @@ impl ExecTask {
                 let res = task.db_pool.db_exec_conn().await;
                 let res = log_err_if_new(res, &mut old_err);
                 if let Ok(db_exec) = res {
-                    let _ = task.tick(db_exec.as_ref(), clock_fn.now(), RunId::generate(), deployment_id).await;
+                    let _ = task
+                        .tick(
+                            db_exec.as_ref(),
+                            clock_fn.now(),
+                            RunId::generate(),
+                            deployment_id,
+                        )
+                        .await;
                     let timeout_fut = {
                         let sleep = sleep.clone();
                         Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })
@@ -308,15 +350,14 @@ impl ExecTask {
                                 .await;
                         }
                     }
-                } else  {
+                } else {
                     sleep.sleep(task.config.tick_sleep).await;
                 }
             }
-        })
-        .abort_handle();
+        });
         ExecutorTaskHandle {
             is_closing,
-            abort_handle,
+            join_handle,
             component_id,
             executor_id,
             deployment_id,
@@ -1040,7 +1081,7 @@ mod tests {
     ) -> Vec<ExecutionId> {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new_test(config, worker, clock_fn, db_pool, ffqns);
+        let (executor, _close_tx) = ExecTask::new_test(config, worker, clock_fn, db_pool, ffqns);
         executor
             .tick_test_await(executed_at, RunId::generate())
             .await
@@ -1808,7 +1849,7 @@ mod tests {
             .unwrap();
 
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new_test(
+        let (executor, _close_tx) = ExecTask::new_test(
             exec_config.clone(),
             worker,
             sim_clock.clone_box(),
