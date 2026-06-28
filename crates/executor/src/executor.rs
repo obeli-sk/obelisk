@@ -213,6 +213,8 @@ impl ExecTask {
         ffqns: Arc<[FunctionFqn]>,
     ) -> Self {
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
+        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        std::mem::forget(close_tx); // FIXME: leak
         ExecTask {
             worker,
             locking_strategy_holder: config.locking_strategy.holder(ffqns),
@@ -220,7 +222,7 @@ impl ExecTask {
             clock_fn,
             db_pool,
             worker_count_tx,
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            executor_close_watcher,
         }
     }
 
@@ -233,6 +235,8 @@ impl ExecTask {
     ) -> Self {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
+        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        std::mem::forget(close_tx); // FIXME: leak
         Self {
             worker,
             locking_strategy_holder: config.locking_strategy.holder(ffqns),
@@ -240,7 +244,7 @@ impl ExecTask {
             clock_fn,
             db_pool,
             worker_count_tx,
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            executor_close_watcher,
         }
     }
 

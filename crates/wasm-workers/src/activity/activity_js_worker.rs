@@ -453,6 +453,8 @@ mod tests {
             COMPONENT_DIGEST_DUMMY,
         )
         .unwrap();
+        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        std::mem::forget(close_tx); // FIXME: leak
         WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
@@ -473,7 +475,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            executor_close_watcher,
         }
     }
 
@@ -487,6 +489,8 @@ mod tests {
             COMPONENT_DIGEST_DUMMY,
         )
         .unwrap();
+        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        std::mem::forget(close_tx); // FIXME: leak
         WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
@@ -507,7 +511,7 @@ mod tests {
                 lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            executor_close_watcher,
         }
     }
 
