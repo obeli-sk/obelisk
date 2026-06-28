@@ -94,6 +94,7 @@ use directories::BaseDirs;
 use directories::ProjectDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
+use executor::executor::WorkerTasksHandle;
 use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
@@ -2306,13 +2307,14 @@ async fn switch_hot_redeploy(
     debug!("Closing old executors");
     let old = std::mem::take(&mut write_guard_ctx.exec_task_handles);
     let worker_tasks_handles =
-        futures_util::future::join_all(old.into_iter().map(|exec| exec.close_outer_task())).await;
+        futures_util::future::join_all(old.into_iter().map(ExecutorTaskHandle::close_outer_task))
+            .await;
 
     debug!("Waiting for workers");
     futures_util::future::join_all(
         worker_tasks_handles
             .into_iter()
-            .map(|handle| handle.close()),
+            .map(WorkerTasksHandle::close),
     )
     .await;
 
@@ -2574,14 +2576,16 @@ impl ServerInit {
             std::mem::take(&mut deployment_lock.exec_task_handles)
         };
         let worker_tasks_handles = futures_util::future::join_all(
-            executors.into_iter().map(|exec| exec.close_outer_task()),
+            executors
+                .into_iter()
+                .map(ExecutorTaskHandle::close_outer_task),
         )
         .await;
         debug!("Waiting for workers");
         futures_util::future::join_all(
             worker_tasks_handles
                 .into_iter()
-                .map(|handle| handle.close()),
+                .map(WorkerTasksHandle::close),
         )
         .await;
         // Explicit drop to avoid the pattern match footgun.

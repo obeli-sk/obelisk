@@ -52,7 +52,7 @@ use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{Linker, Val};
-use wasmtime::{Engine, Store, UpdateDeadline};
+use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::WasiHttpCtx;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
@@ -1705,8 +1705,8 @@ impl WebhookEndpointCtx {
                 .expect("engine must have `consume_fuel` enabled");
         }
 
-        // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
+        // Yield to tokio periodically
+        store.epoch_deadline_async_yield_and_update(1);
         store
     }
 
