@@ -565,6 +565,8 @@ pub(crate) mod tests {
         wast_val::{WastVal, WastValWithType},
     };
 
+    pub(crate) type ExecTaskAndClose = (ExecTask, tokio::sync::watch::Sender<bool>);
+
     pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
     ); // sleep-loop: func(millis: u64, iterations: u32);
@@ -656,7 +658,7 @@ pub(crate) mod tests {
         sleep: impl Sleep + 'static,
         retry_config: ComponentRetryConfig,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         new_activity_with_config(
             db_pool,
             wasm_path,
@@ -677,7 +679,7 @@ pub(crate) mod tests {
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
         retry_config: ComponentRetryConfig,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (worker, component_id) = new_activity_worker_with_config(
             wasm_path,
@@ -706,7 +708,7 @@ pub(crate) mod tests {
         clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         locking_strategy: LockingStrategy,
-    ) -> ExecTask {
+    ) -> ExecTaskAndClose {
         new_activity(
             db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -772,7 +774,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([ffqn.clone()]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -956,7 +958,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let exec = new_activity_fibo(
+        let (exec, _close_tx) = new_activity_fibo(
             db_pool.clone(),
             sim_clock.clone_box(),
             TokioSleep,
@@ -1138,7 +1140,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([SLEEP_LOOP_ACTIVITY_FFQN]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1366,7 +1368,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1498,7 +1500,7 @@ pub(crate) mod tests {
             locking_strategy,
         };
         let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1655,7 +1657,7 @@ pub(crate) mod tests {
             locking_strategy: LockingStrategy::ByComponentDigest,
         };
         let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1792,7 +1794,7 @@ pub(crate) mod tests {
         let secret_get_ffqn: FunctionFqn =
             FunctionFqn::new_static("testing:http/http-get", "secret-get");
         let ffqns = Arc::from([secret_get_ffqn.clone()]);
-        let exec_task = ExecTask::new_test(
+        let (exec_task, _close_tx) = ExecTask::new_test(
             exec_config,
             worker,
             sim_clock.clone_box(),
@@ -1878,7 +1880,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let exec = new_activity_with_config(
+        let (exec, _close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),
@@ -1952,7 +1954,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let db_connection = db_pool.connection().await.unwrap();
-        let exec = new_activity_with_config(
+        let (exec, _close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),
@@ -2032,7 +2034,7 @@ pub(crate) mod tests {
             max_retries: Some(1),
             retry_exp_backoff: Duration::from_millis(10),
         };
-        let exec = new_activity_with_config(
+        let (exec, _close_tx) = new_activity_with_config(
             db_pool.clone(),
             test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
             sim_clock.clone_box(),

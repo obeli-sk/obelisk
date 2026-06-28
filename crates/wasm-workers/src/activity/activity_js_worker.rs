@@ -443,7 +443,10 @@ mod tests {
             .await
     }
 
-    fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
+    fn make_worker_context(
+        ffqn: FunctionFqn,
+        params: &[String],
+    ) -> (WorkerContext, tokio::sync::watch::Sender<bool>) {
         // The user function signature is: func(params: list<string>) -> result<string, string>
         // So we wrap the params in a list
         let params_json: Vec<serde_json::Value> = vec![json!(params)];
@@ -454,8 +457,7 @@ mod tests {
         )
         .unwrap();
         let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
-        std::mem::forget(close_tx); // FIXME: leak
-        WorkerContext {
+        let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
             component_digest: component_id.component_digest.clone(),
@@ -476,13 +478,14 @@ mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
             },
             executor_close_watcher,
-        }
+        };
+        (ctx, close_tx)
     }
 
     fn make_worker_context_custom(
         ffqn: FunctionFqn,
         params_json: Vec<serde_json::Value>,
-    ) -> WorkerContext {
+    ) -> (WorkerContext, tokio::sync::watch::Sender<bool>) {
         let component_id = concepts::ComponentId::new(
             ComponentType::Activity,
             StrVariant::Static("test_js"),
@@ -490,8 +493,7 @@ mod tests {
         )
         .unwrap();
         let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
-        std::mem::forget(close_tx); // FIXME: leak
-        WorkerContext {
+        let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
             component_digest: component_id.component_digest.clone(),
@@ -512,7 +514,8 @@ mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
             },
             executor_close_watcher,
-        }
+        };
+        (ctx, close_tx)
     }
 
     fn extract_string(val: &WastVal) -> String {
@@ -533,7 +536,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -553,7 +556,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -573,7 +576,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -595,7 +598,8 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &["World".to_string(), "Hello".to_string()]);
+        let (ctx, _close_tx) =
+            make_worker_context(ffqn, &["World".to_string(), "Hello".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -615,7 +619,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -636,7 +640,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -661,7 +665,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &["test".to_string()]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &["test".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -681,7 +685,7 @@ mod tests {
         ";
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &["test".to_string()]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &["test".to_string()]);
 
         // The JS object is JSON-serialized successfully, but fails to deserialize as result<string, string>
         // because the JSON object `{"name":"test","count":42}` is not a string.
@@ -713,7 +717,7 @@ mod tests {
         ";
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
         assert_matches!(
@@ -743,7 +747,7 @@ mod tests {
             }
         ";
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
         let err = worker.run(ctx).await.unwrap_err();
         assert_matches!(
             err,
@@ -767,7 +771,7 @@ mod tests {
         ";
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let err = worker.run(ctx).await.unwrap_err();
         assert_matches!(
@@ -821,7 +825,7 @@ mod tests {
 
         let allowed = format!("http://127.0.0.1:{}", server.address().port());
         let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -864,7 +868,7 @@ mod tests {
 
         let allowed = format!("http://127.0.0.1:{}", server.address().port());
         let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -901,7 +905,7 @@ mod tests {
 
         let allowed = format!("http://127.0.0.1:{}", server.address().port());
         let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -922,7 +926,7 @@ mod tests {
             }
         "#;
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -943,7 +947,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &["hello".to_string()]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &["hello".to_string()]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -981,7 +985,7 @@ mod tests {
 
         let worker =
             new_js_activity_worker_custom_params(js_source, ffqn.clone(), user_params).await;
-        let ctx = make_worker_context_custom(ffqn, vec![json!("World"), json!(3)]);
+        let (ctx, _close_tx) = make_worker_context_custom(ffqn, vec![json!("World"), json!(3)]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1004,7 +1008,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker_custom_params(js_source, ffqn.clone(), vec![]).await;
-        let ctx = make_worker_context_custom(ffqn, vec![]);
+        let (ctx, _close_tx) = make_worker_context_custom(ffqn, vec![]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1042,7 +1046,7 @@ mod tests {
 
         let worker =
             new_js_activity_worker_custom_params(js_source, ffqn.clone(), user_params).await;
-        let ctx = make_worker_context_custom(
+        let (ctx, _close_tx) = make_worker_context_custom(
             ffqn,
             vec![json!(["apple", "banana", "cherry"]), json!(true)],
         );
@@ -1069,7 +1073,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let start = std::time::Instant::now();
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -1114,7 +1118,7 @@ mod tests {
         "#;
 
         let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let start = std::time::Instant::now();
         let result = worker.run(ctx).await.expect("worker should succeed");
@@ -1166,7 +1170,7 @@ mod tests {
             .with_logs(logs_storage_config)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
 
@@ -1288,7 +1292,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1319,7 +1323,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1357,7 +1361,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1395,7 +1399,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1434,7 +1438,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1468,7 +1472,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let worker_ok = worker.run(ctx).await.unwrap();
         assert_matches!(
@@ -1503,7 +1507,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
@@ -1539,7 +1543,7 @@ mod tests {
             .with_return_type(return_type)
             .build()
             .await;
-        let ctx = make_worker_context(ffqn, &[]);
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
 
         let result = worker.run(ctx).await.expect("worker should succeed");
         let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);

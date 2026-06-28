@@ -211,19 +211,21 @@ impl ExecTask {
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
         ffqns: Arc<[FunctionFqn]>,
-    ) -> Self {
+    ) -> (Self, tokio::sync::watch::Sender<bool>) {
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
         let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
-        std::mem::forget(close_tx); // FIXME: leak
-        ExecTask {
-            worker,
-            locking_strategy_holder: config.locking_strategy.holder(ffqns),
-            config,
-            clock_fn,
-            db_pool,
-            worker_count_tx,
-            executor_close_watcher,
-        }
+        (
+            ExecTask {
+                worker,
+                locking_strategy_holder: config.locking_strategy.holder(ffqns),
+                config,
+                clock_fn,
+                db_pool,
+                worker_count_tx,
+                executor_close_watcher,
+            },
+            close_tx,
+        )
     }
 
     #[cfg(feature = "test")]
@@ -232,20 +234,22 @@ impl ExecTask {
         config: ExecConfig,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
-    ) -> Self {
+    ) -> (Self, tokio::sync::watch::Sender<bool>) {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
         let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
-        std::mem::forget(close_tx); // FIXME: leak
-        Self {
-            worker,
-            locking_strategy_holder: config.locking_strategy.holder(ffqns),
-            config,
-            clock_fn,
-            db_pool,
-            worker_count_tx,
-            executor_close_watcher,
-        }
+        (
+            Self {
+                worker,
+                locking_strategy_holder: config.locking_strategy.holder(ffqns),
+                config,
+                clock_fn,
+                db_pool,
+                worker_count_tx,
+                executor_close_watcher,
+            },
+            close_tx,
+        )
     }
 
     #[cfg(feature = "test")]
@@ -1077,7 +1081,7 @@ mod tests {
     ) -> Vec<ExecutionId> {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new_test(config, worker, clock_fn, db_pool, ffqns);
+        let (executor, _close_tx) = ExecTask::new_test(config, worker, clock_fn, db_pool, ffqns);
         executor
             .tick_test_await(executed_at, RunId::generate())
             .await
@@ -1845,7 +1849,7 @@ mod tests {
             .unwrap();
 
         let ffqns = super::extract_exported_ffqns_noext(worker.as_ref());
-        let executor = ExecTask::new_test(
+        let (executor, _close_tx) = ExecTask::new_test(
             exec_config.clone(),
             worker,
             sim_clock.clone_box(),

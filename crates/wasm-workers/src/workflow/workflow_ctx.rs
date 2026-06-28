@@ -3778,7 +3778,7 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
         let fn_registry = steps_to_registry(&steps);
-        let workflow_exec = {
+        let (workflow_exec, _close_tx) = {
             let worker = Arc::new(WorkflowWorkerMock::new(
                 FFQN_MOCK,
                 fn_registry.clone(),
