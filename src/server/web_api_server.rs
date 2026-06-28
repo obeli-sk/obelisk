@@ -3055,7 +3055,7 @@ mod deployment {
     use serde::{Deserialize, Serialize};
     use std::fmt::Write as _;
     use std::sync::Arc;
-    use tracing::{info, instrument};
+    use tracing::{error, info, instrument};
     use utoipa::{IntoParams, ToSchema};
 
     #[derive(Debug, Serialize, ToSchema)]
@@ -3714,20 +3714,37 @@ mod deployment {
     ) -> Result<Response, HttpResponse> {
         let mut termination_watcher = state.termination_watcher.clone();
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-        let outcome = Box::pin(crate::command::server::switch_deployment(
-            state.server_verified.clone(),
-            deployment_id,
-            SwitchDeploymentAction::new(payload.hot_redeploy),
-            runtime_config_check_from_bool(payload.allow_missing_runtime_config),
-            &state.prepared_dirs,
-            state.db_pool.clone(),
-            &mut termination_watcher,
-            &state.deployment_ctx,
-            &state.webhook_registry,
-            state.cancel_registry.clone(),
-            state.log_forwarder_sender.clone(),
-        ))
+        let action = if payload.hot_redeploy {
+            SwitchDeploymentAction::HotRedeploy
+        } else {
+            SwitchDeploymentAction::VerifyAndStore
+        };
+        let outcome = tokio::spawn(async move {
+            // Cancel safety
+            crate::command::server::switch_deployment(
+                state.server_verified.clone(),
+                deployment_id,
+                action,
+                runtime_config_check_from_bool(payload.allow_missing_runtime_config),
+                &state.prepared_dirs,
+                state.db_pool.clone(),
+                &mut termination_watcher,
+                &state.deployment_ctx,
+                &state.webhook_registry,
+                state.cancel_registry.clone(),
+                state.log_forwarder_sender.clone(),
+            )
+            .await
+        })
         .await
+        .map_err(|join_err| {
+            error!("Panic in switch_deployment: {join_err:?}");
+            HttpResponse {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "internal error".to_string(),
+                accept,
+            }
+        })?
         .map_err(|err| match err {
             crate::command::server::SwitchError::NotFound => {
                 HttpResponse::not_found(accept, Some("deployment"))

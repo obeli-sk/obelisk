@@ -1674,20 +1674,42 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .try_into()?;
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let mut termination_watcher = self.termination_watcher.clone();
-        let outcome = Box::pin(server::switch_deployment(
-            self.server_verified.clone(),
-            deployment_id,
-            SwitchDeploymentAction::new(request.hot_redeploy),
-            runtime_config_check,
-            &self.prepared_dirs,
-            self.db_pool.clone(),
-            &mut termination_watcher,
-            &self.deployment_ctx,
-            &self.webhook_registry,
-            self.cancel_registry.clone(),
-            self.log_forwarder_sender.clone(),
-        ))
+        let action = if request.hot_redeploy {
+            SwitchDeploymentAction::HotRedeploy
+        } else {
+            SwitchDeploymentAction::VerifyAndStore
+        };
+        let outcome = tokio::spawn({
+            let server_verified = self.server_verified.clone();
+            let db_pool = self.db_pool.clone();
+            let prepared_dirs = self.prepared_dirs.clone();
+            let deployment_ctx = self.deployment_ctx.clone();
+            let webhook_registry = self.webhook_registry.clone();
+            let cancel_registry = self.cancel_registry.clone();
+            let log_forwarder_sender = self.log_forwarder_sender.clone();
+            async move {
+                // Cancel safety
+                server::switch_deployment(
+                    server_verified,
+                    deployment_id,
+                    action,
+                    runtime_config_check,
+                    &prepared_dirs,
+                    db_pool,
+                    &mut termination_watcher,
+                    &deployment_ctx,
+                    &webhook_registry,
+                    cancel_registry,
+                    log_forwarder_sender,
+                )
+                .await
+            }
+        })
         .await
+        .map_err(|join_err| {
+            error!("Panic in switch_deployment: {join_err:?}");
+            tonic::Status::internal("internal error")
+        })?
         .map_err(|err| match err {
             server::SwitchError::NotFound => tonic::Status::not_found("deployment not found"),
             server::SwitchError::Other(e) => tonic::Status::failed_precondition(format!("{e:#}")),
