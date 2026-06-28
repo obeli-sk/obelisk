@@ -4,7 +4,6 @@
 
 ## Activities
 * External activity executor gRPC API
-* Lock extension - define max duration, but lock is extended periodically every `lock_duration`, makes for a heartbeat.
 
 ## Security
 * Dynamic secrets loaded from Vault, missing dynamic secrets should be a warning
