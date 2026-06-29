@@ -200,13 +200,13 @@ pub(crate) struct DeploymentSwitchManagerHandle {
 }
 
 struct DeploymentSwitchManager {
+    /// Independent lane for submit, so a long hot switch does not block submissions.
+    /// Holds `submit_concurrency` permits; `close()` drains all of them.
+    submit_lane: Arc<Semaphore>,
     /// Serializes hot redeploys and cold switch/enqueue: at most one in flight,
     /// surplus requests get `Busy`. Must stay at exactly 1 permit: `close()` drains this
     /// lane with a single `acquire_owned()`, which only accounts for one permit.
     switch_gate: Arc<Semaphore>,
-    /// Independent lane for submit, so a long hot switch does not block submissions.
-    /// Holds `submit_concurrency` permits; `close()` drains all of them.
-    submit_gate: Arc<Semaphore>,
     /// Permit count of `submit_gate`, retained so `close()` can drain every permit.
     submit_concurrency: u32,
     latest_prepared: Mutex<Option<PreparedDeploymentSwitch>>,
@@ -235,9 +235,8 @@ impl DeploymentSwitchManagerHandle {
     ) -> Self {
         Self {
             inner: Arc::new(DeploymentSwitchManager {
-                // Pinned at 1: `close()` drains this lane with a single `acquire_owned()`.
-                switch_gate: Arc::new(Semaphore::new(1)),
-                submit_gate: Arc::new(Semaphore::new(submit_concurrency as usize)),
+                submit_lane: Arc::new(Semaphore::new(submit_concurrency as usize)),
+                switch_gate: Arc::new(Semaphore::new(1)), // at most 1
                 submit_concurrency,
                 latest_prepared: Mutex::new(None),
                 server_verified,
@@ -252,7 +251,7 @@ impl DeploymentSwitchManagerHandle {
         }
     }
 
-    fn try_acquire_switch_gate(&self) -> Result<OwnedSemaphorePermit, SwitchError> {
+    fn try_acquire_switch_permit(&self) -> Result<OwnedSemaphorePermit, SwitchError> {
         match self.inner.switch_gate.clone().try_acquire_owned() {
             Ok(permit) => Ok(permit),
             Err(TryAcquireError::NoPermits) => Err(SwitchError::Busy),
@@ -262,8 +261,8 @@ impl DeploymentSwitchManagerHandle {
         }
     }
 
-    fn try_acquire_submit_gate(&self) -> Result<OwnedSemaphorePermit, SubmitDeploymentError> {
-        match self.inner.submit_gate.clone().try_acquire_owned() {
+    fn try_acquire_submit_permit(&self) -> Result<OwnedSemaphorePermit, SubmitDeploymentError> {
+        match self.inner.submit_lane.clone().try_acquire_owned() {
             Ok(permit) => Ok(permit),
             Err(TryAcquireError::NoPermits) => Err(SubmitDeploymentError::Busy),
             Err(TryAcquireError::Closed) => Err(SubmitDeploymentError::Other(anyhow::anyhow!(
@@ -335,12 +334,12 @@ impl DeploymentSwitchManagerHandle {
         let _switch_permit = self.inner.switch_gate.clone().acquire_owned().await;
         let _submit_permits = self
             .inner
-            .submit_gate
+            .submit_lane
             .clone()
             .acquire_many_owned(self.inner.submit_concurrency)
             .await;
         self.inner.switch_gate.close();
-        self.inner.submit_gate.close();
+        self.inner.submit_lane.close();
     }
 }
 
@@ -2170,7 +2169,7 @@ pub(crate) async fn submit_deployment(
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
     let _submit_permit = if let Some(manager) = &deployment_switch_manager {
-        Some(manager.try_acquire_submit_gate()?)
+        Some(manager.try_acquire_submit_permit()?)
     } else {
         None
     };
@@ -2403,7 +2402,7 @@ pub(crate) async fn switch_deployment(
         return Ok(SwitchOutcome::Switched);
     }
 
-    let permit = deployment_switch_manager.try_acquire_switch_gate()?;
+    let permit = deployment_switch_manager.try_acquire_switch_permit()?;
     let mut termination_watcher = deployment_switch_manager.inner.termination_watcher.clone();
     let prepared = prepare_switch_deployment(
         &deployment_switch_manager,
