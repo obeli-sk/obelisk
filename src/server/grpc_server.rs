@@ -1,6 +1,7 @@
 use crate::command::server;
 use crate::command::server::DeploymentContextHandle;
 use crate::command::server::PreparedDirs;
+use crate::command::server::RuntimeConfigCheck;
 use crate::command::server::ServerVerified;
 use crate::command::server::SubmitError;
 use crate::command::server::SwitchDeploymentAction;
@@ -1667,7 +1668,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
         use grpc_gen::switch_deployment_response::Outcome;
         let request = request.into_inner();
-        let runtime_config_check = runtime_config_check_from_grpc(request.runtime_config_check());
+        let check = runtime_config_check_from_grpc(request.runtime_config_check());
         let deployment_id: DeploymentId = request
             .deployment_id
             .argument_must_exist("deployment_id")?
@@ -1675,9 +1676,12 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let mut termination_watcher = self.termination_watcher.clone();
         let action = if request.hot_redeploy {
+            if check == RuntimeConfigCheck::AllowMissing {
+                return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_MISSING` cannot be used with `hot_redeploy = true`".to_string()));
+            }
             SwitchDeploymentAction::HotRedeploy
         } else {
-            SwitchDeploymentAction::VerifyAndStore
+            SwitchDeploymentAction::VerifyAndStore(check)
         };
         let outcome = tokio::spawn({
             let server_verified = self.server_verified.clone();
@@ -1693,7 +1697,6 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                     server_verified,
                     deployment_id,
                     action,
-                    runtime_config_check,
                     &prepared_dirs,
                     db_pool,
                     &mut termination_watcher,

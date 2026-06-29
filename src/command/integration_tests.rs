@@ -2142,9 +2142,8 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
         })
         .await
         .expect_err("hot redeploy must reject allow-missing-runtime-config");
-    assert!(
-        status.message().contains("allow-missing-runtime-config"),
-        "error must explain the rejection, got: {}",
+    assert_eq!(
+        "argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_MISSING` cannot be used with `hot_redeploy = true`",
         status.message()
     );
 

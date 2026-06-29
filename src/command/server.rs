@@ -6,6 +6,7 @@ use crate::config::config_holder::PathPrefixes;
 use crate::config::config_holder::load_deployment_canonical;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
+use crate::config::file_provider::CasFileProvider;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
 use crate::config::toml::ActivityExternalComponentConfigResolved;
@@ -827,7 +828,7 @@ async fn get_deployment_canonical_from_db(
         .as_ref()
         .map(|(pool, _)| pool.clone())
         .expect("db pool was set above");
-    let deployment = canonical_from_manifest(pool.as_ref(), &record.deployment_toml)
+    let deployment = deployment_resolved_from_manifest(pool.as_ref(), &record.deployment_toml)
         .await
         .with_context(|| {
             format!(
@@ -906,48 +907,50 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
     }
 }
 
-/// Canonicalize a stored verbatim manifest by reading its referenced blobs from the CAS,
+/// Resolve a stored verbatim TOML manifest by reading its referenced blobs from the CAS,
 /// returning the canonical form and the `(path, digest)` of every file it referenced.
 ///
 /// `${...}` env vars and secrets resolve here, in the server's environment.
-async fn canonical_and_files_from_manifest(
+async fn deployment_resolved_and_files_from_manifest(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_toml: &str,
 ) -> anyhow::Result<(
     DeploymentResolved,
     Vec<concepts::storage::DeploymentFileRecord>,
 )> {
-    let cas: std::sync::Arc<dyn concepts::cas::Cas> = db_pool
+    let cas: Arc<dyn concepts::cas::Cas> = db_pool
         .cas_conn()
         .await
         .context("cannot get CAS connection for deployment canonicalization")?
         .into();
     let provider = RecordingCasProvider {
-        inner: crate::config::file_provider::CasFileProvider { cas },
+        inner: CasFileProvider { cas },
         seen: std::sync::Mutex::new(Vec::new()),
     };
-    let canonical = crate::config::manifest::manifest_to_canonical(
+    let resolved = crate::config::manifest::manifest_to_resolved(
         deployment_toml,
         &cas_deployment_dir(),
         &provider,
     )
     .await
-    .context("cannot canonicalize deployment manifest from the content-addressed store")?;
+    .context("cannot resolve deployment manifest from the content-addressed store")?;
     let files = provider
         .seen
         .into_inner()
         .expect("RecordingCasProvider mutex poisoned");
-    Ok((canonical, files))
+    Ok((resolved, files))
 }
 
-/// Canonicalize a stored verbatim manifest by reading its referenced blobs from the CAS.
-async fn canonical_from_manifest(
+/// Resolve a stored verbatim manifest by reading its referenced blobs from the CAS.
+async fn deployment_resolved_from_manifest(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_toml: &str,
 ) -> anyhow::Result<DeploymentResolved> {
-    Ok(canonical_and_files_from_manifest(db_pool, deployment_toml)
-        .await?
-        .0)
+    Ok(
+        deployment_resolved_and_files_from_manifest(db_pool, deployment_toml)
+            .await?
+            .0,
+    )
 }
 
 /// A [`DeploymentResolved`] whose every WASM component location is a concrete, runnable
@@ -1251,7 +1254,8 @@ pub(crate) async fn run_internal(
                     .await
                     .context("cannot activate enqueued deployment")?;
             }
-            let canonical = canonical_from_manifest(&*db_pool, &record.deployment_toml).await?;
+            let canonical =
+                deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
             span.record(
                 "deployment_id",
                 tracing::field::display(&record.deployment_id),
@@ -2050,7 +2054,7 @@ pub(crate) async fn submit_deployment(
     // parse JS, validate WIT/WASM, and compile + link every component. Activation no
     // longer performs first-time package validation. Blobs already written to the CAS
     // when verification fails are acceptable GC input; no deployment row is inserted.
-    let canonical = canonical_from_manifest(&*db_pool, deployment_toml)
+    let deployment_resolved = deployment_resolved_from_manifest(&*db_pool, deployment_toml)
         .await
         .map_err(SubmitDeploymentError::Other)?;
     let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool
@@ -2062,7 +2066,7 @@ pub(crate) async fn submit_deployment(
     let compiled_linked = deployment_verify_config_compile_link(
         server_verified,
         prepared_dirs,
-        canonical,
+        deployment_resolved,
         Some(cas_arc),
         deployment_id,
         VerifyParams {
@@ -2142,7 +2146,6 @@ impl From<anyhow::Error> for SwitchError {
 
 /// Policy for runtime configuration (environment variables and secrets) that a
 /// deployment references but that may be absent from the server's environment.
-/// Structural, file, compile, and link validation always runs regardless.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum RuntimeConfigCheck {
     /// Missing environment variables or secrets fail the operation.
@@ -2153,16 +2156,23 @@ pub(crate) enum RuntimeConfigCheck {
 }
 
 impl RuntimeConfigCheck {
-    /// Whether verification should tolerate missing env vars / secrets.
-    pub(crate) fn ignore_missing_env_vars(self) -> bool {
-        matches!(self, RuntimeConfigCheck::AllowMissing)
+    fn ignore_missing_env_vars(self) -> bool {
+        self == RuntimeConfigCheck::AllowMissing
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SwitchDeploymentAction {
     HotRedeploy,
-    VerifyAndStore,
+    VerifyAndStore(RuntimeConfigCheck),
+}
+impl SwitchDeploymentAction {
+    fn ignore_missing_env_vars(self) -> bool {
+        match self {
+            SwitchDeploymentAction::VerifyAndStore(check) => check.ignore_missing_env_vars(),
+            SwitchDeploymentAction::HotRedeploy => false,
+        }
+    }
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -2171,7 +2181,6 @@ pub(crate) async fn switch_deployment(
     server_verified: ServerVerified,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
-    runtime_config_check: RuntimeConfigCheck,
     prepared_dirs: &PreparedDirs,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
@@ -2180,18 +2189,6 @@ pub(crate) async fn switch_deployment(
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<SwitchOutcome, SwitchError> {
-    // A hot redeploy makes the deployment immediately live, so its runtime config must be
-    // fully available; tolerating missing env vars / secrets here would yield broken
-    // running components.
-    if action == SwitchDeploymentAction::HotRedeploy
-        && runtime_config_check == RuntimeConfigCheck::AllowMissing
-    {
-        return Err(SwitchError::Other(anyhow::anyhow!(
-            "a hot redeploy requires all runtime configuration to be available; \
-             `allow-missing-runtime-config` is not permitted"
-        )));
-    }
-
     let db_conn = db_pool
         .external_api_conn()
         .await
@@ -2219,9 +2216,10 @@ pub(crate) async fn switch_deployment(
         )));
     }
 
-    let target_deployment = canonical_from_manifest(&*db_pool, &deployment_record.deployment_toml)
-        .await
-        .map_err(SwitchError::Other)?;
+    let target_deployment =
+        deployment_resolved_from_manifest(&*db_pool, &deployment_record.deployment_toml)
+            .await
+            .map_err(SwitchError::Other)?;
 
     let cas: Arc<dyn concepts::cas::Cas> = db_pool
         .cas_conn()
@@ -2234,7 +2232,7 @@ pub(crate) async fn switch_deployment(
             clean_cache: false,
             clean_codegen_cache: false,
         },
-        ignore_missing_env_vars: runtime_config_check.ignore_missing_env_vars(),
+        ignore_missing_env_vars: action.ignore_missing_env_vars(),
         suppress_type_checking_errors: false,
         suppress_linking_errors: false,
     };

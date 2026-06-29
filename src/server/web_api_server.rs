@@ -3715,9 +3715,18 @@ mod deployment {
         let mut termination_watcher = state.termination_watcher.clone();
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let action = if payload.hot_redeploy {
+            if payload.allow_missing_runtime_config {
+                return Err(HttpResponse::bad_request(
+                    accept,
+                    "`allow_missing_runtime_config = true` not allowed with `hot_redeploy = true`"
+                        .to_string(),
+                ));
+            }
             SwitchDeploymentAction::HotRedeploy
         } else {
-            SwitchDeploymentAction::VerifyAndStore
+            SwitchDeploymentAction::VerifyAndStore(runtime_config_check_from_bool(
+                payload.allow_missing_runtime_config,
+            ))
         };
         let outcome = tokio::spawn(async move {
             // Cancel safety
@@ -3725,7 +3734,6 @@ mod deployment {
                 state.server_verified.clone(),
                 deployment_id,
                 action,
-                runtime_config_check_from_bool(payload.allow_missing_runtime_config),
                 &state.prepared_dirs,
                 state.db_pool.clone(),
                 &mut termination_watcher,
