@@ -3523,6 +3523,61 @@ impl SqlitePool {
         Ok(())
     }
 
+    fn upsert_component_metadata_tx(
+        tx: &Transaction,
+        records: &[ComponentMetadataRecord],
+    ) -> Result<(), DbErrorWrite> {
+        let mut stmt = tx
+            .prepare(
+                "INSERT OR IGNORE INTO t_component_metadata \
+                 (component_digest, imports_json, exports_json, wit, wit_origin) \
+                 VALUES (:component_digest, :imports_json, :exports_json, :wit, :wit_origin)",
+            )
+            .map_err(RusqliteError::from)?;
+        for record in records {
+            let imports_json = serde_json::to_string(&record.imports).map_err(|err| {
+                RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
+            })?;
+            let exports_json = serde_json::to_string(&record.exports).map_err(|err| {
+                RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
+            })?;
+            stmt.execute(named_params! {
+                ":component_digest": record.component_digest.clone(),
+                ":imports_json": imports_json,
+                ":exports_json": exports_json,
+                ":wit": record.wit.clone(),
+                ":wit_origin": record.wit_origin.clone(),
+            })
+            .map_err(RusqliteError::from)?;
+        }
+        Ok(())
+    }
+
+    fn insert_deployment_components_tx(
+        tx: &Transaction,
+        deployment_id: DeploymentId,
+        records: &[DeploymentComponentRecord],
+    ) -> Result<(), DbErrorWrite> {
+        let mut stmt = tx
+            .prepare(
+                "INSERT OR IGNORE INTO t_deployment_component \
+                 (deployment_id, component_name, component_type, component_digest) \
+                 VALUES (:deployment_id, :component_name, :component_type, :component_digest)",
+            )
+            .map_err(RusqliteError::from)?;
+        for record in records {
+            debug_assert_eq!(record.deployment_id, deployment_id);
+            stmt.execute(named_params! {
+                ":deployment_id": deployment_id.to_string(),
+                ":component_name": record.component_name.to_string(),
+                ":component_type": record.component_type.to_string(),
+                ":component_digest": record.component_digest.clone(),
+            })
+            .map_err(RusqliteError::from)?;
+        }
+        Ok(())
+    }
+
     fn compute_file_digest(content: &[u8]) -> ContentDigest {
         let hash: [u8; 32] = Sha256::digest(content).into();
         ContentDigest(Digest(hash))
@@ -4466,27 +4521,7 @@ impl DbExternalApi for SqlitePool {
         records: Vec<ComponentMetadataRecord>,
     ) -> Result<(), DbErrorWrite> {
         self.transaction(
-            move |tx| {
-                let mut stmt = tx.prepare(
-                    "INSERT OR IGNORE INTO t_component_metadata \
-                     (component_digest, imports_json, exports_json, wit, wit_origin) \
-                     VALUES (:component_digest, :imports_json, :exports_json, :wit, :wit_origin)",
-                )?;
-                for record in &records {
-                    let imports_json = serde_json::to_string(&record.imports)
-                        .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
-                    let exports_json = serde_json::to_string(&record.exports)
-                        .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
-                    stmt.execute(named_params! {
-                        ":component_digest": record.component_digest.clone(),
-                        ":imports_json": imports_json,
-                        ":exports_json": exports_json,
-                        ":wit": record.wit.clone(),
-                        ":wit_origin": record.wit_origin.clone(),
-                    })?;
-                }
-                Ok(())
-            },
+            move |tx| Self::upsert_component_metadata_tx(tx, &records),
             TxType::MultipleWrites,
             "upsert_component_metadata",
         )
@@ -4500,23 +4535,7 @@ impl DbExternalApi for SqlitePool {
         records: Vec<DeploymentComponentRecord>,
     ) -> Result<(), DbErrorWrite> {
         self.transaction(
-            move |tx| {
-                let mut stmt = tx.prepare(
-                    "INSERT OR IGNORE INTO t_deployment_component \
-                     (deployment_id, component_name, component_type, component_digest) \
-                     VALUES (:deployment_id, :component_name, :component_type, :component_digest)",
-                )?;
-                for record in &records {
-                    debug_assert_eq!(record.deployment_id, deployment_id);
-                    stmt.execute(named_params! {
-                        ":deployment_id": deployment_id.to_string(),
-                        ":component_name": record.component_name.to_string(),
-                        ":component_type": record.component_type.to_string(),
-                        ":component_digest": record.component_digest.clone(),
-                    })?;
-                }
-                Ok(())
-            },
+            move |tx| Self::insert_deployment_components_tx(tx, deployment_id, &records),
             TxType::MultipleWrites,
             "insert_deployment_components",
         )
@@ -4771,6 +4790,26 @@ impl DbExternalApi for SqlitePool {
             move |tx| Self::insert_deployment_tx(tx, &record),
             TxType::MultipleWrites,
             "insert_deployment",
+        )
+        .await
+    }
+
+    async fn insert_deployment_with_components(
+        &self,
+        record: DeploymentRecord,
+        component_metadata: Vec<ComponentMetadataRecord>,
+        deployment_components: Vec<DeploymentComponentRecord>,
+    ) -> Result<(), DbErrorWrite> {
+        let deployment_id = record.deployment_id;
+        self.transaction(
+            move |tx| {
+                // Parent row first so the t_deployment_component FK is satisfied within the tx.
+                Self::insert_deployment_tx(tx, &record)?;
+                Self::upsert_component_metadata_tx(tx, &component_metadata)?;
+                Self::insert_deployment_components_tx(tx, deployment_id, &deployment_components)
+            },
+            TxType::MultipleWrites,
+            "insert_deployment_with_components",
         )
         .await
     }
