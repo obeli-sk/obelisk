@@ -72,7 +72,7 @@ impl args::Deployment {
                     &mut client,
                     id,
                     runtime_config_check,
-                    false, // hot
+                    SwitchCommand::Enqueue,
                 )
                 .await
             }
@@ -97,13 +97,7 @@ impl args::Deployment {
                     deployment_id,
                 )
                 .await?;
-                switch_deployment(
-                    &mut client,
-                    id,
-                    runtime_config_check,
-                    true, // hot
-                )
-                .await
+                switch_deployment(&mut client, id, runtime_config_check, SwitchCommand::Apply).await
             }
 
             args::Deployment::List { api_url } => {
@@ -515,34 +509,41 @@ async fn switch_deployment(
     client: &mut DeploymentClient,
     id: DeploymentId,
     runtime_config_check: grpc_gen::RuntimeConfigCheck,
-    hot: bool,
+    command: SwitchCommand,
 ) -> anyhow::Result<()> {
     let resp = client
         .switch_deployment(grpc_gen::SwitchDeploymentRequest {
             deployment_id: Some(grpc_gen::DeploymentId::from(id)),
             runtime_config_check: runtime_config_check.into(),
-            hot_redeploy: hot,
+            hot_redeploy: command == SwitchCommand::Apply,
         })
         .await?
         .into_inner();
 
-    match resp.outcome() {
-        Outcome::SwitchOutcomeSwitched => {
+    match (command, resp.outcome()) {
+        (SwitchCommand::Apply, Outcome::SwitchOutcomeSwitched) => {
             println!("Applied successfully.");
         }
-        Outcome::SwitchOutcomeRestartRequired => {
-            if hot {
-                bail!(
-                    "Could not apply immediately; deployment enqueued. Restart the server to apply."
-                );
-            }
+        (SwitchCommand::Apply, Outcome::SwitchOutcomeRestartRequired) => {
+            bail!("Could not apply immediately; deployment enqueued. Restart the server to apply.");
+        }
+        (SwitchCommand::Enqueue, Outcome::SwitchOutcomeSwitched) => {
+            println!("Deployment already active; it will remain active after restart.");
+        }
+        (SwitchCommand::Enqueue, Outcome::SwitchOutcomeRestartRequired) => {
             println!("Deployment enqueued. Restart the server to apply.");
         }
-        Outcome::SwitchOutcomeUnspecified => {
+        (_, Outcome::SwitchOutcomeUnspecified) => {
             bail!("Unexpected outcome from server.");
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwitchCommand {
+    Apply,
+    Enqueue,
 }
 
 async fn prepare_manifest_from_file_or_empty(

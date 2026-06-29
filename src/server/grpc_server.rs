@@ -1672,9 +1672,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             if check == RuntimeConfigCheck::AllowMissing {
                 return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_MISSING` cannot be used with `hot_redeploy = true`".to_string()));
             }
-            SwitchDeploymentAction::HotRedeploy
+            SwitchDeploymentAction::Activate
         } else {
-            SwitchDeploymentAction::VerifyAndStore(check)
+            SwitchDeploymentAction::Enqueue(check)
         };
         let outcome = server::switch_deployment(
             self.deployment_switch_manager.clone(),

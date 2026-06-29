@@ -3727,9 +3727,9 @@ mod deployment {
                         .to_string(),
                 ));
             }
-            SwitchDeploymentAction::HotRedeploy
+            SwitchDeploymentAction::Activate
         } else {
-            SwitchDeploymentAction::VerifyAndStore(runtime_config_check_from_bool(
+            SwitchDeploymentAction::Enqueue(runtime_config_check_from_bool(
                 payload.allow_missing_runtime_config,
             ))
         };

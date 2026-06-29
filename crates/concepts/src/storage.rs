@@ -1534,9 +1534,13 @@ pub trait DbExternalApi: DbConnection {
     ) -> Result<(), DbErrorWrite>;
 
     /// Mark a deployment as Enqueued (pending next server restart).
-    /// Returns `Err(DbErrorWriteNonRetriable::Conflict)` if the deployment is currently Active.
-    /// Any previously Enqueued deployment is demoted to Inactive.
-    async fn enqueue_deployment(&self, deployment_id: DeploymentId) -> Result<(), DbErrorWrite>;
+    /// Any previously Enqueued deployment is demoted to Inactive. If the target deployment is
+    /// currently Active, it remains Active and any previously Enqueued deployment is cleared.
+    /// The returned [`EnqueueOutcome`] reflects which of those happened.
+    async fn enqueue_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<EnqueueOutcome, DbErrorWrite>;
 
     /// Returned [`DeploymentRecord`] must contain `deployment_toml`.
     async fn get_deployment(
@@ -1630,6 +1634,16 @@ pub enum DeploymentStatus {
     /// Queued to become Active on the next server restart.
     Enqueued,
     Active,
+}
+
+/// Outcome of [`DbExternalApi::enqueue_deployment`], reflecting what the transaction did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnqueueOutcome {
+    /// The target was inactive and is now Enqueued for the next restart.
+    Enqueued,
+    /// The target was already Active; it stays Active and any previously Enqueued
+    /// deployment was cleared.
+    AlreadyActive,
 }
 
 impl DeploymentStatus {

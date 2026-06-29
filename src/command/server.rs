@@ -85,6 +85,7 @@ use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::DeploymentComponentRecord;
+use concepts::storage::EnqueueOutcome;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
 use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentStatus};
@@ -1515,7 +1516,7 @@ pub(crate) async fn run_internal(
     switch_deployment(
         deployment_switch_manager.clone(),
         active_deployment_id,
-        SwitchDeploymentAction::HotRedeploy,
+        SwitchDeploymentAction::Activate,
     )
     .instrument(info_span!("startup deployment manager no-op", %active_deployment_id))
     .await
@@ -2372,16 +2373,37 @@ impl RuntimeConfigCheck {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SwitchDeploymentAction {
-    HotRedeploy,
-    VerifyAndStore(RuntimeConfigCheck),
+    Activate,
+    Enqueue(RuntimeConfigCheck),
 }
 impl SwitchDeploymentAction {
     fn ignore_missing_env_vars(self) -> bool {
         match self {
-            SwitchDeploymentAction::VerifyAndStore(check) => check.ignore_missing_env_vars(),
-            SwitchDeploymentAction::HotRedeploy => false,
+            SwitchDeploymentAction::Enqueue(check) => check.ignore_missing_env_vars(),
+            SwitchDeploymentAction::Activate => false,
         }
     }
+}
+
+/// Enqueue `deployment_id` for the next restart, returning the DB-decided [`EnqueueOutcome`],
+/// then release the switch permit needed for serializability.
+async fn enqueue_deployment_and_release(
+    deployment_switch_manager: &DeploymentSwitchManagerHandle,
+    deployment_id: DeploymentId,
+    permit: OwnedSemaphorePermit,
+) -> Result<EnqueueOutcome, SwitchError> {
+    let db_conn = deployment_switch_manager
+        .inner
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+    let outcome = db_conn
+        .enqueue_deployment(deployment_id)
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+    drop(permit);
+    Ok(outcome)
 }
 
 #[instrument(skip_all, fields(%deployment_id))]
@@ -2390,46 +2412,62 @@ pub(crate) async fn switch_deployment(
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
 ) -> Result<SwitchOutcome, SwitchError> {
-    if deployment_switch_manager
+    let deployment_already_active = deployment_switch_manager
         .inner
         .deployment_ctx
         .read()
         .await
         .deployment_id
-        == deployment_id
-    {
-        info!(%deployment_id, "Deployment switch no-op: deployment already active");
-        return Ok(SwitchOutcome::Switched);
-    }
-
-    let permit = deployment_switch_manager.try_acquire_switch_permit()?;
-    let mut termination_watcher = deployment_switch_manager.inner.termination_watcher.clone();
-    let prepared = prepare_switch_deployment(
-        &deployment_switch_manager,
-        deployment_id,
-        action,
-        &mut termination_watcher,
-    )
-    .await?;
+        == deployment_id;
 
     match action {
-        SwitchDeploymentAction::VerifyAndStore(_) => {
-            let db_conn = deployment_switch_manager
-                .inner
-                .db_pool
-                .external_api_conn()
-                .await
-                .map_err(|e| SwitchError::Other(e.into()))?;
-            db_conn
-                .enqueue_deployment(deployment_id)
-                .await
-                .map_err(|e| SwitchError::Other(e.into()))?;
-            drop(permit);
-
-            info!(%deployment_id, "Deployment enqueued for next restart");
-            Ok(SwitchOutcome::RestartRequired)
+        SwitchDeploymentAction::Enqueue(_) => {
+            let permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            if !deployment_already_active {
+                // Validate (compile + link) so the queued deployment is known-good against
+                // the current host before enqueuing. An already-active deployment is already
+                // running, hence known-good, so this is skipped.
+                let mut termination_watcher =
+                    deployment_switch_manager.inner.termination_watcher.clone();
+                prepare_switch_deployment(
+                    &deployment_switch_manager,
+                    deployment_id,
+                    action,
+                    &mut termination_watcher,
+                )
+                .await?;
+            }
+            // The outcome is decided inside the DB transaction, so it is authoritative even
+            // if the active deployment changed since the read above.
+            let outcome =
+                enqueue_deployment_and_release(&deployment_switch_manager, deployment_id, permit)
+                    .await?;
+            Ok(match outcome {
+                EnqueueOutcome::Enqueued => {
+                    info!(%deployment_id, "Deployment enqueued for next restart");
+                    SwitchOutcome::RestartRequired
+                }
+                EnqueueOutcome::AlreadyActive => {
+                    info!(%deployment_id, "Deployment already active; it will remain active after restart");
+                    SwitchOutcome::Switched
+                }
+            })
         }
-        SwitchDeploymentAction::HotRedeploy => {
+        SwitchDeploymentAction::Activate => {
+            if deployment_already_active {
+                info!(%deployment_id, "Deployment switch no-op: deployment already active");
+                return Ok(SwitchOutcome::Switched);
+            }
+            let permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            let mut termination_watcher =
+                deployment_switch_manager.inner.termination_watcher.clone();
+            let prepared = prepare_switch_deployment(
+                &deployment_switch_manager,
+                deployment_id,
+                action,
+                &mut termination_watcher,
+            )
+            .await?;
             // Pre-critical, fallible commit work. Run the cron seeding and the durable
             // DB activation before the non-cancel-safe critical switch, so the section
             // after `exec_task_handles` is taken cannot fail and strand the context.
