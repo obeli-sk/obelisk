@@ -1,10 +1,10 @@
 use crate::command::server;
-use crate::command::server::DeploymentContextHandle;
 use crate::command::server::PreparedDirs;
 use crate::command::server::RuntimeConfigCheck;
 use crate::command::server::ServerVerified;
 use crate::command::server::SubmitError;
 use crate::command::server::SwitchDeploymentAction;
+use crate::command::server::{DeploymentContextHandle, DeploymentSwitchManagerHandle};
 use crate::server::deployment_summary;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
@@ -35,7 +35,6 @@ use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION;
 use concepts::storage::LogCursor;
 use concepts::storage::LogFilter;
-use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
 use concepts::storage::LogStreamType;
 use concepts::storage::Pagination;
@@ -80,7 +79,6 @@ use tracing::instrument;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::registry::ReplayWorker;
-use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
 
 pub(crate) struct GrpcServer {
@@ -89,22 +87,19 @@ pub(crate) struct GrpcServer {
     termination_watcher: watch::Receiver<()>,
     cancel_registry: CancelRegistry,
     prepared_dirs: PreparedDirs,
-    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     deployment_ctx: DeploymentContextHandle,
-    webhook_registry: Arc<WebhookRegistry>,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
 }
 
 impl GrpcServer {
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         server_verified: ServerVerified,
         db_pool: Arc<dyn DbPool>,
         termination_watcher: watch::Receiver<()>,
         cancel_registry: CancelRegistry,
         prepared_dirs: PreparedDirs,
-        log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
         deployment_ctx: DeploymentContextHandle,
-        webhook_registry: Arc<WebhookRegistry>,
+        deployment_switch_manager: DeploymentSwitchManagerHandle,
     ) -> Self {
         Self {
             server_verified,
@@ -112,9 +107,8 @@ impl GrpcServer {
             termination_watcher,
             cancel_registry,
             prepared_dirs,
-            log_forwarder_sender,
             deployment_ctx,
-            webhook_registry,
+            deployment_switch_manager,
         }
     }
 }
@@ -1674,46 +1668,24 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .argument_must_exist("deployment_id")?
             .try_into()?;
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-        let mut termination_watcher = self.termination_watcher.clone();
         let action = if request.hot_redeploy {
             if check == RuntimeConfigCheck::AllowMissing {
                 return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_MISSING` cannot be used with `hot_redeploy = true`".to_string()));
             }
-            SwitchDeploymentAction::HotRedeploy
+            SwitchDeploymentAction::Activate
         } else {
-            SwitchDeploymentAction::VerifyAndStore(check)
+            SwitchDeploymentAction::Enqueue(check)
         };
-        let outcome = tokio::spawn({
-            let server_verified = self.server_verified.clone();
-            let db_pool = self.db_pool.clone();
-            let prepared_dirs = self.prepared_dirs.clone();
-            let deployment_ctx = self.deployment_ctx.clone();
-            let webhook_registry = self.webhook_registry.clone();
-            let cancel_registry = self.cancel_registry.clone();
-            let log_forwarder_sender = self.log_forwarder_sender.clone();
-            async move {
-                // Cancel safety
-                server::switch_deployment(
-                    server_verified,
-                    deployment_id,
-                    action,
-                    &prepared_dirs,
-                    db_pool,
-                    &mut termination_watcher,
-                    &deployment_ctx,
-                    &webhook_registry,
-                    cancel_registry,
-                    log_forwarder_sender,
-                )
-                .await
-            }
-        })
+        let outcome = server::switch_deployment(
+            self.deployment_switch_manager.clone(),
+            deployment_id,
+            action,
+        )
         .await
-        .map_err(|join_err| {
-            error!("Panic in switch_deployment: {join_err:?}");
-            tonic::Status::internal("internal error")
-        })?
         .map_err(|err| match err {
+            server::SwitchError::Busy => tonic::Status::resource_exhausted(
+                "another deployment submit or switch is already running",
+            ),
             server::SwitchError::NotFound => tonic::Status::not_found("deployment not found"),
             server::SwitchError::Other(e) => tonic::Status::failed_precondition(format!("{e:#}")),
         })?;
@@ -1760,10 +1732,16 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             supplied_files,
             self.db_pool.clone(),
             &mut termination_watcher,
+            Some(self.deployment_switch_manager.clone()),
         ))
         .await;
         let deployment_id = match result {
             Ok(deployment_id) => deployment_id,
+            Err(server::SubmitDeploymentError::Busy) => {
+                return Err(tonic::Status::resource_exhausted(
+                    "another deployment submit or switch is already running",
+                ));
+            }
             Err(server::SubmitDeploymentError::Other(err)) => {
                 return Err(tonic::Status::failed_precondition(format!("{err:#}")));
             }

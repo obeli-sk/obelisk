@@ -15,7 +15,7 @@ use concepts::{
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
+        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
@@ -4884,20 +4884,21 @@ impl DbExternalApi for PostgresConnection {
         Ok(())
     }
 
-    async fn enqueue_deployment(&self, deployment_id: DeploymentId) -> Result<(), DbErrorWrite> {
+    async fn enqueue_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<EnqueueOutcome, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        // Guard: reject if target deployment is currently active.
         let status_opt = tx
             .query_opt(
                 "SELECT status FROM t_deployment WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
             .await?;
-        match status_opt.as_ref().map(|r| r.get::<_, &str>("status")) {
-            None => return Err(DbErrorWrite::NotFound),
-            Some("active") => return Err(DbErrorWriteNonRetriable::Conflict.into()),
-            _ => {}
+        let status = status_opt.as_ref().map(|r| r.get::<_, &str>("status"));
+        if status.is_none() {
+            return Err(DbErrorWrite::NotFound);
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
@@ -4905,6 +4906,11 @@ impl DbExternalApi for PostgresConnection {
             &[],
         )
         .await?;
+        // The target is already active: it stays active, only the pending one was cleared.
+        if status == Some("active") {
+            tx.commit().await?;
+            return Ok(EnqueueOutcome::AlreadyActive);
+        }
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
@@ -4916,7 +4922,7 @@ impl DbExternalApi for PostgresConnection {
         if rows == 0 {
             return Err(DbErrorWrite::NotFound);
         }
-        Ok(())
+        Ok(EnqueueOutcome::Enqueued)
     }
 
     #[instrument(skip(self))]

@@ -15,7 +15,7 @@ use concepts::{
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, ExecutionEvent,
+        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
@@ -3643,8 +3643,7 @@ impl SqlitePool {
     fn enqueue_deployment_tx(
         tx: &Transaction,
         deployment_id: DeploymentId,
-    ) -> Result<(), DbErrorWrite> {
-        // Guard: reject if target deployment is currently active.
+    ) -> Result<EnqueueOutcome, DbErrorWrite> {
         let status_opt: Option<String> = tx
             .query_row(
                 "SELECT status FROM t_deployment WHERE deployment_id = :deployment_id",
@@ -3653,10 +3652,9 @@ impl SqlitePool {
             )
             .optional()
             .map_err(RusqliteError::from)?;
-        match status_opt.as_deref() {
-            None => return Err(DbErrorWrite::NotFound),
-            Some("active") => return Err(DbErrorWriteNonRetriable::Conflict.into()),
-            _ => {}
+        let status = status_opt.as_deref();
+        if status.is_none() {
+            return Err(DbErrorWrite::NotFound);
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
@@ -3664,6 +3662,10 @@ impl SqlitePool {
             [],
         )
         .map_err(RusqliteError::from)?;
+        // The target is already active: it stays active, only the pending one was cleared.
+        if status == Some("active") {
+            return Ok(EnqueueOutcome::AlreadyActive);
+        }
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
@@ -3676,7 +3678,7 @@ impl SqlitePool {
         if rows == 0 {
             return Err(DbErrorWrite::NotFound);
         }
-        Ok(())
+        Ok(EnqueueOutcome::Enqueued)
     }
 
     fn get_deployment_tx(
@@ -4832,7 +4834,10 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
-    async fn enqueue_deployment(&self, deployment_id: DeploymentId) -> Result<(), DbErrorWrite> {
+    async fn enqueue_deployment(
+        &self,
+        deployment_id: DeploymentId,
+    ) -> Result<EnqueueOutcome, DbErrorWrite> {
         self.transaction(
             move |tx| Self::enqueue_deployment_tx(tx, deployment_id),
             TxType::MultipleWrites,

@@ -28,10 +28,9 @@ use concepts::{
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, FunctionNameFilter, ListExecutionsFilter,
-        LogInfoAppendRow, Pagination, PendingState, PendingStateFinishedError,
-        PendingStateFinishedResultKind, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
-        Version, VersionType,
+        ExecutionRequest, ExecutionWithState, FunctionNameFilter, ListExecutionsFilter, Pagination,
+        PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, ResponseCursor,
+        ResponseWithCursor, TimeoutOutcome, Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -50,7 +49,7 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
     activity::cancel_registry::CancelRegistry, registry::ReplayWorker,
-    webhook::webhook_registry::WebhookRegistry, workflow::workflow_worker::AdvanceError,
+    workflow::workflow_worker::AdvanceError,
 };
 
 #[derive(Clone)]
@@ -61,9 +60,8 @@ pub(crate) struct WebApiState {
     pub(crate) cancel_registry: CancelRegistry,
     pub(crate) termination_watcher: watch::Receiver<()>,
     pub(crate) subscription_interruption: Option<Duration>,
-    pub(crate) log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     pub(crate) prepared_dirs: PreparedDirs,
-    pub(crate) webhook_registry: Arc<WebhookRegistry>,
+    pub(crate) deployment_switch_manager: crate::command::server::DeploymentSwitchManagerHandle,
 }
 
 /// `OpenAPI` documentation for the Obelisk REST API
@@ -3055,7 +3053,7 @@ mod deployment {
     use serde::{Deserialize, Serialize};
     use std::fmt::Write as _;
     use std::sync::Arc;
-    use tracing::{error, info, instrument};
+    use tracing::{info, instrument};
     use utoipa::{IntoParams, ToSchema};
 
     #[derive(Debug, Serialize, ToSchema)]
@@ -3598,11 +3596,19 @@ mod deployment {
             inputs.files,
             state.db_pool.clone(),
             &mut termination_watcher,
+            Some(state.deployment_switch_manager.clone()),
         ))
         .await;
 
         let deployment_id = match result {
             Ok(deployment_id) => deployment_id,
+            Err(server::SubmitDeploymentError::Busy) => {
+                return Err(HttpResponse {
+                    status: StatusCode::SERVICE_UNAVAILABLE,
+                    message: "another deployment submit or switch is already running".to_string(),
+                    accept,
+                });
+            }
             Err(server::SubmitDeploymentError::Other(err)) => {
                 return Err(HttpResponse {
                     status: StatusCode::BAD_REQUEST,
@@ -3712,7 +3718,6 @@ mod deployment {
         accept: AcceptHeader,
         Json(payload): Json<DeploymentSwitchPayload>,
     ) -> Result<Response, HttpResponse> {
-        let mut termination_watcher = state.termination_watcher.clone();
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let action = if payload.hot_redeploy {
             if payload.allow_missing_runtime_config {
@@ -3722,38 +3727,24 @@ mod deployment {
                         .to_string(),
                 ));
             }
-            SwitchDeploymentAction::HotRedeploy
+            SwitchDeploymentAction::Activate
         } else {
-            SwitchDeploymentAction::VerifyAndStore(runtime_config_check_from_bool(
+            SwitchDeploymentAction::Enqueue(runtime_config_check_from_bool(
                 payload.allow_missing_runtime_config,
             ))
         };
-        let outcome = tokio::spawn(async move {
-            // Cancel safety
-            crate::command::server::switch_deployment(
-                state.server_verified.clone(),
-                deployment_id,
-                action,
-                &state.prepared_dirs,
-                state.db_pool.clone(),
-                &mut termination_watcher,
-                &state.deployment_ctx,
-                &state.webhook_registry,
-                state.cancel_registry.clone(),
-                state.log_forwarder_sender.clone(),
-            )
-            .await
-        })
+        let outcome = crate::command::server::switch_deployment(
+            state.deployment_switch_manager.clone(),
+            deployment_id,
+            action,
+        )
         .await
-        .map_err(|join_err| {
-            error!("Panic in switch_deployment: {join_err:?}");
-            HttpResponse {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                message: "internal error".to_string(),
-                accept,
-            }
-        })?
         .map_err(|err| match err {
+            crate::command::server::SwitchError::Busy => HttpResponse {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: "another deployment submit or switch is already running".to_string(),
+                accept,
+            },
             crate::command::server::SwitchError::NotFound => {
                 HttpResponse::not_found(accept, Some("deployment"))
             }

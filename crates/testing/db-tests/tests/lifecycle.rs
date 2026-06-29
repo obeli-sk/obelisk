@@ -11,7 +11,9 @@ use concepts::storage::{
     PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
     Unlocked, Version, VersionType, WasmBacktrace,
 };
-use concepts::storage::{DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus};
+use concepts::storage::{
+    DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
+};
 use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent, ListExecutionsFilter};
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent, LogFilter};
 use concepts::storage::{LogCursor, LogEntry, LogInfoAppendRow};
@@ -4059,6 +4061,74 @@ async fn deployment_only_one_active_allowed(database: Database) {
     // id1 must be inactive.
     let d1 = api_conn.get_deployment(id1).await.unwrap().unwrap();
     assert_eq!(DeploymentStatus::Inactive, d1.status);
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_enqueue_active_clears_pending(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    let now = sim_clock.now();
+    let active_id = concepts::prefixed_ulid::DeploymentId::generate();
+    let pending_id = concepts::prefixed_ulid::DeploymentId::generate();
+    for id in [active_id, pending_id] {
+        api_conn
+            .insert_deployment(DeploymentRecord {
+                deployment_id: id,
+                description: None,
+                digest: DeploymentRecord::compute_digest("{}"),
+                created_at: now,
+                last_active_at: None,
+                status: DeploymentStatus::Inactive,
+                deployment_toml: "{}".to_string(),
+                obelisk_version: "0.0.0-test".to_string(),
+                created_by: None,
+                files: Vec::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    api_conn.activate_deployment(active_id, now).await.unwrap();
+    assert_eq!(
+        EnqueueOutcome::Enqueued,
+        api_conn.enqueue_deployment(pending_id).await.unwrap()
+    );
+    assert_eq!(
+        pending_id,
+        api_conn
+            .get_current_deployment()
+            .await
+            .unwrap()
+            .unwrap()
+            .deployment_id
+    );
+
+    assert_eq!(
+        EnqueueOutcome::AlreadyActive,
+        api_conn.enqueue_deployment(active_id).await.unwrap()
+    );
+
+    let active = api_conn.get_deployment(active_id).await.unwrap().unwrap();
+    let pending = api_conn.get_deployment(pending_id).await.unwrap().unwrap();
+    assert_eq!(DeploymentStatus::Active, active.status);
+    assert_eq!(DeploymentStatus::Inactive, pending.status);
+    assert_eq!(
+        active_id,
+        api_conn
+            .get_current_deployment()
+            .await
+            .unwrap()
+            .unwrap()
+            .deployment_id
+    );
 
     drop(api_conn);
     db_close.close().await;

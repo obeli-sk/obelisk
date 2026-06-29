@@ -85,6 +85,7 @@ use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::DeploymentComponentRecord;
+use concepts::storage::EnqueueOutcome;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
 use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentStatus};
@@ -117,7 +118,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::Semaphore;
+use tokio::sync::TryAcquireError;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tonic::codec::CompressionEncoding;
 use tonic::service::RoutesBuilder;
@@ -183,7 +189,195 @@ pub(crate) struct DeploymentContext {
 
 pub(crate) type DeploymentContextHandle = Arc<tokio::sync::RwLock<DeploymentContext>>;
 
+struct PreparedDeploymentSwitch {
+    deployment_id: DeploymentId,
+    digest: ContentDigest,
+    compiled_linked: ServerCompiledLinked,
+}
+
+#[derive(Clone)]
+pub(crate) struct DeploymentSwitchManagerHandle {
+    inner: Arc<DeploymentSwitchManager>,
+}
+
+/// Permit for the switch lane (hot redeploy / enqueue), held for its `Drop` which releases
+/// the slot. A distinct type from [`SubmitPermit`] so the two lanes cannot be mixed up.
+struct SwitchPermit(#[expect(dead_code)] OwnedSemaphorePermit);
+
+/// Permit for the submit lane, held for its `Drop` which releases a slot.
+struct SubmitPermit(#[expect(dead_code)] OwnedSemaphorePermit);
+
+struct DeploymentSwitchManager {
+    /// Independent lane for submit, so a long hot switch does not block submissions.
+    /// Holds `submit_concurrency` permits; `close()` drains all of them.
+    submit_lane: Arc<Semaphore>,
+    /// Serializes hot redeploys and cold switch/enqueue: at most one in flight,
+    /// surplus requests get `Busy`. Must stay at exactly 1 permit: `close()` drains this
+    /// lane with a single `acquire_owned()`, which only accounts for one permit.
+    switch_gate: Arc<Semaphore>,
+    /// Permit count of `submit_gate`, retained so `close()` can drain every permit.
+    submit_concurrency: u32,
+    latest_prepared: Mutex<Option<PreparedDeploymentSwitch>>,
+    server_verified: ServerVerified,
+    prepared_dirs: PreparedDirs,
+    db_pool: Arc<dyn DbPool>,
+    termination_watcher: watch::Receiver<()>,
+    deployment_ctx: DeploymentContextHandle,
+    webhook_registry: Arc<WebhookRegistry>,
+    cancel_registry: CancelRegistry,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+}
+
+impl DeploymentSwitchManagerHandle {
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        server_verified: ServerVerified,
+        prepared_dirs: PreparedDirs,
+        db_pool: Arc<dyn DbPool>,
+        termination_watcher: watch::Receiver<()>,
+        deployment_ctx: DeploymentContextHandle,
+        webhook_registry: Arc<WebhookRegistry>,
+        cancel_registry: CancelRegistry,
+        log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+        submit_concurrency: u32,
+    ) -> Self {
+        Self {
+            inner: Arc::new(DeploymentSwitchManager {
+                submit_lane: Arc::new(Semaphore::new(submit_concurrency as usize)),
+                switch_gate: Arc::new(Semaphore::new(1)), // at most 1
+                submit_concurrency,
+                latest_prepared: Mutex::new(None),
+                server_verified,
+                prepared_dirs,
+                db_pool,
+                termination_watcher,
+                deployment_ctx,
+                webhook_registry,
+                cancel_registry,
+                log_forwarder_sender,
+            }),
+        }
+    }
+
+    fn try_acquire_switch_permit(&self) -> Result<SwitchPermit, SwitchError> {
+        match self.inner.switch_gate.clone().try_acquire_owned() {
+            Ok(permit) => Ok(SwitchPermit(permit)),
+            Err(TryAcquireError::NoPermits) => Err(SwitchError::Busy),
+            Err(TryAcquireError::Closed) => Err(SwitchError::Other(anyhow::anyhow!(
+                "server is being shut down"
+            ))),
+        }
+    }
+
+    fn try_acquire_submit_permit(&self) -> Result<SubmitPermit, SubmitDeploymentError> {
+        match self.inner.submit_lane.clone().try_acquire_owned() {
+            Ok(permit) => Ok(SubmitPermit(permit)),
+            Err(TryAcquireError::NoPermits) => Err(SubmitDeploymentError::Busy),
+            Err(TryAcquireError::Closed) => Err(SubmitDeploymentError::Other(anyhow::anyhow!(
+                "server is being shut down"
+            ))),
+        }
+    }
+
+    async fn take_latest_prepared(
+        &self,
+        deployment_id: DeploymentId,
+        digest: &ContentDigest,
+    ) -> Option<PreparedDeploymentSwitch> {
+        let mut latest = self.inner.latest_prepared.lock().await;
+        if latest.as_ref().is_some_and(|prepared| {
+            prepared.deployment_id == deployment_id && &prepared.digest == digest
+        }) {
+            latest.take()
+        } else {
+            None
+        }
+    }
+
+    async fn store_latest_prepared(&self, prepared: PreparedDeploymentSwitch) {
+        let mut latest = self.inner.latest_prepared.lock().await;
+        *latest = Some(prepared);
+    }
+
+    async fn spawn_critical_hot_switch(
+        &self,
+        prepared: PreparedDeploymentSwitch,
+        switch_permit: SwitchPermit,
+    ) -> Result<SwitchOutcome, SwitchError> {
+        let (tx, rx) = oneshot::channel();
+        let db_pool = self.inner.db_pool.clone();
+        let deployment_ctx = self.inner.deployment_ctx.clone();
+        let webhook_registry = self.inner.webhook_registry.clone();
+        let cancel_registry = self.inner.cancel_registry.clone();
+        let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
+        // Own the whole commit in a detached task: a dropped caller only stops observing the
+        // result via `rx`, it cannot abort the switch. This covers the durable pre-critical
+        // commits (cron seeds + activate) as well as the non-cancel-safe critical swap, so a
+        // cancellation can never leave the DB activated while the old workers keep running.
+        // The permit is held until the task finishes, which is what `close()` drains on.
+        tokio::spawn(async move {
+            let _switch_permit = switch_permit;
+            let deployment_id = prepared.deployment_id;
+            let result = async {
+                // Pre-critical, fallible commit work, before the critical swap so the section
+                // after `exec_task_handles` is taken cannot fail and strand the context.
+                // `activate_deployment` is the durable source of truth for which deployment is
+                // active, so commit it first: startup reconciles cron seeds (and workers) from
+                // the active deployment, so a crash after activate self-heals on restart, while
+                // a crash before it leaves no orphan seeds.
+                let db_conn = db_pool
+                    .external_api_conn()
+                    .await
+                    .map_err(|e| SwitchError::Other(e.into()))?;
+                db_conn
+                    .activate_deployment(deployment_id, chrono::Utc::now())
+                    .await
+                    .map_err(|e| SwitchError::Other(e.into()))?;
+                prepared
+                    .compiled_linked
+                    .create_missing_cron_seeds(&db_pool, deployment_id)
+                    .await?;
+                switch_hot_redeploy(
+                    prepared.compiled_linked,
+                    deployment_id,
+                    db_pool,
+                    deployment_ctx,
+                    webhook_registry,
+                    cancel_registry,
+                    log_forwarder_sender,
+                )
+                .await
+            }
+            .await;
+            let _ = tx.send(result);
+        });
+        rx.await.map_err(|_| {
+            SwitchError::Other(anyhow::anyhow!("deployment switch critical task exited"))
+        })?
+    }
+
+    pub(crate) async fn close(&self) {
+        // Drain both lanes: an in-flight operation holds its lane's permit(s) until it
+        // completes (the hot switch holds the switch permit through its critical task), so
+        // acquiring waits for completion. The switch lane has exactly one permit; the
+        // submit lane has `submit_concurrency`, so drain all of them. Then close the gates
+        // so no new work is accepted; once closed, `try_acquire_*` returns the shutdown
+        // error atomically (no separate flag).
+        let _switch_permit = self.inner.switch_gate.clone().acquire_owned().await;
+        let _submit_permits = self
+            .inner
+            .submit_lane
+            .clone()
+            .acquire_many_owned(self.inner.submit_concurrency)
+            .await;
+        self.inner.switch_gate.close();
+        self.inner.submit_lane.close();
+    }
+}
+
 const EPOCH_MILLIS: u64 = 10;
+/// Default number of concurrent deployment submits the switch manager accepts.
+const DEFAULT_SUBMIT_CONCURRENCY: u32 = 1;
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
 #[cfg(not(feature = "activity-js-local"))]
 pub(crate) const ACTIVITY_JS_LOCATION: &str =
@@ -1337,6 +1531,33 @@ pub(crate) async fn run_internal(
     )
     .instrument(span)
     .await?;
+    let mut server_init = server_init;
+    let deployment_switch_manager = DeploymentSwitchManagerHandle::new(
+        server_init.server_verified.clone(),
+        server_init.prepared_dirs.clone(),
+        server_init.db_pool.clone(),
+        termination_watcher.clone(),
+        server_init.deployment_ctx.clone(),
+        server_init.webhook_registry.clone(),
+        cancel_registry.clone(),
+        server_init.log_forwarder_sender.clone(),
+        DEFAULT_SUBMIT_CONCURRENCY,
+    );
+    server_init.deployment_switch_manager = Some(deployment_switch_manager.clone());
+    switch_deployment(
+        deployment_switch_manager.clone(),
+        active_deployment_id,
+        SwitchDeploymentAction::Activate,
+    )
+    .instrument(info_span!("startup deployment manager no-op", %active_deployment_id))
+    .await
+    .map_err(|err| match err {
+        SwitchError::Busy => anyhow::anyhow!("deployment switch manager busy during startup"),
+        SwitchError::NotFound => {
+            anyhow::anyhow!("active deployment {active_deployment_id} not found during startup")
+        }
+        SwitchError::Other(err) => err,
+    })?;
 
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.server_verified.clone(),
@@ -1344,9 +1565,8 @@ pub(crate) async fn run_internal(
         termination_watcher.clone(),
         cancel_registry.clone(),
         prepared_dirs.clone(),
-        server_init.log_forwarder_sender.clone(),
         server_init.deployment_ctx.clone(),
-        server_init.webhook_registry.clone(),
+        deployment_switch_manager.clone(),
     ));
 
     let mut grpc = RoutesBuilder::default();
@@ -1405,9 +1625,8 @@ pub(crate) async fn run_internal(
         cancel_registry,
         termination_watcher: termination_watcher.clone(),
         subscription_interruption,
-        log_forwarder_sender: server_init.log_forwarder_sender.clone(),
         prepared_dirs: server_init.prepared_dirs.clone(),
-        webhook_registry: server_init.webhook_registry.clone(),
+        deployment_switch_manager,
     });
     let app: axum::Router<()> = app_router.fallback_service(grpc_service);
     let app_svc = app.into_make_service();
@@ -1846,6 +2065,7 @@ impl SubmitPackageError {
 /// Submit failure: either a structured file-set error (no deployment stored) or any
 /// other error (parse/idempotency/storage).
 pub(crate) enum SubmitDeploymentError {
+    Busy,
     Package(SubmitPackageError),
     Other(anyhow::Error),
 }
@@ -1977,8 +2197,14 @@ pub(crate) async fn submit_deployment(
     supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
+    deployment_switch_manager: Option<DeploymentSwitchManagerHandle>,
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
+    let _submit_permit = if let Some(manager) = &deployment_switch_manager {
+        Some(manager.try_acquire_submit_permit()?)
+    } else {
+        None
+    };
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
     // every referenced file because the manifest embeds each file's content digest. It is
     // used only for idempotency, not returned (the client already has the manifest).
@@ -2087,7 +2313,7 @@ pub(crate) async fn submit_deployment(
     conn.insert_deployment(DeploymentRecord {
         deployment_id,
         description,
-        digest,
+        digest: digest.clone(),
         created_at: now,
         last_active_at: None,
         status: DeploymentStatus::Inactive,
@@ -2111,6 +2337,21 @@ pub(crate) async fn submit_deployment(
     .map_err(SubmitDeploymentError::Other)?;
     upsert_backtrace_sources(conn.as_ref(), &compiled_linked).await;
 
+    // Only cache strict-verified artifacts. A hot redeploy is always strict, so an
+    // artifact compiled while tolerating missing env vars (AllowMissing) must not be
+    // reused to satisfy a later strict switch; a strict artifact satisfies any consumer.
+    if let Some(manager) = deployment_switch_manager
+        && !runtime_config_check.ignore_missing_env_vars()
+    {
+        manager
+            .store_latest_prepared(PreparedDeploymentSwitch {
+                deployment_id,
+                digest,
+                compiled_linked,
+            })
+            .await;
+    }
+
     info!(%deployment_id, "Deployment submitted");
     Ok(deployment_id)
 }
@@ -2131,6 +2372,8 @@ pub(crate) enum SwitchOutcome {
 
 /// Error returned by [`switch_deployment`].
 pub(crate) enum SwitchError {
+    /// Another deployment submit/switch operation is queued or running.
+    Busy,
     /// The requested deployment ID does not exist.
     NotFound,
     /// Any other failure (verification, compilation, DB write, etc.).
@@ -2161,33 +2404,123 @@ impl RuntimeConfigCheck {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SwitchDeploymentAction {
-    HotRedeploy,
-    VerifyAndStore(RuntimeConfigCheck),
+    Activate,
+    Enqueue(RuntimeConfigCheck),
 }
 impl SwitchDeploymentAction {
     fn ignore_missing_env_vars(self) -> bool {
         match self {
-            SwitchDeploymentAction::VerifyAndStore(check) => check.ignore_missing_env_vars(),
-            SwitchDeploymentAction::HotRedeploy => false,
+            SwitchDeploymentAction::Enqueue(check) => check.ignore_missing_env_vars(),
+            SwitchDeploymentAction::Activate => false,
         }
     }
 }
 
-#[expect(clippy::too_many_arguments)]
+/// Enqueue `deployment_id` for the next restart, returning the DB-decided [`EnqueueOutcome`],
+/// then release the switch permit needed for serializability.
+async fn enqueue_deployment_and_release(
+    deployment_switch_manager: &DeploymentSwitchManagerHandle,
+    deployment_id: DeploymentId,
+    switch_permit: SwitchPermit,
+) -> Result<EnqueueOutcome, SwitchError> {
+    let db_conn = deployment_switch_manager
+        .inner
+        .db_pool
+        .external_api_conn()
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+    let outcome = db_conn
+        .enqueue_deployment(deployment_id)
+        .await
+        .map_err(|e| SwitchError::Other(e.into()))?;
+    drop(switch_permit);
+    Ok(outcome)
+}
+
 #[instrument(skip_all, fields(%deployment_id))]
 pub(crate) async fn switch_deployment(
-    server_verified: ServerVerified,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
-    prepared_dirs: &PreparedDirs,
-    db_pool: Arc<dyn DbPool>,
-    termination_watcher: &mut watch::Receiver<()>,
-    deployment_ctx: &DeploymentContextHandle,
-    webhook_registry: &WebhookRegistry,
-    cancel_registry: CancelRegistry,
-    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<SwitchOutcome, SwitchError> {
-    let db_conn = db_pool
+    let deployment_already_active = deployment_switch_manager
+        .inner
+        .deployment_ctx
+        .read()
+        .await
+        .deployment_id
+        == deployment_id;
+
+    match action {
+        SwitchDeploymentAction::Enqueue(_) => {
+            let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            if !deployment_already_active {
+                // Validate (compile + link) so the queued deployment is known-good against
+                // the current host before enqueuing. An already-active deployment is already
+                // running, hence known-good, so this is skipped.
+                let mut termination_watcher =
+                    deployment_switch_manager.inner.termination_watcher.clone();
+                prepare_switch_deployment(
+                    &deployment_switch_manager,
+                    deployment_id,
+                    action,
+                    &mut termination_watcher,
+                )
+                .await?;
+            }
+            // The outcome is decided inside the DB transaction, so it is authoritative even
+            // if the active deployment changed since the read above.
+            let outcome = enqueue_deployment_and_release(
+                &deployment_switch_manager,
+                deployment_id,
+                switch_permit,
+            )
+            .await?;
+            Ok(match outcome {
+                EnqueueOutcome::Enqueued => {
+                    info!(%deployment_id, "Deployment enqueued for next restart");
+                    SwitchOutcome::RestartRequired
+                }
+                EnqueueOutcome::AlreadyActive => {
+                    info!(%deployment_id, "Deployment already active; it will remain active after restart");
+                    SwitchOutcome::Switched
+                }
+            })
+        }
+        SwitchDeploymentAction::Activate => {
+            if deployment_already_active {
+                info!(%deployment_id, "Deployment switch no-op: deployment already active");
+                return Ok(SwitchOutcome::Switched);
+            }
+            let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            let mut termination_watcher =
+                deployment_switch_manager.inner.termination_watcher.clone();
+            // Cancellable: validation only. The durable commit and critical swap are owned by
+            // the detached task spawned below, so they cannot be aborted by a dropped caller.
+            let prepared = prepare_switch_deployment(
+                &deployment_switch_manager,
+                deployment_id,
+                action,
+                &mut termination_watcher,
+            )
+            .await?;
+            deployment_switch_manager
+                .spawn_critical_hot_switch(prepared, switch_permit)
+                .await
+        }
+    }
+}
+
+#[instrument(skip_all, fields(%deployment_id))]
+async fn prepare_switch_deployment(
+    deployment_switch_manager: &DeploymentSwitchManagerHandle,
+    deployment_id: DeploymentId,
+    action: SwitchDeploymentAction,
+    termination_watcher: &mut watch::Receiver<()>,
+) -> Result<PreparedDeploymentSwitch, SwitchError> {
+    let db_conn = deployment_switch_manager
+        .inner
+        .db_pool
         .external_api_conn()
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
@@ -2197,6 +2530,14 @@ pub(crate) async fn switch_deployment(
         .await
         .map_err(|e| SwitchError::Other(e.into()))?
         .ok_or(SwitchError::NotFound)?;
+
+    if let Some(prepared) = deployment_switch_manager
+        .take_latest_prepared(deployment_id, &deployment_record.digest)
+        .await
+    {
+        debug!(%deployment_id, "Using cached prepared deployment artifact");
+        return Ok(prepared);
+    }
 
     let missing = db_conn
         .missing_digests(deployment_id)
@@ -2214,12 +2555,16 @@ pub(crate) async fn switch_deployment(
         )));
     }
 
-    let target_deployment =
-        deployment_resolved_from_manifest(&*db_pool, &deployment_record.deployment_toml)
-            .await
-            .map_err(SwitchError::Other)?;
+    let target_deployment = deployment_resolved_from_manifest(
+        &*deployment_switch_manager.inner.db_pool,
+        &deployment_record.deployment_toml,
+    )
+    .await
+    .map_err(SwitchError::Other)?;
 
-    let cas: Arc<dyn concepts::cas::Cas> = db_pool
+    let cas: Arc<dyn concepts::cas::Cas> = deployment_switch_manager
+        .inner
+        .db_pool
         .cas_conn()
         .await
         .map_err(|e| SwitchError::Other(e.into()))?
@@ -2235,63 +2580,71 @@ pub(crate) async fn switch_deployment(
         suppress_linking_errors: false,
     };
 
-    if action == SwitchDeploymentAction::HotRedeploy {
-        let server_compiled_linked = deployment_verify_config_compile_link(
-            server_verified,
-            prepared_dirs,
-            target_deployment,
-            Some(cas),
-            DeploymentId::generate(),
-            verify_params,
-            termination_watcher,
-        )
-        .await?;
-        switch_hot_redeploy(
-            server_compiled_linked,
-            db_conn.as_ref(),
-            deployment_id,
-            &db_pool,
-            deployment_ctx,
-            webhook_registry,
-            cancel_registry,
-            &log_forwarder_sender,
-        )
-        .await
-    } else {
-        // Cold switch: validation (compile + link) always runs before enqueuing, so a
-        // deployment queued for the next restart is known-good against the current host.
-        deployment_verify_config_compile_link(
-            server_verified,
-            prepared_dirs,
-            target_deployment,
-            Some(cas),
-            DeploymentId::generate(),
-            verify_params,
-            termination_watcher,
-        )
-        .await?;
-        db_conn
-            .enqueue_deployment(deployment_id)
-            .await
-            .map_err(|e| SwitchError::Other(e.into()))?;
+    // Cold switch: validation (compile + link) always runs before enqueuing, so a
+    // deployment queued for the next restart is known-good against the current host.
+    let compiled_linked = deployment_verify_config_compile_link(
+        deployment_switch_manager.inner.server_verified.clone(),
+        &deployment_switch_manager.inner.prepared_dirs,
+        target_deployment,
+        Some(cas),
+        deployment_id,
+        verify_params,
+        termination_watcher,
+    )
+    .await?;
 
-        info!(%deployment_id, "Deployment enqueued for next restart");
-        Ok(SwitchOutcome::RestartRequired)
+    Ok(PreparedDeploymentSwitch {
+        deployment_id,
+        digest: deployment_record.digest,
+        compiled_linked,
+    })
+}
+
+/// Spawn the executor tasks for `deployment_id` and assemble its `DeploymentContext`.
+/// Shared by initial startup ([`spawn_tasks_and_threads`]) and hot redeploy
+/// ([`switch_hot_redeploy`]) so the two paths cannot drift. Webhook-registry wiring
+/// (create vs swap) and where the context is stored differ and stay at the call sites.
+fn spawn_deployment_context(
+    deployment_id: DeploymentId,
+    workers_linked: Vec<WorkerLinked>,
+    component_registry_ro: ComponentConfigRegistryRO,
+    db_pool: &Arc<dyn DbPool>,
+    cancel_registry: &CancelRegistry,
+    log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+) -> DeploymentContext {
+    let mut exec_task_handles: Vec<ExecutorTaskHandle> = Vec::with_capacity(workers_linked.len());
+    let mut replay_workers = ReplayWorkerRegistry::default();
+    for pre_spawn in workers_linked {
+        let (handle, replay_entry) = pre_spawn.spawn(
+            deployment_id,
+            db_pool,
+            cancel_registry.clone(),
+            log_forwarder_sender,
+        );
+        exec_task_handles.push(handle);
+        if let Some((component_id, worker)) = replay_entry {
+            replay_workers.insert(component_id, worker);
+        }
+    }
+    DeploymentContext {
+        deployment_id,
+        component_registry_ro,
+        exec_task_handles,
+        replay_workers: Arc::new(replay_workers),
+        closed: false,
     }
 }
 
 /// Write lock pretected switch to the new deployment
 #[instrument(skip_all, fields(%deployment_id))]
-#[expect(clippy::too_many_arguments)]
 async fn switch_hot_redeploy(
     server_compiled_linked: ServerCompiledLinked,
-    db_conn: &dyn DbExternalApi,
     deployment_id: DeploymentId,
-    db_pool: &Arc<dyn DbPool>,
-    deployment_ctx: &DeploymentContextHandle,
-    webhook_registry: &WebhookRegistry,
+    db_pool: Arc<dyn DbPool>,
+    deployment_ctx: DeploymentContextHandle,
+    webhook_registry: Arc<WebhookRegistry>,
     cancel_registry: CancelRegistry,
-    log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+    log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<SwitchOutcome, SwitchError> {
     let mut write_guard_ctx = deployment_ctx.write().await;
     if write_guard_ctx.closed {
@@ -2322,40 +2675,16 @@ async fn switch_hot_redeploy(
             .map(|(http_server, (_instance, state))| (http_server.name.to_string(), state.clone())),
     );
 
-    server_compiled_linked
-        .create_missing_cron_seeds(db_pool, deployment_id)
-        .await?;
-
-    let mut new_handles: Vec<ExecutorTaskHandle> =
-        Vec::with_capacity(server_compiled_linked.workers_linked.len());
-    let mut replay_workers = ReplayWorkerRegistry::default();
-    for pre_spawn in server_compiled_linked.workers_linked {
-        let (handle, replay_entry) = pre_spawn.spawn(
-            deployment_id,
-            db_pool,
-            cancel_registry.clone(),
-            log_forwarder_sender,
-        );
-        new_handles.push(handle);
-        if let Some((component_id, worker)) = replay_entry {
-            replay_workers.insert(component_id, worker);
-        }
-    }
-
-    *write_guard_ctx = DeploymentContext {
+    *write_guard_ctx = spawn_deployment_context(
         deployment_id,
-        component_registry_ro: server_compiled_linked.component_registry_ro.clone(),
-        exec_task_handles: new_handles,
-        replay_workers: Arc::new(replay_workers),
-        closed: false,
-    };
+        server_compiled_linked.workers_linked,
+        server_compiled_linked.component_registry_ro,
+        &db_pool,
+        &cancel_registry,
+        &log_forwarder_sender,
+    );
 
-    db_conn
-        .activate_deployment(deployment_id, chrono::Utc::now())
-        .await
-        .map_err(|e| SwitchError::Other(e.into()))?;
-
-    info!(%deployment_id, "Switched to new  deployment");
+    info!(%deployment_id, "Switched to new deployment");
     Ok(SwitchOutcome::Switched)
 }
 
@@ -2462,23 +2791,6 @@ async fn spawn_tasks_and_threads(
         (log_forwarder_sender, log_db_forarder)
     };
 
-    // Spawn executors
-    let mut exec_join_handles: Vec<ExecutorTaskHandle> =
-        Vec::with_capacity(server_compiled_linked.workers_linked.len());
-    let mut replay_workers = ReplayWorkerRegistry::default();
-    for pre_spawn in server_compiled_linked.workers_linked {
-        let (handle, replay_entry) = pre_spawn.spawn(
-            deployment_id,
-            &db_pool,
-            cancel_registry.clone(),
-            &log_forwarder_sender,
-        );
-        exec_join_handles.push(handle);
-        if let Some((component_id, worker)) = replay_entry {
-            replay_workers.insert(component_id, worker);
-        }
-    }
-
     let webhook_registry = WebhookRegistry::new(
         server_compiled_linked
             .http_servers_to_webhooks_and_state
@@ -2502,13 +2814,14 @@ async fn spawn_tasks_and_threads(
     )
     .await?;
     let deployment_ctx: DeploymentContextHandle =
-        Arc::new(tokio::sync::RwLock::new(DeploymentContext {
+        Arc::new(tokio::sync::RwLock::new(spawn_deployment_context(
             deployment_id,
-            component_registry_ro: server_compiled_linked.component_registry_ro,
-            exec_task_handles: exec_join_handles,
-            replay_workers: Arc::new(replay_workers),
-            closed: false,
-        }));
+            server_compiled_linked.workers_linked,
+            server_compiled_linked.component_registry_ro,
+            &db_pool,
+            cancel_registry,
+            &log_forwarder_sender,
+        )));
     let server_init = ServerInit {
         server_verified,
         deployment_ctx,
@@ -2525,6 +2838,7 @@ async fn spawn_tasks_and_threads(
         log_forwarder_sender,
         webhook_registry: Arc::new(webhook_registry),
         prepared_dirs,
+        deployment_switch_manager: None,
     };
     Ok(server_init)
 }
@@ -2543,6 +2857,7 @@ struct ServerInit {
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
     prepared_dirs: PreparedDirs,
+    deployment_switch_manager: Option<DeploymentSwitchManagerHandle>,
 }
 impl ServerInit {
     async fn close(self) {
@@ -2562,7 +2877,12 @@ impl ServerInit {
             log_forwarder_sender,
             webhook_registry,
             prepared_dirs: _,
+            deployment_switch_manager,
         } = self;
+
+        if let Some(deployment_switch_manager) = deployment_switch_manager {
+            deployment_switch_manager.close().await;
+        }
 
         debug!("Closing executors");
         let executors = {
