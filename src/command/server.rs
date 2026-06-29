@@ -7,6 +7,8 @@ use crate::config::config_holder::load_deployment_canonical;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::file_provider::CasFileProvider;
+use crate::config::manifest::DeploymentManifest;
+use crate::config::manifest::DeploymentManifestFile;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
 use crate::config::toml::ActivityExternalComponentConfigResolved;
@@ -847,7 +849,7 @@ async fn get_deployment_canonical_from_db(
 pub(crate) struct LocalDeployment {
     deployment_toml: String,
     canonical: DeploymentResolved,
-    files: Vec<crate::config::manifest::DeploymentManifestFile>,
+    files: Vec<DeploymentManifestFile>,
 }
 
 impl LocalDeployment {
@@ -1080,7 +1082,7 @@ async fn insert_and_activate_deployment(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_id: DeploymentId,
     deployment_toml: String,
-    files: Vec<crate::config::manifest::DeploymentManifestFile>,
+    files: Vec<DeploymentManifestFile>,
     description: Option<String>,
 ) -> anyhow::Result<()> {
     use chrono::Utc;
@@ -1887,8 +1889,8 @@ fn validate_submit_package(
     supplied: Vec<SuppliedFile>,
     cas_present: &hashbrown::HashSet<ContentDigest>,
     max_bytes: usize,
-) -> Result<Vec<crate::config::manifest::DeploymentManifestFile>, SubmitPackageError> {
-    use crate::config::manifest::DeploymentManifestFile;
+) -> Result<Vec<DeploymentManifestFile>, SubmitPackageError> {
+    use DeploymentManifestFile;
 
     let mut err = SubmitPackageError::default();
     // `expected` is already deduplicated by digest in `DeploymentManifest`.
@@ -2007,11 +2009,8 @@ pub(crate) async fn submit_deployment(
         )));
     }
 
-    let manifest = crate::config::manifest::DeploymentManifest::try_from_toml(
-        deployment_toml,
-        &cas_deployment_dir(),
-    )
-    .context("cannot read deployment file references from manifest")?;
+    let manifest = DeploymentManifest::try_from_toml(deployment_toml, &cas_deployment_dir())
+        .context("cannot read deployment file references from manifest")?;
 
     // A referenced digest already in the CAS need not be attached to the request.
     let cas = db_pool.cas_conn().await.map_err(anyhow::Error::from)?;
