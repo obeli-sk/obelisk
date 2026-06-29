@@ -964,7 +964,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                 grpc_gen::execution_event::Unlocked {
                     reason: unlocked.reason.to_string(),
                     backoff_expires_at: Some(prost_wkt_types::Timestamp::from(
-                        unlocked.backoff_expires_at,
+                        unlocked.unlocked_at,
                     )),
                 },
             ),
@@ -1128,7 +1128,7 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
             }),
             grpc_gen::execution_event::Event::Unlocked(unlocked) => {
                 ExecutionRequest::Unlocked(Unlocked {
-                    backoff_expires_at: unlocked
+                    unlocked_at: unlocked
                         .backoff_expires_at
                         .argument_must_exist("backoff_expires_at")?
                         .into(),

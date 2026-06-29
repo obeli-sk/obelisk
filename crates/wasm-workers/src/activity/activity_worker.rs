@@ -192,7 +192,7 @@ impl Worker for ActivityWorker {
 
         let interrupt_token = self
             .cancel_registry
-            .obtain_interrupt_token(ctx.execution_id.clone());
+            .activity_obtain_interrupt_token(ctx.execution_id.clone());
         let mut executor_close_watcher = ctx.executor_close_watcher.clone();
 
         let (mut store, deadline_duration) = match self.create_store(ctx, started_at) {
@@ -310,7 +310,15 @@ impl ActivityWorker {
         }
 
         // Configure epoch callback to yield to tokio periodically.
-        store.epoch_deadline_async_yield_and_update(1);
+        // Unlike `epoch_deadline_async_yield_and_update` (which yields via wasmtime's
+        // runtime-agnostic yield), `tokio::task::yield_now()` cooperates with tokio's
+        // task budget so the fiber yields fairly to other tokio tasks on the worker.
+        store.epoch_deadline_callback(|_store_ctx| {
+            Ok(wasmtime::UpdateDeadline::YieldCustom(
+                1,
+                Box::pin(tokio::task::yield_now()),
+            ))
+        });
 
         let deadline_delta = lock_expires_at - started_at;
         let Ok(deadline_duration) = deadline_delta.to_std() else {

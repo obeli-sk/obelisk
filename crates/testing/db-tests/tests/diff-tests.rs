@@ -180,7 +180,7 @@ fn normalize_timestamps(
             locked.lock_expires_at = arbitrary_valid_datetime(unstructured)?;
         }
         ExecutionRequest::Unlocked(unlocked) => {
-            unlocked.backoff_expires_at = arbitrary_valid_datetime(unstructured)?;
+            unlocked.unlocked_at = arbitrary_valid_datetime(unstructured)?;
         }
         ExecutionRequest::TemporarilyFailed {
             backoff_expires_at,

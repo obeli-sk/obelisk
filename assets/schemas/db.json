@@ -402,7 +402,7 @@
       "type": "object",
       "properties": {
         "backoff_expires_at": {
-          "description": "Instant used when releasing a currently locked execution back to\n[`PendingState::PendingAt`]. This field keeps the released JSON and gRPC name.",
+          "description": "Instant used when releasing a currently locked execution back to [`PendingState::PendingAt`].",
           "type": "string",
           "format": "date-time"
         },

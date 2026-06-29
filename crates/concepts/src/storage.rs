@@ -439,11 +439,11 @@ pub enum ComponentUpgradeReason {
     Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
-#[display("{reason}, pending at {backoff_expires_at}")]
+#[display("{reason}, pending at {unlocked_at}")]
 pub struct Unlocked {
-    /// Instant used when releasing a currently locked execution back to
-    /// [`PendingState::PendingAt`]. This field keeps the released JSON and gRPC name.
-    pub backoff_expires_at: DateTime<Utc>,
+    /// Instant used when releasing a currently locked execution back to [`PendingState::PendingAt`].
+    #[serde(rename = "backoff_expires_at")] // backcompat
+    pub unlocked_at: DateTime<Utc>,
     #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
     pub reason: StrVariant,
 }

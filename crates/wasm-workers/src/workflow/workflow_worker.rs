@@ -660,6 +660,10 @@ impl WorkflowWorker {
         store.epoch_deadline_callback(|store_ctx| {
             let ctx = store_ctx.data();
             match ctx.check_epoch_callback() {
+                // `UpdateDeadline::Yield` performs wasmtime's runtime-agnostic yield
+                // (wake self, return `Pending` once), which does not cooperate with
+                // tokio's cooperative task budget. `tokio::task::yield_now()` does, so
+                // the fiber yields fairly to other tokio tasks on the same worker.
                 Ok(()) => Ok(wasmtime::UpdateDeadline::YieldCustom(
                     1,
                     Box::pin(tokio::task::yield_now()),
@@ -1334,7 +1338,7 @@ impl WorkflowWorker {
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: created_at,
+                                unlocked_at: created_at,
                                 reason: "auto-upgrade failed".into(),
                             }),
                         },
@@ -1368,7 +1372,7 @@ impl WorkflowWorker {
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: created_at,
+                                unlocked_at: created_at,
                                 reason: "auto-upgrade failed".into(),
                             }),
                         },
@@ -1428,7 +1432,7 @@ impl WorkflowWorker {
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: created_at,
+                                unlocked_at: created_at,
                                 reason: "auto-upgrade succeeded".into(),
                             }),
                         },

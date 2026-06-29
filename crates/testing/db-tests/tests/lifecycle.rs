@@ -346,13 +346,13 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
 
     // The Executor / Worker responds with a Unlock
     let backoff = Duration::from_millis(500);
-    let backoff_expires_at = sim_clock.now() + backoff;
+    let unlocked_at = sim_clock.now() + backoff;
     let _version = {
         let created_at = sim_clock.now();
         info!(now = %created_at, "unlock");
         let req = AppendRequest {
             event: ExecutionRequest::Unlocked(Unlocked {
-                backoff_expires_at,
+                unlocked_at,
                 reason: StrVariant::Static("reason"),
             }),
             created_at,
@@ -389,7 +389,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
         assert!(locked_executions.is_empty());
     }
 
-    sim_clock.move_time_to(backoff_expires_at);
+    sim_clock.move_time_to(unlocked_at);
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Locking exactly at `backoff_expires_at` should succeed");
@@ -1839,7 +1839,7 @@ async fn cannot_append_unlocked_to_blocked_execution(database: Database) {
             AppendRequest {
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::Unlocked(Unlocked {
-                    backoff_expires_at: sim_clock.now(),
+                    unlocked_at: sim_clock.now(),
                     reason: "should fail".into(),
                 }),
             },
@@ -1901,7 +1901,7 @@ async fn cannot_append_unlocked_to_paused_execution(database: Database) {
             AppendRequest {
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::Unlocked(Unlocked {
-                    backoff_expires_at: sim_clock.now(),
+                    unlocked_at: sim_clock.now(),
                     reason: "should fail".into(),
                 }),
             },
@@ -2396,8 +2396,8 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
     assert_eq!(Some(found_locked_by.clone()), paused_pending_at.1);
     let reason = assert_matches!(
         &log.events[2].event,
-        ExecutionRequest::Unlocked(Unlocked { backoff_expires_at, reason }) => {
-            assert_eq!(&paused_at, backoff_expires_at);
+        ExecutionRequest::Unlocked(Unlocked { unlocked_at, reason }) => {
+            assert_eq!(&paused_at, unlocked_at);
             reason
         }
     );
@@ -2623,7 +2623,7 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
             AppendRequest {
                 created_at,
                 event: ExecutionRequest::Unlocked(Unlocked {
-                    backoff_expires_at: created_at,
+                    unlocked_at: created_at,
                     reason: "paused".into(),
                 }),
             },

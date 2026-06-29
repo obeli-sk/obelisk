@@ -38,11 +38,11 @@ impl PreparedDeploymentManifest {
     }
 }
 
-/// Parse a verbatim manifest and canonicalize it using the supplied file provider.
+/// Parse a verbatim manifest and resolve it using the supplied file provider.
 ///
 /// `deployment_dir` remains explicit until later slices move all `${DEPLOYMENT_DIR}` and
 /// WASM path resolution to the runtime environment.
-pub(crate) async fn manifest_to_canonical(
+pub(crate) async fn manifest_to_resolved(
     deployment_toml: &str,
     deployment_dir: &Path,
     provider: &dyn FileProvider,
@@ -597,7 +597,7 @@ pub(crate) async fn manifest_file_to_canonical(
     let provider = DiskProvider {
         deployment_dir: deployment_dir.clone(),
     };
-    manifest_to_canonical(&deployment_toml, &deployment_dir, &provider).await
+    manifest_to_resolved(&deployment_toml, &deployment_dir, &provider).await
 }
 
 #[cfg(test)]
@@ -859,7 +859,7 @@ ffqn = "ns:pkg/ifc.fn"
             deployment_dir: dir.path().to_path_buf(),
         };
 
-        let canonical = manifest_to_canonical(manifest, dir.path(), &provider)
+        let canonical = manifest_to_resolved(manifest, dir.path(), &provider)
             .await
             .unwrap();
 

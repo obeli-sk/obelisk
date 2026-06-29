@@ -110,7 +110,7 @@ pub(crate) async fn tick(
                         primary_event: AppendRequest {
                             created_at: executed_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: executed_at,
+                                unlocked_at: executed_at,
                                 reason: "made progress".into(),
                             }),
                         },

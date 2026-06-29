@@ -1705,8 +1705,16 @@ impl WebhookEndpointCtx {
                 .expect("engine must have `consume_fuel` enabled");
         }
 
-        // Yield to tokio periodically
-        store.epoch_deadline_async_yield_and_update(1);
+        // Yield to tokio periodically. `tokio::task::yield_now()` cooperates with
+        // tokio's task budget (unlike `epoch_deadline_async_yield_and_update`, which
+        // yields via wasmtime's runtime-agnostic yield), so the fiber yields fairly
+        // to other tokio tasks on the worker.
+        store.epoch_deadline_callback(|_store_ctx| {
+            Ok(wasmtime::UpdateDeadline::YieldCustom(
+                1,
+                Box::pin(tokio::task::yield_now()),
+            ))
+        });
         store
     }
 

@@ -2280,7 +2280,7 @@ async fn append(
                         tx,
                         execution_id,
                         combined_state.execution_with_state.component_digest,
-                        unlocked.backoff_expires_at,
+                        unlocked.unlocked_at,
                         &appending_version,
                     )
                     .await?;
@@ -5070,7 +5070,7 @@ impl DbExternalApi for PostgresConnection {
                 AppendRequest {
                     created_at: paused_at,
                     event: ExecutionRequest::Unlocked(Unlocked {
-                        backoff_expires_at: paused_at,
+                        unlocked_at: paused_at,
                         reason: "paused".into(),
                     }),
                 },
