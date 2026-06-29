@@ -61,6 +61,7 @@ use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
 use anyhow::bail;
+use chrono::Utc;
 use concepts::ComponentId;
 use concepts::ComponentType;
 use concepts::ContentDigest;
@@ -85,6 +86,7 @@ use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
 use concepts::storage::DeploymentComponentRecord;
+use concepts::storage::DeploymentFileRecord;
 use concepts::storage::EnqueueOutcome;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
@@ -1272,16 +1274,17 @@ async fn materialize_wasm_location(
     Ok(())
 }
 
-async fn insert_and_activate_deployment(
+/// Upload a new deployment's file blobs to the CAS and build its Inactive [`DeploymentRecord`]
+/// without inserting it. Deferring the insert until after a successful
+/// compile with [`DbExternalApi::insert_deployment_with_components`]
+/// means startup, like submit, never persists a deployment that failed verification.
+async fn prepare_new_deployment_record(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_id: DeploymentId,
     deployment_toml: String,
     files: Vec<DeploymentManifestFile>,
     description: Option<String>,
-) -> anyhow::Result<()> {
-    use chrono::Utc;
-    use concepts::storage::{DeploymentFileRecord, DeploymentRecord, DeploymentStatus};
-
+) -> anyhow::Result<DeploymentRecord> {
     // Upload referenced blobs to the CAS first, so a later restart can canonicalize from it.
     let cas = db_pool
         .cas_conn()
@@ -1298,33 +1301,20 @@ async fn insert_and_activate_deployment(
         });
     }
 
-    let api_conn = db_pool
-        .external_api_conn()
-        .await
-        .context("cannot get external api connection for deployment activation")?;
-
     let now = Utc::now();
     let digest = DeploymentRecord::compute_digest(&deployment_toml);
-    api_conn
-        .insert_deployment(DeploymentRecord {
-            deployment_id,
-            description,
-            digest,
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            deployment_toml,
-            obelisk_version: PKG_VERSION.to_string(),
-            created_by: Some("server".to_string()),
-            files: file_records,
-        })
-        .await
-        .context("cannot insert deployment")?;
-    api_conn
-        .activate_deployment(deployment_id, Utc::now())
-        .await
-        .context("cannot activate deployment")?;
-    Ok(())
+    Ok(DeploymentRecord {
+        deployment_id,
+        description,
+        digest,
+        created_at: now,
+        last_active_at: None,
+        status: DeploymentStatus::Inactive,
+        deployment_toml,
+        obelisk_version: PKG_VERSION.to_string(),
+        created_by: Some("server".to_string()),
+        files: file_records,
+    })
 }
 
 type DbClose = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -1418,68 +1408,70 @@ pub(crate) async fn run_internal(
         }
     };
     let span = Span::current();
-    // Determine the deployment to compile and the active deployment_id.
-    let (active_deployment_id, deployment_canonical) = if let Some(deployment) = deployment {
-        // --deployment or `--deployment-empty` provided: insert and activate.
-        let new_deployment_id = DeploymentId::generate();
-        span.record("deployment_id", tracing::field::display(&new_deployment_id));
-        insert_and_activate_deployment(
-            &*db_pool,
-            new_deployment_id,
-            deployment.deployment_toml,
-            deployment.files,
-            description,
-        )
-        .await?;
-        info!("Activated new deployment");
-        (new_deployment_id, deployment.canonical)
-    } else {
-        // No --deployment: pick up from the DB.
-        // Activate any Enqueued deployment (queued for this restart), then use active.
-        let conn = db_pool
-            .external_api_conn()
-            .await
-            .context("cannot get db connection for deployment lookup")?;
-        if let Some(record) = conn
-            .get_current_deployment()
-            .await
-            .context("cannot query current deployment")?
-        {
-            if record.status == concepts::storage::DeploymentStatus::Enqueued {
-                conn.activate_deployment(record.deployment_id, chrono::Utc::now())
-                    .await
-                    .context("cannot activate enqueued deployment")?;
-            }
-            let canonical =
-                deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
-            span.record(
-                "deployment_id",
-                tracing::field::display(&record.deployment_id),
-            );
-            if record.status == concepts::storage::DeploymentStatus::Enqueued {
-                info!("Activated enqueued deployment");
-            } else {
-                info!("Using the currently active deployment");
-            }
-
-            (record.deployment_id, canonical)
-        } else {
+    let (active_deployment_id, deployment_canonical, new_deployment_record) =
+        if let Some(deployment) = deployment {
+            // --deployment or `--deployment-empty` provided: prepare, insert+activate after compile.
             let new_deployment_id = DeploymentId::generate();
             span.record("deployment_id", tracing::field::display(&new_deployment_id));
-
-            info!("No deployment found in DB; starting with empty deployment");
-            insert_and_activate_deployment(
+            let record = prepare_new_deployment_record(
                 &*db_pool,
                 new_deployment_id,
-                String::new(),
-                Vec::new(),
-                None,
+                deployment.deployment_toml,
+                deployment.files,
+                description,
             )
             .await?;
+            (new_deployment_id, deployment.canonical, Some(record))
+        } else {
+            // No --deployment: pick up from the DB.
+            // Activate any Enqueued deployment (queued for this restart), then use active.
+            let conn = db_pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment lookup")?;
+            if let Some(record) = conn
+                .get_current_deployment()
+                .await
+                .context("cannot query current deployment")?
+            {
+                if record.status == concepts::storage::DeploymentStatus::Enqueued {
+                    conn.activate_deployment(record.deployment_id, chrono::Utc::now())
+                        .await
+                        .context("cannot activate enqueued deployment")?;
+                }
+                let canonical =
+                    deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
+                span.record(
+                    "deployment_id",
+                    tracing::field::display(&record.deployment_id),
+                );
+                if record.status == concepts::storage::DeploymentStatus::Enqueued {
+                    info!("Activated enqueued deployment");
+                } else {
+                    info!("Using the currently active deployment");
+                }
 
-            (new_deployment_id, DeploymentResolved::default())
-        }
-    };
+                (record.deployment_id, canonical, None)
+            } else {
+                let new_deployment_id = DeploymentId::generate();
+                span.record("deployment_id", tracing::field::display(&new_deployment_id));
+                info!("No deployment found in DB; starting with empty deployment");
+                let record = prepare_new_deployment_record(
+                    &*db_pool,
+                    new_deployment_id,
+                    String::new(),
+                    Vec::new(),
+                    None,
+                )
+                .await?;
+
+                (
+                    new_deployment_id,
+                    DeploymentResolved::default(),
+                    Some(record),
+                )
+            }
+        };
     let engines = create_engines(&config, &prepared_dirs)?;
     let server_verified = server_verify(config, engines).await?;
     let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
@@ -1502,16 +1494,26 @@ pub(crate) async fn run_internal(
     ))
     .instrument(span.clone())
     .await?;
-    let api_conn = db_pool
-        .external_api_conn()
-        .await
-        .context("cannot get db connection for component metadata persistence")?;
-    persist_deployment_component_metadata(
-        api_conn.as_ref(),
-        active_deployment_id,
-        &compiled_and_linked.component_registry_ro,
-    )
-    .await?;
+    // Persist a freshly created deployment only now that it has compiled and verified, matching the submit path.
+    if let Some(record) = new_deployment_record {
+        let api_conn = db_pool
+            .external_api_conn()
+            .await
+            .context("cannot get db connection for deployment insertion")?;
+        let (component_metadata, deployment_components) = build_component_metadata_records(
+            active_deployment_id,
+            &compiled_and_linked.component_registry_ro,
+        );
+        api_conn
+            .insert_deployment_with_components(record, component_metadata, deployment_components)
+            .await
+            .context("cannot insert deployment")?;
+        api_conn
+            .activate_deployment(active_deployment_id, chrono::Utc::now())
+            .await
+            .context("cannot activate deployment")?;
+        info!("Activated new deployment");
+    }
 
     let cancel_registry = CancelRegistry::new();
     let subscription_interruption = database.get_subscription_interruption();
@@ -1994,22 +1996,6 @@ fn build_component_metadata_records(
         metadata_by_digest.into_values().collect(),
         deployment_components,
     )
-}
-
-pub(crate) async fn persist_deployment_component_metadata(
-    conn: &dyn DbExternalApi,
-    deployment_id: DeploymentId,
-    component_registry_ro: &ComponentConfigRegistryRO,
-) -> anyhow::Result<()> {
-    let (component_metadata, deployment_components) =
-        build_component_metadata_records(deployment_id, component_registry_ro);
-    conn.upsert_component_metadata(component_metadata)
-        .await
-        .context("cannot insert component metadata")?;
-    conn.insert_deployment_components(deployment_id, deployment_components)
-        .await
-        .context("cannot insert deployment components")?;
-    Ok(())
 }
 
 /// Per-file size limit for deployment-owned blobs attached to a submit request.
