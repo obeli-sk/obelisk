@@ -2544,6 +2544,41 @@ async fn prepare_switch_deployment(
     })
 }
 
+/// Spawn the executor tasks for `deployment_id` and assemble its `DeploymentContext`.
+/// Shared by initial startup ([`spawn_tasks_and_threads`]) and hot redeploy
+/// ([`switch_hot_redeploy`]) so the two paths cannot drift. Webhook-registry wiring
+/// (create vs swap) and where the context is stored differ and stay at the call sites.
+fn spawn_deployment_context(
+    deployment_id: DeploymentId,
+    workers_linked: Vec<WorkerLinked>,
+    component_registry_ro: ComponentConfigRegistryRO,
+    db_pool: &Arc<dyn DbPool>,
+    cancel_registry: &CancelRegistry,
+    log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+) -> DeploymentContext {
+    let mut exec_task_handles: Vec<ExecutorTaskHandle> = Vec::with_capacity(workers_linked.len());
+    let mut replay_workers = ReplayWorkerRegistry::default();
+    for pre_spawn in workers_linked {
+        let (handle, replay_entry) = pre_spawn.spawn(
+            deployment_id,
+            db_pool,
+            cancel_registry.clone(),
+            log_forwarder_sender,
+        );
+        exec_task_handles.push(handle);
+        if let Some((component_id, worker)) = replay_entry {
+            replay_workers.insert(component_id, worker);
+        }
+    }
+    DeploymentContext {
+        deployment_id,
+        component_registry_ro,
+        exec_task_handles,
+        replay_workers: Arc::new(replay_workers),
+        closed: false,
+    }
+}
+
 /// Write lock pretected switch to the new deployment
 #[instrument(skip_all, fields(%deployment_id))]
 async fn switch_hot_redeploy(
@@ -2584,29 +2619,14 @@ async fn switch_hot_redeploy(
             .map(|(http_server, (_instance, state))| (http_server.name.to_string(), state.clone())),
     );
 
-    let mut new_handles: Vec<ExecutorTaskHandle> =
-        Vec::with_capacity(server_compiled_linked.workers_linked.len());
-    let mut replay_workers = ReplayWorkerRegistry::default();
-    for pre_spawn in server_compiled_linked.workers_linked {
-        let (handle, replay_entry) = pre_spawn.spawn(
-            deployment_id,
-            &db_pool,
-            cancel_registry.clone(),
-            &log_forwarder_sender,
-        );
-        new_handles.push(handle);
-        if let Some((component_id, worker)) = replay_entry {
-            replay_workers.insert(component_id, worker);
-        }
-    }
-
-    *write_guard_ctx = DeploymentContext {
+    *write_guard_ctx = spawn_deployment_context(
         deployment_id,
-        component_registry_ro: server_compiled_linked.component_registry_ro.clone(),
-        exec_task_handles: new_handles,
-        replay_workers: Arc::new(replay_workers),
-        closed: false,
-    };
+        server_compiled_linked.workers_linked,
+        server_compiled_linked.component_registry_ro,
+        &db_pool,
+        &cancel_registry,
+        &log_forwarder_sender,
+    );
 
     info!(%deployment_id, "Switched to new deployment");
     Ok(SwitchOutcome::Switched)
@@ -2715,23 +2735,6 @@ async fn spawn_tasks_and_threads(
         (log_forwarder_sender, log_db_forarder)
     };
 
-    // Spawn executors
-    let mut exec_join_handles: Vec<ExecutorTaskHandle> =
-        Vec::with_capacity(server_compiled_linked.workers_linked.len());
-    let mut replay_workers = ReplayWorkerRegistry::default();
-    for pre_spawn in server_compiled_linked.workers_linked {
-        let (handle, replay_entry) = pre_spawn.spawn(
-            deployment_id,
-            &db_pool,
-            cancel_registry.clone(),
-            &log_forwarder_sender,
-        );
-        exec_join_handles.push(handle);
-        if let Some((component_id, worker)) = replay_entry {
-            replay_workers.insert(component_id, worker);
-        }
-    }
-
     let webhook_registry = WebhookRegistry::new(
         server_compiled_linked
             .http_servers_to_webhooks_and_state
@@ -2755,13 +2758,14 @@ async fn spawn_tasks_and_threads(
     )
     .await?;
     let deployment_ctx: DeploymentContextHandle =
-        Arc::new(tokio::sync::RwLock::new(DeploymentContext {
+        Arc::new(tokio::sync::RwLock::new(spawn_deployment_context(
             deployment_id,
-            component_registry_ro: server_compiled_linked.component_registry_ro,
-            exec_task_handles: exec_join_handles,
-            replay_workers: Arc::new(replay_workers),
-            closed: false,
-        }));
+            server_compiled_linked.workers_linked,
+            server_compiled_linked.component_registry_ro,
+            &db_pool,
+            cancel_registry,
+            &log_forwarder_sender,
+        )));
     let server_init = ServerInit {
         server_verified,
         deployment_ctx,
