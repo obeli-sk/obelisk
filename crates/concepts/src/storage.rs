@@ -1507,6 +1507,17 @@ pub trait DbExternalApi: DbConnection {
     /// `last_active_at == None`; activation is a separate step via [`Self::activate_deployment`].
     async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite>;
 
+    /// [`Self::insert_deployment`] + [`Self::upsert_component_metadata`] +
+    /// [`Self::insert_deployment_components`] in a single transaction, so the deployment row
+    /// and its component rows commit together or not at all. Same preconditions as
+    /// [`Self::insert_deployment`].
+    async fn insert_deployment_with_components(
+        &self,
+        record: DeploymentRecord,
+        component_metadata: Vec<ComponentMetadataRecord>,
+        deployment_components: Vec<DeploymentComponentRecord>,
+    ) -> Result<(), DbErrorWrite>;
+
     /// Return deployment file digests referenced by this deployment but absent from the CAS.
     ///
     /// Blob bytes themselves are stored and fetched through the separate [`crate::cas::Cas`]

@@ -371,6 +371,97 @@ async fn list_deployment_files_tx(
         .collect()
 }
 
+async fn insert_deployment_tx(
+    tx: &Transaction<'_>,
+    record: &DeploymentRecord,
+) -> Result<(), DbErrorWrite> {
+    assert_eq!(
+        record.status,
+        DeploymentStatus::Inactive,
+        "insert_deployment requires Inactive status"
+    );
+    assert!(
+        record.last_active_at.is_none(),
+        "insert_deployment requires last_active_at == None"
+    );
+    let digest = record.digest.to_string();
+    tx.execute(
+        "INSERT INTO t_deployment \
+         (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        &[
+            &record.deployment_id.to_string(), // $1
+            &record.description,               // $2
+            &digest,                           // $3
+            &record.created_at,                // $4
+            &record.status.as_str(),           // $5
+            &record.deployment_toml,           // $6
+            &record.obelisk_version,           // $7
+            &record.created_by,                // $8
+        ],
+    )
+    .await?;
+    for file in &record.files {
+        tx.execute(
+            "INSERT INTO t_deployment_file (deployment_id, digest, path) VALUES ($1, $2, $3)",
+            &[
+                &record.deployment_id.to_string(),
+                &file.digest.to_string(),
+                &file.path,
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn upsert_component_metadata_tx(
+    tx: &Transaction<'_>,
+    records: &[ComponentMetadataRecord],
+) -> Result<(), DbErrorWrite> {
+    for record in records {
+        tx.execute(
+            "INSERT INTO t_component_metadata \
+             (component_digest, imports_json, exports_json, wit, wit_origin) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (component_digest) DO NOTHING",
+            &[
+                &record.component_digest.as_slice(),
+                &Json(&record.imports),
+                &Json(&record.exports),
+                &record.wit,
+                &record.wit_origin,
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn insert_deployment_components_tx(
+    tx: &Transaction<'_>,
+    deployment_id: DeploymentId,
+    records: &[DeploymentComponentRecord],
+) -> Result<(), DbErrorWrite> {
+    for record in records {
+        debug_assert_eq!(record.deployment_id, deployment_id);
+        tx.execute(
+            "INSERT INTO t_deployment_component \
+             (deployment_id, component_name, component_type, component_digest) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (deployment_id, component_name) DO NOTHING",
+            &[
+                &deployment_id.to_string(),
+                &record.component_name.to_string(),
+                &record.component_type.to_string(),
+                &record.component_digest.as_slice(),
+            ],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 async fn deployment_record_with_files_tx(
     tx: &Transaction<'_>,
     mut record: DeploymentRecord,
@@ -4505,22 +4596,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        for record in records {
-            tx.execute(
-                "INSERT INTO t_component_metadata \
-                 (component_digest, imports_json, exports_json, wit, wit_origin) \
-                 VALUES ($1, $2, $3, $4, $5) \
-                 ON CONFLICT (component_digest) DO NOTHING",
-                &[
-                    &record.component_digest.as_slice(),
-                    &Json(&record.imports),
-                    &Json(&record.exports),
-                    &record.wit,
-                    &record.wit_origin,
-                ],
-            )
-            .await?;
-        }
+        upsert_component_metadata_tx(&tx, &records).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -4533,22 +4609,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        for record in records {
-            debug_assert_eq!(record.deployment_id, deployment_id);
-            tx.execute(
-                "INSERT INTO t_deployment_component \
-                 (deployment_id, component_name, component_type, component_digest) \
-                 VALUES ($1, $2, $3, $4) \
-                 ON CONFLICT (deployment_id, component_name) DO NOTHING",
-                &[
-                    &deployment_id.to_string(),
-                    &record.component_name.to_string(),
-                    &record.component_type.to_string(),
-                    &record.component_digest.as_slice(),
-                ],
-            )
-            .await?;
-        }
+        insert_deployment_components_tx(&tx, deployment_id, &records).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -4754,45 +4815,26 @@ impl DbExternalApi for PostgresConnection {
 
     #[instrument(skip(self))]
     async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite> {
-        assert_eq!(
-            record.status,
-            DeploymentStatus::Inactive,
-            "insert_deployment requires Inactive status"
-        );
-        assert!(
-            record.last_active_at.is_none(),
-            "insert_deployment requires last_active_at == None"
-        );
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        let digest = record.digest.to_string();
-        tx.execute(
-            "INSERT INTO t_deployment \
-             (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-            &[
-                &record.deployment_id.to_string(), // $1
-                &record.description,               // $2
-                &digest,                           // $3
-                &record.created_at,                // $4
-                &record.status.as_str(),           // $5
-                &record.deployment_toml,               // $6
-                &record.obelisk_version,           // $7
-                &record.created_by,                // $8
-            ],
-        )
-        .await?;
-        for file in &record.files {
-            tx.execute(
-                "INSERT INTO t_deployment_file (deployment_id, digest, path) VALUES ($1, $2, $3)",
-                &[
-                    &record.deployment_id.to_string(),
-                    &file.digest.to_string(),
-                    &file.path,
-                ],
-            )
-            .await?;
-        }
+        insert_deployment_tx(&tx, &record).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn insert_deployment_with_components(
+        &self,
+        record: DeploymentRecord,
+        component_metadata: Vec<ComponentMetadataRecord>,
+        deployment_components: Vec<DeploymentComponentRecord>,
+    ) -> Result<(), DbErrorWrite> {
+        let deployment_id = record.deployment_id;
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        // Parent row first so the t_deployment_component FK is satisfied within the tx.
+        insert_deployment_tx(&tx, &record).await?;
+        upsert_component_metadata_tx(&tx, &component_metadata).await?;
+        insert_deployment_components_tx(&tx, deployment_id, &deployment_components).await?;
         tx.commit().await?;
         Ok(())
     }

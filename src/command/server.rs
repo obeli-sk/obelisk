@@ -2310,31 +2310,36 @@ pub(crate) async fn submit_deployment(
 
     let now = chrono::Utc::now();
 
-    conn.insert_deployment(DeploymentRecord {
-        deployment_id,
-        description,
-        digest: digest.clone(),
-        created_at: now,
-        last_active_at: None,
-        status: DeploymentStatus::Inactive,
-        obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-        created_by,
-        deployment_toml: deployment_toml.to_string(),
-        files: manifest.file_records(),
-    })
+    // Persist the deployment row together with its verified component metadata in a single
+    // transaction so the DB-backed ListComponents / GetWit see this deployment without waiting
+    // for a server restart, and so the submit is cancel-safe: this future runs inline in the
+    // request handler and is dropped if the client disconnects, so the row that makes a
+    // deployment queryable and its component rows must commit together or not at all.
+    // Verification above already compiled and linked every component.
+    let (component_metadata, deployment_components) =
+        build_component_metadata_records(deployment_id, &compiled_linked.component_registry_ro);
+    conn.insert_deployment_with_components(
+        DeploymentRecord {
+            deployment_id,
+            description,
+            digest: digest.clone(),
+            created_at: now,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
+            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+            created_by,
+            deployment_toml: deployment_toml.to_string(),
+            files: manifest.file_records(),
+        },
+        component_metadata,
+        deployment_components,
+    )
     .await
     .map_err(anyhow::Error::from)?;
 
-    // Persist the verified component metadata and backtrace sources so the DB-backed
-    // ListComponents / GetBacktraceSource see this deployment without waiting for a
-    // server restart. Verification above already compiled and linked every component.
-    persist_deployment_component_metadata(
-        conn.as_ref(),
-        deployment_id,
-        &compiled_linked.component_registry_ro,
-    )
-    .await
-    .map_err(SubmitDeploymentError::Other)?;
+    // Backtrace sources are content-addressed and deployment-independent (keyed by component
+    // digest), only consulted once a component runs and produces a backtrace, so they are
+    // persisted outside the deployment transaction; a partial set self-heals on re-persist.
     upsert_backtrace_sources(conn.as_ref(), &compiled_linked).await;
 
     // Only cache strict-verified artifacts. A hot redeploy is always strict, so an
