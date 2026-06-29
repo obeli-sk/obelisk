@@ -140,7 +140,7 @@ impl Worker for CronWorker {
                 AppendRequest {
                     created_at: now,
                     event: ExecutionRequest::Unlocked(Unlocked {
-                        backoff_expires_at: next_fire,
+                        unlocked_at: next_fire,
                         reason: "cron".into(),
                     }),
                 }

@@ -2194,7 +2194,7 @@ impl SqlitePool {
                                 execution_id,
                                 &appending_version,
                                 PendingAfterEventUpdate {
-                                    scheduled_at: unlocked.backoff_expires_at,
+                                    scheduled_at: unlocked.unlocked_at,
                                     intermittent_failure: false,
                                     component_input_digest: combined_state
                                         .execution_with_state
@@ -3799,7 +3799,7 @@ impl SqlitePool {
                 AppendRequest {
                     created_at: paused_at,
                     event: ExecutionRequest::Unlocked(Unlocked {
-                        backoff_expires_at: paused_at, // does not matter, about to append `Paused` in same tx.
+                        unlocked_at: paused_at, // does not matter, about to append `Paused` in same tx.
                         reason: "paused".into(),
                     }),
                 },

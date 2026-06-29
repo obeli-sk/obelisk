@@ -1334,7 +1334,7 @@ impl WorkflowWorker {
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: created_at,
+                                unlocked_at: created_at,
                                 reason: "auto-upgrade failed".into(),
                             }),
                         },
@@ -1368,7 +1368,7 @@ impl WorkflowWorker {
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: created_at,
+                                unlocked_at: created_at,
                                 reason: "auto-upgrade failed".into(),
                             }),
                         },
@@ -1428,7 +1428,7 @@ impl WorkflowWorker {
                         AppendRequest {
                             created_at,
                             event: ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: created_at,
+                                unlocked_at: created_at,
                                 reason: "auto-upgrade succeeded".into(),
                             }),
                         },

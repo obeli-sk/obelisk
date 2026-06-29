@@ -712,7 +712,7 @@ impl ExecTask {
                 let (primary_event, child_finished, version) = match err {
                     WorkerError::ExecutorClosing(version) => {
                         let primary_event = ExecutionRequest::Unlocked(Unlocked {
-                            backoff_expires_at: result_obtained_at,
+                            unlocked_at: result_obtained_at,
                             reason: "executor closing".into(),
                         });
                         (primary_event, None, version)
@@ -825,7 +825,7 @@ impl ExecTask {
                         );
                         (
                             ExecutionRequest::Unlocked(Unlocked {
-                                backoff_expires_at: expires_at,
+                                unlocked_at: expires_at,
                                 reason: StrVariant::from(reason),
                             }),
                             None,

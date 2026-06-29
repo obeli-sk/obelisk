@@ -398,7 +398,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             ExecutionRequest::Locked(locked)
         }
         ExecutionRequest::Unlocked(mut unlocked) => {
-            unlocked.backoff_expires_at = DateTime::UNIX_EPOCH;
+            unlocked.unlocked_at = DateTime::UNIX_EPOCH;
             ExecutionRequest::Unlocked(unlocked)
         }
         ExecutionRequest::ComponentUpgradeFinished {
