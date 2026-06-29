@@ -2154,7 +2154,6 @@ pub(crate) enum RuntimeConfigCheck {
     /// Missing environment variables or secrets are tolerated.
     AllowMissing,
 }
-
 impl RuntimeConfigCheck {
     fn ignore_missing_env_vars(self) -> bool {
         self == RuntimeConfigCheck::AllowMissing
@@ -3224,7 +3223,7 @@ async fn compile_and_link(
     });
     let parent_span = Span::current();
 
-    // TODO: other components are not compiled in parallel.
+    // JS runtimes are compiled in parallel, then all other WASM components.
     let activity_js_runnable = if let Some(first_activity_js) = activities_js.first() {
         let engine = engines.activity_engine.clone();
         let build_semaphore = build_semaphore.clone();
@@ -3239,15 +3238,11 @@ async fn compile_and_link(
                 RunnableComponent::new(&wasm_path, &engine, component_type)
                     .context("cannot compile activity-js-runtime")
             })
-        })
-        .await
-        .context("panic while compiling activity-js-runtime")?;
+        });
         Some(runnable)
     } else {
         None
-    }
-    .transpose()?;
-
+    };
     let workflow_js_runnable = if let Some(first_workflow_js) = workflows_js.first() {
         let engine = engines.workflow_engine.clone();
         let build_semaphore = build_semaphore.clone();
@@ -3261,15 +3256,11 @@ async fn compile_and_link(
                 RunnableComponent::new(&wasm_path, &engine, ComponentType::Workflow)
                     .context("cannot compile workflow-js-runtime")
             })
-        })
-        .await
-        .context("panic while compiling workflow-js-runtime")?;
+        });
         Some(runnable)
     } else {
         None
-    }
-    .transpose()?;
-
+    };
     let webhook_js_runnable = if let Some((_, first_webhook_js)) = webhooks_js_by_names.first() {
         let engine = engines.webhook_engine.clone();
         let build_semaphore = build_semaphore.clone();
@@ -3283,14 +3274,24 @@ async fn compile_and_link(
                 RunnableComponent::new(&wasm_path, &engine, ComponentType::WebhookEndpoint)
                     .context("cannot compile webhook-js-runtime")
             })
-        })
-        .await
-        .context("panic while compiling webhook-js-runtime")?;
+        });
         Some(runnable)
     } else {
         None
-    }
-    .transpose()?;
+    };
+
+    let activity_js_runnable = match activity_js_runnable {
+        Some(wasm) => Some(wasm.await??),
+        None => None,
+    };
+    let workflow_js_runnable = match workflow_js_runnable {
+        Some(wasm) => Some(wasm.await??),
+        None => None,
+    };
+    let webhook_js_runnable = match webhook_js_runnable {
+        Some(wasm) => Some(wasm.await??),
+        None => None,
+    };
 
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<CompiledComponent, anyhow::Error>>> = activities_wasm
         .into_iter()
