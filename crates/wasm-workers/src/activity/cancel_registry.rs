@@ -61,7 +61,7 @@ impl CancelRegistry {
         guard.retain(|_exe, info| !info.interrupt_sender.is_closed());
     }
 
-    pub(crate) fn obtain_interrupt_token(
+    pub(crate) fn activity_obtain_interrupt_token(
         &self,
         execution_id: ExecutionId,
     ) -> oneshot::Receiver<()> {
@@ -73,6 +73,7 @@ impl CancelRegistry {
 
     /// Best-effort local interrupt for an activity currently running in this process.
     /// Unlike `cancel_activity`, this does not write terminal cancellation state to the DB.
+    /// Noop if the execution is not an activity tracked by this registry.
     pub fn interrupt_running_activity(&self, execution_id: &ExecutionId) {
         let info = {
             let mut guard = self.tokens.lock().unwrap();

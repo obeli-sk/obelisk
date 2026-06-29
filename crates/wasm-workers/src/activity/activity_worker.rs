@@ -192,7 +192,7 @@ impl Worker for ActivityWorker {
 
         let interrupt_token = self
             .cancel_registry
-            .obtain_interrupt_token(ctx.execution_id.clone());
+            .activity_obtain_interrupt_token(ctx.execution_id.clone());
         let mut executor_close_watcher = ctx.executor_close_watcher.clone();
 
         let (mut store, deadline_duration) = match self.create_store(ctx, started_at) {
