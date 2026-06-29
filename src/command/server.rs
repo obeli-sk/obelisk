@@ -200,6 +200,13 @@ pub(crate) struct DeploymentSwitchManagerHandle {
     inner: Arc<DeploymentSwitchManager>,
 }
 
+/// Permit for the switch lane (hot redeploy / enqueue), held for its `Drop` which releases
+/// the slot. A distinct type from [`SubmitPermit`] so the two lanes cannot be mixed up.
+struct SwitchPermit(#[expect(dead_code)] OwnedSemaphorePermit);
+
+/// Permit for the submit lane, held for its `Drop` which releases a slot.
+struct SubmitPermit(#[expect(dead_code)] OwnedSemaphorePermit);
+
 struct DeploymentSwitchManager {
     /// Independent lane for submit, so a long hot switch does not block submissions.
     /// Holds `submit_concurrency` permits; `close()` drains all of them.
@@ -252,9 +259,9 @@ impl DeploymentSwitchManagerHandle {
         }
     }
 
-    fn try_acquire_switch_permit(&self) -> Result<OwnedSemaphorePermit, SwitchError> {
+    fn try_acquire_switch_permit(&self) -> Result<SwitchPermit, SwitchError> {
         match self.inner.switch_gate.clone().try_acquire_owned() {
-            Ok(permit) => Ok(permit),
+            Ok(permit) => Ok(SwitchPermit(permit)),
             Err(TryAcquireError::NoPermits) => Err(SwitchError::Busy),
             Err(TryAcquireError::Closed) => Err(SwitchError::Other(anyhow::anyhow!(
                 "server is being shut down"
@@ -262,9 +269,9 @@ impl DeploymentSwitchManagerHandle {
         }
     }
 
-    fn try_acquire_submit_permit(&self) -> Result<OwnedSemaphorePermit, SubmitDeploymentError> {
+    fn try_acquire_submit_permit(&self) -> Result<SubmitPermit, SubmitDeploymentError> {
         match self.inner.submit_lane.clone().try_acquire_owned() {
-            Ok(permit) => Ok(permit),
+            Ok(permit) => Ok(SubmitPermit(permit)),
             Err(TryAcquireError::NoPermits) => Err(SubmitDeploymentError::Busy),
             Err(TryAcquireError::Closed) => Err(SubmitDeploymentError::Other(anyhow::anyhow!(
                 "server is being shut down"
@@ -295,7 +302,7 @@ impl DeploymentSwitchManagerHandle {
     async fn spawn_critical_hot_switch(
         &self,
         prepared: PreparedDeploymentSwitch,
-        permit: OwnedSemaphorePermit,
+        switch_permit: SwitchPermit,
     ) -> Result<SwitchOutcome, SwitchError> {
         let (tx, rx) = oneshot::channel();
         let db_pool = self.inner.db_pool.clone();
@@ -307,7 +314,7 @@ impl DeploymentSwitchManagerHandle {
         // caller only stops observing the result. The permit is held until the task
         // finishes, which is what `close()` drains on during shutdown.
         tokio::spawn(async move {
-            let _permit = permit;
+            let _switch_permit = switch_permit;
             let result = switch_hot_redeploy(
                 prepared.compiled_linked,
                 prepared.deployment_id,
@@ -2390,7 +2397,7 @@ impl SwitchDeploymentAction {
 async fn enqueue_deployment_and_release(
     deployment_switch_manager: &DeploymentSwitchManagerHandle,
     deployment_id: DeploymentId,
-    permit: OwnedSemaphorePermit,
+    switch_permit: SwitchPermit,
 ) -> Result<EnqueueOutcome, SwitchError> {
     let db_conn = deployment_switch_manager
         .inner
@@ -2402,7 +2409,7 @@ async fn enqueue_deployment_and_release(
         .enqueue_deployment(deployment_id)
         .await
         .map_err(|e| SwitchError::Other(e.into()))?;
-    drop(permit);
+    drop(switch_permit);
     Ok(outcome)
 }
 
@@ -2422,7 +2429,7 @@ pub(crate) async fn switch_deployment(
 
     match action {
         SwitchDeploymentAction::Enqueue(_) => {
-            let permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
             if !deployment_already_active {
                 // Validate (compile + link) so the queued deployment is known-good against
                 // the current host before enqueuing. An already-active deployment is already
@@ -2439,9 +2446,12 @@ pub(crate) async fn switch_deployment(
             }
             // The outcome is decided inside the DB transaction, so it is authoritative even
             // if the active deployment changed since the read above.
-            let outcome =
-                enqueue_deployment_and_release(&deployment_switch_manager, deployment_id, permit)
-                    .await?;
+            let outcome = enqueue_deployment_and_release(
+                &deployment_switch_manager,
+                deployment_id,
+                switch_permit,
+            )
+            .await?;
             Ok(match outcome {
                 EnqueueOutcome::Enqueued => {
                     info!(%deployment_id, "Deployment enqueued for next restart");
@@ -2458,7 +2468,7 @@ pub(crate) async fn switch_deployment(
                 info!(%deployment_id, "Deployment switch no-op: deployment already active");
                 return Ok(SwitchOutcome::Switched);
             }
-            let permit = deployment_switch_manager.try_acquire_switch_permit()?;
+            let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
             let mut termination_watcher =
                 deployment_switch_manager.inner.termination_watcher.clone();
             let prepared = prepare_switch_deployment(
@@ -2486,7 +2496,7 @@ pub(crate) async fn switch_deployment(
                 .await
                 .map_err(|e| SwitchError::Other(e.into()))?;
             deployment_switch_manager
-                .spawn_critical_hot_switch(prepared, permit)
+                .spawn_critical_hot_switch(prepared, switch_permit)
                 .await
         }
     }
