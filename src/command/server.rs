@@ -2449,8 +2449,7 @@ async fn spawn_tasks_and_threads(
         None
     };
 
-    let cancel_watcher =
-        cancel_registry.spawn_cancel_watcher(db_pool.clone(), cancel_watcher.tick_sleep.into());
+    let cancel_watcher = cancel_registry.spawn_cancel_watcher(cancel_watcher.tick_sleep.into());
 
     server_compiled_linked
         .create_missing_cron_seeds(&db_pool, deployment_id)

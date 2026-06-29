@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::ExecutionId,
-    storage::{CancelOutcome, DbConnection, DbErrorGeneric, DbErrorWrite, DbPool},
+    storage::{CancelOutcome, DbConnection, DbErrorWrite},
 };
 use executor::AbortOnDropHandle;
 use std::{
@@ -9,16 +9,14 @@ use std::{
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tracing::{Instrument, debug, info, info_span, warn};
-
-pub const CANCEL_RETRIES: u8 = 5;
+use tracing::{Instrument, debug, info, info_span};
 
 #[derive(Clone)]
 /// All currently running activities in this process.
-/// Activity worker tasks register themselves and listen on cancellation token.
-/// RPCs and workflow worker can trigger `cancel_activity`
+/// Activity worker tasks register themselves and listen on interruption token.
+/// Cancel RPCs and workflow workers call `cancel_activity`
 /// which writes the new state to db (no matter whether registered or not)
-/// and triggers the cancellation token.
+/// and triggers the interruption token.
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
 }
@@ -41,27 +39,14 @@ impl CancelRegistry {
         }
     }
 
-    pub fn spawn_cancel_watcher(
-        &self,
-        db_pool: Arc<dyn DbPool>,
-        sleep_duration: Duration,
-    ) -> AbortOnDropHandle {
+    pub fn spawn_cancel_watcher(&self, sleep_duration: Duration) -> AbortOnDropHandle {
         let clone = self.clone();
         AbortOnDropHandle::new(
             tokio::spawn({
                 async move {
                     debug!("Spawned the cancel watcher");
-                    let mut old_err = None;
                     loop {
-                        let res = db_pool.connection().await;
-                        let res = match res {
-                            Ok(conn) => {
-                                clone.tick(conn.as_ref()).await;
-                                Ok(())
-                            }
-                            Err(err) => Err(err),
-                        };
-                        log_err_if_new(res, &mut old_err);
+                        clone.tick();
                         tokio::time::sleep(sleep_duration).await;
                     }
                 }
@@ -71,28 +56,9 @@ impl CancelRegistry {
         )
     }
 
-    async fn tick(&self, db_connection: &dyn DbConnection) {
-        let execution_ids: Vec<_> = {
-            let guard = self.tokens.lock().unwrap();
-            guard.keys().cloned().collect()
-        };
-        let mut finished = Vec::new();
-        for execution_id in execution_ids {
-            if let Ok(execution_with_state) = db_connection.get_pending_state(&execution_id).await
-                && execution_with_state.pending_state.is_finished()
-            {
-                finished.push(execution_id);
-            }
-        }
-        if !finished.is_empty() {
-            let mut guard = self.tokens.lock().unwrap();
-            // Cleanup old entries.
-            for execution_id in finished {
-                if let Some(info) = guard.remove(&execution_id) {
-                    let _ = info.interrupt_sender.send(());
-                }
-            }
-        }
+    fn tick(&self) {
+        let mut guard = self.tokens.lock().unwrap();
+        guard.retain(|_exe, info| !info.interrupt_sender.is_closed());
     }
 
     pub(crate) fn obtain_interrupt_token(
@@ -133,18 +99,5 @@ impl CancelRegistry {
             self.interrupt_running_activity(execution_id);
         }
         Ok(outcome)
-    }
-}
-
-fn log_err_if_new(res: Result<(), DbErrorGeneric>, old_err: &mut Option<DbErrorGeneric>) {
-    match (res, &old_err) {
-        (Ok(()), _) => {
-            *old_err = None;
-        }
-        (Err(err), Some(old)) if err == *old => {}
-        (Err(err), _) => {
-            warn!("Tick failed: {err:?}");
-            *old_err = Some(err);
-        }
     }
 }
