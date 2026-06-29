@@ -310,20 +310,44 @@ impl DeploymentSwitchManagerHandle {
         let webhook_registry = self.inner.webhook_registry.clone();
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
-        // The critical switch is not cancel-safe, so own it in a detached task: a dropped
-        // caller only stops observing the result. The permit is held until the task
-        // finishes, which is what `close()` drains on during shutdown.
+        // Own the whole commit in a detached task: a dropped caller only stops observing the
+        // result via `rx`, it cannot abort the switch. This covers the durable pre-critical
+        // commits (cron seeds + activate) as well as the non-cancel-safe critical swap, so a
+        // cancellation can never leave the DB activated while the old workers keep running.
+        // The permit is held until the task finishes, which is what `close()` drains on.
         tokio::spawn(async move {
             let _switch_permit = switch_permit;
-            let result = switch_hot_redeploy(
-                prepared.compiled_linked,
-                prepared.deployment_id,
-                db_pool,
-                deployment_ctx,
-                webhook_registry,
-                cancel_registry,
-                log_forwarder_sender,
-            )
+            let deployment_id = prepared.deployment_id;
+            let result = async {
+                // Pre-critical, fallible commit work, before the critical swap so the section
+                // after `exec_task_handles` is taken cannot fail and strand the context.
+                // `activate_deployment` is the durable source of truth for which deployment is
+                // active, so commit it first: startup reconciles cron seeds (and workers) from
+                // the active deployment, so a crash after activate self-heals on restart, while
+                // a crash before it leaves no orphan seeds.
+                let db_conn = db_pool
+                    .external_api_conn()
+                    .await
+                    .map_err(|e| SwitchError::Other(e.into()))?;
+                db_conn
+                    .activate_deployment(deployment_id, chrono::Utc::now())
+                    .await
+                    .map_err(|e| SwitchError::Other(e.into()))?;
+                prepared
+                    .compiled_linked
+                    .create_missing_cron_seeds(&db_pool, deployment_id)
+                    .await?;
+                switch_hot_redeploy(
+                    prepared.compiled_linked,
+                    deployment_id,
+                    db_pool,
+                    deployment_ctx,
+                    webhook_registry,
+                    cancel_registry,
+                    log_forwarder_sender,
+                )
+                .await
+            }
             .await;
             let _ = tx.send(result);
         });
@@ -2471,6 +2495,8 @@ pub(crate) async fn switch_deployment(
             let switch_permit = deployment_switch_manager.try_acquire_switch_permit()?;
             let mut termination_watcher =
                 deployment_switch_manager.inner.termination_watcher.clone();
+            // Cancellable: validation only. The durable commit and critical swap are owned by
+            // the detached task spawned below, so they cannot be aborted by a dropped caller.
             let prepared = prepare_switch_deployment(
                 &deployment_switch_manager,
                 deployment_id,
@@ -2478,23 +2504,6 @@ pub(crate) async fn switch_deployment(
                 &mut termination_watcher,
             )
             .await?;
-            // Pre-critical, fallible commit work. Run the cron seeding and the durable
-            // DB activation before the non-cancel-safe critical switch, so the section
-            // after `exec_task_handles` is taken cannot fail and strand the context.
-            prepared
-                .compiled_linked
-                .create_missing_cron_seeds(&deployment_switch_manager.inner.db_pool, deployment_id)
-                .await?;
-            let db_conn = deployment_switch_manager
-                .inner
-                .db_pool
-                .external_api_conn()
-                .await
-                .map_err(|e| SwitchError::Other(e.into()))?;
-            db_conn
-                .activate_deployment(deployment_id, chrono::Utc::now())
-                .await
-                .map_err(|e| SwitchError::Other(e.into()))?;
             deployment_switch_manager
                 .spawn_critical_hot_switch(prepared, switch_permit)
                 .await
