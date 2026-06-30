@@ -4428,76 +4428,66 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip_all)]
-    async fn upsert_source_file(
+    async fn upsert_source_mapping(
         &self,
         component_digest: &ComponentDigest,
         frame_key: &str,
         is_suffix: bool,
-        content: &str,
+        digest: &ContentDigest,
     ) -> Result<(), DbErrorWrite> {
-        let content_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
         let component_digest = component_digest.clone();
         let frame_key = frame_key.to_owned();
-        let content = content.to_owned();
+        let digest = digest.to_string();
         self.transaction(
             move |tx| {
                 tx.prepare(
-                    "INSERT OR IGNORE INTO t_source_file (content_hash, content) \
-                     VALUES (:content_hash, :content)",
-                )?
-                .execute(named_params! {
-                    ":content_hash": content_hash,
-                    ":content": content,
-                })?;
-                tx.prepare(
                     "INSERT INTO t_component_source \
-                     (component_digest, frame_key, is_suffix, content_hash) \
-                     VALUES (:component_digest, :frame_key, :is_suffix, :content_hash) \
+                     (component_digest, frame_key, is_suffix, digest) \
+                     VALUES (:component_digest, :frame_key, :is_suffix, :digest) \
                      ON CONFLICT (component_digest, frame_key, is_suffix) \
-                     DO UPDATE SET content_hash = excluded.content_hash",
+                     DO UPDATE SET digest = excluded.digest",
                 )?
                 .execute(named_params! {
                     ":component_digest": component_digest,
                     ":frame_key": frame_key,
                     ":is_suffix": is_suffix,
-                    ":content_hash": content_hash,
+                    ":digest": digest,
                 })?;
                 Ok(())
             },
             TxType::Other,
-            "upsert_source_file",
+            "upsert_source_mapping",
         )
         .await
     }
 
     #[instrument(skip_all)]
-    async fn get_source_file(
+    async fn resolve_source_digest(
         &self,
         component_digest: &ComponentDigest,
         file: &str,
-    ) -> Result<Option<String>, DbErrorRead> {
+    ) -> Result<Option<ContentDigest>, DbErrorRead> {
         let component_digest = component_digest.clone();
         let file = file.to_owned();
         self.transaction(
             move |tx| {
                 let mut stmt = tx.prepare(
-                    "SELECT s.content \
-                     FROM t_component_source cs \
-                     JOIN t_source_file s ON cs.content_hash = s.content_hash \
-                     WHERE cs.component_digest = :component_digest \
+                    "SELECT digest \
+                     FROM t_component_source \
+                     WHERE component_digest = :component_digest \
                        AND ( \
-                           (cs.is_suffix = 0 AND cs.frame_key = :file) \
-                        OR (cs.is_suffix = 1 AND \
-                            substr(:file, length(:file) - length(cs.frame_key) + 1) = cs.frame_key) \
+                           (is_suffix = 0 AND frame_key = :file) \
+                        OR (is_suffix = 1 AND \
+                            substr(:file, length(:file) - length(frame_key) + 1) = frame_key) \
                        )",
                 )?;
-                let rows: Vec<String> = stmt
+                let rows: Vec<ContentDigest> = stmt
                     .query_map(
                         named_params! {
                             ":component_digest": component_digest,
                             ":file": file,
                         },
-                        |row| row.get(0),
+                        |row| row.get("digest"),
                     )?
                     .collect::<Result<_, _>>()?;
                 match rows.len() {
@@ -4510,7 +4500,7 @@ impl DbExternalApi for SqlitePool {
                 }
             },
             TxType::Other,
-            "get_source_file",
+            "resolve_source_digest",
         )
         .await
     }
@@ -4847,7 +4837,8 @@ impl DbExternalApi for SqlitePool {
                 let deleted = tx
                     .execute(
                         "DELETE FROM t_file WHERE digest NOT IN \
-                         (SELECT digest FROM t_deployment_file)",
+                         (SELECT digest FROM t_deployment_file \
+                          UNION SELECT digest FROM t_component_source)",
                         [],
                     )
                     .map_err(RusqliteError::from)?;

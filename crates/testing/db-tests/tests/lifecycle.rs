@@ -3171,40 +3171,37 @@ async fn source_file_upsert_replaces_existing_mapping(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let api_conn = db_pool.external_api_conn().await.unwrap();
+    let cas = db_pool.cas_conn().await.unwrap();
     let component_digest = ComponentId::dummy_activity().component_digest;
 
-    api_conn
-        .upsert_source_file(&component_digest, "exact.rs", false, "old exact")
-        .await
-        .unwrap();
-    api_conn
-        .upsert_source_file(&component_digest, "/src/suffix.rs", true, "old suffix")
-        .await
-        .unwrap();
-    api_conn
-        .upsert_source_file(&component_digest, "exact.rs", false, "new exact")
-        .await
-        .unwrap();
-    api_conn
-        .upsert_source_file(&component_digest, "/src/suffix.rs", true, "new suffix")
-        .await
-        .unwrap();
-
-    assert_eq!(
-        Some("new exact".to_string()),
+    // The source bytes live in the CAS; the DB only maps frame keys to digests.
+    let upsert = async |frame_key: &str, is_suffix: bool, content: &str| {
+        let digest = cas.write_blob(content.as_bytes()).await.unwrap();
         api_conn
-            .get_source_file(&component_digest, "exact.rs")
+            .upsert_source_mapping(&component_digest, frame_key, is_suffix, &digest)
             .await
-            .unwrap()
-    );
+            .unwrap();
+    };
+    upsert("exact.rs", false, "old exact").await;
+    upsert("/src/suffix.rs", true, "old suffix").await;
+    upsert("exact.rs", false, "new exact").await;
+    upsert("/src/suffix.rs", true, "new suffix").await;
+
+    let resolve = async |file: &str| {
+        let digest = api_conn
+            .resolve_source_digest(&component_digest, file)
+            .await
+            .unwrap()?;
+        let bytes = cas.read_blob(&digest).await.unwrap().unwrap();
+        Some(String::from_utf8(bytes).unwrap())
+    };
+    assert_eq!(Some("new exact".to_string()), resolve("exact.rs").await);
     assert_eq!(
         Some("new suffix".to_string()),
-        api_conn
-            .get_source_file(&component_digest, "/workspace/src/suffix.rs")
-            .await
-            .unwrap()
+        resolve("/workspace/src/suffix.rs").await
     );
 
+    drop(cas);
     drop(api_conn);
     db_close.close().await;
 }

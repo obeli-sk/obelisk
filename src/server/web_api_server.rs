@@ -3987,14 +3987,34 @@ mod backtrace {
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
-        let content = conn
-            .get_source_file(&backtrace_info.component_id.component_digest, &params.file)
+        let digest = conn
+            .resolve_source_digest(&backtrace_info.component_id.component_digest, &params.file)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
 
-        let Some(content) = content else {
+        let Some(digest) = digest else {
             return Err(HttpResponse::not_found(accept, "source file"));
         };
+
+        let cas = state
+            .db_pool
+            .cas_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        let content = cas
+            .read_blob(&digest)
+            .await
+            .map_err(|err| HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("cannot read source file: {err}"),
+                accept,
+            })?
+            .ok_or_else(|| HttpResponse::not_found(accept, "source file"))?;
+        let content = String::from_utf8(content).map_err(|_| HttpResponse {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "backtrace source is not valid UTF-8".to_string(),
+            accept,
+        })?;
 
         Ok(match accept {
             AcceptHeader::Json => pretty_json_response(StatusCode::OK, &content),

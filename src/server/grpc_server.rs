@@ -710,25 +710,41 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(|err| tonic::Status::internal(err.to_string()))?;
-        match conn
-            .get_source_file(&component_id.component_digest, &request.file)
+        let digest = match conn
+            .resolve_source_digest(&component_id.component_digest, &request.file)
             .await
         {
-            Ok(Some(content)) => Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
-                content,
-            })),
+            Ok(Some(digest)) => digest,
             Ok(None) => {
                 debug!(
                     "Backtrace source not found for {component_id}, file {}",
                     request.file
                 );
-                Err(tonic::Status::not_found("backtrace source not found"))
+                return Err(tonic::Status::not_found("backtrace source not found"));
             }
             Err(err) => {
-                error!(%component_id, "Cannot fetch backtrace source from DB: {err:?}");
-                Err(tonic::Status::internal("cannot fetch source file"))
+                error!(%component_id, "Cannot resolve backtrace source digest: {err:?}");
+                return Err(tonic::Status::internal("cannot fetch source file"));
             }
-        }
+        };
+        let cas = self
+            .db_pool
+            .cas_conn()
+            .await
+            .map_err(|err| tonic::Status::internal(err.to_string()))?;
+        let content = cas
+            .read_blob(&digest)
+            .await
+            .map_err(|err| {
+                error!(%component_id, "Cannot fetch backtrace source from CAS: {err:?}");
+                tonic::Status::internal("cannot fetch source file")
+            })?
+            .ok_or_else(|| tonic::Status::not_found("backtrace source not found"))?;
+        let content = String::from_utf8(content)
+            .map_err(|_| tonic::Status::internal("backtrace source is not valid UTF-8"))?;
+        Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
+            content,
+        }))
     }
 
     #[instrument(skip_all, fields(execution_id))]

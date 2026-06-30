@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(db)* [**breaking**] Backtrace source blobs are now stored only in the content-addressed store.
+  The migration drops existing backtrace source mappings; sources are repopulated when deployments
+  are resubmitted or loaded again.
+
 ## [0.39.3](https://github.com/obeli-sk/obelisk/compare/v0.39.2...v0.39.3)
 
 Re-release because `cargo publish` failed on an internal error.

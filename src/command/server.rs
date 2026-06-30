@@ -1892,25 +1892,32 @@ impl ServerCompiledLinked {
 
 pub(crate) async fn upsert_backtrace_sources(
     conn: &dyn DbExternalApi,
+    cas: &dyn concepts::cas::Cas,
     server_compiled_linked: &ServerCompiledLinked,
 ) {
-    // Persist source files to the DB so GetBacktraceSource can serve them without filesystem access.
-    {
-        for (component_digest, frame_files) in &server_compiled_linked.frame_files {
-            for (config_key, source) in frame_files {
-                // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
-                let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../")
-                {
-                    (format!("/{stripped}"), true)
-                } else {
-                    (config_key.clone(), false)
-                };
-                let res = conn
-                    .upsert_source_file(component_digest, &frame_key, is_suffix, source)
-                    .await;
-                if let Err(err) = res {
-                    warn!("Cannot store backtrace source {config_key:?} in DB: {err:?}");
+    // Persist source files so GetBacktraceSource can serve them without filesystem access.
+    // The bytes go to the content-addressed store (shared with deployment files); only the
+    // (component, frame_key) -> digest mapping lives in the DB.
+    for (component_digest, frame_files) in &server_compiled_linked.frame_files {
+        for (config_key, source) in frame_files {
+            // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
+            let (frame_key, is_suffix) = if let Some(stripped) = config_key.strip_prefix(".../") {
+                (format!("/{stripped}"), true)
+            } else {
+                (config_key.clone(), false)
+            };
+            let digest = match cas.write_blob(source.as_bytes()).await {
+                Ok(digest) => digest,
+                Err(err) => {
+                    warn!("Cannot store backtrace source {config_key:?} in CAS: {err:?}");
+                    continue;
                 }
+            };
+            if let Err(err) = conn
+                .upsert_source_mapping(component_digest, &frame_key, is_suffix, &digest)
+                .await
+            {
+                warn!("Cannot store backtrace source mapping {config_key:?} in DB: {err:?}");
             }
         }
     }
@@ -2326,7 +2333,7 @@ pub(crate) async fn submit_deployment(
     // Backtrace sources are content-addressed and deployment-independent (keyed by component
     // digest), only consulted once a component runs and produces a backtrace, so they are
     // persisted outside the deployment transaction; a partial set self-heals on re-persist.
-    upsert_backtrace_sources(conn.as_ref(), &compiled_linked).await;
+    upsert_backtrace_sources(conn.as_ref(), cas.as_ref(), &compiled_linked).await;
 
     // Only cache strict-verified artifacts. A hot redeploy is always strict, so an
     // artifact compiled while tolerating missing env vars (AllowMissing) must not be
@@ -2746,6 +2753,7 @@ async fn spawn_tasks_and_threads(
 ) -> Result<ServerInit, anyhow::Error> {
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
+        db_pool.cas_conn().await?.as_ref(),
         &server_compiled_linked,
     )
     .await;
