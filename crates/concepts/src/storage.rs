@@ -1392,25 +1392,28 @@ pub trait DbExternalApi: DbConnection {
         filter: BacktraceFilter,
     ) -> Result<BacktraceInfo, DbErrorRead>;
 
-    /// Store a source file associated with a component digest.
+    /// Map a backtrace source file (a blob already stored in the CAS) to a component digest.
     /// `frame_key` is either an exact frame symbol path or a suffix (with leading `/`)
-    /// when `is_suffix` is true. Repeated calls replace the source mapped to the same key.
-    async fn upsert_source_file(
+    /// when `is_suffix` is true. Repeated calls replace the digest mapped to the same key.
+    /// The blob bytes themselves live in the CAS (see [`crate::cas::Cas`]); only this mapping
+    /// lives in the database.
+    async fn upsert_source_mapping(
         &self,
         component_digest: &ComponentDigest,
         frame_key: &str,
         is_suffix: bool,
-        content: &str,
+        digest: &ContentDigest,
     ) -> Result<(), DbErrorWrite>;
 
-    /// Look up a source file by component digest and a frame symbol path.
+    /// Resolve a backtrace source file's CAS digest by component digest and a frame symbol path.
     /// Matches either exact keys or suffix keys (where the frame path ends with the stored key).
-    /// Returns `None` if not found or if multiple suffix entries match (ambiguous).
-    async fn get_source_file(
+    /// Returns `None` if not found or if multiple suffix entries match (ambiguous). The caller
+    /// fetches the bytes from the CAS (see [`crate::cas::Cas`]).
+    async fn resolve_source_digest(
         &self,
         component_digest: &ComponentDigest,
         file: &str,
-    ) -> Result<Option<String>, DbErrorRead>;
+    ) -> Result<Option<ContentDigest>, DbErrorRead>;
 
     /// Insert or reuse normalized component metadata rows.
     async fn upsert_component_metadata(

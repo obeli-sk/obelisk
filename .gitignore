@@ -6,4 +6,4 @@ test-codegen-cache
 /.vscode/
 obelisk.log
 /.claude/
-/meta/
+/meta

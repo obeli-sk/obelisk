@@ -4522,34 +4522,27 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip_all)]
-    async fn upsert_source_file(
+    async fn upsert_source_mapping(
         &self,
         component_digest: &ComponentDigest,
         frame_key: &str,
         is_suffix: bool,
-        content: &str,
+        digest: &ContentDigest,
     ) -> Result<(), DbErrorWrite> {
-        let content_hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+        let digest = digest.to_string();
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         tx.execute(
-            "INSERT INTO t_source_file (content_hash, content) \
-             VALUES ($1, $2) \
-             ON CONFLICT (content_hash) DO NOTHING",
-            &[&content_hash.as_slice(), &content],
-        )
-        .await?;
-        tx.execute(
             "INSERT INTO t_component_source \
-             (component_digest, frame_key, is_suffix, content_hash) \
+             (component_digest, frame_key, is_suffix, digest) \
              VALUES ($1, $2, $3, $4) \
              ON CONFLICT (component_digest, frame_key, is_suffix) \
-             DO UPDATE SET content_hash = EXCLUDED.content_hash",
+             DO UPDATE SET digest = EXCLUDED.digest",
             &[
                 &component_digest.as_slice(),
                 &frame_key,
                 &is_suffix,
-                &content_hash.as_slice(),
+                &digest,
             ],
         )
         .await?;
@@ -4558,22 +4551,21 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip_all)]
-    async fn get_source_file(
+    async fn resolve_source_digest(
         &self,
         component_digest: &ComponentDigest,
         file: &str,
-    ) -> Result<Option<String>, DbErrorRead> {
+    ) -> Result<Option<ContentDigest>, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(
-                "SELECT s.content \
-                 FROM t_component_source cs \
-                 JOIN t_source_file s ON cs.content_hash = s.content_hash \
-                 WHERE cs.component_digest = $1 \
+                "SELECT digest \
+                 FROM t_component_source \
+                 WHERE component_digest = $1 \
                    AND ( \
-                       (NOT cs.is_suffix AND cs.frame_key = $2) \
-                    OR (cs.is_suffix AND right($2, length(cs.frame_key)) = cs.frame_key) \
+                       (NOT is_suffix AND frame_key = $2) \
+                    OR (is_suffix AND right($2, length(frame_key)) = frame_key) \
                    )",
                 &[&component_digest.as_slice(), &file],
             )
@@ -4581,7 +4573,7 @@ impl DbExternalApi for PostgresConnection {
         tx.commit().await?;
         match rows.len() {
             0 => Ok(None),
-            1 => Ok(Some(get::<String, _>(&rows[0], "content")?)),
+            1 => Ok(Some(get::<ContentDigest, _>(&rows[0], "digest")?)),
             _ => {
                 warn!("Multiple suffix matches for '{file}', returning None");
                 Ok(None)
@@ -4890,7 +4882,8 @@ impl DbExternalApi for PostgresConnection {
         let deleted = tx
             .execute(
                 "DELETE FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file)",
+                 (SELECT digest FROM t_deployment_file \
+                  UNION SELECT digest FROM t_component_source)",
                 &[],
             )
             .await?;
