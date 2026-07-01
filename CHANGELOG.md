@@ -6,11 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.4](https://github.com/obeli-sk/obelisk/compare/v0.39.3...v0.39.4)
+
+This release hardens deployment submission and switching against cancellation, stores backtrace
+sources solely in the content-addressed store, and extends outbound HTTP allowlists with request
+URL regex matching.
+
+### Added
+
+- *(toml)* Outbound HTTP allowlists now support request URL regex matching, with env var
+  interpolation in the regex - ([7718019](https://github.com/obeli-sk/obelisk/commit/7718019650b860c1e5bbf74d4db9488f99b1d7fe))
+- *(deployment)* Enqueuing the active deployment now clears any pending one - ([03447d8](https://github.com/obeli-sk/obelisk/commit/03447d827d0367fe5a9d749b9f36de7a9a359e7b))
+
+### Fixed
+
+- *(deployment)* Deployment submission and switching are now cancel-safe, so an interrupted request
+  no longer leaves partial state - ([2573c88](https://github.com/obeli-sk/obelisk/commit/2573c880ab5687817a62c4d9c2d3bd023a78028a)), ([82db51a](https://github.com/obeli-sk/obelisk/commit/82db51ab42561e5e49ad611a7e41e0807ae026a3))
+- *(activity-wasm)* Handle the executor shutdown signal in the main `select!` so activities stop
+  cleanly - ([bbfb86b](https://github.com/obeli-sk/obelisk/commit/bbfb86b14c2b649ccf6a3352e095b48f4cc9f63c))
+
 ### Changed
 
-- *(db)* [**breaking**] Backtrace source blobs are now stored only in the content-addressed store.
-  The migration drops existing backtrace source mappings; sources are repopulated when deployments
-  are resubmitted or loaded again.
+- JS runtimes now compile in parallel, speeding up startup - ([b8d4d18](https://github.com/obeli-sk/obelisk/commit/b8d4d18c2189d629ab67becc01d7da5fa02c9a60))
+
+### Removed
+
+- *(db)* Dropped the `t_source_file` table; backtrace source blobs are now stored only in the
+  content-addressed store. The migration drops existing backtrace source mappings; sources are
+  repopulated when deployments are resubmitted or loaded again - ([9e81398](https://github.com/obeli-sk/obelisk/commit/9e813988a2ee7af2f5d570ec0e28775176c84459))
 
 ## [0.39.3](https://github.com/obeli-sk/obelisk/compare/v0.39.2...v0.39.3)
 
