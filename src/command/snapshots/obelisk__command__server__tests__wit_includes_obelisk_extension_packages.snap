@@ -2,17 +2,20 @@
 source: src/command/server.rs
 expression: config.wit
 ---
-package ns:pkg;
-
-interface ifc {
-    my-fn: func(id: u64) -> result<string, string>;
-}
+package root:component;
 
 world stub-activity {
-    export ifc;
+    export ns:pkg/ifc;
     export ns:pkg-obelisk-ext/ifc;
     export ns:pkg-obelisk-stub/ifc;
 }
+package ns:pkg {
+    interface ifc {
+        my-fn: func(id: u64) -> result<string, string>;
+    }
+}
+
+
 package obelisk:types@4.2.0 {
     @since(version = 3.0.0)
     interface time {
