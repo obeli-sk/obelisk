@@ -4807,6 +4807,15 @@ mod tests {
         let config = compile_activity_inline(component_id, &ffqn, &params, &ret_type)
             .expect("compile must succeed");
 
+        // The synthesized WIT must re-parse: the world lives in a dedicated `root:component`
+        // package so the extension packages do not form a package dependency cycle.
+        let group =
+            wit_parser::UnresolvedPackageGroup::parse(std::path::PathBuf::new(), &config.wit)
+                .expect("synthesized WIT must parse");
+        wit_parser::Resolve::new()
+            .push_group(group)
+            .expect("synthesized WIT must not contain a package dependency cycle");
+
         // The rebuilt WIT includes extension packages absent from the raw synthesized string.
         insta::assert_snapshot!(config.wit);
     }

@@ -902,7 +902,7 @@ pub(crate) fn build_primary_resolve(
         resolve.interfaces.get_mut(ifc_id).unwrap().types = types;
     }
 
-    if let Some(world_name) = world_name {
+    let main_pkg_id = if let Some(world_name) = world_name {
         let world_exports: IndexMap<WorldKey, WorldItem> = resolve.packages[pkg_id]
             .interfaces
             .values()
@@ -917,12 +917,28 @@ pub(crate) fn build_primary_resolve(
                 )
             })
             .collect();
+        // Put the synthesized world in a dedicated `root:component` package to avoid
+        // a package-level dependency cycle.
+        let root_pkg = wit_parser::Package {
+            name: PackageName {
+                namespace: "root".to_string(),
+                name: "component".to_string(),
+                version: None,
+            },
+            docs: wit_parser::Docs::default(),
+            interfaces: IndexMap::default(),
+            worlds: IndexMap::default(),
+        };
+        let root_pkg_id = resolve.packages.alloc(root_pkg);
+        resolve
+            .package_names
+            .insert(resolve.packages[root_pkg_id].name.clone(), root_pkg_id);
         let world = World {
             name: world_name.to_string(),
             docs: wit_parser::Docs::default(),
             imports: IndexMap::default(),
             exports: world_exports,
-            package: Some(pkg_id),
+            package: Some(root_pkg_id),
             span: Span::default(),
             includes: vec![],
             stability: Stability::Unknown,
@@ -930,13 +946,16 @@ pub(crate) fn build_primary_resolve(
         let world_id = resolve.worlds.alloc(world);
         resolve
             .packages
-            .get_mut(pkg_id)
+            .get_mut(root_pkg_id)
             .unwrap()
             .worlds
             .insert(world_name.to_string(), world_id);
-    }
+        root_pkg_id
+    } else {
+        pkg_id
+    };
 
-    Ok((resolve, pkg_id))
+    Ok((resolve, main_pkg_id))
 }
 
 // TODO: Make the wit_component's OutputToString configurable for number of spaces
