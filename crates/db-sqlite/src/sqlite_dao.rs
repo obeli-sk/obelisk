@@ -1214,7 +1214,7 @@ impl SqlitePool {
     fn update_state_locked_get_intermittent_event_count(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        deployment_id: DeploymentId,
+        deployment_id: Option<DeploymentId>,
         component_digest: Option<&ComponentDigest>,
         executor_id: ExecutorId,
         run_id: RunId,
@@ -1241,7 +1241,7 @@ impl SqlitePool {
                     pending_expires_finished = :pending_expires_finished,
                     state = :state,
                     updated_at = CURRENT_TIMESTAMP,
-                    deployment_id = :deployment_id,
+                    deployment_id = COALESCE(:deployment_id, deployment_id),
                     component_id_input_digest = COALESCE(:component_id_input_digest, component_id_input_digest),
 
                     max_retries = :max_retries,
@@ -1263,7 +1263,7 @@ impl SqlitePool {
             ":appending_version": appending_version.0,
             ":pending_expires_finished": lock_expires_at,
             ":state": STATE_LOCKED,
-            ":deployment_id": deployment_id.to_string(),
+            ":deployment_id": deployment_id, // no change if `None` due to `coalesce`
             ":component_id_input_digest": component_digest.cloned(), // no change if `None` due to `coalesce`
             ":max_retries": retry_config.max_retries,
             ":retry_exp_backoff_millis": backoff_millis,
@@ -1852,7 +1852,7 @@ impl SqlitePool {
     }
 
     /// `component_id` is used to construct the `Locked` event.
-    /// If `update_component_digest` is set, `t_state` will be set to the component's digest.
+    /// If `update_component_digest_and_deployment_id` is set, execution state (`t_state`) will be updated to the component's digest and deployment id.
     /// This should be true in all cases except for `lock_pending_by_ffqns_auto`, where
     /// the digest in `t_state` is only updated after a successful execution upgrade.
     #[instrument(level = Level::TRACE, skip(tx))]
@@ -1861,7 +1861,7 @@ impl SqlitePool {
         tx: &Transaction,
         created_at: DateTime<Utc>,
         component_id: &ComponentId,
-        update_component_digest: bool, // if set, update `t_state` as well
+        update_component_digest_and_deployment_id: bool,
         deployment_id: DeploymentId,
         execution_id: &ExecutionId,
         run_id: RunId,
@@ -1872,7 +1872,7 @@ impl SqlitePool {
     ) -> Result<LockedExecution, DbErrorWrite> {
         trace!("lock_single_execution");
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let context_component_digest = if update_component_digest {
+        let context_component_digest = if update_component_digest_and_deployment_id {
             component_id.component_digest.clone()
         } else {
             combined_state.execution_with_state.component_digest.clone()
@@ -1934,8 +1934,8 @@ impl SqlitePool {
         let intermittent_event_count = Self::update_state_locked_get_intermittent_event_count(
             tx,
             execution_id,
-            deployment_id,
-            update_component_digest.then_some(&component_id.component_digest),
+            update_component_digest_and_deployment_id.then_some(deployment_id),
+            update_component_digest_and_deployment_id.then_some(&component_id.component_digest),
             executor_id,
             run_id,
             lock_expires_at,
