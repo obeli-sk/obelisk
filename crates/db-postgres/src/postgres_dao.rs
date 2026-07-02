@@ -908,7 +908,7 @@ async fn update_state_component_upgrade_finished_failed(
 async fn update_state_locked_get_intermittent_event_count(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    deployment_id: DeploymentId,
+    deployment_id: Option<DeploymentId>,
     component_digest: Option<&ComponentDigest>,
     executor_id: ExecutorId,
     run_id: RunId,
@@ -939,7 +939,7 @@ async fn update_state_locked_get_intermittent_event_count(
                 pending_expires_finished = $2,
                 state = $3,
                 updated_at = CURRENT_TIMESTAMP,
-                deployment_id = $4,
+                deployment_id = COALESCE($4, deployment_id),
                 component_id_input_digest = COALESCE($5, component_id_input_digest),
 
                 max_retries = $6,
@@ -959,7 +959,7 @@ async fn update_state_locked_get_intermittent_event_count(
                 &i64::from(appending_version.0),
                 &lock_expires_at,
                 &STATE_LOCKED,
-                &deployment_id.to_string(),
+                &deployment_id.map(|deployment_id| deployment_id.to_string()),
                 &component_digest.map(|component_digest| component_digest.as_slice().to_vec()), // no change if `None` due to `coalesce`
                 &retry_config.max_retries.map(i64::from),
                 &backoff_millis,
@@ -2029,7 +2029,7 @@ fn parse_response_with_cursor(
 }
 
 /// `component_id` is used to construct the `Locked` event.
-/// If `update_component_digest` is set, `t_state` will be set to the component's digest.
+/// If `update_component_digest_and_deployment_id` is set, execution state (`t_state`) will be updated to the component's digest and deployment id.
 /// This should be true in all cases except for `lock_pending_by_ffqns_auto`, where
 /// the digest in `t_state` is only updated after a successful execution upgrade.
 #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
@@ -2038,7 +2038,7 @@ async fn lock_single_execution(
     tx: &Transaction<'_>,
     created_at: DateTime<Utc>,
     component_id: &ComponentId,
-    update_component_digest: bool, // if set, update `t_state` as well
+    update_component_digest_and_deployment_id: bool,
     deployment_id: DeploymentId,
     execution_id: &ExecutionId,
     run_id: RunId,
@@ -2051,7 +2051,7 @@ async fn lock_single_execution(
 
     // Check State
     let combined_state = get_combined_state(tx, execution_id).await?;
-    let context_component_digest = if update_component_digest {
+    let context_component_digest = if update_component_digest_and_deployment_id {
         component_id.component_digest.clone()
     } else {
         combined_state.execution_with_state.component_digest.clone()
@@ -2106,8 +2106,8 @@ async fn lock_single_execution(
     let intermittent_event_count = update_state_locked_get_intermittent_event_count(
         tx,
         execution_id,
-        deployment_id,
-        update_component_digest.then_some(&component_id.component_digest),
+        update_component_digest_and_deployment_id.then_some(deployment_id),
+        update_component_digest_and_deployment_id.then_some(&component_id.component_digest),
         executor_id,
         run_id,
         lock_expires_at,

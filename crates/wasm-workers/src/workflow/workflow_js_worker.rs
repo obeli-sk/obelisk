@@ -597,7 +597,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::DateTime;
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest, Digest};
-    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, ExecutorId, RunId};
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, DeploymentId, ExecutorId, RunId};
     use concepts::storage::{
         CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
         DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest, HistoryEvent, JoinSetRequest,
@@ -1060,6 +1060,26 @@ mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
         workflow_engine: Arc<Engine>,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
+        compile_js_workflow_worker_with_deployment_id(
+            js_source,
+            user_ffqn,
+            db_pool,
+            clock_fn,
+            fn_registry,
+            workflow_engine,
+            DEPLOYMENT_ID_DUMMY,
+        )
+    }
+
+    fn compile_js_workflow_worker_with_deployment_id(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: Box<dyn ClockFn>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        workflow_engine: Arc<Engine>,
+        deployment_id: DeploymentId,
+    ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let params = default_js_params();
         let return_type = default_return_type();
@@ -1108,7 +1128,7 @@ mod tests {
 
         (
             linked.into_worker(
-                DEPLOYMENT_ID_DUMMY,
+                deployment_id,
                 db_pool,
                 deadline_factory,
                 CancelRegistry::new(),
@@ -2575,6 +2595,8 @@ mod tests {
         let (_guard, db_pool, db_close) = database.set_up().await;
         let sim_clock = SimClock::epoch();
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-auto-locking-failure");
+        let original_deployment_id = DeploymentId::from_parts(0, 9009);
+        let upgrade_deployment_id = DeploymentId::from_parts(0, 9010);
         let original_js_source = r"
         export default function test_auto_locking_failure(params) {
             obelisk.sleep({ milliseconds: 10 });
@@ -2594,22 +2616,25 @@ mod tests {
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let (original_worker, original_component_id, _original_runnable) =
-            compile_js_workflow_worker(
+            compile_js_workflow_worker_with_deployment_id(
                 original_js_source,
                 &user_ffqn,
                 db_pool.clone(),
                 sim_clock.clone_box(),
                 fn_registry.clone(),
                 workflow_engine.clone(),
+                original_deployment_id,
             );
-        let (upgrade_worker, upgrade_component_id, _upgrade_runnable) = compile_js_workflow_worker(
-            failing_upgrade_js_source,
-            &user_ffqn,
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            fn_registry,
-            workflow_engine,
-        );
+        let (upgrade_worker, upgrade_component_id, _upgrade_runnable) =
+            compile_js_workflow_worker_with_deployment_id(
+                failing_upgrade_js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                fn_registry,
+                workflow_engine,
+                upgrade_deployment_id,
+            );
         assert_ne!(
             original_component_id.component_digest,
             upgrade_component_id.component_digest
@@ -2644,8 +2669,8 @@ mod tests {
                 parent: None,
                 metadata: ExecutionMetadata::empty(),
                 scheduled_at: created_at,
-                component_id: original_component_id,
-                deployment_id: DEPLOYMENT_ID_DUMMY,
+                component_id: original_component_id.clone(),
+                deployment_id: original_deployment_id,
                 scheduled_by: None,
                 paused: false,
             })
@@ -2677,6 +2702,8 @@ mod tests {
         );
 
         let log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(original_deployment_id, log.deployment_id);
+        assert_eq!(original_component_id.component_digest, log.component_digest);
         assert_eq!(8, log.events.len());
         assert_matches!(&log.events[0].event, ExecutionRequest::Created { .. });
         assert_matches!(&log.events[1].event, ExecutionRequest::Locked(_));
