@@ -2834,6 +2834,83 @@ async fn cannot_lock_cancelling_execution(database: Database) {
     db_close.close().await;
 }
 
+/// A cancelling row must never be handed to a normal executor tick: the batch
+/// pick-up queries carry `AND lifecycle = 'active'`. This exercises the SELECT
+/// path, distinct from the `lock_one` rejection above.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancelling_execution_should_not_be_picked_up_by_pending_query(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create ready to run, then request cancellation from PendingAt.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+
+    let component_id = ComponentId::dummy_activity();
+    let by_ffqns = db_connection
+        .lock_pending_by_ffqns(
+            1,
+            sim_clock.now(),
+            Arc::from([SOME_FFQN]),
+            sim_clock.now(),
+            component_id.clone(),
+            DEPLOYMENT_ID_DUMMY,
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            RunId::generate(),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap();
+    assert!(
+        by_ffqns.is_empty(),
+        "cancelling row must not be picked up by lock_pending_by_ffqns"
+    );
+
+    let by_digest = db_connection
+        .lock_pending_by_component_digest(
+            1,
+            sim_clock.now(),
+            &component_id,
+            DEPLOYMENT_ID_DUMMY,
+            sim_clock.now(),
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            RunId::generate(),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap();
+    assert!(
+        by_digest.is_empty(),
+        "cancelling row must not be picked up by lock_pending_by_component_digest"
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
