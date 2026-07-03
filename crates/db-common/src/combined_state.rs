@@ -49,7 +49,7 @@ pub struct CombinedState {
 }
 
 /// What `cancel_workflow` should do, derived from the current [`CombinedState`].
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum CancelWorkflowPlan {
     AlreadyFinished,
     AlreadyCancelling,
@@ -78,32 +78,41 @@ impl CombinedState {
         Ok(self.corresponding_version.increment())
     }
 
-    /// Decide how `cancel_workflow` should reach the cancelling state, rejecting a
-    /// non-cancellable target. A [`PendingState::Locked`]/[`PendingState::Paused`]
-    /// execution must first be released so `cancelling` never coexists with a lock
-    /// or pause.
-    pub fn plan_cancel_workflow(&self) -> Result<CancelWorkflowPlan, DbErrorWrite> {
-        let ews = &self.execution_with_state;
-        match &ews.pending_state {
-            PendingState::Finished(_) => Ok(CancelWorkflowPlan::AlreadyFinished),
-            PendingState::Cancelling(_) => Ok(CancelWorkflowPlan::AlreadyCancelling),
-            pending_state => {
-                if !ews.ffqn.is_cancellable() {
-                    return Err(DbErrorWrite::NonRetriable(
-                        DbErrorWriteNonRetriable::IllegalState {
-                            reason: "cannot cancel, execution is not a cancellable workflow".into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        },
-                    ));
-                }
-                Ok(CancelWorkflowPlan::Proceed {
-                    unlock: matches!(pending_state, PendingState::Locked(_)),
-                    unpause: matches!(pending_state, PendingState::Paused(_)),
-                })
-            }
+    /// Decide how a cancellation should reach the cancelling state, without the
+    /// `is_cancellable` guard. Used by the worker join-set close and the
+    /// cancellation driver, which have already classified the target as cancellable.
+    /// A [`PendingState::Locked`]/[`PendingState::Paused`] execution must first be
+    /// released so `cancelling` never coexists with a lock or pause.
+    #[must_use]
+    pub fn plan_request_cancellation(&self) -> CancelWorkflowPlan {
+        match &self.execution_with_state.pending_state {
+            PendingState::Finished(_) => CancelWorkflowPlan::AlreadyFinished,
+            PendingState::Cancelling(_) => CancelWorkflowPlan::AlreadyCancelling,
+            pending_state => CancelWorkflowPlan::Proceed {
+                unlock: matches!(pending_state, PendingState::Locked(_)),
+                unpause: matches!(pending_state, PendingState::Paused(_)),
+            },
         }
+    }
+
+    /// Decide how `cancel_workflow` should reach the cancelling state, rejecting a
+    /// non-cancellable target. Control-plane entrypoint; the worker/driver paths use
+    /// [`Self::plan_request_cancellation`] instead.
+    pub fn plan_cancel_workflow(&self) -> Result<CancelWorkflowPlan, DbErrorWrite> {
+        let plan = self.plan_request_cancellation();
+        if matches!(plan, CancelWorkflowPlan::Proceed { .. })
+            && !self.execution_with_state.ffqn.is_cancellable()
+        {
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot cancel, execution is not a cancellable workflow".into(),
+                    context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
+                },
+            ));
+        }
+        Ok(plan)
     }
 
     #[must_use]

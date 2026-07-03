@@ -516,26 +516,32 @@ impl EventHistory {
         debug!("Closing `{join_set_id}` with unawaited {response_ids:?}");
 
         let join_next_count = response_ids.len();
-        // Attempt to cancel activities and delays.
-        // Retain order, keep only activities and delays.
-        let activity_and_delay_ids: Vec<_> = response_ids
-            .into_iter()
-            .filter_map(|(response_id, member)| {
-                if matches!(response_id, JoinSetResponseId::DelayId(_)) || member.is_activity() {
-                    Some(response_id)
-                } else {
-                    None
+        // Activities+delays are cancelled, cancellable children are signalled, other
+        // children are merely awaited. Order retained (cancelled in reverse later).
+        let mut activity_and_delay_ids = Vec::new();
+        let mut cancellable_child_ids = Vec::new();
+        for (response_id, member) in response_ids {
+            match &response_id {
+                JoinSetResponseId::DelayId(_) => activity_and_delay_ids.push(response_id),
+                JoinSetResponseId::ChildExecutionId(child_id) => {
+                    if member.is_activity() {
+                        activity_and_delay_ids.push(response_id);
+                    } else if member.is_cancellable_workflow() {
+                        cancellable_child_ids.push(child_id.clone());
+                    }
                 }
-            })
-            .collect();
-        let mut cancellations = if activity_and_delay_ids.is_empty() {
-            None
-        } else {
-            Some(JoinSetCloseCancellations::new(
-                activity_and_delay_ids,
-                called_at,
-            ))
-        };
+            }
+        }
+        let mut cancellations =
+            if activity_and_delay_ids.is_empty() && cancellable_child_ids.is_empty() {
+                None
+            } else {
+                Some(JoinSetCloseCancellations::new(
+                    activity_and_delay_ids,
+                    cancellable_child_ids,
+                    called_at,
+                ))
+            };
         for _ in 0..join_next_count {
             let event_call = EventCall::Blocking(EventCallBlocking::JoinSetClose(JoinSetClose {
                 join_set_id: join_set_id.clone(),

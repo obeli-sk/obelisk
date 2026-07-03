@@ -2951,6 +2951,48 @@ async fn cancel_workflow_second_call_is_already_cancelling(database: Database) {
     db_close.close().await;
 }
 
+/// The worker join-set close / cancellation driver path classifies the target as
+/// cancellable itself, so `request_cancellation` skips the `is_cancellable` guard
+/// that rejects `SOME_FFQN` on the `cancel_workflow` control-plane path.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn request_cancellation_bypasses_cancellable_guard(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // SOME_FFQN has no `-cancellable` suffix; `cancel_workflow` would reject it.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let outcome = db_connection
+        .request_cancellation(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]

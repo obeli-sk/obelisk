@@ -1310,6 +1310,61 @@ async fn get_combined_state(
     CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
 }
 
+/// Shared body of `cancel_workflow` / `request_cancellation`: release any lock/pause
+/// then append `CancellationRequested`, and commit.
+async fn apply_cancellation_plan(
+    tx: deadpool_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+    cancelled_at: DateTime<Utc>,
+    combined_state: &CombinedState,
+    plan: CancelWorkflowPlan,
+) -> Result<CancelOutcome, DbErrorWrite> {
+    let (unlock, unpause) = match plan {
+        CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
+        CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
+        CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
+    };
+    let mut version = combined_state.get_next_version_assert_not_finished();
+    if unlock {
+        (version, _) = append(
+            &tx,
+            execution_id,
+            AppendRequest {
+                created_at: cancelled_at,
+                event: ExecutionRequest::Unlocked(Unlocked {
+                    unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
+                    reason: "cancelling".into(),
+                }),
+            },
+            version,
+        )
+        .await?;
+    } else if unpause {
+        (version, _) = append(
+            &tx,
+            execution_id,
+            AppendRequest {
+                created_at: cancelled_at,
+                event: ExecutionRequest::Unpaused,
+            },
+            version,
+        )
+        .await?;
+    }
+    append(
+        &tx,
+        execution_id,
+        AppendRequest {
+            created_at: cancelled_at,
+            event: ExecutionRequest::CancellationRequested,
+        },
+        version,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(CancelOutcome::Cancelled)
+}
+
 async fn list_executions(
     read_tx: &Transaction<'_>,
     filter: ListExecutionsFilter,
@@ -3971,6 +4026,20 @@ impl DbExecutor for PostgresConnection {
         tx.commit().await?;
         Ok(event)
     }
+
+    #[instrument(skip(self))]
+    async fn request_cancellation(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let combined_state = get_combined_state(&tx, execution_id).await?;
+        let plan = combined_state.plan_request_cancellation();
+        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
+    }
 }
 #[async_trait]
 impl DbConnection for PostgresConnection {
@@ -5260,50 +5329,8 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
-        let (unlock, unpause) = match combined_state.plan_cancel_workflow()? {
-            CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
-            CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
-            CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
-        };
-        let mut version = combined_state.get_next_version_assert_not_finished();
-        if unlock {
-            (version, _) = append(
-                &tx,
-                execution_id,
-                AppendRequest {
-                    created_at: cancelled_at,
-                    event: ExecutionRequest::Unlocked(Unlocked {
-                        unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
-                        reason: "cancelling".into(),
-                    }),
-                },
-                version,
-            )
-            .await?;
-        } else if unpause {
-            (version, _) = append(
-                &tx,
-                execution_id,
-                AppendRequest {
-                    created_at: cancelled_at,
-                    event: ExecutionRequest::Unpaused,
-                },
-                version,
-            )
-            .await?;
-        }
-        append(
-            &tx,
-            execution_id,
-            AppendRequest {
-                created_at: cancelled_at,
-                event: ExecutionRequest::CancellationRequested,
-            },
-            version,
-        )
-        .await?;
-        tx.commit().await?;
-        Ok(CancelOutcome::Cancelled)
+        let plan = combined_state.plan_cancel_workflow()?;
+        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
     }
 
     #[instrument(skip(self))]

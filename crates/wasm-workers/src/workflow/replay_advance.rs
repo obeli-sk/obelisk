@@ -2,6 +2,7 @@ use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use chrono::{DateTime, Utc};
 use concepts::{
     SupportedFunctionReturnValue,
+    prefixed_ulid::ExecutionIdDerived,
     storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CapturedDbWrite,
         CreateRequest, DbErrorWrite, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
@@ -217,21 +218,29 @@ pub(crate) fn is_closing_join_next(req: &AppendRequest) -> bool {
 pub(crate) struct JoinSetCloseCancellations {
     /// Order based on creation. Must be cancelled in the reverse order.
     activity_and_delay_ids: Vec<JoinSetResponseId>,
+    /// Signalled (`CancellationRequested`), not finished-cancelled; the driver closes them.
+    cancellable_child_ids: Vec<ExecutionIdDerived>,
     pub(crate) cancelled_at: DateTime<Utc>,
 }
 impl JoinSetCloseCancellations {
     pub(crate) fn new(
         activity_and_delay_ids: Vec<JoinSetResponseId>,
+        cancellable_child_ids: Vec<ExecutionIdDerived>,
         cancelled_at: DateTime<Utc>,
     ) -> JoinSetCloseCancellations {
         JoinSetCloseCancellations {
             activity_and_delay_ids,
+            cancellable_child_ids,
             cancelled_at,
         }
     }
 
     pub(crate) fn iterate_in_cancellation_order(&self) -> impl Iterator<Item = &JoinSetResponseId> {
         self.activity_and_delay_ids.iter().rev()
+    }
+
+    pub(crate) fn cancellable_child_ids(&self) -> &[ExecutionIdDerived] {
+        &self.cancellable_child_ids
     }
 }
 

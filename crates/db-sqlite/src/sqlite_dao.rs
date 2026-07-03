@@ -3988,7 +3988,28 @@ impl SqlitePool {
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let (unlock, unpause) = match combined_state.plan_cancel_workflow()? {
+        let plan = combined_state.plan_cancel_workflow()?;
+        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
+    }
+
+    fn request_cancellation(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
+        let plan = combined_state.plan_request_cancellation();
+        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
+    }
+
+    fn apply_cancellation_plan(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+        combined_state: &CombinedState,
+        plan: CancelWorkflowPlan,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let (unlock, unpause) = match plan {
             CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
             CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
             CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
@@ -4504,6 +4525,21 @@ impl DbExecutor for SqlitePool {
             move |tx| Self::get_last_execution_event(tx, &execution_id),
             TxType::Other, // read only
             "get_last_execution_event",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn request_cancellation(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| SqlitePool::request_cancellation(tx, &execution_id, cancelled_at),
+            TxType::MultipleWrites,
+            "request_cancellation",
         )
         .await
     }
