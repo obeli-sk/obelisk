@@ -46,6 +46,34 @@ pub const STATE_FINISHED: &str = "finished";
 pub const LIFECYCLE_ACTIVE: &str = "active";
 pub const LIFECYCLE_PAUSED: &str = "paused";
 pub const LIFECYCLE_CANCELLING: &str = "cancelling";
+
+/// Typed view of the `t_state.lifecycle` column. Mutually exclusive by
+/// construction (single column), so pause and cancellation cannot coexist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+    Active,
+    Paused,
+    Cancelling,
+}
+impl Lifecycle {
+    #[must_use]
+    pub fn as_column(self) -> &'static str {
+        match self {
+            Lifecycle::Active => LIFECYCLE_ACTIVE,
+            Lifecycle::Paused => LIFECYCLE_PAUSED,
+            Lifecycle::Cancelling => LIFECYCLE_CANCELLING,
+        }
+    }
+    #[must_use]
+    pub fn from_column(column: &str) -> Option<Self> {
+        match column {
+            LIFECYCLE_ACTIVE => Some(Lifecycle::Active),
+            LIFECYCLE_PAUSED => Some(Lifecycle::Paused),
+            LIFECYCLE_CANCELLING => Some(Lifecycle::Cancelling),
+            _ => None,
+        }
+    }
+}
 // JSON encodings of `PendingStateFinishedResultKind` as stored in the `result_kind` column,
 // pinned by `result_kind_json_constants_match_serde`.
 pub const RESULT_KIND_JSON_OK: &str = r#""ok""#;
@@ -2485,59 +2513,69 @@ pub enum PendingState {
     BlockedByJoinSet(PendingStateBlockedByJoinSet),
 
     #[display("Paused({_0})")]
-    Paused(PendingStatePaused),
+    Paused(PendingStateSuspended),
+
+    #[display("Cancelling({_0})")]
+    Cancelling(PendingStateSuspended),
 
     #[display("Finished: {_0}")]
     Finished(PendingStateFinished),
 }
 
-pub enum PendingStateMergedPause {
+/// [`PendingState`] flattened so the underlying runnable state and the
+/// [`Lifecycle`] overlay are available side by side.
+pub enum PendingStateMerged {
     Locked {
         state: PendingStateLocked,
-        paused: bool,
+        lifecycle: Lifecycle,
     },
     PendingAt {
         state: PendingStatePendingAt,
-        paused: bool,
+        lifecycle: Lifecycle,
     },
     BlockedByJoinSet {
         state: PendingStateBlockedByJoinSet,
-        paused: bool,
+        lifecycle: Lifecycle,
     },
     Finished(PendingStateFinished),
 }
-impl From<PendingState> for PendingStateMergedPause {
+impl From<PendingState> for PendingStateMerged {
     fn from(state: PendingState) -> Self {
         match state {
-            PendingState::Locked(s) => PendingStateMergedPause::Locked {
+            PendingState::Locked(s) => PendingStateMerged::Locked {
                 state: s,
-                paused: false,
+                lifecycle: Lifecycle::Active,
             },
 
-            PendingState::PendingAt(s) => PendingStateMergedPause::PendingAt {
+            PendingState::PendingAt(s) => PendingStateMerged::PendingAt {
                 state: s,
-                paused: false,
+                lifecycle: Lifecycle::Active,
             },
 
-            PendingState::BlockedByJoinSet(s) => PendingStateMergedPause::BlockedByJoinSet {
+            PendingState::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
                 state: s,
-                paused: false,
+                lifecycle: Lifecycle::Active,
             },
 
-            PendingState::Paused(paused) => match paused {
-                PendingStatePaused::PendingAt(s) => PendingStateMergedPause::PendingAt {
-                    state: s,
-                    paused: true,
-                },
-                PendingStatePaused::BlockedByJoinSet(s) => {
-                    PendingStateMergedPause::BlockedByJoinSet {
-                        state: s,
-                        paused: true,
-                    }
-                }
-            },
+            PendingState::Paused(inner) => Self::from_suspended(inner, Lifecycle::Paused),
 
-            PendingState::Finished(s) => PendingStateMergedPause::Finished(s),
+            PendingState::Cancelling(inner) => Self::from_suspended(inner, Lifecycle::Cancelling),
+
+            PendingState::Finished(s) => PendingStateMerged::Finished(s),
+        }
+    }
+}
+impl PendingStateMerged {
+    fn from_suspended(inner: PendingStateSuspended, lifecycle: Lifecycle) -> Self {
+        match inner {
+            PendingStateSuspended::PendingAt(s) => PendingStateMerged::PendingAt {
+                state: s,
+                lifecycle,
+            },
+            PendingStateSuspended::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
+                state: s,
+                lifecycle,
+            },
         }
     }
 }
@@ -2567,11 +2605,13 @@ pub struct PendingStateBlockedByJoinSet {
     pub closing: bool,
 }
 
-/// State of execution before it was paused.
+/// Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or
+/// cancelling execution.
 ///
-/// Pausing a locked execution must first append `Unlocked` and only then `Paused`.
+/// Suspending a locked execution must first append `Unlocked`, so `Locked` is
+/// never wrapped here.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub enum PendingStatePaused {
+pub enum PendingStateSuspended {
     #[display("PendingAt({_0})")]
     PendingAt(PendingStatePendingAt),
     #[display("BlockedByJoinSet({_0})")]
@@ -2726,6 +2766,12 @@ impl PendingState {
                 source: None,
                 loc: Location::caller(),
             }),
+            PendingState::Cancelling(..) => Err(DbErrorWriteNonRetriable::IllegalState {
+                reason: "cannot lock, execution is cancelling".into(),
+                context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
+            }),
         }
     }
 
@@ -2737,6 +2783,11 @@ impl PendingState {
     #[must_use]
     pub fn is_paused(&self) -> bool {
         matches!(self, PendingState::Paused(_))
+    }
+
+    #[must_use]
+    pub fn is_cancelling(&self) -> bool {
+        matches!(self, PendingState::Cancelling(_))
     }
 }
 

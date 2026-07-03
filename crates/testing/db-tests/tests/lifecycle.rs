@@ -8,8 +8,8 @@ use concepts::storage::{
     ExecutionListPagination, ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo,
     FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter,
     LockedBy, LockedExecution, Pagination, PendingState, PendingStateBlockedByJoinSet,
-    PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
-    Unlocked, Version, VersionType, WasmBacktrace,
+    PendingStateLocked, PendingStatePendingAt, PendingStateSuspended, ResponseCursor,
+    TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{
     DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
@@ -2393,7 +2393,7 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
     // Verify the lock was released before the execution was paused.
     let log = db_connection.get(&execution_id).await.unwrap();
     let paused_pending_at = assert_matches!(log.pending_state,
-        PendingState::Paused(PendingStatePaused::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
+        PendingState::Paused(PendingStateSuspended::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
     assert_eq!(paused_at, paused_pending_at.0);
     assert_eq!(Some(found_locked_by.clone()), paused_pending_at.1);
     let reason = assert_matches!(
@@ -2518,7 +2518,13 @@ async fn cancellation_requested_from_pending_at_should_keep_underlying_state(dat
     let execution_id = ExecutionId::generate();
     // Future scheduled time so the underlying state stays PendingAt.
     let scheduled_at = sim_clock.now() + Duration::from_mins(1);
-    create_at(db_connection.as_ref(), &sim_clock, &execution_id, scheduled_at).await;
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        scheduled_at,
+    )
+    .await;
 
     let next_version = db_connection
         .append(
@@ -2534,11 +2540,14 @@ async fn cancellation_requested_from_pending_at_should_keep_underlying_state(dat
     assert_eq!(Version(2), next_version);
 
     let log = db_connection.get(&execution_id).await.unwrap();
-    // Underlying state is unchanged (cancellation is an overlay, not a first-class
-    // PendingState yet).
+    // The state is now first-class Cancelling, wrapping the unchanged underlying
+    // PendingAt.
     let scheduled = assert_matches!(
         log.pending_state,
-        PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) => scheduled_at
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(PendingStatePendingAt {
+            scheduled_at,
+            ..
+        })) => scheduled_at
     );
     assert_eq!(scheduled_at, scheduled);
     assert_matches!(
@@ -2560,7 +2569,13 @@ async fn cannot_cancel_locked_execution_directly(database: Database) {
     let db_connection = db_pool.connection().await.unwrap();
 
     let execution_id = ExecutionId::generate();
-    create_at(db_connection.as_ref(), &sim_clock, &execution_id, sim_clock.now()).await;
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
     lock(
         db_connection.as_ref(),
         &execution_id,
@@ -2602,7 +2617,13 @@ async fn cannot_cancel_paused_execution_directly(database: Database) {
     let db_connection = db_pool.connection().await.unwrap();
 
     let execution_id = ExecutionId::generate();
-    create_at(db_connection.as_ref(), &sim_clock, &execution_id, sim_clock.now()).await;
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
     let version = db_connection
         .append(
             execution_id.clone(),
@@ -2646,7 +2667,13 @@ async fn cannot_cancel_finished_execution(database: Database) {
     let db_connection = db_pool.connection().await.unwrap();
 
     let execution_id = ExecutionId::generate();
-    create_at(db_connection.as_ref(), &sim_clock, &execution_id, sim_clock.now()).await;
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
     let version = lock(
         db_connection.as_ref(),
         &execution_id,
@@ -2750,6 +2777,58 @@ async fn cannot_lock_paused_execution(database: Database) {
 
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!("cannot lock, execution is paused", reason.as_ref());
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_lock_cancelling_execution(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create ready to run, then request cancellation from PendingAt.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .lock_one(
+            sim_clock.now(),
+            ComponentId::dummy_activity(),
+            DEPLOYMENT_ID_DUMMY,
+            &execution_id,
+            RunId::generate(),
+            Version::new(2), // After CancellationRequested event
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap_err();
+
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!("cannot lock, execution is cancelling", reason.as_ref());
 
     drop(db_connection);
     db_close.close().await;
@@ -2879,7 +2958,7 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
         log.pending_state,
-        PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
+        PendingState::Paused(PendingStateSuspended::BlockedByJoinSet(
             PendingStateBlockedByJoinSet {
                 join_set_id: actual_join_set_id,
                 ..

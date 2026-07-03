@@ -16,15 +16,15 @@ use concepts::{
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState, LIFECYCLE_ACTIVE,
-        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
-        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
+        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
+        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
+        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
+        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
         RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
         VersionType, WasmBacktrace,
@@ -1280,7 +1280,8 @@ async fn get_combined_state(
     let result_kind = result_kind.map(|it| it.0);
 
     let lifecycle: String = get(&row, "lifecycle")?;
-    let is_paused = lifecycle == LIFECYCLE_PAUSED;
+    let lifecycle = Lifecycle::from_column(&lifecycle)
+        .ok_or_else(|| consistency_db_err("invalid t_state.lifecycle"))?;
 
     let corresponding_version: i64 = get(&row, "corresponding_version")?;
     let corresponding_version = Version::new(
@@ -1304,7 +1305,7 @@ async fn get_combined_state(
         join_set_id,
         join_set_closing,
         result_kind,
-        is_paused,
+        lifecycle,
     };
     CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
 }
@@ -1467,7 +1468,8 @@ async fn list_executions(
             let result_kind = result_kind.map(|it| it.0);
 
             let lifecycle: String = get(&row, "lifecycle")?;
-            let is_paused = lifecycle == LIFECYCLE_PAUSED;
+            let lifecycle = Lifecycle::from_column(&lifecycle)
+                .ok_or_else(|| consistency_db_err("invalid t_state.lifecycle"))?;
 
             let corresponding_version: i64 = get(&row, "corresponding_version")?;
             let corresponding_version = Version::try_from(corresponding_version)
@@ -1510,7 +1512,7 @@ async fn list_executions(
                 join_set_id,
                 join_set_closing: get(&row, "join_set_closing")?,
                 result_kind,
-                is_paused,
+                lifecycle,
             };
 
             let combined_state = CombinedState::new(combined_state_dto, corresponding_version)?;
@@ -2424,6 +2426,11 @@ async fn append(
                         DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
                     ));
                 }
+                PendingState::Cancelling(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::UnlockedCannotBeAppended("cancelling"),
+                    ));
+                }
                 PendingState::Finished(_) => {
                     unreachable!("handled above");
                 }
@@ -2483,6 +2490,15 @@ async fn append(
                     }
                     .into());
                 }
+                PendingState::Cancelling(..) => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot pause, execution is cancelling".into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
                 _ => {}
             }
             let next_version =
@@ -2521,6 +2537,15 @@ async fn append(
                         reason:
                             "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
                                 .into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
+                PendingState::Cancelling(..) => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot append CancellationRequested event, execution is already cancelling".into(),
                         context: SpanTrace::capture(),
                         source: None,
                         loc: Location::caller(),
@@ -2727,16 +2752,16 @@ async fn append_response(
     let combined_state = get_combined_state(tx, execution_id).await?;
     debug!("previous_pending_state: {combined_state:?}");
 
-    let mut notifier = if let PendingStateMergedPause::BlockedByJoinSet {
+    let mut notifier = if let PendingStateMerged::BlockedByJoinSet {
         state:
             PendingStateBlockedByJoinSet {
                 join_set_id: found_join_set_id,
                 lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                 closing: _,
             },
-        paused: _,
+        lifecycle: _,
     } =
-        PendingStateMergedPause::from(combined_state.execution_with_state.pending_state)
+        PendingStateMerged::from(combined_state.execution_with_state.pending_state)
         && *join_set_id == found_join_set_id
     {
         let scheduled_at = std::cmp::max(lock_expires_at, event.created_at);

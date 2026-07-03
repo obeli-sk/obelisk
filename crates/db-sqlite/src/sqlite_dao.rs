@@ -18,13 +18,13 @@ use concepts::{
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
-        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
+        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
+        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
+        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
+        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
         RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
         VersionType,
@@ -1555,7 +1555,8 @@ impl SqlitePool {
                                 "result_kind",
                             )?
                             .map(|wrapper| wrapper.0),
-                        is_paused: row.get::<_, String>("lifecycle")? == LIFECYCLE_PAUSED,
+                        lifecycle: Lifecycle::from_column(&row.get::<_, String>("lifecycle")?)
+                            .ok_or_else(|| consistency_rusqlite("invalid t_state.lifecycle"))?,
                     },
                     Version::new(row.get("corresponding_version")?),
                 )
@@ -1764,7 +1765,8 @@ impl SqlitePool {
                                     "result_kind",
                                 )?
                                 .map(|wrapper| wrapper.0),
-                            is_paused: row.get::<_, String>("lifecycle")? == LIFECYCLE_PAUSED,
+                            lifecycle: Lifecycle::from_column(&row.get::<_, String>("lifecycle")?)
+                                .ok_or_else(|| consistency_rusqlite("invalid t_state.lifecycle"))?,
                         },
                         Version::new(row.get("corresponding_version")?),
                     )
@@ -2247,6 +2249,11 @@ impl SqlitePool {
                             DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
                         ));
                     }
+                    PendingState::Cancelling(_) => {
+                        return Err(DbErrorWrite::NonRetriable(
+                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("cancelling"),
+                        ));
+                    }
                     PendingState::Finished(_) => {
                         unreachable!("handled above");
                     }
@@ -2305,6 +2312,15 @@ impl SqlitePool {
                         }
                         .into());
                     }
+                    PendingState::Cancelling(..) => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason: "cannot pause, execution is cancelling".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
                     _ => {}
                 }
                 let next_version =
@@ -2343,6 +2359,15 @@ impl SqlitePool {
                             reason:
                                 "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
                                     .into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
+                    PendingState::Cancelling(..) => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason: "cannot append CancellationRequested event, execution is already cancelling".into(),
                             context: SpanTrace::capture(),
                             source: None,
                             loc: Location::caller(),
@@ -2524,16 +2549,16 @@ impl SqlitePool {
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         debug!("previous_pending_state: {combined_state:?}");
-        let mut notifier = if let PendingStateMergedPause::BlockedByJoinSet {
+        let mut notifier = if let PendingStateMerged::BlockedByJoinSet {
             state:
                 PendingStateBlockedByJoinSet {
                     join_set_id: found_join_set_id,
                     lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                     closing: _,
                 },
-            paused: _,
+            lifecycle: _,
         } =
-            PendingStateMergedPause::from(combined_state.execution_with_state.pending_state)
+            PendingStateMerged::from(combined_state.execution_with_state.pending_state)
             && *join_set_id == found_join_set_id
         {
             // PendingAt should be set to current time if called from expired_timers_watcher,

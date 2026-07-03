@@ -1346,6 +1346,7 @@ fn format_execution_status_text(pending_state: &PendingState) -> String {
             if blocked.closing { " (closing)" } else { "" }
         ),
         PendingState::Paused(_) => "Paused".to_string(),
+        PendingState::Cancelling(_) => "Cancelling".to_string(),
         PendingState::Finished(finished) => match finished.result_kind {
             PendingStateFinishedResultKind::Ok => "Finished: OK".to_string(),
             PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {

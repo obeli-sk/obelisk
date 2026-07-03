@@ -509,6 +509,7 @@ fn format_pending_status(pending_status: grpc_gen::ExecutionStatus) -> String {
             format_finished_status(result_kind)
         }
         Status::Paused(grpc_gen::execution_status::Paused {}) => "Paused".to_string(),
+        Status::Cancelling(grpc_gen::execution_status::Cancelling {}) => "Cancelling".to_string(),
         illegal @ Status::BlockedByJoinSet(_) => panic!("illegal state {illegal:?}"),
     }
 }

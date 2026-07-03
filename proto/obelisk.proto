@@ -306,6 +306,8 @@ message ExecutionStatus {
     }
     message Paused {
     }
+    message Cancelling {
+    }
 
     oneof status {
         Locked locked = 1;
@@ -313,6 +315,7 @@ message ExecutionStatus {
         BlockedByJoinSet blocked_by_join_set = 3;
         Finished finished = 4;
         Paused paused = 6;
+        Cancelling cancelling = 7;
     }
     ContentDigest component_digest = 5;
 }

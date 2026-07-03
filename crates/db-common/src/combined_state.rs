@@ -6,10 +6,10 @@ use concepts::{
     component_id::ComponentDigest,
     prefixed_ulid::{DeploymentId, ExecutorId, RunId},
     storage::{
-        DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState, LockedBy,
-        PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePaused,
-        PendingStatePendingAt, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState, Lifecycle,
+        LockedBy, PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
+        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt,
+        PendingStateSuspended, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
         STATE_PENDING_AT, Version,
     },
 };
@@ -29,7 +29,7 @@ pub struct CombinedStateDTO {
     pub created_at: DateTime<Utc>,
     pub first_scheduled_at: DateTime<Utc>,
     pub pending_expires_finished: DateTime<Utc>,
-    pub is_paused: bool,
+    pub lifecycle: Lifecycle,
     // Locked:
     pub last_lock_version: Option<Version>,
     pub executor_id: Option<ExecutorId>,
@@ -99,7 +99,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-                is_paused: false,
+                lifecycle: Lifecycle::Active,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -130,7 +130,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-                is_paused: false,
+                lifecycle: Lifecycle::Active,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -163,7 +163,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-                is_paused: false,
+                lifecycle: Lifecycle::Active,
             } if state == STATE_LOCKED => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -196,7 +196,7 @@ impl CombinedState {
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
-                is_paused: false,
+                lifecycle: Lifecycle::Active,
             } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -227,7 +227,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: Some(result_kind),
-                is_paused: false,
+                lifecycle: Lifecycle::Active,
             } if state == STATE_FINISHED => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -259,7 +259,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-                is_paused: true,
+                lifecycle: Lifecycle::Paused,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -268,7 +268,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
+                pending_state: PendingState::Paused(PendingStateSuspended::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: None,
@@ -292,7 +292,7 @@ impl CombinedState {
                 join_set_id: None,
                 join_set_closing: None,
                 result_kind: None,
-                is_paused: true,
+                lifecycle: Lifecycle::Paused,
             } if state == STATE_PENDING_AT => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -301,7 +301,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
+                pending_state: PendingState::Paused(PendingStateSuspended::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: Some(LockedBy {
@@ -328,7 +328,7 @@ impl CombinedState {
                 join_set_id: Some(join_set_id),
                 join_set_closing: Some(join_set_closing),
                 result_kind: None,
-                is_paused: true,
+                lifecycle: Lifecycle::Paused,
             } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
                 component_digest,
                 component_type,
@@ -337,7 +337,110 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
+                pending_state: PendingState::Paused(PendingStateSuspended::BlockedByJoinSet(
+                    PendingStateBlockedByJoinSet {
+                        join_set_id: join_set_id.clone(),
+                        closing: join_set_closing,
+                        lock_expires_at,
+                    },
+                )),
+            },
+            // Cancelling - PendingAt (just created)
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: scheduled_at,
+                last_lock_version: None,
+                executor_id: None,
+                run_id: None,
+                join_set_id: None,
+                join_set_closing: None,
+                result_kind: None,
+                lifecycle: Lifecycle::Cancelling,
+            } if state == STATE_PENDING_AT => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Cancelling(PendingStateSuspended::PendingAt(
+                    PendingStatePendingAt {
+                        scheduled_at,
+                        last_lock: None,
+                    },
+                )),
+            },
+            // Cancelling - PendingAt (previously locked)
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: scheduled_at,
+                last_lock_version: None,
+                executor_id: Some(executor_id),
+                run_id: Some(run_id),
+                join_set_id: None,
+                join_set_closing: None,
+                result_kind: None,
+                lifecycle: Lifecycle::Cancelling,
+            } if state == STATE_PENDING_AT => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Cancelling(PendingStateSuspended::PendingAt(
+                    PendingStatePendingAt {
+                        scheduled_at,
+                        last_lock: Some(LockedBy {
+                            executor_id,
+                            run_id,
+                        }),
+                    },
+                )),
+            },
+            // Cancelling - BlockedByJoinSet
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: lock_expires_at,
+                last_lock_version: None,
+                executor_id: _,
+                run_id: _,
+                join_set_id: Some(join_set_id),
+                join_set_closing: Some(join_set_closing),
+                result_kind: None,
+                lifecycle: Lifecycle::Cancelling,
+            } if state == STATE_BLOCKED_BY_JOIN_SET => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Cancelling(PendingStateSuspended::BlockedByJoinSet(
                     PendingStateBlockedByJoinSet {
                         join_set_id: join_set_id.clone(),
                         closing: join_set_closing,

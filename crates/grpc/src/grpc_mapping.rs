@@ -352,7 +352,7 @@ impl TryFrom<grpc_gen::ComponentType> for ComponentType {
 impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
     fn from(execution_with_state: &ExecutionWithState) -> grpc_gen::ExecutionStatus {
         use grpc_gen::execution_status::{
-            BlockedByJoinSet, Finished, Locked, Paused, PendingAt, Status,
+            BlockedByJoinSet, Cancelling, Finished, Locked, Paused, PendingAt, Status,
         };
         grpc_gen::ExecutionStatus {
             component_digest: Some(grpc_gen::ContentDigest::from(
@@ -394,6 +394,7 @@ impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
                     result_kind: grpc_gen::ResultKind::from(*result_kind).into(),
                 }),
                 PendingState::Paused(..) => Status::Paused(Paused {}),
+                PendingState::Cancelling(..) => Status::Cancelling(Cancelling {}),
             }),
         }
     }

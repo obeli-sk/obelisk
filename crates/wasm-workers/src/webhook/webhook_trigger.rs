@@ -17,8 +17,8 @@ use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent,
     HistoryEventScheduleAt, JoinSetRequest, LogInfoAppendRow, LogLevel, LogStreamType,
-    PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome,
-    Version, http_client_trace::HttpClientTrace,
+    PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateSuspended,
+    TimeoutOutcome, Version, http_client_trace::HttpClientTrace,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -1093,9 +1093,12 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             }
         };
 
-        // Convert PendingState to ExecutionStatus
+        // Convert PendingState to ExecutionStatus.
+        // The webhook host API has no dedicated `cancelling` status yet, so a
+        // cancelling execution reports the underlying state it is suspended from.
         let status = match execution_with_state.pending_state {
-            PendingState::PendingAt(state) => {
+            PendingState::PendingAt(state)
+            | PendingState::Cancelling(PendingStateSuspended::PendingAt(state)) => {
                 ExecutionStatus::PendingAt(types::obelisk::types::time::Datetime {
                     seconds: u64::try_from(state.scheduled_at.timestamp())
                         .expect("pending at before unix epoch is unsupported"),
@@ -1103,7 +1106,10 @@ impl WebhookSupportHost for WebhookEndpointCtx {
                 })
             }
             PendingState::Locked(_) => ExecutionStatus::Locked,
-            PendingState::BlockedByJoinSet(_) => ExecutionStatus::BlockedByJoinSet,
+            PendingState::BlockedByJoinSet(_)
+            | PendingState::Cancelling(PendingStateSuspended::BlockedByJoinSet(_)) => {
+                ExecutionStatus::BlockedByJoinSet
+            }
             PendingState::Paused(_) => ExecutionStatus::Paused,
             PendingState::Finished(finished) => {
                 let finished_status = match finished.result_kind {
