@@ -1,8 +1,9 @@
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
-use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse};
+use concepts::storage::JoinSetResponse;
 use concepts::{ComponentType, FunctionFqn, JoinSetId};
 use indexmap::IndexMap;
 
+/// Simplified version of [`JoinSetResponse`]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum JoinSetResponseId {
     ChildExecutionId(ExecutionIdDerived),
@@ -148,12 +149,14 @@ impl JoinSetFold {
             })
     }
 
-    pub fn apply_history_event(
+    #[cfg(test)]
+    fn apply_history_event(
         &mut self,
-        event: &HistoryEvent,
+        event: &concepts::storage::HistoryEvent,
         child_component_type: Option<ComponentType>,
         consumed_response: Option<&JoinSetResponse>,
     ) -> Result<(), JoinSetFoldError> {
+        use concepts::storage::{HistoryEvent, JoinSetRequest};
         match event {
             HistoryEvent::JoinSetCreate { join_set_id } => {
                 self.create_join_set(join_set_id.clone())?;
@@ -224,6 +227,7 @@ impl JoinSetFold {
 mod tests {
     use super::*;
     use concepts::prefixed_ulid::DelayId;
+    use concepts::storage::{HistoryEvent, JoinSetRequest};
     use concepts::{ExecutionId, JoinSetKind, Params, StrVariant};
 
     fn join_set_id() -> JoinSetId {
