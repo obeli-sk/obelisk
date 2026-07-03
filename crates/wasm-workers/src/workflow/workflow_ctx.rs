@@ -3475,7 +3475,7 @@ pub(crate) mod tests {
         assert_eq!(ExecutionFailureKind::Uncategorized, kind);
         assert_eq!(
             Some(format!(
-                "constraint violation: not found in open join sets: `{join_set_id}`"
+                "constraint violation: join set is not open: `{join_set_id}`"
             )),
             reason
         );
