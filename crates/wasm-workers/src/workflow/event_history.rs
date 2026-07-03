@@ -14,7 +14,6 @@ use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
-use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
@@ -68,8 +67,8 @@ use wasmtime::component::Val;
 enum ChildReturnValue {
     WastVal(WastVal),
     JoinSetCreate(JoinSetId),
-    JoinNext(Result<(ResponseId, Result<(), ()>), JoinNextError>),
-    JoinNextTry(Result<(ResponseId, Result<(), ()>), JoinNextTryError>),
+    JoinNext(Result<(JoinSetResponseId, Result<(), ()>), JoinNextError>),
+    JoinNextTry(Result<(JoinSetResponseId, Result<(), ()>), JoinNextTryError>),
     JoinNextRequestingFfqn(Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>),
     OneOffDelay {
         scheduled_at: DateTime<Utc>,
@@ -124,24 +123,6 @@ impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
 
 fn join_set_fold_error_to_constraint(err: &JoinSetFoldError) -> StrVariant {
     err.to_string().into()
-}
-
-fn response_id_to_fold_response_id(response_id: &ResponseId) -> JoinSetResponseId {
-    match response_id {
-        ResponseId::ChildExecutionId(child_execution_id) => {
-            JoinSetResponseId::ChildExecutionId(child_execution_id.clone())
-        }
-        ResponseId::DelayId(delay_id) => JoinSetResponseId::DelayId(delay_id.clone()),
-    }
-}
-
-fn fold_response_id_to_response_id(response_id: JoinSetResponseId) -> ResponseId {
-    match response_id {
-        JoinSetResponseId::ChildExecutionId(child_execution_id) => {
-            ResponseId::ChildExecutionId(child_execution_id)
-        }
-        JoinSetResponseId::DelayId(delay_id) => ResponseId::DelayId(delay_id),
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -541,7 +522,7 @@ impl EventHistory {
             .into_iter()
             .filter_map(|(response_id, member)| {
                 if matches!(response_id, JoinSetResponseId::DelayId(_)) || member.is_activity() {
-                    Some(fold_response_id_to_response_id(response_id))
+                    Some(response_id)
                 } else {
                     None
                 }
@@ -905,7 +886,9 @@ impl EventHistory {
                         let function_mismatch = AwaitNextExtensionError::FunctionMismatch {
                             specified_function: requested_ffqn.clone(),
                             actual_function: Some(response_ffqn.clone()),
-                            actual_id: ResponseId::ChildExecutionId(child_execution_id.clone()),
+                            actual_id: JoinSetResponseId::ChildExecutionId(
+                                child_execution_id.clone(),
+                            ),
                         };
                         Ok(FindMatchingResponse::Found(
                             ChildReturnValue::JoinNextRequestingFfqn(Err(function_mismatch)),
@@ -919,7 +902,7 @@ impl EventHistory {
                         let function_mismatch = AwaitNextExtensionError::FunctionMismatch {
                             specified_function: requested_ffqn.clone(),
                             actual_function: None,
-                            actual_id: ResponseId::DelayId(delay_id.clone()),
+                            actual_id: JoinSetResponseId::DelayId(delay_id.clone()),
                         };
                         Ok(FindMatchingResponse::Found(
                             ChildReturnValue::JoinNextRequestingFfqn(Err(function_mismatch)),
@@ -989,7 +972,7 @@ impl EventHistory {
                         trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNext: Matched ChildExecutionFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
                             (
-                                ResponseId::ChildExecutionId(child_execution_id.clone()),
+                                JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
                                 res.as_pending_state_finished_result()
                                     .as_result()
                                     .map_err(|_| ()),
@@ -1003,7 +986,7 @@ impl EventHistory {
                     }) => {
                         trace!(%join_set_id, %delay_id, "DeterministicKey::JoinNext: Matched DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
-                            (ResponseId::DelayId(delay_id.clone()), result),
+                            (JoinSetResponseId::DelayId(delay_id.clone()), result),
                         ))))
                     }
                     None => Ok(FindMatchingResponse::FoundRequestButNotResponse {
@@ -1050,7 +1033,7 @@ impl EventHistory {
                         trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNextTry: Matched ChildExecutionFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
                             Ok((
-                                ResponseId::ChildExecutionId(child_execution_id.clone()),
+                                JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
                                 res.as_pending_state_finished_result()
                                     .as_result()
                                     .map_err(|_| ()),
@@ -1064,7 +1047,7 @@ impl EventHistory {
                     }) => {
                         trace!(%join_set_id, %delay_id, "DeterministicKey::JoinNextTry: Matched DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
-                            Ok((ResponseId::DelayId(delay_id.clone()), result)),
+                            Ok((JoinSetResponseId::DelayId(delay_id.clone()), result)),
                         )))
                     }
                     None => {
@@ -2064,7 +2047,7 @@ enum AwaitNextExtensionError {
     FunctionMismatch {
         specified_function: FunctionFqn,
         actual_function: Option<FunctionFqn>, // None on delay
-        actual_id: ResponseId,
+        actual_id: JoinSetResponseId,
     },
     AllProcessed,
 }
@@ -2081,10 +2064,12 @@ impl AwaitNextExtensionError {
                 actual_id,
             } => {
                 let (actual_id_field_name, actual_str_value) = match actual_id {
-                    ResponseId::ChildExecutionId(id) => {
+                    JoinSetResponseId::ChildExecutionId(id) => {
                         (ValKey::new_snake("execution_id"), id.to_string())
                     }
-                    ResponseId::DelayId(id) => (ValKey::new_snake("delay_id"), id.to_string()),
+                    JoinSetResponseId::DelayId(id) => {
+                        (ValKey::new_snake("delay_id"), id.to_string())
+                    }
                 };
                 WastVal::Variant(
                     ValKey::new_snake("function_mismatch"),
@@ -2502,7 +2487,7 @@ impl JoinNextRequestingFfqn {
                 {
                     event_history
                         .join_set_fold
-                        .remove_response(&join_set_id, &response_id_to_fold_response_id(actual_id))
+                        .remove_response(&join_set_id, actual_id)
                         .map_err(|err| {
                             WorkflowFunctionError::ConstraintViolation(
                                 join_set_fold_error_to_constraint(&err),
@@ -2550,7 +2535,7 @@ impl JoinNext {
         if let Ok((response_id, _)) = &value {
             event_history
                 .join_set_fold
-                .remove_response(&join_set_id, &response_id_to_fold_response_id(response_id))
+                .remove_response(&join_set_id, response_id)
                 .map_err(|err| {
                     WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
                         &err,
@@ -2603,7 +2588,7 @@ impl JoinNextTry {
         if let Ok((response_id, _)) = &value {
             event_history
                 .join_set_fold
-                .remove_response(&join_set_id, &response_id_to_fold_response_id(response_id))
+                .remove_response(&join_set_id, response_id)
                 .map_err(|err| {
                     WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
                         &err,
@@ -3087,7 +3072,6 @@ mod tests {
         JoinNextTryError, JoinSetCreate, Schedule, ScheduleIntent, Stub, StubIntent, StubParams,
         SubmitChildIntent, SubmitDelay,
     };
-    use crate::workflow::host_exports::response_id::ResponseId;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
@@ -3104,6 +3088,7 @@ mod tests {
         SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
+    use db_common::JoinSetResponseId;
     use db_tests::Database;
     use rstest::rstest;
     use std::sync::Arc;
@@ -3494,7 +3479,7 @@ mod tests {
                 AwaitNextExtensionError::FunctionMismatch {
                     specified_function: submit_ffqn_1,
                     actual_function: Some(submit_ffqn_2),
-                    actual_id: ResponseId::ChildExecutionId(child_execution_id_b)
+                    actual_id: JoinSetResponseId::ChildExecutionId(child_execution_id_b)
                 },
                 err
             );

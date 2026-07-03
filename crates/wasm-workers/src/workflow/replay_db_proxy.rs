@@ -3,7 +3,6 @@
 //! that the workflow would produce next.
 
 use super::caching_db_connection::{CacheableDbEvent, WorkflowDbConnection};
-use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use crate::{
     activity::cancel_registry::CancelRegistry,
@@ -22,6 +21,7 @@ use concepts::{
         ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
+use db_common::JoinSetResponseId;
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tokio::sync::mpsc;
@@ -173,7 +173,7 @@ async fn apply_captured_write(
     if let Some(cancellations) = &write.cancellations {
         for response_id in cancellations.iterate_in_cancellation_order() {
             match response_id {
-                ResponseId::ChildExecutionId(execution_id) => {
+                JoinSetResponseId::ChildExecutionId(execution_id) => {
                     let res = cancel_registry
                         .cancel_activity(
                             conn,
@@ -185,7 +185,7 @@ async fn apply_captured_write(
                         debug!("Ignoring failure to cancel activity {execution_id} - {err:?}");
                     }
                 }
-                ResponseId::DelayId(delay_id) => {
+                JoinSetResponseId::DelayId(delay_id) => {
                     let res =
                         storage::cancel_delay(conn, delay_id.clone(), cancellations.cancelled_at)
                             .await;

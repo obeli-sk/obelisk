@@ -1,6 +1,4 @@
-use crate::workflow::{
-    host_exports::response_id::ResponseId, replay_db_proxy::InternalCapturedWrite,
-};
+use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use chrono::{DateTime, Utc};
 use concepts::{
     SupportedFunctionReturnValue,
@@ -10,6 +8,7 @@ use concepts::{
         JoinSetRequest, Version,
     },
 };
+use db_common::JoinSetResponseId;
 use executor::worker::FatalError;
 
 /// Replay outcome for a workflow execution.
@@ -217,12 +216,12 @@ pub(crate) fn is_closing_join_next(req: &AppendRequest) -> bool {
 #[derive(Debug, Clone)]
 pub(crate) struct JoinSetCloseCancellations {
     /// Order based on creation. Must be cancelled in the reverse order.
-    activity_and_delay_ids: Vec<ResponseId>,
+    activity_and_delay_ids: Vec<JoinSetResponseId>,
     pub(crate) cancelled_at: DateTime<Utc>,
 }
 impl JoinSetCloseCancellations {
     pub(crate) fn new(
-        activity_and_delay_ids: Vec<ResponseId>,
+        activity_and_delay_ids: Vec<JoinSetResponseId>,
         cancelled_at: DateTime<Utc>,
     ) -> JoinSetCloseCancellations {
         JoinSetCloseCancellations {
@@ -231,7 +230,7 @@ impl JoinSetCloseCancellations {
         }
     }
 
-    pub(crate) fn iterate_in_cancellation_order(&self) -> impl Iterator<Item = &ResponseId> {
+    pub(crate) fn iterate_in_cancellation_order(&self) -> impl Iterator<Item = &JoinSetResponseId> {
         self.activity_and_delay_ids.iter().rev()
     }
 }
