@@ -440,6 +440,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
         },
         ExecutionRequest::Paused => ExecutionRequest::Paused,
         ExecutionRequest::Unpaused => ExecutionRequest::Unpaused,
+        ExecutionRequest::CancellationRequested => ExecutionRequest::CancellationRequested,
     }
 }
 

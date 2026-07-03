@@ -1052,6 +1052,11 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
             ExecutionRequest::Unpaused => {
                 grpc_gen::execution_event::Event::Unpaused(grpc_gen::execution_event::Unpaused {})
             }
+            ExecutionRequest::CancellationRequested => {
+                grpc_gen::execution_event::Event::CancellationRequested(
+                    grpc_gen::execution_event::CancellationRequested {},
+                )
+            }
             ExecutionRequest::HistoryEvent { event } => {
                 grpc_gen::execution_event::Event::HistoryVariant(history_event_to_grpc(event))
             }
@@ -1203,6 +1208,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
             }
             grpc_gen::execution_event::Event::Paused(_) => ExecutionRequest::Paused,
             grpc_gen::execution_event::Event::Unpaused(_) => ExecutionRequest::Unpaused,
+            grpc_gen::execution_event::Event::CancellationRequested(_) => {
+                ExecutionRequest::CancellationRequested
+            }
         };
 
         Ok(ExecutionEvent {

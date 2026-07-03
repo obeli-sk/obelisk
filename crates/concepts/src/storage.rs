@@ -45,6 +45,7 @@ pub const STATE_FINISHED: &str = "finished";
 // state. Mutually exclusive by construction (single column).
 pub const LIFECYCLE_ACTIVE: &str = "active";
 pub const LIFECYCLE_PAUSED: &str = "paused";
+pub const LIFECYCLE_CANCELLING: &str = "cancelling";
 // JSON encodings of `PendingStateFinishedResultKind` as stored in the `result_kind` column,
 // pinned by `result_kind_json_constants_match_serde`.
 pub const RESULT_KIND_JSON_OK: &str = r#""ok""#;
@@ -424,6 +425,19 @@ pub enum ExecutionRequest {
     Paused,
     #[display("Unpaused")]
     Unpaused,
+    /// Requests cancellation of a cancellable workflow. Sets `lifecycle` to
+    /// `cancelling` without changing the underlying state; the cancellation driver
+    /// then closes the subtree and appends `Finished(Cancelled)`.
+    ///
+    /// State transition semantics (mirrors [`ExecutionRequest::Paused`]):
+    /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set
+    ///   `lifecycle = cancelling`, underlying state unchanged.
+    /// - [`PendingState::Locked`] and [`PendingState::Paused`] are rejected on the
+    ///   raw append path; they must first be released (`Unlocked` / `Unpaused`) by
+    ///   `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+    /// - [`PendingState::Finished`] is rejected (already terminal).
+    #[display("CancellationRequested")]
+    CancellationRequested,
 }
 
 /// Reason for auditing only
@@ -490,6 +504,7 @@ impl ExecutionRequest {
             ExecutionRequest::HistoryEvent { .. } => "history_event",
             ExecutionRequest::Paused => "paused",
             ExecutionRequest::Unpaused => "unpaused",
+            ExecutionRequest::CancellationRequested => "cancellation_requested",
         }
     }
 

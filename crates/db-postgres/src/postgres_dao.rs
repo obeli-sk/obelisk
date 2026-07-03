@@ -17,7 +17,7 @@ use concepts::{
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState, LIFECYCLE_ACTIVE,
-        LIFECYCLE_PAUSED,
+        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
@@ -1117,6 +1117,37 @@ async fn update_state_paused(
             &[
                 &i64::from(appending_version.0), // $1
                 &lifecycle,                      // $2
+                &execution_id.to_string(),       // $3
+            ],
+        )
+        .await?;
+
+    if updated != 1 {
+        return Err(DbErrorWrite::NotFound);
+    }
+    Ok(appending_version.increment())
+}
+
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
+async fn update_state_cancelling(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    appending_version: &Version,
+) -> Result<AppendResponse, DbErrorWrite> {
+    debug!("Setting t_state lifecycle to cancelling");
+    let updated = tx
+        .execute(
+            r"
+            UPDATE t_state
+            SET
+                corresponding_version = $1,
+                lifecycle = $2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE execution_id = $3
+            ",
+            &[
+                &i64::from(appending_version.0), // $1
+                &LIFECYCLE_CANCELLING,           // $2
                 &execution_id.to_string(),       // $3
             ],
         )
@@ -2475,6 +2506,31 @@ async fn append(
             }
             let next_version =
                 update_state_paused(tx, execution_id, &appending_version, false).await?;
+            return Ok((next_version, AppendNotifier::default()));
+        }
+
+        ExecutionRequest::CancellationRequested => {
+            match &combined_state.execution_with_state.pending_state {
+                PendingState::Finished { .. } => {
+                    unreachable!("handled above");
+                }
+                // Locked and Paused must first be released (`Unlocked` / `Unpaused`)
+                // by `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+                PendingState::Locked(..) | PendingState::Paused(..) => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason:
+                            "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
+                                .into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
+                PendingState::PendingAt(..) | PendingState::BlockedByJoinSet(..) => {}
+            }
+            let next_version =
+                update_state_cancelling(tx, execution_id, &appending_version).await?;
             return Ok((next_version, AppendNotifier::default()));
         }
 

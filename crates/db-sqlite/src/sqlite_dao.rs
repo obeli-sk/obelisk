@@ -18,7 +18,7 @@ use concepts::{
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        LIFECYCLE_ACTIVE, LIFECYCLE_PAUSED,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
@@ -1428,6 +1428,36 @@ impl SqlitePool {
         Ok(appending_version.increment())
     }
 
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
+    fn update_state_cancelling(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        appending_version: &Version,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        debug!("Setting t_state lifecycle to cancelling");
+        let execution_id_str = execution_id.to_string();
+        let mut stmt = tx.prepare_cached(
+            r"
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    lifecycle = :lifecycle,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE execution_id = :execution_id
+            ",
+        )?;
+
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":appending_version": appending_version.0,
+            ":lifecycle": LIFECYCLE_CANCELLING,
+        })?;
+        if updated != 1 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(appending_version.increment())
+    }
+
     // Upon appending new event to t_execution_log, copy the previous t_state with changed appending_version and created_at.
     #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
     fn bump_state_next_version(
@@ -2298,6 +2328,31 @@ impl SqlitePool {
                 }
                 let next_version =
                     Self::update_state_paused(tx, execution_id, &appending_version, false)?;
+                return Ok((next_version, AppendNotifier::default()));
+            }
+
+            ExecutionRequest::CancellationRequested => {
+                match &combined_state.execution_with_state.pending_state {
+                    PendingState::Finished { .. } => {
+                        unreachable!("handled above");
+                    }
+                    // Locked and Paused must first be released (`Unlocked` / `Unpaused`)
+                    // by `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+                    PendingState::Locked(..) | PendingState::Paused(..) => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason:
+                                "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
+                                    .into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
+                    PendingState::PendingAt(..) | PendingState::BlockedByJoinSet(..) => {}
+                }
+                let next_version =
+                    Self::update_state_cancelling(tx, execution_id, &appending_version)?;
                 return Ok((next_version, AppendNotifier::default()));
             }
 

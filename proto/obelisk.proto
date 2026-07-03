@@ -433,6 +433,11 @@ message ExecutionEvent {
     message Unpaused {
     }
 
+    // Cancellation requested for a cancellable workflow. Sets the execution's
+    // lifecycle to cancelling without changing the underlying state.
+    message CancellationRequested {
+    }
+
     message ComponentUpgradeFinished {
         message Auto {
         }
@@ -645,6 +650,7 @@ message ExecutionEvent {
         Paused paused = 11;
         Unpaused unpaused = 12;
         ComponentUpgradeFinished component_upgrade_finished = 13;
+        CancellationRequested cancellation_requested = 14;
     }
 
     optional uint32 backtrace_id = 10;

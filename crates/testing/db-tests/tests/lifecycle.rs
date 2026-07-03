@@ -2482,6 +2482,215 @@ async fn cannot_append_paused_to_locked_execution(database: Database) {
     db_close.close().await;
 }
 
+async fn create_at(
+    db_connection: &dyn DbConnection,
+    sim_clock: &SimClock,
+    execution_id: &ExecutionId,
+    scheduled_at: DateTime<Utc>,
+) {
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancellation_requested_from_pending_at_should_keep_underlying_state(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Future scheduled time so the underlying state stays PendingAt.
+    let scheduled_at = sim_clock.now() + Duration::from_mins(1);
+    create_at(db_connection.as_ref(), &sim_clock, &execution_id, scheduled_at).await;
+
+    let next_version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(Version(2), next_version);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    // Underlying state is unchanged (cancellation is an overlay, not a first-class
+    // PendingState yet).
+    let scheduled = assert_matches!(
+        log.pending_state,
+        PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) => scheduled_at
+    );
+    assert_eq!(scheduled_at, scheduled);
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_cancel_locked_execution_directly(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_at(db_connection.as_ref(), &sim_clock, &execution_id, sim_clock.now()).await;
+    lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + Duration::from_secs(30),
+        RunId::generate(),
+    )
+    .await;
+
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow",
+        reason.as_ref()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_cancel_paused_execution_directly(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_at(db_connection.as_ref(), &sim_clock, &execution_id, sim_clock.now()).await;
+    let version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow",
+        reason.as_ref()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_cancel_finished_execution(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_at(db_connection.as_ref(), &sim_clock, &execution_id, sim_clock.now()).await;
+    let version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + Duration::from_secs(30),
+        RunId::generate(),
+    )
+    .await;
+    let version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Finished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    http_client_traces: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
