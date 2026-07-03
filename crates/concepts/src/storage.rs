@@ -41,6 +41,10 @@ pub const STATE_PENDING_AT: &str = "pending_at";
 pub const STATE_BLOCKED_BY_JOIN_SET: &str = "blocked_by_join_set";
 pub const STATE_LOCKED: &str = "locked";
 pub const STATE_FINISHED: &str = "finished";
+// `lifecycle` column values on `t_state`: an override of the underlying pending
+// state. Mutually exclusive by construction (single column).
+pub const LIFECYCLE_ACTIVE: &str = "active";
+pub const LIFECYCLE_PAUSED: &str = "paused";
 // JSON encodings of `PendingStateFinishedResultKind` as stored in the `result_kind` column,
 // pinned by `result_kind_json_constants_match_serde`.
 pub const RESULT_KIND_JSON_OK: &str = r#""ok""#;

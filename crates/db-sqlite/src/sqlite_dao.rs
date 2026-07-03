@@ -18,6 +18,7 @@ use concepts::{
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        LIFECYCLE_ACTIVE, LIFECYCLE_PAUSED,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
         ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
@@ -972,8 +973,7 @@ impl SqlitePool {
                     deployment_id,
                     updated_at,
                     first_scheduled_at,
-                    intermittent_event_count,
-                    is_paused
+                    intermittent_event_count
                     )
                 VALUES (
                     :execution_id,
@@ -988,11 +988,10 @@ impl SqlitePool {
                     :deployment_id,
                     CURRENT_TIMESTAMP,
                     :first_scheduled_at,
-                    0,
-                    false
+                    0
                     )
                 ",
-            )? // paused set to false here to avoid "execution is already paused" error.
+            )? // lifecycle defaults to 'active'
             .execute(named_params! {
                 ":execution_id": execution_id.to_string(),
                 ":is_top_level": execution_id.is_top_level(),
@@ -1255,7 +1254,7 @@ impl SqlitePool {
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id
-                AND is_paused = false
+                AND lifecycle = 'active'
             ",
         )?;
         let updated = stmt.execute(named_params! {
@@ -1371,7 +1370,7 @@ impl SqlitePool {
                     join_set_id = NULL,
                     join_set_closing = NULL,
 
-                    is_paused = FALSE,
+                    lifecycle = 'active',
                     result_kind = :result_kind
                 WHERE execution_id = :execution_id
             ",
@@ -1402,12 +1401,17 @@ impl SqlitePool {
             if is_paused { "paused" } else { "unpaused" }
         );
         let execution_id_str = execution_id.to_string();
+        let lifecycle = if is_paused {
+            LIFECYCLE_PAUSED
+        } else {
+            LIFECYCLE_ACTIVE
+        };
         let mut stmt = tx.prepare_cached(
             r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
-                    is_paused = :is_paused,
+                    lifecycle = :lifecycle,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE execution_id = :execution_id
             ",
@@ -1416,7 +1420,7 @@ impl SqlitePool {
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
             ":appending_version": appending_version.0,
-            ":is_paused": is_paused,
+            ":lifecycle": lifecycle,
         })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
@@ -1486,7 +1490,7 @@ impl SqlitePool {
                     corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
                     join_set_id, join_set_closing,
-                    result_kind, is_paused
+                    result_kind, lifecycle
                     FROM t_state
                 WHERE
                     execution_id = :execution_id
@@ -1521,7 +1525,7 @@ impl SqlitePool {
                                 "result_kind",
                             )?
                             .map(|wrapper| wrapper.0),
-                        is_paused: row.get("is_paused")?,
+                        is_paused: row.get::<_, String>("lifecycle")? == LIFECYCLE_PAUSED,
                     },
                     Version::new(row.get("corresponding_version")?),
                 )
@@ -1687,7 +1691,7 @@ impl SqlitePool {
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
-            result_kind, is_paused
+            result_kind, lifecycle
             FROM t_state {where_str} ORDER BY created_at {inner_order} LIMIT {limit}",
             limit = statement_mod.limit,
         );
@@ -1730,7 +1734,7 @@ impl SqlitePool {
                                     "result_kind",
                                 )?
                                 .map(|wrapper| wrapper.0),
-                            is_paused: row.get("is_paused")?,
+                            is_paused: row.get::<_, String>("lifecycle")? == LIFECYCLE_PAUSED,
                         },
                         Version::new(row.get("corresponding_version")?),
                     )
@@ -2943,7 +2947,7 @@ impl SqlitePool {
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND is_paused = false
+                    AND lifecycle = 'active'
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
             ))?;
@@ -2977,7 +2981,7 @@ impl SqlitePool {
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND is_paused = false
+                    AND lifecycle = 'active'
                     AND (incompatible_digest IS NULL OR incompatible_digest <> :current_digest)
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
@@ -3023,7 +3027,7 @@ impl SqlitePool {
                 state = "{STATE_PENDING_AT}" AND
                 pending_expires_finished <= :pending_expires_finished AND
                 component_id_input_digest = :component_id_input_digest
-                AND is_paused = false
+                AND lifecycle = 'active'
                 ORDER BY pending_expires_finished LIMIT :batch_size
                 "#
         ))?;
@@ -3335,11 +3339,11 @@ impl SqlitePool {
         let count_cols = if include_execution_counts {
             format!(
                 r"
-            COALESCE(SUM(s.state = '{STATE_LOCKED}' AND s.is_paused = false), 0) AS locked,
-            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished <= :now), 0) AS pending,
-            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished > :now), 0) AS scheduled,
-            COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.is_paused = false), 0) AS blocked,
-            COALESCE(SUM(s.is_paused = true), 0) AS paused,
+            COALESCE(SUM(s.state = '{STATE_LOCKED}' AND s.lifecycle = 'active'), 0) AS locked,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.lifecycle = 'active' AND s.pending_expires_finished <= :now), 0) AS pending,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.lifecycle = 'active' AND s.pending_expires_finished > :now), 0) AS scheduled,
+            COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.lifecycle = 'active'), 0) AS blocked,
+            COALESCE(SUM(s.lifecycle = 'paused'), 0) AS paused,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_OK}'), 0) AS finished_ok,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_ERROR}'), 0) AS finished_error,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind IS NOT NULL
@@ -5467,7 +5471,7 @@ impl DbConnection for SqlitePool {
                 // Extend with expired locks
                 let expired = conn.prepare(&format!(r#"
                     SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis,
-                    executor_id, run_id, is_paused
+                    executor_id, run_id, lifecycle
                     FROM t_state
                     WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
                     "#
@@ -5479,9 +5483,9 @@ impl DbConnection for SqlitePool {
                         },
                         |row| {
                             let execution_id = row.get("execution_id")?;
-                            let is_paused: bool = row.get("is_paused")?;
-                            if is_paused {
-                                error!(%execution_id, "encountered invalid paused locked execution while scanning expired locks");
+                            let lifecycle: String = row.get("lifecycle")?;
+                            if lifecycle != LIFECYCLE_ACTIVE {
+                                error!(%execution_id, %lifecycle, "encountered invalid non-active locked execution while scanning expired locks");
                                 return Ok(None);
                             }
                             let locked_at_version = Version::new(row.get("last_lock_version")?);

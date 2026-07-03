@@ -16,7 +16,8 @@ use concepts::{
         DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState, LIFECYCLE_ACTIVE,
+        LIFECYCLE_PAUSED,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
@@ -639,11 +640,10 @@ async fn create_inner(
                 deployment_id,
                 first_scheduled_at,
                 updated_at,
-                intermittent_event_count,
-                is_paused
+                intermittent_event_count
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0, $12
-            )",
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0
+            )", // lifecycle defaults to 'active'
             &[
                 &execution_id_str,
                 &execution_id.is_top_level(),
@@ -656,8 +656,7 @@ async fn create_inner(
                 &component_id.component_type.to_string(),
                 &deployment_id.to_string(),
                 &scheduled_at,
-                &false,
-            ], // paused set to false here to avoid "execution is already paused" error.
+            ],
         )
         .await?;
 
@@ -953,7 +952,7 @@ async fn update_state_locked_get_intermittent_event_count(
 
                 result_kind = NULL
             WHERE execution_id = $10
-            AND is_paused = false
+            AND lifecycle = 'active'
             ",
             &[
                 &i64::from(appending_version.0),
@@ -1068,7 +1067,7 @@ async fn update_state_finished(
                 join_set_id = NULL,
                 join_set_closing = NULL,
 
-                is_paused = false,
+                lifecycle = 'active',
                 result_kind = $4
             WHERE execution_id = $5
             ",
@@ -1100,19 +1099,24 @@ async fn update_state_paused(
         if is_paused { "paused" } else { "unpaused" }
     );
 
+    let lifecycle = if is_paused {
+        LIFECYCLE_PAUSED
+    } else {
+        LIFECYCLE_ACTIVE
+    };
     let updated = tx
         .execute(
             r"
             UPDATE t_state
             SET
                 corresponding_version = $1,
-                is_paused = $2,
+                lifecycle = $2,
                 updated_at = CURRENT_TIMESTAMP
             WHERE execution_id = $3
             ",
             &[
                 &i64::from(appending_version.0), // $1
-                &is_paused,                      // $2
+                &lifecycle,                      // $2
                 &execution_id.to_string(),       // $3
             ],
         )
@@ -1189,7 +1193,7 @@ async fn get_combined_state(
                 state, ffqn, component_id_input_digest, component_type, deployment_id, corresponding_version, pending_expires_finished,
                 last_lock_version, executor_id, run_id,
                 join_set_id, join_set_closing,
-                result_kind, is_paused
+                result_kind, lifecycle
             FROM t_state
             WHERE execution_id = $1
             ",
@@ -1244,7 +1248,8 @@ async fn get_combined_state(
     let result_kind: Option<Json<PendingStateFinishedResultKind>> = get(&row, "result_kind")?;
     let result_kind = result_kind.map(|it| it.0);
 
-    let is_paused: bool = get(&row, "is_paused")?;
+    let lifecycle: String = get(&row, "lifecycle")?;
+    let is_paused = lifecycle == LIFECYCLE_PAUSED;
 
     let corresponding_version: i64 = get(&row, "corresponding_version")?;
     let corresponding_version = Version::new(
@@ -1388,7 +1393,7 @@ async fn list_executions(
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
-            result_kind, is_paused
+            result_kind, lifecycle
             FROM t_state {where_str} ORDER BY {order_col} {inner_order} LIMIT {limit}"
     );
 
@@ -1430,7 +1435,8 @@ async fn list_executions(
                 get(&row, "result_kind")?;
             let result_kind = result_kind.map(|it| it.0);
 
-            let is_paused: bool = get(&row, "is_paused")?;
+            let lifecycle: String = get(&row, "lifecycle")?;
+            let is_paused = lifecycle == LIFECYCLE_PAUSED;
 
             let corresponding_version: i64 = get(&row, "corresponding_version")?;
             let corresponding_version = Version::try_from(corresponding_version)
@@ -1801,23 +1807,23 @@ async fn list_deployment_states(
         (
             format!(
                 "
-            COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}' AND s.is_paused = false) AS locked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}' AND s.lifecycle = 'active') AS locked,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_PENDING_AT}'
-                  AND s.is_paused = false
+                  AND s.lifecycle = 'active'
                   AND s.pending_expires_finished <= {p_now}
             ) AS pending,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_PENDING_AT}'
-                  AND s.is_paused = false
+                  AND s.lifecycle = 'active'
                   AND s.pending_expires_finished > {p_now}
             ) AS scheduled,
 
-            COUNT(*) FILTER (WHERE s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.is_paused = false) AS blocked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.lifecycle = 'active') AS blocked,
 
-            COUNT(*) FILTER (WHERE s.is_paused = true) AS paused,
+            COUNT(*) FILTER (WHERE s.lifecycle = 'paused') AS paused,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_FINISHED}'
@@ -3123,7 +3129,7 @@ async fn get_pending_of_single_ffqn(
                 WHERE
                 state = '{STATE_PENDING_AT}' AND
                 pending_expires_finished <= $1 AND ffqn = $2
-                AND is_paused = false
+                AND lifecycle = 'active'
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
@@ -3220,7 +3226,7 @@ async fn get_pending_by_ffqns_auto(
                     WHERE
                     state = '{STATE_PENDING_AT}' AND
                     pending_expires_finished <= $1 AND ffqn = $2
-                    AND is_paused = false
+                    AND lifecycle = 'active'
                     AND (incompatible_digest IS NULL OR incompatible_digest <> $3)
                     ORDER BY pending_expires_finished
                     {}
@@ -3279,7 +3285,7 @@ async fn get_pending_by_component_input_digest(
                 state = '{STATE_PENDING_AT}' AND
                 pending_expires_finished <= $1 AND
                 component_id_input_digest = $2
-                AND is_paused = false
+                AND lifecycle = 'active'
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
@@ -4285,7 +4291,7 @@ impl DbConnection for PostgresConnection {
         // Expired Locks
         let rows = tx.query(
             &format!(
-                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id, is_paused \
+                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id, lifecycle \
                  FROM t_state \
                  WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
             ),
@@ -4296,9 +4302,9 @@ impl DbConnection for PostgresConnection {
             let unpack = || -> Result<Option<ExpiredTimer>, DbErrorGeneric> {
                 let execution_id: String = get(&row, "execution_id")?;
                 let execution_id = ExecutionId::from_str(&execution_id)?;
-                let is_paused: bool = get(&row, "is_paused")?;
-                if is_paused {
-                    error!(%execution_id, "encountered invalid paused locked execution while scanning expired locks");
+                let lifecycle: String = get(&row, "lifecycle")?;
+                if lifecycle != LIFECYCLE_ACTIVE {
+                    error!(%execution_id, %lifecycle, "encountered invalid non-active locked execution while scanning expired locks");
                     return Ok(None);
                 }
                 let last_lock_version: i64 = get(&row, "last_lock_version")?;
