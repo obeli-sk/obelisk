@@ -4071,6 +4071,11 @@ impl HttpResponse {
                 message: "already finished".to_string(),
                 accept,
             },
+            CancelOutcome::AlreadyCancelling => HttpResponse {
+                status: StatusCode::CONFLICT,
+                message: "already cancelling".to_string(),
+                accept,
+            },
         }
     }
 

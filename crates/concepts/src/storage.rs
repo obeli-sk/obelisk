@@ -1639,6 +1639,35 @@ pub trait DbExternalApi: DbConnection {
         unpaused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite>;
 
+    /// Request cancellation of a cancellable workflow. In one transaction, releases
+    /// any lock/pause (`Unlocked`/`Unpaused`) so `cancelling` never coexists with
+    /// them, then appends `CancellationRequested`. Rejects a non-cancellable target;
+    /// returns `AlreadyFinished`/`AlreadyCancelling` without appending. The
+    /// `Finished(Cancelled)` outcome is driven later by the cancellation driver.
+    async fn cancel_workflow(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite>;
+
+    /// Request cancellation of a cancellable workflow, retrying the version-guarded
+    /// transaction on the live-worker race.
+    async fn cancel_workflow_with_retries(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut retries = 5;
+        loop {
+            match self.cancel_workflow(execution_id, cancelled_at).await {
+                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
+                    ..
+                })) if retries > 0 => retries -= 1,
+                res => return res,
+            }
+        }
+    }
+
     /// Pause a delay, preventing it from being picked up by the expired timers watcher.
     /// No-op if the delay is already paused.
     /// Returns `NotFound` if the delay does not exist (already processed or cancelled).
@@ -2165,6 +2194,7 @@ pub trait DbConnectionTest: DbConnection {
 pub enum CancelOutcome {
     Cancelled,
     AlreadyFinished,
+    AlreadyCancelling,
 }
 
 #[instrument(skip(db_connection))]

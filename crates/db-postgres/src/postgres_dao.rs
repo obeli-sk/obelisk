@@ -9,7 +9,7 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
         ComponentMetadataRecord, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
@@ -31,8 +31,8 @@ use concepts::{
     },
 };
 use db_common::{
-    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
-    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
+    AppendNotifier, CancelWorkflowPlan, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
+    NotifierPendingAt, PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
@@ -5248,6 +5248,62 @@ impl DbExternalApi for PostgresConnection {
 
         tx.commit().await?;
         Ok(next_version)
+    }
+
+    #[instrument(skip(self))]
+    async fn cancel_workflow(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let combined_state = get_combined_state(&tx, execution_id).await?;
+        let (unlock, unpause) = match combined_state.plan_cancel_workflow()? {
+            CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
+            CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
+            CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
+        };
+        let mut version = combined_state.get_next_version_assert_not_finished();
+        if unlock {
+            (version, _) = append(
+                &tx,
+                execution_id,
+                AppendRequest {
+                    created_at: cancelled_at,
+                    event: ExecutionRequest::Unlocked(Unlocked {
+                        unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
+                        reason: "cancelling".into(),
+                    }),
+                },
+                version,
+            )
+            .await?;
+        } else if unpause {
+            (version, _) = append(
+                &tx,
+                execution_id,
+                AppendRequest {
+                    created_at: cancelled_at,
+                    event: ExecutionRequest::Unpaused,
+                },
+                version,
+            )
+            .await?;
+        }
+        append(
+            &tx,
+            execution_id,
+            AppendRequest {
+                created_at: cancelled_at,
+                event: ExecutionRequest::CancellationRequested,
+            },
+            version,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(CancelOutcome::Cancelled)
     }
 
     #[instrument(skip(self))]

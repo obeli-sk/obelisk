@@ -24,7 +24,7 @@ use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VA
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use db_postgres::postgres_dao::{DbInitialzationOutcome, PostgresPool, ProvisionPolicy};
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
-use obeli_db_tests::SOME_FFQN;
+use obeli_db_tests::{CANCELLABLE_FFQN, SOME_FFQN};
 use obeli_db_tests::{Database, initialize_fresh_postgres_db};
 use rstest::rstest;
 use std::sync::Arc;
@@ -2713,6 +2713,239 @@ async fn cannot_cancel_finished_execution(database: Database) {
         err,
         DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)
     );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+async fn create_cancellable_at(
+    db_connection: &dyn DbConnection,
+    sim_clock: &SimClock,
+    execution_id: &ExecutionId,
+    scheduled_at: DateTime<Utc>,
+) {
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: CANCELLABLE_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_from_pending_at(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let outcome = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_from_locked_appends_unlocked_first(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .lock_one(
+            sim_clock.now(),
+            ComponentId::dummy_activity(),
+            DEPLOYMENT_ID_DUMMY,
+            &execution_id,
+            RunId::generate(),
+            Version::new(1),
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap();
+
+    let outcome = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    // ..., Unlocked, CancellationRequested
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+    assert_matches!(
+        log.events[log.events.len() - 2].event,
+        ExecutionRequest::Unlocked(Unlocked { ref reason, .. }) if reason.as_ref() == "cancelling"
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_from_paused_appends_unpaused_first(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let outcome = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    // Cancel supersedes pause: cancelling, not paused.
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    // ..., Unpaused, CancellationRequested
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+    assert_matches!(
+        log.events[log.events.len() - 2].event,
+        ExecutionRequest::Unpaused
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_rejects_non_cancellable(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // SOME_FFQN has no `-cancellable` suffix.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let err = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot cancel, execution is not a cancellable workflow",
+        reason.as_ref()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_second_call_is_already_cancelling(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let first = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, first);
+    let second = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::AlreadyCancelling, second);
 
     drop(db_connection);
     db_close.close().await;

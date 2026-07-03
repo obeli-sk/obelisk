@@ -48,6 +48,19 @@ pub struct CombinedState {
     pub corresponding_version: Version,
 }
 
+/// What `cancel_workflow` should do, derived from the current [`CombinedState`].
+#[derive(Debug)]
+pub enum CancelWorkflowPlan {
+    AlreadyFinished,
+    AlreadyCancelling,
+    /// Release the current lock/pause (`unlock`/`unpause` are mutually exclusive)
+    /// before appending `CancellationRequested`.
+    Proceed {
+        unlock: bool,
+        unpause: bool,
+    },
+}
+
 impl CombinedState {
     #[must_use]
     pub fn get_next_version_assert_not_finished(&self) -> Version {
@@ -63,6 +76,34 @@ impl CombinedState {
             ));
         }
         Ok(self.corresponding_version.increment())
+    }
+
+    /// Decide how `cancel_workflow` should reach the cancelling state, rejecting a
+    /// non-cancellable target. A [`PendingState::Locked`]/[`PendingState::Paused`]
+    /// execution must first be released so `cancelling` never coexists with a lock
+    /// or pause.
+    pub fn plan_cancel_workflow(&self) -> Result<CancelWorkflowPlan, DbErrorWrite> {
+        let ews = &self.execution_with_state;
+        match &ews.pending_state {
+            PendingState::Finished(_) => Ok(CancelWorkflowPlan::AlreadyFinished),
+            PendingState::Cancelling(_) => Ok(CancelWorkflowPlan::AlreadyCancelling),
+            pending_state => {
+                if !ews.ffqn.is_cancellable() {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::IllegalState {
+                            reason: "cannot cancel, execution is not a cancellable workflow".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        },
+                    ));
+                }
+                Ok(CancelWorkflowPlan::Proceed {
+                    unlock: matches!(pending_state, PendingState::Locked(_)),
+                    unpause: matches!(pending_state, PendingState::Paused(_)),
+                })
+            }
+        }
     }
 
     #[must_use]

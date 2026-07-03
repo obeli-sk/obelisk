@@ -1807,6 +1807,9 @@ impl From<CancelOutcome> for grpc_gen::cancel_activity_response::CancelActivityO
             CancelOutcome::AlreadyFinished => {
                 grpc_gen::cancel_activity_response::CancelActivityOutcome::AlreadyFinished
             }
+            CancelOutcome::AlreadyCancelling => {
+                unreachable!("cancel_activity never yields AlreadyCancelling")
+            }
         }
     }
 }
@@ -1819,6 +1822,9 @@ impl From<CancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome
             }
             CancelOutcome::AlreadyFinished => {
                 grpc_gen::cancel_delay_response::CancelDelayOutcome::AlreadyFinished
+            }
+            CancelOutcome::AlreadyCancelling => {
+                unreachable!("cancel_delay never yields AlreadyCancelling")
             }
         }
     }

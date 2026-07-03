@@ -13,6 +13,8 @@ use tempfile::NamedTempFile;
 use tracing::debug;
 
 pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
+/// A workflow FFQN whose `-cancellable` suffix makes [`FunctionFqn::is_cancellable`] true.
+pub const CANCELLABLE_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn-cancellable");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Database {
