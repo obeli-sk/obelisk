@@ -225,15 +225,10 @@ pub(crate) mod latest {
     }
 }
 pub(crate) mod response_id {
-    use concepts::{
-        ComponentType,
-        prefixed_ulid::{DelayId, ExecutionIdDerived},
-    };
+    use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
     use std::hash::Hash;
 
     use crate::workflow::host_exports::latest::{DelayIdTypes, ExecutionIdTypes, ResponseIdTypes};
-
-    pub(crate) const INVALID_CHILD_TYPE_FOR_DELAYS: ComponentType = ComponentType::WebhookEndpoint;
 
     #[derive(Debug, PartialEq, Eq, Hash, Clone)]
     pub(crate) enum ResponseId {
