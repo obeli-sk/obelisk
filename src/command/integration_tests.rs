@@ -2658,6 +2658,118 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
+    let server = TestServer::start(test_addr!(84)).await;
+
+    let activity_id = server.generate_execution_id().await;
+    server
+        .submit_paused_webapi(
+            &activity_id,
+            "testing:integration/activity.add",
+            vec![json!(3), json!(5)],
+        )
+        .await;
+    let resp = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{activity_id}/cancel",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("cancel activity request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "ok": "cancellation requested" })
+    );
+    let summary = server.get_status_summary_grpc(&activity_id).await;
+    assert!(matches!(
+        summary
+            .current_status
+            .as_ref()
+            .and_then(|status| status.status.as_ref()),
+        Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+    ));
+
+    let cancellable_workflow_id = server.generate_execution_id().await;
+    server
+        .submit_paused_webapi(
+            &cancellable_workflow_id,
+            "testing:integration/workflow-add.add-workflow-cancellable",
+            vec![json!(10), json!(20)],
+        )
+        .await;
+    let resp = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{cancellable_workflow_id}/cancel",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("cancel cancellable workflow request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "ok": "cancellation requested" })
+    );
+    let summary = server
+        .get_status_summary_grpc(&cancellable_workflow_id)
+        .await;
+    assert!(matches!(
+        summary
+            .current_status
+            .as_ref()
+            .and_then(|status| status.status.as_ref()),
+        Some(grpc::grpc_gen::execution_status::Status::Cancelling(_))
+    ));
+    let resp = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{cancellable_workflow_id}/cancel",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("repeat cancel cancellable workflow request failed");
+    assert_eq!(resp.status().as_u16(), 409);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "err": "already cancelling" })
+    );
+
+    let workflow_id = server.generate_execution_id().await;
+    server
+        .submit_paused_webapi(
+            &workflow_id,
+            "testing:integration/workflow-add.add-workflow",
+            vec![json!(1), json!(2)],
+        )
+        .await;
+    let resp = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{workflow_id}/cancel",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("cancel plain workflow request failed");
+    assert_eq!(resp.status().as_u16(), 422);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "err": "cancelled workflow must be marked cancellable" })
+    );
+
+    server.shutdown().await;
+}
+
 // ---- Workflow: replaying a paused workflow should return preview events ----
 
 #[tokio::test]
