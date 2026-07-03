@@ -1814,6 +1814,22 @@ impl From<CancelOutcome> for grpc_gen::cancel_activity_response::CancelActivityO
     }
 }
 
+impl From<CancelOutcome> for grpc_gen::cancel_execution_response::CancelExecutionOutcome {
+    fn from(value: CancelOutcome) -> Self {
+        match value {
+            CancelOutcome::Cancelled => {
+                grpc_gen::cancel_execution_response::CancelExecutionOutcome::CancellationRequested
+            }
+            CancelOutcome::AlreadyFinished => {
+                grpc_gen::cancel_execution_response::CancelExecutionOutcome::AlreadyFinished
+            }
+            CancelOutcome::AlreadyCancelling => {
+                grpc_gen::cancel_execution_response::CancelExecutionOutcome::AlreadyCancelling
+            }
+        }
+    }
+}
+
 impl From<CancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome {
     fn from(value: CancelOutcome) -> Self {
         match value {

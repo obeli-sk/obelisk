@@ -16,10 +16,10 @@ use concepts::JoinSetKind;
 use concepts::prefixed_ulid::ExecutionIdDerived;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::grpc_gen;
-use grpc::grpc_gen::CancelActivityRequest;
 use grpc::grpc_gen::CancelDelayRequest;
-use grpc::grpc_gen::cancel_activity_response::CancelActivityOutcome;
+use grpc::grpc_gen::CancelExecutionRequest;
 use grpc::grpc_gen::cancel_delay_response::CancelDelayOutcome;
+use grpc::grpc_gen::cancel_execution_response::CancelExecutionOutcome;
 use grpc::grpc_gen::execution_status::BlockedByJoinSet;
 use grpc::grpc_gen::execution_status::Finished;
 use grpc::to_channel;
@@ -1598,18 +1598,21 @@ impl CancelCommand {
         match self.id {
             args::ExecutionIdOrDelayId::Execution(execution_id) => {
                 let resp = client
-                    .cancel_activity(tonic::Request::new(CancelActivityRequest {
-                        execution_id: Some(grpc_gen::ExecutionId {
-                            id: execution_id.to_string(),
-                        }),
+                    .cancel_execution(tonic::Request::new(CancelExecutionRequest {
+                        execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
                     }))
                     .await?
                     .into_inner();
                 match resp.outcome() {
-                    CancelActivityOutcome::Unspecified => panic!("unspecified"),
-                    CancelActivityOutcome::Cancelled => println!("Cancelled"),
-                    CancelActivityOutcome::AlreadyFinished => {
+                    CancelExecutionOutcome::Unspecified => panic!("unspecified"),
+                    CancelExecutionOutcome::CancellationRequested => {
+                        println!("Cancellation requested");
+                    }
+                    CancelExecutionOutcome::AlreadyFinished => {
                         println!("Already successfully finished");
+                    }
+                    CancelExecutionOutcome::AlreadyCancelling => {
+                        println!("Already cancelling");
                     }
                 }
             }

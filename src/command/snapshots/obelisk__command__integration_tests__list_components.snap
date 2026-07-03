@@ -1,5 +1,6 @@
 ---
 source: src/command/integration_tests.rs
+assertion_line: 1681
 expression: components
 ---
 [
@@ -238,6 +239,13 @@ expression: components
     "component_id": {
       "component_type": "webhook_endpoint",
       "name": "test_read_env_webhook",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_add_cancellable_workflow",
       "component_digest": "sha256:<REDACTED>"
     }
   },

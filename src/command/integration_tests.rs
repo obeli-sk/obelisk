@@ -69,10 +69,11 @@ use concepts::storage::DbPoolCloseable;
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
-    AdvanceExecutionRequest, DeploymentId as GrpcDeploymentId, ExecutionId as GrpcExecutionId,
-    GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest, GetStatusRequest,
-    ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest,
-    SubmitRequest, SwitchDeploymentRequest,
+    AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
+    ExecutionId as GrpcExecutionId, GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest,
+    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck,
+    SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
+    cancel_execution_response::CancelExecutionOutcome,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -258,6 +259,16 @@ return_type = "result<string>"
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
 ffqn = "testing:integration/workflow-add.add-workflow"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+]
+return_type = "result<string, string>"
+
+[[workflow_js]]
+name = "test_add_cancellable_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
+ffqn = "testing:integration/workflow-add.add-workflow-cancellable"
 params = [
   {{ name = "a", type = "u32" }},
   {{ name = "b", type = "u32" }},
@@ -2544,6 +2555,106 @@ async fn submit_workflow_and_replay() {
         events, events_after,
         "events must be identical after replay"
     );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
+    let server = TestServer::start(test_addr!(83)).await;
+    let mut grpc_client =
+        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap();
+
+    let activity_id = server.generate_execution_id().await;
+    server
+        .submit_paused_grpc(
+            &activity_id,
+            "testing:integration/activity.add",
+            vec![json!(3), json!(5)],
+        )
+        .await;
+    let resp = grpc_client
+        .cancel_execution(CancelExecutionRequest {
+            execution_id: Some(GrpcExecutionId {
+                id: activity_id.clone(),
+            }),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        resp.outcome(),
+        CancelExecutionOutcome::CancellationRequested
+    );
+    let summary = server.get_status_summary_grpc(&activity_id).await;
+    assert!(matches!(
+        summary
+            .current_status
+            .as_ref()
+            .and_then(|status| status.status.as_ref()),
+        Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+    ));
+
+    let cancellable_workflow_id = server.generate_execution_id().await;
+    server
+        .submit_paused_grpc(
+            &cancellable_workflow_id,
+            "testing:integration/workflow-add.add-workflow-cancellable",
+            vec![json!(10), json!(20)],
+        )
+        .await;
+    let resp = grpc_client
+        .cancel_execution(CancelExecutionRequest {
+            execution_id: Some(GrpcExecutionId {
+                id: cancellable_workflow_id.clone(),
+            }),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        resp.outcome(),
+        CancelExecutionOutcome::CancellationRequested
+    );
+    let summary = server
+        .get_status_summary_grpc(&cancellable_workflow_id)
+        .await;
+    assert!(matches!(
+        summary
+            .current_status
+            .as_ref()
+            .and_then(|status| status.status.as_ref()),
+        Some(grpc::grpc_gen::execution_status::Status::Cancelling(_))
+    ));
+    let resp = grpc_client
+        .cancel_execution(CancelExecutionRequest {
+            execution_id: Some(GrpcExecutionId {
+                id: cancellable_workflow_id.clone(),
+            }),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.outcome(), CancelExecutionOutcome::AlreadyCancelling);
+
+    let workflow_id = server.generate_execution_id().await;
+    server
+        .submit_paused_grpc(
+            &workflow_id,
+            "testing:integration/workflow-add.add-workflow",
+            vec![json!(1), json!(2)],
+        )
+        .await;
+    let status = grpc_client
+        .cancel_execution(CancelExecutionRequest {
+            execution_id: Some(GrpcExecutionId { id: workflow_id }),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert!(status.message().contains("must be marked cancellable"));
+
     server.shutdown().await;
 }
 
