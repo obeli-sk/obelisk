@@ -1,7 +1,8 @@
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
-use concepts::storage::JoinSetResponse;
+use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest, JoinSetResponse};
 use concepts::{ComponentType, FunctionFqn, JoinSetId};
 use indexmap::IndexMap;
+use std::collections::HashMap;
 
 /// Simplified version of [`JoinSetResponse`]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -76,6 +77,83 @@ impl JoinSetFold {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Reconstruct the open join sets from a persisted execution log, for the
+    /// cancellation driver (which cannot replay WASM). Folds the history events,
+    /// pairing each consuming `JoinNext` with the next response of its join set in
+    /// cursor order. `child_component_type` classifies each child request
+    /// (activity vs workflow) from the log. Members left in the result are the
+    /// still-unawaited ones; those without a response are still running.
+    pub fn reconstruct(
+        history: impl IntoIterator<Item = HistoryEvent>,
+        responses: impl IntoIterator<Item = (JoinSetId, JoinSetResponseId)>,
+        mut child_component_type: impl FnMut(&ExecutionIdDerived) -> ComponentType,
+    ) -> Result<JoinSetFold, JoinSetFoldError> {
+        // Responses per join set in cursor order, plus how many were consumed.
+        let mut per_join_set: HashMap<JoinSetId, (Vec<JoinSetResponseId>, usize)> = HashMap::new();
+        for (join_set_id, response_id) in responses {
+            per_join_set
+                .entry(join_set_id)
+                .or_default()
+                .0
+                .push(response_id);
+        }
+        let mut fold = JoinSetFold::new();
+        for event in history {
+            match event {
+                HistoryEvent::JoinSetCreate { join_set_id } => fold.create_join_set(join_set_id)?,
+                HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request:
+                        JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id,
+                            target_ffqn,
+                            result: Ok(()),
+                            ..
+                        },
+                } => {
+                    let component_type = child_component_type(&child_execution_id);
+                    fold.insert_child(
+                        &join_set_id,
+                        child_execution_id,
+                        component_type,
+                        target_ffqn,
+                    )?;
+                }
+                HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::DelayRequest { delay_id, .. },
+                } => fold.insert_delay(&join_set_id, delay_id)?,
+                // A worker close appends one closing `JoinNext` per member; the first
+                // drops the whole set, the rest are no-ops.
+                HistoryEvent::JoinNext {
+                    join_set_id,
+                    closing: true,
+                    ..
+                } => {
+                    let _ = fold.close_join_set(&join_set_id);
+                }
+                HistoryEvent::JoinNext {
+                    join_set_id,
+                    closing: false,
+                    ..
+                }
+                | HistoryEvent::JoinNextTry {
+                    join_set_id,
+                    outcome: JoinNextTryOutcome::Found,
+                } => {
+                    if let Some((responses, cursor)) = per_join_set.get_mut(&join_set_id)
+                        && let Some(response_id) = responses.get(*cursor)
+                    {
+                        fold.remove_response(&join_set_id, response_id)?;
+                        *cursor += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(fold)
     }
 
     #[must_use]
@@ -336,6 +414,59 @@ mod tests {
         .unwrap();
 
         assert!(fold.open_join_sets().get(&join_set_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn reconstruct_keeps_unresponded_members_open() {
+        let join_set_id = join_set_id();
+        let awaited = child_id(&join_set_id, 1);
+        let running = child_id(&join_set_id, 2);
+        let ffqn = FunctionFqn::new_static("testing:integration/workflow", "child");
+        let history = vec![
+            HistoryEvent::JoinSetCreate {
+                join_set_id: join_set_id.clone(),
+            },
+            HistoryEvent::JoinSetRequest {
+                join_set_id: join_set_id.clone(),
+                request: JoinSetRequest::ChildExecutionRequest {
+                    child_execution_id: awaited.clone(),
+                    target_ffqn: ffqn.clone(),
+                    params: Params::empty(),
+                    result: Ok(()),
+                },
+            },
+            HistoryEvent::JoinSetRequest {
+                join_set_id: join_set_id.clone(),
+                request: JoinSetRequest::ChildExecutionRequest {
+                    child_execution_id: running.clone(),
+                    target_ffqn: ffqn.clone(),
+                    params: Params::empty(),
+                    result: Ok(()),
+                },
+            },
+            HistoryEvent::JoinNext {
+                join_set_id: join_set_id.clone(),
+                run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                requested_ffqn: None,
+                closing: false,
+            },
+        ];
+        // Only the awaited child has landed a response.
+        let responses = vec![(
+            join_set_id.clone(),
+            JoinSetResponseId::ChildExecutionId(awaited),
+        )];
+
+        let fold =
+            JoinSetFold::reconstruct(history, responses, |_| ComponentType::Workflow).unwrap();
+
+        let members = fold.open_join_sets().get(&join_set_id).unwrap();
+        assert_eq!(
+            members.len(),
+            1,
+            "the awaited child is consumed, running stays"
+        );
+        assert!(members.contains_key(&JoinSetResponseId::ChildExecutionId(running)));
     }
 
     #[test]

@@ -5271,6 +5271,37 @@ impl DbConnection for SqlitePool {
         .await
     }
 
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead> {
+        self.transaction(
+            move |tx| {
+                let mut stmt = tx.prepare(
+                    "SELECT execution_id FROM t_state WHERE lifecycle = :lifecycle \
+                     ORDER BY created_at LIMIT :batch_size",
+                )?;
+                let rows = stmt
+                    .query_map(
+                        named_params! {
+                            ":lifecycle": LIFECYCLE_CANCELLING,
+                            ":batch_size": batch_size,
+                        },
+                        |row| row.get::<_, String>("execution_id"),
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows.into_iter()
+                    .map(|id| {
+                        ExecutionId::from_str(&id)
+                            .map_err(|_| consistency_rusqlite("invalid t_state.execution_id"))
+                            .map_err(DbErrorRead::from)
+                    })
+                    .collect()
+            },
+            TxType::Other, // read only
+            "get_cancelling",
+        )
+        .await
+    }
+
     #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,

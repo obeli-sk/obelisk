@@ -4076,6 +4076,30 @@ impl DbConnection for PostgresConnection {
         Ok(res)
     }
 
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let rows = tx
+            .query(
+                &format!(
+                    "SELECT execution_id FROM t_state WHERE lifecycle = '{LIFECYCLE_CANCELLING}' \
+                     ORDER BY created_at LIMIT $1"
+                ),
+                &[&(i64::from(batch_size))],
+            )
+            .await?;
+        tx.commit().await?;
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let eid_str: String = get(&row, "execution_id")?;
+            let eid = ExecutionId::from_str(&eid_str)
+                .map_err(|_| consistency_db_err("invalid execution_id"))?;
+            result.push(eid);
+        }
+        Ok(result)
+    }
+
     #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,

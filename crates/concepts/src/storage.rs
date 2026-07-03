@@ -1990,6 +1990,12 @@ pub trait DbConnection: DbExecutor {
     /// Get execution log.
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
 
+    /// Execution ids whose `lifecycle` is `cancelling`, for the cancellation driver
+    /// to advance. Ordered oldest-first, capped at `batch_size`. Unlike the executor
+    /// pick-up queries this is not lock/pause guarded: cancellation proceeds
+    /// regardless (cancel supersedes pause).
+    async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead>;
+
     async fn append_delay_response(
         &self,
         created_at: DateTime<Utc>,

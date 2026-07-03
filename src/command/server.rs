@@ -378,6 +378,8 @@ impl DeploymentSwitchManagerHandle {
 }
 
 const EPOCH_MILLIS: u64 = 10;
+/// Number of cancelling executions the cancellation driver advances per tick.
+const CANCELLATION_DRIVER_BATCH_SIZE: u32 = 100;
 /// Default number of concurrent deployment submits the switch manager accepts.
 const DEFAULT_SUBMIT_CONCURRENCY: u32 = 1;
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
@@ -2777,6 +2779,14 @@ async fn spawn_tasks_and_threads(
         None
     };
 
+    let cancellation_driver = wasm_workers::cancellation_driver::CancellationDriver::spawn(
+        db_pool.clone(),
+        cancel_registry.clone(),
+        Now.clone_box(),
+        TokioSleep,
+        cancel_watcher.tick_sleep.into(),
+        CANCELLATION_DRIVER_BATCH_SIZE,
+    );
     let cancel_watcher = cancel_registry.spawn_cancel_watcher(cancel_watcher.tick_sleep.into());
 
     server_compiled_linked
@@ -2830,6 +2840,7 @@ async fn spawn_tasks_and_threads(
         // exec_join_handles,
         timers_watcher,
         cancel_watcher,
+        cancellation_driver,
         http_servers_handles,
         epoch_ticker,
         log_db_forarder,
@@ -2850,6 +2861,7 @@ struct ServerInit {
     engines: Engines,
     timers_watcher: Option<AbortOnDropHandle>,
     cancel_watcher: AbortOnDropHandle,
+    cancellation_driver: AbortOnDropHandle,
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
     log_db_forarder: AbortOnDropHandle,
@@ -2870,6 +2882,7 @@ impl ServerInit {
             engines,
             timers_watcher,
             cancel_watcher,
+            cancellation_driver,
             http_servers_handles,
             epoch_ticker,
             log_db_forarder,
@@ -2907,6 +2920,7 @@ impl ServerInit {
         drop(db_pool);
         drop(timers_watcher);
         drop(cancel_watcher);
+        drop(cancellation_driver);
         drop(http_servers_handles);
         drop(epoch_ticker);
         drop(engines);

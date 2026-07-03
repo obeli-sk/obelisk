@@ -2993,6 +2993,42 @@ async fn request_cancellation_bypasses_cancellable_guard(database: Database) {
     db_close.close().await;
 }
 
+/// `get_cancelling` (the driver's pick-up query) returns only `cancelling` rows,
+/// excluding an active one.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn get_cancelling_returns_only_cancelling_rows(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let cancelling = ExecutionId::generate();
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &cancelling,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .request_cancellation(&cancelling, sim_clock.now())
+        .await
+        .unwrap();
+
+    let active = ExecutionId::generate();
+    create_at(db_connection.as_ref(), &sim_clock, &active, sim_clock.now()).await;
+
+    assert_eq!(
+        vec![cancelling],
+        db_connection.get_cancelling(10).await.unwrap()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
