@@ -38,8 +38,8 @@ use wasmtime::component::{Type, Val};
 
 pub use deployment_config::naming::{
     FnMarker, FnName, FunctionFqn, FunctionFqnParseError, IfcFqnMarker, IfcFqnName,
-    IfcFqnParseError, NAMESPACE_OBELISK, Name, PackageExtension, PkgFqn, SUFFIX_PKG_EXT,
-    SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
+    IfcFqnParseError, NAMESPACE_OBELISK, Name, PackageExtension, PkgFqn, SUFFIX_FN_CANCELLABLE,
+    SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
 };
 
 #[derive(
