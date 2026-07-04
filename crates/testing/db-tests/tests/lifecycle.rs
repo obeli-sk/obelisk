@@ -5,11 +5,11 @@ use concepts::storage::DeploymentFileRecord;
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
-    ExecutionListPagination, ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo,
-    FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter,
-    LockedBy, LockedExecution, Pagination, PendingState, PendingStateBlockedByJoinSet,
-    PendingStateLocked, PendingStatePendingAt, PendingStateSuspended, ResponseCursor,
-    TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
+    ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, ExpiredDelay, ExpiredLock,
+    ExpiredTimer, FrameInfo, FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse,
+    JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination, PendingState,
+    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, PendingStateSuspended,
+    ResponseCursor, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{
     DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
@@ -5312,6 +5312,93 @@ async fn list_executions_filters_by_versioned_package_name(database: Database) {
         "obelisk-client:api-http/executions@1.0.0-beta.generate",
         executions[0].ffqn.to_string()
     );
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+/// Regression: every state filter renders SQL against `t_state`, which no longer
+/// has the `is_paused` column (V12 replaced it with `lifecycle`). Exercise each
+/// filter so a stale column reference fails loudly instead of only in production.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn list_executions_filters_by_state(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let create = |execution_id: ExecutionId| CreateRequest {
+        created_at: sim_clock.now(),
+        execution_id,
+        ffqn: SOME_FFQN,
+        params: Params::empty(),
+        parent: None,
+        metadata: concepts::ExecutionMetadata::empty(),
+        scheduled_at: sim_clock.now(),
+        component_id: ComponentId::dummy_activity(),
+        deployment_id: DEPLOYMENT_ID_DUMMY,
+        scheduled_by: None,
+        paused: false,
+    };
+
+    let pending_id = ExecutionId::generate();
+    db_connection
+        .create(create(pending_id.clone()))
+        .await
+        .unwrap();
+    let paused_id = ExecutionId::generate();
+    db_connection
+        .create(create(paused_id.clone()))
+        .await
+        .unwrap();
+    drop(db_connection);
+
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    api_conn
+        .pause_execution(&paused_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let list = |state_filter: ExecutionStateFilter| {
+        let api_conn = &api_conn;
+        async move {
+            api_conn
+                .list_executions(
+                    ListExecutionsFilter {
+                        state_filters: vec![state_filter],
+                        ..Default::default()
+                    },
+                    ExecutionListPagination::default(),
+                )
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|e| e.execution_id)
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let now = sim_clock.now();
+    // Each of these previously panicked on a missing `is_paused` column.
+    assert_eq!(
+        vec![pending_id.clone()],
+        list(ExecutionStateFilter::Pending { now }).await
+    );
+    assert_eq!(
+        vec![paused_id.clone()],
+        list(ExecutionStateFilter::Paused).await
+    );
+    // A paused row is excluded from the active buckets (lifecycle = 'active').
+    assert!(
+        list(ExecutionStateFilter::Scheduled { now })
+            .await
+            .is_empty()
+    );
+    assert!(list(ExecutionStateFilter::Locked).await.is_empty());
+    assert!(list(ExecutionStateFilter::Blocked).await.is_empty());
+    assert!(list(ExecutionStateFilter::Finished).await.is_empty());
 
     drop(api_conn);
     db_close.close().await;

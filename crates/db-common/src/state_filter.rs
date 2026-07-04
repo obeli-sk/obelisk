@@ -4,8 +4,8 @@
 
 use chrono::{DateTime, Utc};
 use concepts::storage::{
-    ExecutionStateFilter, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, STATE_BLOCKED_BY_JOIN_SET,
-    STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
+    ExecutionStateFilter, LIFECYCLE_ACTIVE, LIFECYCLE_PAUSED, RESULT_KIND_JSON_ERROR,
+    RESULT_KIND_JSON_OK, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
 };
 
 /// Render one filter as a parenthesized SQL condition.
@@ -20,21 +20,23 @@ pub fn state_filter_to_sql(
     jsonb_cast: &str,
 ) -> String {
     match filter {
+        // The active buckets require `lifecycle = 'active'`, which excludes both
+        // paused and cancelling rows (mirroring the deployment-summary aggregates).
         ExecutionStateFilter::Locked => {
-            format!("(state = '{STATE_LOCKED}' AND is_paused = false)")
+            format!("(state = '{STATE_LOCKED}' AND lifecycle = '{LIFECYCLE_ACTIVE}')")
         }
         ExecutionStateFilter::Pending { .. } => format!(
-            "(state = '{STATE_PENDING_AT}' AND is_paused = false \
+            "(state = '{STATE_PENDING_AT}' AND lifecycle = '{LIFECYCLE_ACTIVE}' \
             AND pending_expires_finished <= {now_placeholder})"
         ),
         ExecutionStateFilter::Scheduled { .. } => format!(
-            "(state = '{STATE_PENDING_AT}' AND is_paused = false \
+            "(state = '{STATE_PENDING_AT}' AND lifecycle = '{LIFECYCLE_ACTIVE}' \
             AND pending_expires_finished > {now_placeholder})"
         ),
         ExecutionStateFilter::Blocked => {
-            format!("(state = '{STATE_BLOCKED_BY_JOIN_SET}' AND is_paused = false)")
+            format!("(state = '{STATE_BLOCKED_BY_JOIN_SET}' AND lifecycle = '{LIFECYCLE_ACTIVE}')")
         }
-        ExecutionStateFilter::Paused => "(is_paused = true)".to_string(),
+        ExecutionStateFilter::Paused => format!("(lifecycle = '{LIFECYCLE_PAUSED}')"),
         ExecutionStateFilter::Finished => format!("(state = '{STATE_FINISHED}')"),
         ExecutionStateFilter::FinishedOk => format!(
             "(state = '{STATE_FINISHED}' AND result_kind = '{RESULT_KIND_JSON_OK}'{jsonb_cast})"
