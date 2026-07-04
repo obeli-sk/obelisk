@@ -276,6 +276,13 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
+name = "test_sleep_cancellable_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/sleep_cancellable.js"
+ffqn = "testing:integration/workflow-sleep.sleep-cancellable"
+params = []
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_add_via_activity_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_via_activity.js"
 ffqn = "testing:integration/workflow-add-via-activity.add-via-activity"
@@ -2765,6 +2772,95 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     assert_eq!(
         resp.json::<Value>().await.unwrap(),
         json!({ "err": "cancelled workflow must be marked cancellable" })
+    );
+
+    server.shutdown().await;
+}
+
+/// End-to-end: a *running* cancellable workflow, blocked on a durable sleep, is
+/// cancelled and the cancellation driver (running no WASM) cancels the pending
+/// delay and finishes the workflow as Cancelled.
+#[tokio::test]
+async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled() {
+    use grpc::grpc_gen::execution_status::Status;
+    const FFQN: &str = "testing:integration/workflow-sleep.sleep-cancellable";
+    let server = TestServer::start(test_addr!(85)).await;
+    let mut grpc_client =
+        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap();
+
+    // Submit running (not paused); the workflow blocks on a 100s durable sleep.
+    let exec_id = server.generate_execution_id().await;
+    grpc_client
+        .submit(SubmitRequest {
+            execution_id: Some(GrpcExecutionId { id: exec_id.clone() }),
+            function_name: Some(FFQN.parse::<FunctionFqn>().unwrap().into()),
+            params: Some(
+                grpc::grpc_mapping::to_any(
+                    Vec::<Value>::new(),
+                    format!("urn:obelisk:json:params:{FFQN}"),
+                )
+                .unwrap(),
+            ),
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    // Wait until it has run and created the delay (blocked, or kept warm-locked).
+    let mut started = false;
+    for _ in 0..100 {
+        let status = server.get_status_summary_grpc(&exec_id).await;
+        if matches!(
+            status
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(Status::BlockedByJoinSet(_) | Status::Locked(_))
+        ) {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(started, "workflow never started/blocked on the sleep");
+
+    let resp = grpc_client
+        .cancel_execution(CancelExecutionRequest {
+            execution_id: Some(GrpcExecutionId { id: exec_id.clone() }),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(resp.outcome(), CancelExecutionOutcome::CancellationRequested);
+
+    // The driver drives it to Finished(Cancelled) without the 100s sleep ever expiring.
+    let mut finished_kind = None;
+    for _ in 0..100 {
+        let status = server.get_status_summary_grpc(&exec_id).await;
+        if let Some(Status::Finished(finished)) = status
+            .current_status
+            .as_ref()
+            .and_then(|status| status.status.as_ref())
+        {
+            finished_kind = Some(
+                finished
+                    .result_kind
+                    .as_ref()
+                    .and_then(|rk| rk.value.clone())
+                    .expect("finished must carry a result kind"),
+            );
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        finished_kind,
+        Some(grpc::grpc_gen::result_kind::Value::ExecutionFailureKind(
+            grpc::grpc_gen::ExecutionFailureKind::Cancelled as i32
+        )),
+        "workflow must finish as Cancelled"
     );
 
     server.shutdown().await;

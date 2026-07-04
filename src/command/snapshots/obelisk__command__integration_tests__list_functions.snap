@@ -1,6 +1,5 @@
 ---
 source: src/command/integration_tests.rs
-assertion_line: 1784
 expression: functions
 ---
 [
@@ -75,6 +74,9 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflow-add.add-workflow-cancellable"
+  },
+  {
+    "ffqn": "testing:integration/workflow-sleep.sleep-cancellable"
   },
   {
     "ffqn": "testing:integration/workflow-add-via-activity.add-via-activity"
