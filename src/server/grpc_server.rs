@@ -1255,9 +1255,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         conn.pause_execution(&execution_id, executed_at)
             .await
             .to_status()?;
-        // No need to distinguish between component types, only activities are tracked in the cancel registry.
-        self.cancel_registry
-            .interrupt_running_activity(&execution_id);
         Ok(tonic::Response::new(grpc_gen::PauseExecutionResponse {}))
     }
 

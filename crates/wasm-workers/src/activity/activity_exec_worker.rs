@@ -370,8 +370,9 @@ impl Worker for ActivityExecWorker {
         let result = tokio::select! {
             biased;
             _signal = cancel_token => {
-                // Either paused or cancelled by CancelRegistry, or timed out by `expired_timers_watcher`
-                // and Sender removed from CancelRegistry using its watcher.
+                // Fired only by `CancelRegistry::cancel_activity`, which has already written the
+                // terminal cancellation state to the DB. Pausing a running activity is rejected,
+                // so pause never interrupts here.
                 debug!("Activity run interrupted, DB must have been updated");
                 // Kill the child once the DB state has already been updated elsewhere.
                 let _ = child.kill().await;
