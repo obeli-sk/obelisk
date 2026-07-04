@@ -1513,7 +1513,9 @@ impl TestServer {
     /// cancelled the cancellation driver can never advance it to `Finished` — it stays
     /// `Cancelling` for the rest of the test. Cancelling a trivial workflow instead
     /// races the driver, which finishes an empty-join-set cancellation on its next tick.
-    async fn seed_cancellable_parent_blocked_on_uncancellable_child(&self) -> concepts::ExecutionId {
+    async fn seed_cancellable_parent_blocked_on_uncancellable_child(
+        &self,
+    ) -> concepts::ExecutionId {
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
         use concepts::storage::{
             AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, JoinSetRequest,
