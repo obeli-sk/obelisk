@@ -3,7 +3,6 @@ use crate::{
     activity::cancel_registry::CancelRegistry,
     workflow::{
         event_history::UpsertStubOrReplayInterrupt,
-        host_exports::response_id::ResponseId,
         replay_advance::{JoinSetCloseCancellations, is_closing_join_next},
     },
 };
@@ -18,6 +17,7 @@ use concepts::{
         ResponseWithCursor, TimeoutOutcome, Version,
     },
 };
+use db_common::JoinSetResponseId;
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tracing::{debug, instrument, warn};
@@ -377,7 +377,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         if let Some(cancellations) = cancellations {
             for response_id in cancellations.iterate_in_cancellation_order() {
                 match response_id {
-                    ResponseId::ChildExecutionId(child_execution_id_derived) => {
+                    JoinSetResponseId::ChildExecutionId(child_execution_id_derived) => {
                         let res = cancel_registry
                             .cancel_activity(
                                 self.db_connection.as_ref(),
@@ -391,7 +391,7 @@ impl WorkflowDbConnection for CachingDbConnection {
                             );
                         }
                     }
-                    ResponseId::DelayId(delay_id) => {
+                    JoinSetResponseId::DelayId(delay_id) => {
                         let res = storage::cancel_delay(
                             self.db_connection.as_ref(),
                             delay_id.clone(),
@@ -402,6 +402,20 @@ impl WorkflowDbConnection for CachingDbConnection {
                             debug!("Ignoring failure to cancel delay {delay_id} - {err:?}");
                         }
                     }
+                }
+            }
+            // Signal cancellable children (already classified, so guard-free); the
+            // driver drives their close and the `Cancelled` response wakes our await.
+            for child_id in cancellations.cancellable_child_ids() {
+                let res = self
+                    .db_connection
+                    .request_cancellation_with_retries(
+                        &ExecutionId::Derived(child_id.clone()),
+                        cancellations.cancelled_at,
+                    )
+                    .await;
+                if let Err(err) = res {
+                    debug!("Ignoring failure to signal cancellable child {child_id} - {err:?}");
                 }
             }
         }

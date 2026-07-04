@@ -352,7 +352,7 @@ impl TryFrom<grpc_gen::ComponentType> for ComponentType {
 impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
     fn from(execution_with_state: &ExecutionWithState) -> grpc_gen::ExecutionStatus {
         use grpc_gen::execution_status::{
-            BlockedByJoinSet, Finished, Locked, Paused, PendingAt, Status,
+            BlockedByJoinSet, Cancelling, Finished, Locked, Paused, PendingAt, Status,
         };
         grpc_gen::ExecutionStatus {
             component_digest: Some(grpc_gen::ContentDigest::from(
@@ -394,6 +394,7 @@ impl From<&ExecutionWithState> for grpc_gen::ExecutionStatus {
                     result_kind: grpc_gen::ResultKind::from(*result_kind).into(),
                 }),
                 PendingState::Paused(..) => Status::Paused(Paused {}),
+                PendingState::Cancelling(..) => Status::Cancelling(Cancelling {}),
             }),
         }
     }
@@ -1052,6 +1053,11 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
             ExecutionRequest::Unpaused => {
                 grpc_gen::execution_event::Event::Unpaused(grpc_gen::execution_event::Unpaused {})
             }
+            ExecutionRequest::CancellationRequested => {
+                grpc_gen::execution_event::Event::CancellationRequested(
+                    grpc_gen::execution_event::CancellationRequested {},
+                )
+            }
             ExecutionRequest::HistoryEvent { event } => {
                 grpc_gen::execution_event::Event::HistoryVariant(history_event_to_grpc(event))
             }
@@ -1203,6 +1209,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
             }
             grpc_gen::execution_event::Event::Paused(_) => ExecutionRequest::Paused,
             grpc_gen::execution_event::Event::Unpaused(_) => ExecutionRequest::Unpaused,
+            grpc_gen::execution_event::Event::CancellationRequested(_) => {
+                ExecutionRequest::CancellationRequested
+            }
         };
 
         Ok(ExecutionEvent {
@@ -1798,6 +1807,25 @@ impl From<CancelOutcome> for grpc_gen::cancel_activity_response::CancelActivityO
             CancelOutcome::AlreadyFinished => {
                 grpc_gen::cancel_activity_response::CancelActivityOutcome::AlreadyFinished
             }
+            CancelOutcome::AlreadyCancelling => {
+                unreachable!("cancel_activity never yields AlreadyCancelling")
+            }
+        }
+    }
+}
+
+impl From<CancelOutcome> for grpc_gen::cancel_execution_response::CancelExecutionOutcome {
+    fn from(value: CancelOutcome) -> Self {
+        match value {
+            CancelOutcome::Cancelled => {
+                grpc_gen::cancel_execution_response::CancelExecutionOutcome::CancellationRequested
+            }
+            CancelOutcome::AlreadyFinished => {
+                grpc_gen::cancel_execution_response::CancelExecutionOutcome::AlreadyFinished
+            }
+            CancelOutcome::AlreadyCancelling => {
+                grpc_gen::cancel_execution_response::CancelExecutionOutcome::AlreadyCancelling
+            }
         }
     }
 }
@@ -1810,6 +1838,9 @@ impl From<CancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome
             }
             CancelOutcome::AlreadyFinished => {
                 grpc_gen::cancel_delay_response::CancelDelayOutcome::AlreadyFinished
+            }
+            CancelOutcome::AlreadyCancelling => {
+                unreachable!("cancel_delay never yields AlreadyCancelling")
             }
         }
     }

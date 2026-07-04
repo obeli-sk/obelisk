@@ -499,10 +499,27 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
     let deployment_pending = DeploymentId::generate();
     let deployment_locked = DeploymentId::generate();
     let deployment_finished = DeploymentId::generate();
+    let deployment_cancelling = DeploymentId::generate();
     let deployment_mixed = DeploymentId::generate();
 
     // Deployment with pending execution
     create_deployment_with_execution(api_conn.as_ref(), deployment_pending, &sim_clock).await;
+
+    // Deployment with a cancelling execution (CancellationRequested on a pending row).
+    let exec_cancelling =
+        create_deployment_with_execution(api_conn.as_ref(), deployment_cancelling, &sim_clock)
+            .await;
+    db_connection
+        .append(
+            exec_cancelling.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
 
     // Deployment with locked execution
     let exec_locked =
@@ -575,7 +592,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
         .await
         .unwrap();
 
-    assert_eq!(4, deployments.len());
+    assert_eq!(5, deployments.len());
 
     // Find each deployment and verify its state
     let find_deployment = |id: DeploymentId| -> &DeploymentState {
@@ -586,6 +603,15 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
     assert_eq!(1, pending_state.pending);
     assert_eq!(0, pending_state.locked);
     assert_eq!(0, pending_state.finished_ok);
+    assert_eq!(0, pending_state.cancelling);
+
+    // A cancelling row counts only in the disjoint `cancelling` bucket, not `pending`.
+    let cancelling_state = find_deployment(deployment_cancelling);
+    assert_eq!(1, cancelling_state.cancelling);
+    assert_eq!(0, cancelling_state.pending);
+    assert_eq!(0, cancelling_state.blocked);
+    assert_eq!(0, cancelling_state.paused);
+    assert_eq!(0, cancelling_state.locked);
 
     let locked_state = find_deployment(deployment_locked);
     assert_eq!(0, locked_state.pending);
@@ -626,13 +652,14 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
         .await
         .unwrap();
 
-    assert_eq!(4, deployments.len());
+    assert_eq!(5, deployments.len());
     for deployment in &deployments {
         assert_eq!(0, deployment.locked, "{:?}", deployment.deployment_id);
         assert_eq!(0, deployment.pending, "{:?}", deployment.deployment_id);
         assert_eq!(0, deployment.scheduled, "{:?}", deployment.deployment_id);
         assert_eq!(0, deployment.blocked, "{:?}", deployment.deployment_id);
         assert_eq!(0, deployment.paused, "{:?}", deployment.deployment_id);
+        assert_eq!(0, deployment.cancelling, "{:?}", deployment.deployment_id);
         assert_eq!(0, deployment.finished_ok, "{:?}", deployment.deployment_id);
         assert_eq!(
             0, deployment.finished_error,

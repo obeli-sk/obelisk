@@ -9,7 +9,7 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
         ComponentMetadataRecord, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
@@ -19,19 +19,20 @@ use concepts::{
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
-        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
+        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
+        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
+        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
+        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
         RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
         VersionType, WasmBacktrace,
     },
 };
 use db_common::{
-    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
-    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
+    AppendNotifier, CancelWorkflowPlan, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
+    NotifierPendingAt, PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
@@ -639,11 +640,10 @@ async fn create_inner(
                 deployment_id,
                 first_scheduled_at,
                 updated_at,
-                intermittent_event_count,
-                is_paused
+                intermittent_event_count
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0, $12
-            )",
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, 0
+            )", // lifecycle defaults to 'active'
             &[
                 &execution_id_str,
                 &execution_id.is_top_level(),
@@ -656,8 +656,7 @@ async fn create_inner(
                 &component_id.component_type.to_string(),
                 &deployment_id.to_string(),
                 &scheduled_at,
-                &false,
-            ], // paused set to false here to avoid "execution is already paused" error.
+            ],
         )
         .await?;
 
@@ -953,7 +952,7 @@ async fn update_state_locked_get_intermittent_event_count(
 
                 result_kind = NULL
             WHERE execution_id = $10
-            AND is_paused = false
+            AND lifecycle = 'active'
             ",
             &[
                 &i64::from(appending_version.0),
@@ -1068,7 +1067,7 @@ async fn update_state_finished(
                 join_set_id = NULL,
                 join_set_closing = NULL,
 
-                is_paused = false,
+                lifecycle = 'active',
                 result_kind = $4
             WHERE execution_id = $5
             ",
@@ -1100,19 +1099,55 @@ async fn update_state_paused(
         if is_paused { "paused" } else { "unpaused" }
     );
 
+    let lifecycle = if is_paused {
+        LIFECYCLE_PAUSED
+    } else {
+        LIFECYCLE_ACTIVE
+    };
     let updated = tx
         .execute(
             r"
             UPDATE t_state
             SET
                 corresponding_version = $1,
-                is_paused = $2,
+                lifecycle = $2,
                 updated_at = CURRENT_TIMESTAMP
             WHERE execution_id = $3
             ",
             &[
                 &i64::from(appending_version.0), // $1
-                &is_paused,                      // $2
+                &lifecycle,                      // $2
+                &execution_id.to_string(),       // $3
+            ],
+        )
+        .await?;
+
+    if updated != 1 {
+        return Err(DbErrorWrite::NotFound);
+    }
+    Ok(appending_version.increment())
+}
+
+#[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
+async fn update_state_cancelling(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    appending_version: &Version,
+) -> Result<AppendResponse, DbErrorWrite> {
+    debug!("Setting t_state lifecycle to cancelling");
+    let updated = tx
+        .execute(
+            r"
+            UPDATE t_state
+            SET
+                corresponding_version = $1,
+                lifecycle = $2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE execution_id = $3
+            ",
+            &[
+                &i64::from(appending_version.0), // $1
+                &LIFECYCLE_CANCELLING,           // $2
                 &execution_id.to_string(),       // $3
             ],
         )
@@ -1189,7 +1224,7 @@ async fn get_combined_state(
                 state, ffqn, component_id_input_digest, component_type, deployment_id, corresponding_version, pending_expires_finished,
                 last_lock_version, executor_id, run_id,
                 join_set_id, join_set_closing,
-                result_kind, is_paused
+                result_kind, lifecycle
             FROM t_state
             WHERE execution_id = $1
             ",
@@ -1244,7 +1279,9 @@ async fn get_combined_state(
     let result_kind: Option<Json<PendingStateFinishedResultKind>> = get(&row, "result_kind")?;
     let result_kind = result_kind.map(|it| it.0);
 
-    let is_paused: bool = get(&row, "is_paused")?;
+    let lifecycle: String = get(&row, "lifecycle")?;
+    let lifecycle = Lifecycle::from_column(&lifecycle)
+        .ok_or_else(|| consistency_db_err("invalid t_state.lifecycle"))?;
 
     let corresponding_version: i64 = get(&row, "corresponding_version")?;
     let corresponding_version = Version::new(
@@ -1268,9 +1305,64 @@ async fn get_combined_state(
         join_set_id,
         join_set_closing,
         result_kind,
-        is_paused,
+        lifecycle,
     };
     CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
+}
+
+/// Shared body of `cancel_workflow` / `request_cancellation`: release any lock/pause
+/// then append `CancellationRequested`, and commit.
+async fn apply_cancellation_plan(
+    tx: deadpool_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+    cancelled_at: DateTime<Utc>,
+    combined_state: &CombinedState,
+    plan: CancelWorkflowPlan,
+) -> Result<CancelOutcome, DbErrorWrite> {
+    let (unlock, unpause) = match plan {
+        CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
+        CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
+        CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
+    };
+    let mut version = combined_state.get_next_version_assert_not_finished();
+    if unlock {
+        (version, _) = append(
+            &tx,
+            execution_id,
+            AppendRequest {
+                created_at: cancelled_at,
+                event: ExecutionRequest::Unlocked(Unlocked {
+                    unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
+                    reason: "cancelling".into(),
+                }),
+            },
+            version,
+        )
+        .await?;
+    } else if unpause {
+        (version, _) = append(
+            &tx,
+            execution_id,
+            AppendRequest {
+                created_at: cancelled_at,
+                event: ExecutionRequest::Unpaused,
+            },
+            version,
+        )
+        .await?;
+    }
+    append(
+        &tx,
+        execution_id,
+        AppendRequest {
+            created_at: cancelled_at,
+            event: ExecutionRequest::CancellationRequested,
+        },
+        version,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(CancelOutcome::Cancelled)
 }
 
 async fn list_executions(
@@ -1388,7 +1480,7 @@ async fn list_executions(
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
-            result_kind, is_paused
+            result_kind, lifecycle
             FROM t_state {where_str} ORDER BY {order_col} {inner_order} LIMIT {limit}"
     );
 
@@ -1430,7 +1522,9 @@ async fn list_executions(
                 get(&row, "result_kind")?;
             let result_kind = result_kind.map(|it| it.0);
 
-            let is_paused: bool = get(&row, "is_paused")?;
+            let lifecycle: String = get(&row, "lifecycle")?;
+            let lifecycle = Lifecycle::from_column(&lifecycle)
+                .ok_or_else(|| consistency_db_err("invalid t_state.lifecycle"))?;
 
             let corresponding_version: i64 = get(&row, "corresponding_version")?;
             let corresponding_version = Version::try_from(corresponding_version)
@@ -1473,7 +1567,7 @@ async fn list_executions(
                 join_set_id,
                 join_set_closing: get(&row, "join_set_closing")?,
                 result_kind,
-                is_paused,
+                lifecycle,
             };
 
             let combined_state = CombinedState::new(combined_state_dto, corresponding_version)?;
@@ -1801,23 +1895,25 @@ async fn list_deployment_states(
         (
             format!(
                 "
-            COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}' AND s.is_paused = false) AS locked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_LOCKED}' AND s.lifecycle = 'active') AS locked,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_PENDING_AT}'
-                  AND s.is_paused = false
+                  AND s.lifecycle = 'active'
                   AND s.pending_expires_finished <= {p_now}
             ) AS pending,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_PENDING_AT}'
-                  AND s.is_paused = false
+                  AND s.lifecycle = 'active'
                   AND s.pending_expires_finished > {p_now}
             ) AS scheduled,
 
-            COUNT(*) FILTER (WHERE s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.is_paused = false) AS blocked,
+            COUNT(*) FILTER (WHERE s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.lifecycle = 'active') AS blocked,
 
-            COUNT(*) FILTER (WHERE s.is_paused = true) AS paused,
+            COUNT(*) FILTER (WHERE s.lifecycle = 'paused') AS paused,
+
+            COUNT(*) FILTER (WHERE s.lifecycle = 'cancelling') AS cancelling,
 
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_FINISHED}'
@@ -1847,6 +1943,7 @@ async fn list_deployment_states(
             0::BIGINT AS scheduled,
             0::BIGINT AS blocked,
             0::BIGINT AS paused,
+            0::BIGINT AS cancelling,
             0::BIGINT AS finished_ok,
             0::BIGINT AS finished_error,
             0::BIGINT AS finished_execution_failure,"
@@ -1939,6 +2036,8 @@ async fn list_deployment_states(
             blocked: u32::try_from(get::<i64, _>(&row, "blocked")?)
                 .expect("count is never negative"),
             paused: u32::try_from(get::<i64, _>(&row, "paused")?).expect("count is never negative"),
+            cancelling: u32::try_from(get::<i64, _>(&row, "cancelling")?)
+                .expect("count is never negative"),
             finished_ok: u32::try_from(get::<i64, _>(&row, "finished_ok")?)
                 .expect("count is never negative"),
             finished_error: u32::try_from(get::<i64, _>(&row, "finished_error")?)
@@ -2387,6 +2486,11 @@ async fn append(
                         DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
                     ));
                 }
+                PendingState::Cancelling(_) => {
+                    return Err(DbErrorWrite::NonRetriable(
+                        DbErrorWriteNonRetriable::UnlockedCannotBeAppended("cancelling"),
+                    ));
+                }
                 PendingState::Finished(_) => {
                     unreachable!("handled above");
                 }
@@ -2446,6 +2550,15 @@ async fn append(
                     }
                     .into());
                 }
+                PendingState::Cancelling(..) => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot pause, execution is cancelling".into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
                 _ => {}
             }
             let next_version =
@@ -2469,6 +2582,40 @@ async fn append(
             }
             let next_version =
                 update_state_paused(tx, execution_id, &appending_version, false).await?;
+            return Ok((next_version, AppendNotifier::default()));
+        }
+
+        ExecutionRequest::CancellationRequested => {
+            match &combined_state.execution_with_state.pending_state {
+                PendingState::Finished { .. } => {
+                    unreachable!("handled above");
+                }
+                // Locked and Paused must first be released (`Unlocked` / `Unpaused`)
+                // by `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+                PendingState::Locked(..) | PendingState::Paused(..) => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason:
+                            "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
+                                .into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
+                PendingState::Cancelling(..) => {
+                    return Err(DbErrorWriteNonRetriable::IllegalState {
+                        reason: "cannot append CancellationRequested event, execution is already cancelling".into(),
+                        context: SpanTrace::capture(),
+                        source: None,
+                        loc: Location::caller(),
+                    }
+                    .into());
+                }
+                PendingState::PendingAt(..) | PendingState::BlockedByJoinSet(..) => {}
+            }
+            let next_version =
+                update_state_cancelling(tx, execution_id, &appending_version).await?;
             return Ok((next_version, AppendNotifier::default()));
         }
 
@@ -2665,16 +2812,16 @@ async fn append_response(
     let combined_state = get_combined_state(tx, execution_id).await?;
     debug!("previous_pending_state: {combined_state:?}");
 
-    let mut notifier = if let PendingStateMergedPause::BlockedByJoinSet {
+    let mut notifier = if let PendingStateMerged::BlockedByJoinSet {
         state:
             PendingStateBlockedByJoinSet {
                 join_set_id: found_join_set_id,
                 lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                 closing: _,
             },
-        paused: _,
+        lifecycle: _,
     } =
-        PendingStateMergedPause::from(combined_state.execution_with_state.pending_state)
+        PendingStateMerged::from(combined_state.execution_with_state.pending_state)
         && *join_set_id == found_join_set_id
     {
         let scheduled_at = std::cmp::max(lock_expires_at, event.created_at);
@@ -3123,7 +3270,7 @@ async fn get_pending_of_single_ffqn(
                 WHERE
                 state = '{STATE_PENDING_AT}' AND
                 pending_expires_finished <= $1 AND ffqn = $2
-                AND is_paused = false
+                AND lifecycle = 'active'
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
@@ -3220,7 +3367,7 @@ async fn get_pending_by_ffqns_auto(
                     WHERE
                     state = '{STATE_PENDING_AT}' AND
                     pending_expires_finished <= $1 AND ffqn = $2
-                    AND is_paused = false
+                    AND lifecycle = 'active'
                     AND (incompatible_digest IS NULL OR incompatible_digest <> $3)
                     ORDER BY pending_expires_finished
                     {}
@@ -3279,7 +3426,7 @@ async fn get_pending_by_component_input_digest(
                 state = '{STATE_PENDING_AT}' AND
                 pending_expires_finished <= $1 AND
                 component_id_input_digest = $2
-                AND is_paused = false
+                AND lifecycle = 'active'
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
@@ -3884,6 +4031,20 @@ impl DbExecutor for PostgresConnection {
         tx.commit().await?;
         Ok(event)
     }
+
+    #[instrument(skip(self))]
+    async fn request_cancellation(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let combined_state = get_combined_state(&tx, execution_id).await?;
+        let plan = combined_state.plan_request_cancellation();
+        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
+    }
 }
 #[async_trait]
 impl DbConnection for PostgresConnection {
@@ -3918,6 +4079,30 @@ impl DbConnection for PostgresConnection {
 
         tx.commit().await?;
         Ok(res)
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let rows = tx
+            .query(
+                &format!(
+                    "SELECT execution_id FROM t_state WHERE lifecycle = '{LIFECYCLE_CANCELLING}' \
+                     ORDER BY created_at LIMIT $1"
+                ),
+                &[&(i64::from(batch_size))],
+            )
+            .await?;
+        tx.commit().await?;
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            let eid_str: String = get(&row, "execution_id")?;
+            let eid = ExecutionId::from_str(&eid_str)
+                .map_err(|_| consistency_db_err("invalid execution_id"))?;
+            result.push(eid);
+        }
+        Ok(result)
     }
 
     #[instrument(level = Level::DEBUG, skip(self, batch))]
@@ -4285,7 +4470,7 @@ impl DbConnection for PostgresConnection {
         // Expired Locks
         let rows = tx.query(
             &format!(
-                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id, is_paused \
+                "SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, executor_id, run_id, lifecycle \
                  FROM t_state \
                  WHERE pending_expires_finished <= $1 AND state = '{STATE_LOCKED}'"
             ),
@@ -4296,9 +4481,9 @@ impl DbConnection for PostgresConnection {
             let unpack = || -> Result<Option<ExpiredTimer>, DbErrorGeneric> {
                 let execution_id: String = get(&row, "execution_id")?;
                 let execution_id = ExecutionId::from_str(&execution_id)?;
-                let is_paused: bool = get(&row, "is_paused")?;
-                if is_paused {
-                    error!(%execution_id, "encountered invalid paused locked execution while scanning expired locks");
+                let lifecycle: String = get(&row, "lifecycle")?;
+                if lifecycle != LIFECYCLE_ACTIVE {
+                    error!(%execution_id, %lifecycle, "encountered invalid non-active locked execution while scanning expired locks");
                     return Ok(None);
                 }
                 let last_lock_version: i64 = get(&row, "last_lock_version")?;
@@ -5161,6 +5346,20 @@ impl DbExternalApi for PostgresConnection {
 
         tx.commit().await?;
         Ok(next_version)
+    }
+
+    #[instrument(skip(self))]
+    async fn cancel_workflow(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        let combined_state = get_combined_state(&tx, execution_id).await?;
+        let plan = combined_state.plan_cancel_workflow()?;
+        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
     }
 
     #[instrument(skip(self))]

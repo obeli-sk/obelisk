@@ -207,7 +207,8 @@ fn normalize_timestamps(
             http_client_traces: _,
         }
         | ExecutionRequest::Paused
-        | ExecutionRequest::Unpaused => {}
+        | ExecutionRequest::Unpaused
+        | ExecutionRequest::CancellationRequested => {}
     }
 
     Ok(())

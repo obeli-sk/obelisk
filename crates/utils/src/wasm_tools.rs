@@ -3,9 +3,9 @@ use anyhow::Context;
 use concepts::{
     ComponentType, ContentDigest, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
     IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
-    ReturnTypeExtendable, ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_GET,
-    SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
-    SUFFIX_PKG_STUB, StrVariant,
+    ReturnTypeExtendable, ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_CANCELLABLE,
+    SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
+    SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -491,10 +491,11 @@ impl ExIm {
 
     fn decode(exim_lite: ExImLite, component_type: ComponentType) -> Result<ExIm, DecodeError> {
         let mut exports_hierarchy_ext = exim_lite.exports;
-        // Verify that there is no -obelisk-ext export
+        // Verify that there is no -obelisk-ext export and that the `-cancellable`
+        // suffix is only used on workflow exports.
         for PackageIfcFns {
             ifc_fqn,
-            fns: _,
+            fns,
             extension,
         } in &exports_hierarchy_ext
         {
@@ -507,6 +508,15 @@ impl ExIm {
                     "invalid package `{}`, {SUFFIX_PKG_EXT} is reserved",
                     ifc_fqn.package_name()
                 )));
+            }
+            if component_type != ComponentType::Workflow {
+                for fn_name in fns.keys() {
+                    if fn_name.ends_with(SUFFIX_FN_CANCELLABLE) {
+                        return Err(DecodeError::new_without_source(format!(
+                            "invalid function `{ifc_fqn}.{fn_name}`, {SUFFIX_FN_CANCELLABLE} is reserved for workflow exports"
+                        )));
+                    }
+                }
             }
         }
 
@@ -1229,5 +1239,32 @@ pub(crate) mod tests {
             WasmComponent::new_from_wit_string(wit, ComponentType::Activity).unwrap();
         let exports = user_wasm_component.exported_functions(false).to_vec();
         insta::assert_debug_snapshot!(exports);
+    }
+
+    const CANCELLABLE_WIT: &str = "
+            package a:b;
+            interface c {
+                run-cancellable: func(p1: string) -> result;
+            }
+            world z {
+                export c;
+            }
+        ";
+
+    #[test]
+    fn cancellable_workflow_export_is_accepted() {
+        WasmComponent::new_from_wit_string(CANCELLABLE_WIT, ComponentType::Workflow).unwrap();
+    }
+
+    #[rstest]
+    #[case(ComponentType::Activity)]
+    #[case(ComponentType::WebhookEndpoint)]
+    fn cancellable_suffix_rejected_on_non_workflow(#[case] wrong_type: ComponentType) {
+        let err = WasmComponent::new_from_wit_string(CANCELLABLE_WIT, wrong_type).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("-cancellable is reserved for workflow exports"),
+            "unexpected error: {err}"
+        );
     }
 }

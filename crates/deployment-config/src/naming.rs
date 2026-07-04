@@ -18,6 +18,10 @@ const NAMESPACE_WASI: &str = "wasi";
 pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 pub const SUFFIX_PKG_SCHEDULE: &str = "-obelisk-schedule";
 pub const SUFFIX_PKG_STUB: &str = "-obelisk-stub";
+/// Function-name suffix marking a workflow export as cancellable. Unlike the
+/// generated companion suffixes (`-submit`, `-await-next`, ...) this marks the
+/// user's primary export, so it is an orthogonal predicate, not a `FunctionExtension`.
+pub const SUFFIX_FN_CANCELLABLE: &str = "-cancellable";
 
 #[derive(Clone, Eq, derive_more::Display, schemars::JsonSchema)]
 #[schemars(with = "String")]
@@ -485,6 +489,11 @@ impl FunctionFqn {
         } else {
             Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
         }
+    }
+
+    #[must_use]
+    pub fn is_cancellable(&self) -> bool {
+        self.function_name.ends_with(SUFFIX_FN_CANCELLABLE)
     }
 }
 

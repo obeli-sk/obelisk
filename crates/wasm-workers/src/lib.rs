@@ -5,6 +5,7 @@ use tracing_error::SpanTrace;
 use utils::wasm_tools::{self, DecodeError, ExIm, WasmComponent};
 
 pub mod activity;
+pub mod cancellation_driver;
 pub mod component_logger;
 pub mod cron;
 pub mod engines;

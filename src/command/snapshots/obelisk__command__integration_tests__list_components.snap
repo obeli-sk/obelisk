@@ -244,6 +244,13 @@ expression: components
   {
     "component_id": {
       "component_type": "workflow",
+      "name": "test_add_cancellable_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
       "name": "test_add_via_activity_workflow",
       "component_digest": "sha256:<REDACTED>"
     }
@@ -336,6 +343,13 @@ expression: components
     "component_id": {
       "component_type": "workflow",
       "name": "test_return_wrong_type_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_sleep_cancellable_workflow",
       "component_digest": "sha256:<REDACTED>"
     }
   },

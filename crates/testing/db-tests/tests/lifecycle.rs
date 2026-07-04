@@ -5,11 +5,11 @@ use concepts::storage::DeploymentFileRecord;
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
-    ExecutionListPagination, ExecutionRequest, ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo,
-    FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter,
-    LockedBy, LockedExecution, Pagination, PendingState, PendingStateBlockedByJoinSet,
-    PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
-    Unlocked, Version, VersionType, WasmBacktrace,
+    ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, ExpiredDelay, ExpiredLock,
+    ExpiredTimer, FrameInfo, FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse,
+    JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination, PendingState,
+    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, PendingStateSuspended,
+    ResponseCursor, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{
     DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
@@ -24,7 +24,7 @@ use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VA
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
 use db_postgres::postgres_dao::{DbInitialzationOutcome, PostgresPool, ProvisionPolicy};
 use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
-use obeli_db_tests::SOME_FFQN;
+use obeli_db_tests::{CANCELLABLE_FFQN, SOME_FFQN};
 use obeli_db_tests::{Database, initialize_fresh_postgres_db};
 use rstest::rstest;
 use std::sync::Arc;
@@ -2393,7 +2393,7 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
     // Verify the lock was released before the execution was paused.
     let log = db_connection.get(&execution_id).await.unwrap();
     let paused_pending_at = assert_matches!(log.pending_state,
-        PendingState::Paused(PendingStatePaused::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
+        PendingState::Paused(PendingStateSuspended::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
     assert_eq!(paused_at, paused_pending_at.0);
     assert_eq!(Some(found_locked_by.clone()), paused_pending_at.1);
     let reason = assert_matches!(
@@ -2482,6 +2482,553 @@ async fn cannot_append_paused_to_locked_execution(database: Database) {
     db_close.close().await;
 }
 
+async fn create_at(
+    db_connection: &dyn DbConnection,
+    sim_clock: &SimClock,
+    execution_id: &ExecutionId,
+    scheduled_at: DateTime<Utc>,
+) {
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancellation_requested_from_pending_at_should_keep_underlying_state(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Future scheduled time so the underlying state stays PendingAt.
+    let scheduled_at = sim_clock.now() + Duration::from_mins(1);
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        scheduled_at,
+    )
+    .await;
+
+    let next_version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(Version(2), next_version);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    // The state is now first-class Cancelling, wrapping the unchanged underlying
+    // PendingAt.
+    let scheduled = assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(PendingStatePendingAt {
+            scheduled_at,
+            ..
+        })) => scheduled_at
+    );
+    assert_eq!(scheduled_at, scheduled);
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_cancel_locked_execution_directly(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + Duration::from_secs(30),
+        RunId::generate(),
+    )
+    .await;
+
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(2),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow",
+        reason.as_ref()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_cancel_paused_execution_directly(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    let version = db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow",
+        reason.as_ref()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_cancel_finished_execution(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    let version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + Duration::from_secs(30),
+        RunId::generate(),
+    )
+    .await;
+    let version = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Finished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    http_client_traces: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::AlreadyFinished)
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+async fn create_cancellable_at(
+    db_connection: &dyn DbConnection,
+    sim_clock: &SimClock,
+    execution_id: &ExecutionId,
+    scheduled_at: DateTime<Utc>,
+) {
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: CANCELLABLE_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at,
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_from_pending_at(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let outcome = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_from_locked_appends_unlocked_first(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .lock_one(
+            sim_clock.now(),
+            ComponentId::dummy_activity(),
+            DEPLOYMENT_ID_DUMMY,
+            &execution_id,
+            RunId::generate(),
+            Version::new(1),
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap();
+
+    let outcome = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    // ..., Unlocked, CancellationRequested
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+    assert_matches!(
+        log.events[log.events.len() - 2].event,
+        ExecutionRequest::Unlocked(Unlocked { ref reason, .. }) if reason.as_ref() == "cancelling"
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_from_paused_appends_unpaused_first(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let outcome = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    // Cancel supersedes pause: cancelling, not paused.
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    // ..., Unpaused, CancellationRequested
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+    assert_matches!(
+        log.events[log.events.len() - 2].event,
+        ExecutionRequest::Unpaused
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_rejects_non_cancellable(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // SOME_FFQN has no `-cancellable` suffix.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let err = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot cancel, execution is not a cancellable workflow",
+        reason.as_ref()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancel_workflow_second_call_is_already_cancelling(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    create_cancellable_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let first = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, first);
+    let second = db_connection
+        .cancel_workflow(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::AlreadyCancelling, second);
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+/// The worker join-set close / cancellation driver path classifies the target as
+/// cancellable itself, so `request_cancellation` skips the `is_cancellable` guard
+/// that rejects `SOME_FFQN` on the `cancel_workflow` control-plane path.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn request_cancellation_bypasses_cancellable_guard(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // SOME_FFQN has no `-cancellable` suffix; `cancel_workflow` would reject it.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+
+    let outcome = db_connection
+        .request_cancellation(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+/// `get_cancelling` (the driver's pick-up query) returns only `cancelling` rows,
+/// excluding an active one.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn get_cancelling_returns_only_cancelling_rows(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let cancelling = ExecutionId::generate();
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &cancelling,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .request_cancellation(&cancelling, sim_clock.now())
+        .await
+        .unwrap();
+
+    let active = ExecutionId::generate();
+    create_at(db_connection.as_ref(), &sim_clock, &active, sim_clock.now()).await;
+
+    assert_eq!(
+        vec![cancelling],
+        db_connection.get_cancelling(10).await.unwrap()
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
@@ -2541,6 +3088,135 @@ async fn cannot_lock_paused_execution(database: Database) {
 
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!("cannot lock, execution is paused", reason.as_ref());
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_lock_cancelling_execution(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create ready to run, then request cancellation from PendingAt.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+
+    let err = db_connection
+        .lock_one(
+            sim_clock.now(),
+            ComponentId::dummy_activity(),
+            DEPLOYMENT_ID_DUMMY,
+            &execution_id,
+            RunId::generate(),
+            Version::new(2), // After CancellationRequested event
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap_err();
+
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!("cannot lock, execution is cancelling", reason.as_ref());
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+/// A cancelling row must never be handed to a normal executor tick: the batch
+/// pick-up queries carry `AND lifecycle = 'active'`. This exercises the SELECT
+/// path, distinct from the `lock_one` rejection above.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cancelling_execution_should_not_be_picked_up_by_pending_query(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    // Create ready to run, then request cancellation from PendingAt.
+    create_at(
+        db_connection.as_ref(),
+        &sim_clock,
+        &execution_id,
+        sim_clock.now(),
+    )
+    .await;
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+
+    let component_id = ComponentId::dummy_activity();
+    let by_ffqns = db_connection
+        .lock_pending_by_ffqns(
+            1,
+            sim_clock.now(),
+            Arc::from([SOME_FFQN]),
+            sim_clock.now(),
+            component_id.clone(),
+            DEPLOYMENT_ID_DUMMY,
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            RunId::generate(),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap();
+    assert!(
+        by_ffqns.is_empty(),
+        "cancelling row must not be picked up by lock_pending_by_ffqns"
+    );
+
+    let by_digest = db_connection
+        .lock_pending_by_component_digest(
+            1,
+            sim_clock.now(),
+            &component_id,
+            DEPLOYMENT_ID_DUMMY,
+            sim_clock.now(),
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(30),
+            RunId::generate(),
+            ComponentRetryConfig::ZERO,
+        )
+        .await
+        .unwrap();
+    assert!(
+        by_digest.is_empty(),
+        "cancelling row must not be picked up by lock_pending_by_component_digest"
+    );
 
     drop(db_connection);
     db_close.close().await;
@@ -2670,7 +3346,7 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
         log.pending_state,
-        PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
+        PendingState::Paused(PendingStateSuspended::BlockedByJoinSet(
             PendingStateBlockedByJoinSet {
                 join_set_id: actual_join_set_id,
                 ..
@@ -4636,6 +5312,113 @@ async fn list_executions_filters_by_versioned_package_name(database: Database) {
         "obelisk-client:api-http/executions@1.0.0-beta.generate",
         executions[0].ffqn.to_string()
     );
+
+    drop(api_conn);
+    db_close.close().await;
+}
+
+/// Regression: every state filter renders SQL against `t_state`, which no longer
+/// has the `is_paused` column (V12 replaced it with `lifecycle`). Exercise each
+/// filter so a stale column reference fails loudly instead of only in production.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn list_executions_filters_by_state(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let create = |execution_id: ExecutionId| CreateRequest {
+        created_at: sim_clock.now(),
+        execution_id,
+        ffqn: SOME_FFQN,
+        params: Params::empty(),
+        parent: None,
+        metadata: concepts::ExecutionMetadata::empty(),
+        scheduled_at: sim_clock.now(),
+        component_id: ComponentId::dummy_activity(),
+        deployment_id: DEPLOYMENT_ID_DUMMY,
+        scheduled_by: None,
+        paused: false,
+    };
+
+    let pending_id = ExecutionId::generate();
+    db_connection
+        .create(create(pending_id.clone()))
+        .await
+        .unwrap();
+    let paused_id = ExecutionId::generate();
+    db_connection
+        .create(create(paused_id.clone()))
+        .await
+        .unwrap();
+    let cancelling_id = ExecutionId::generate();
+    db_connection
+        .create(create(cancelling_id.clone()))
+        .await
+        .unwrap();
+    db_connection
+        .append(
+            cancelling_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+    drop(db_connection);
+
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    api_conn
+        .pause_execution(&paused_id, sim_clock.now())
+        .await
+        .unwrap();
+
+    let list = |state_filter: ExecutionStateFilter| {
+        let api_conn = &api_conn;
+        async move {
+            api_conn
+                .list_executions(
+                    ListExecutionsFilter {
+                        state_filters: vec![state_filter],
+                        ..Default::default()
+                    },
+                    ExecutionListPagination::default(),
+                )
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|e| e.execution_id)
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let now = sim_clock.now();
+    // Each of these previously panicked on a missing `is_paused` column.
+    assert_eq!(
+        vec![pending_id.clone()],
+        list(ExecutionStateFilter::Pending { now }).await
+    );
+    assert_eq!(
+        vec![paused_id.clone()],
+        list(ExecutionStateFilter::Paused).await
+    );
+    assert_eq!(
+        vec![cancelling_id.clone()],
+        list(ExecutionStateFilter::Cancelling).await
+    );
+    // Paused and cancelling rows are excluded from the active buckets (lifecycle = 'active').
+    assert!(
+        list(ExecutionStateFilter::Scheduled { now })
+            .await
+            .is_empty()
+    );
+    assert!(list(ExecutionStateFilter::Locked).await.is_empty());
+    assert!(list(ExecutionStateFilter::Blocked).await.is_empty());
+    assert!(list(ExecutionStateFilter::Finished).await.is_empty());
 
     drop(api_conn);
     db_close.close().await;

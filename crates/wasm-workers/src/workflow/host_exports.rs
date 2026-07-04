@@ -225,29 +225,17 @@ pub(crate) mod latest {
     }
 }
 pub(crate) mod response_id {
-    use concepts::{
-        ComponentType,
-        prefixed_ulid::{DelayId, ExecutionIdDerived},
-    };
-    use std::hash::Hash;
+    use db_common::JoinSetResponseId;
 
     use crate::workflow::host_exports::latest::{DelayIdTypes, ExecutionIdTypes, ResponseIdTypes};
 
-    pub(crate) const INVALID_CHILD_TYPE_FOR_DELAYS: ComponentType = ComponentType::WebhookEndpoint;
-
-    #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-    pub(crate) enum ResponseId {
-        ChildExecutionId(ExecutionIdDerived),
-        DelayId(DelayId),
-    }
-
-    impl From<ResponseId> for ResponseIdTypes {
-        fn from(value: ResponseId) -> Self {
+    impl From<JoinSetResponseId> for ResponseIdTypes {
+        fn from(value: JoinSetResponseId) -> Self {
             match value {
-                ResponseId::ChildExecutionId(child_execution_id) => {
+                JoinSetResponseId::ChildExecutionId(child_execution_id) => {
                     ResponseIdTypes::ExecutionId(ExecutionIdTypes::from(&child_execution_id))
                 }
-                ResponseId::DelayId(delay_id) => {
+                JoinSetResponseId::DelayId(delay_id) => {
                     ResponseIdTypes::DelayId(DelayIdTypes::from(&delay_id))
                 }
             }

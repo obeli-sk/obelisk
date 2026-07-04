@@ -11,6 +11,7 @@ version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+db-common.workspace = true
 deployment-config.workspace = true
 executor.workspace = true
 utils.workspace = true

@@ -616,7 +616,7 @@ async fn executions_list(
     })
 }
 
-/// Cancel an activity execution
+/// Cancel an activity or cancellable workflow execution
 #[utoipa::path(
     put,
     path = "/v1/executions/{execution_id}/cancel",
@@ -625,9 +625,9 @@ async fn executions_list(
         ("execution_id" = String, Path, description = "Execution ID to cancel")
     ),
     responses(
-        (status = 200, description = "Execution cancelled"),
-        (status = 409, description = "Already finished"),
-        (status = 422, description = "Not an activity")
+        (status = 200, description = "Cancellation requested"),
+        (status = 409, description = "Already finished or already cancelling"),
+        (status = 422, description = "Not an activity or cancellable workflow")
     )
 )]
 #[instrument(skip_all, fields(execution_id))]
@@ -645,21 +645,36 @@ async fn execution_cancel(
         .get_create_request(&execution_id)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    // Must verify that this is an activity
-    if !create_req.component_id.component_type.is_activity() {
-        return Err(HttpResponse {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: "cancelled execution must be an activity".to_string(),
-            accept,
-        });
-    }
     let executed_at = Now.now();
-    let outcome = state
-        .cancel_registry
-        .cancel_activity(conn.as_ref(), &execution_id, executed_at)
-        .await
-        .map_err(|e| ErrorWrapper(e, accept))?;
-    Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
+    let outcome = match create_req.component_id.component_type {
+        component_type if component_type.is_activity() => {
+            state
+                .cancel_registry
+                .cancel_activity(conn.as_ref(), &execution_id, executed_at)
+                .await
+        }
+        ComponentType::Workflow if create_req.ffqn.is_cancellable() => {
+            conn.cancel_workflow_with_retries(&execution_id, executed_at)
+                .await
+        }
+        ComponentType::Workflow => {
+            return Err(HttpResponse {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: "cancelled workflow must be marked cancellable".to_string(),
+                accept,
+            });
+        }
+        _ => {
+            return Err(HttpResponse {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: "cancelled execution must be an activity or cancellable workflow"
+                    .to_string(),
+                accept,
+            });
+        }
+    }
+    .map_err(|e| ErrorWrapper(e, accept))?;
+    Ok(HttpResponse::from_cancel_execution_outcome(outcome, accept).into_response())
 }
 
 #[instrument(skip_all, fields(execution_id))]
@@ -1346,6 +1361,7 @@ fn format_execution_status_text(pending_state: &PendingState) -> String {
             if blocked.closing { " (closing)" } else { "" }
         ),
         PendingState::Paused(_) => "Paused".to_string(),
+        PendingState::Cancelling(_) => "Cancelling".to_string(),
         PendingState::Finished(finished) => match finished.result_kind {
             PendingStateFinishedResultKind::Ok => "Finished: OK".to_string(),
             PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {
@@ -3099,6 +3115,8 @@ mod deployment {
         pub blocked: u32,
         /// Number of paused executions, regardless of the underlying state
         pub paused: u32,
+        /// Number of executions with cancellation requested; teardown in progress
+        pub cancelling: u32,
         /// Number of executions finished successfully
         pub finished_ok: u32,
         /// Number of executions finished with the `err` variant of the result type
@@ -3131,6 +3149,7 @@ mod deployment {
                 scheduled: deployment_state.scheduled,
                 blocked: deployment_state.blocked,
                 paused: deployment_state.paused,
+                cancelling: deployment_state.cancelling,
                 finished_ok: deployment_state.finished_ok,
                 finished_error: deployment_state.finished_error,
                 finished_execution_failure: deployment_state.finished_execution_failure,
@@ -3210,7 +3229,7 @@ mod deployment {
                 for s in states {
                     writeln!(
                         &mut output,
-                        "{} locked={} pending={} scheduled={} blocked={} paused={} \
+                        "{} locked={} pending={} scheduled={} blocked={} paused={} cancelling={} \
                         finished_ok={} finished_error={} finished_execution_failure={}",
                         s.deployment_id,
                         s.locked,
@@ -3218,6 +3237,7 @@ mod deployment {
                         s.scheduled,
                         s.blocked,
                         s.paused,
+                        s.cancelling,
                         s.finished_ok,
                         s.finished_error,
                         s.finished_execution_failure,
@@ -4058,6 +4078,26 @@ pub(crate) struct HttpResponse {
     accept: AcceptHeader,
 }
 impl HttpResponse {
+    fn from_cancel_execution_outcome(outcome: CancelOutcome, accept: AcceptHeader) -> Self {
+        match outcome {
+            CancelOutcome::Cancelled => HttpResponse {
+                status: StatusCode::OK,
+                message: "cancellation requested".to_string(),
+                accept,
+            },
+            CancelOutcome::AlreadyFinished => HttpResponse {
+                status: StatusCode::CONFLICT,
+                message: "already finished".to_string(),
+                accept,
+            },
+            CancelOutcome::AlreadyCancelling => HttpResponse {
+                status: StatusCode::CONFLICT,
+                message: "already cancelling".to_string(),
+                accept,
+            },
+        }
+    }
+
     fn from_cancel_outcome(outcome: CancelOutcome, accept: AcceptHeader) -> Self {
         match outcome {
             CancelOutcome::Cancelled => HttpResponse {
@@ -4068,6 +4108,11 @@ impl HttpResponse {
             CancelOutcome::AlreadyFinished => HttpResponse {
                 status: StatusCode::CONFLICT,
                 message: "already finished".to_string(),
+                accept,
+            },
+            CancelOutcome::AlreadyCancelling => HttpResponse {
+                status: StatusCode::CONFLICT,
+                message: "already cancelling".to_string(),
                 accept,
             },
         }

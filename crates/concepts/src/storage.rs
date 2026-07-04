@@ -41,6 +41,39 @@ pub const STATE_PENDING_AT: &str = "pending_at";
 pub const STATE_BLOCKED_BY_JOIN_SET: &str = "blocked_by_join_set";
 pub const STATE_LOCKED: &str = "locked";
 pub const STATE_FINISHED: &str = "finished";
+// `lifecycle` column values on `t_state`: an override of the underlying pending
+// state. Mutually exclusive by construction (single column).
+pub const LIFECYCLE_ACTIVE: &str = "active";
+pub const LIFECYCLE_PAUSED: &str = "paused";
+pub const LIFECYCLE_CANCELLING: &str = "cancelling";
+
+/// Typed view of the `t_state.lifecycle` column. Mutually exclusive by
+/// construction (single column), so pause and cancellation cannot coexist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+    Active,
+    Paused,
+    Cancelling,
+}
+impl Lifecycle {
+    #[must_use]
+    pub fn as_column(self) -> &'static str {
+        match self {
+            Lifecycle::Active => LIFECYCLE_ACTIVE,
+            Lifecycle::Paused => LIFECYCLE_PAUSED,
+            Lifecycle::Cancelling => LIFECYCLE_CANCELLING,
+        }
+    }
+    #[must_use]
+    pub fn from_column(column: &str) -> Option<Self> {
+        match column {
+            LIFECYCLE_ACTIVE => Some(Lifecycle::Active),
+            LIFECYCLE_PAUSED => Some(Lifecycle::Paused),
+            LIFECYCLE_CANCELLING => Some(Lifecycle::Cancelling),
+            _ => None,
+        }
+    }
+}
 // JSON encodings of `PendingStateFinishedResultKind` as stored in the `result_kind` column,
 // pinned by `result_kind_json_constants_match_serde`.
 pub const RESULT_KIND_JSON_OK: &str = r#""ok""#;
@@ -420,6 +453,19 @@ pub enum ExecutionRequest {
     Paused,
     #[display("Unpaused")]
     Unpaused,
+    /// Requests cancellation of a cancellable workflow. Sets `lifecycle` to
+    /// `cancelling` without changing the underlying state; the cancellation driver
+    /// then closes the subtree and appends `Finished(Cancelled)`.
+    ///
+    /// State transition semantics (mirrors [`ExecutionRequest::Paused`]):
+    /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set
+    ///   `lifecycle = cancelling`, underlying state unchanged.
+    /// - [`PendingState::Locked`] and [`PendingState::Paused`] are rejected on the
+    ///   raw append path; they must first be released (`Unlocked` / `Unpaused`) by
+    ///   `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+    /// - [`PendingState::Finished`] is rejected (already terminal).
+    #[display("CancellationRequested")]
+    CancellationRequested,
 }
 
 /// Reason for auditing only
@@ -486,6 +532,7 @@ impl ExecutionRequest {
             ExecutionRequest::HistoryEvent { .. } => "history_event",
             ExecutionRequest::Paused => "paused",
             ExecutionRequest::Unpaused => "unpaused",
+            ExecutionRequest::CancellationRequested => "cancellation_requested",
         }
     }
 
@@ -1235,6 +1282,36 @@ pub trait DbExecutor: Send + Sync {
         }
     }
 
+    /// Request cancellation of an already-known-cancellable workflow, from the worker
+    /// join-set close or the cancellation driver. Unlike `cancel_workflow`, skips the
+    /// `is_cancellable` guard: the caller has already classified the target. In one
+    /// version-guarded transaction, releases any lock/pause (`Unlocked`/`Unpaused`)
+    /// then appends `CancellationRequested`; returns `AlreadyFinished`/
+    /// `AlreadyCancelling` without appending.
+    async fn request_cancellation(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite>;
+
+    /// Request cancellation, retrying the version-guarded transaction on the
+    /// live-worker race.
+    async fn request_cancellation_with_retries(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut retries = 5;
+        loop {
+            match self.request_cancellation(execution_id, cancelled_at).await {
+                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
+                    ..
+                })) if retries > 0 => retries -= 1,
+                res => return res,
+            }
+        }
+    }
+
     /// Get last event. Impls may set `ExecutionEvent::backtrace_id` to `None`.
     async fn get_last_execution_event(
         &self,
@@ -1345,6 +1422,8 @@ pub enum ExecutionStateFilter {
     Blocked,
     /// Paused regardless of the underlying state (locked, pending or blocked).
     Paused,
+    /// Cancellation requested; teardown in progress (underlying state pending or blocked).
+    Cancelling,
     /// Finished with any result.
     Finished,
     /// Finished successfully.
@@ -1592,6 +1671,35 @@ pub trait DbExternalApi: DbConnection {
         unpaused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite>;
 
+    /// Request cancellation of a cancellable workflow. In one transaction, releases
+    /// any lock/pause (`Unlocked`/`Unpaused`) so `cancelling` never coexists with
+    /// them, then appends `CancellationRequested`. Rejects a non-cancellable target;
+    /// returns `AlreadyFinished`/`AlreadyCancelling` without appending. The
+    /// `Finished(Cancelled)` outcome is driven later by the cancellation driver.
+    async fn cancel_workflow(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite>;
+
+    /// Request cancellation of a cancellable workflow, retrying the version-guarded
+    /// transaction on the live-worker race.
+    async fn cancel_workflow_with_retries(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut retries = 5;
+        loop {
+            match self.cancel_workflow(execution_id, cancelled_at).await {
+                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
+                    ..
+                })) if retries > 0 => retries -= 1,
+                res => return res,
+            }
+        }
+    }
+
     /// Pause a delay, preventing it from being picked up by the expired timers watcher.
     /// No-op if the delay is already paused.
     /// Returns `NotFound` if the delay does not exist (already processed or cancelled).
@@ -1623,6 +1731,8 @@ pub struct DeploymentState {
     pub blocked: u32,
     // Paused regardless of the underlying state (locked, pending or blocked).
     pub paused: u32,
+    // Cancellation requested; teardown in progress. Disjoint from the buckets above.
+    pub cancelling: u32,
     pub finished_ok: u32,
     pub finished_error: u32,
     pub finished_execution_failure: u32,
@@ -1884,6 +1994,12 @@ pub trait DbConnection: DbExecutor {
     /// Get execution log.
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
 
+    /// Execution ids whose `lifecycle` is `cancelling`, for the cancellation driver
+    /// to advance. Ordered oldest-first, capped at `batch_size`. Unlike the executor
+    /// pick-up queries this is not lock/pause guarded: cancellation proceeds
+    /// regardless (cancel supersedes pause).
+    async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead>;
+
     async fn append_delay_response(
         &self,
         created_at: DateTime<Utc>,
@@ -2118,6 +2234,7 @@ pub trait DbConnectionTest: DbConnection {
 pub enum CancelOutcome {
     Cancelled,
     AlreadyFinished,
+    AlreadyCancelling,
 }
 
 #[instrument(skip(db_connection))]
@@ -2466,59 +2583,69 @@ pub enum PendingState {
     BlockedByJoinSet(PendingStateBlockedByJoinSet),
 
     #[display("Paused({_0})")]
-    Paused(PendingStatePaused),
+    Paused(PendingStateSuspended),
+
+    #[display("Cancelling({_0})")]
+    Cancelling(PendingStateSuspended),
 
     #[display("Finished: {_0}")]
     Finished(PendingStateFinished),
 }
 
-pub enum PendingStateMergedPause {
+/// [`PendingState`] flattened so the underlying runnable state and the
+/// [`Lifecycle`] overlay are available side by side.
+pub enum PendingStateMerged {
     Locked {
         state: PendingStateLocked,
-        paused: bool,
+        lifecycle: Lifecycle,
     },
     PendingAt {
         state: PendingStatePendingAt,
-        paused: bool,
+        lifecycle: Lifecycle,
     },
     BlockedByJoinSet {
         state: PendingStateBlockedByJoinSet,
-        paused: bool,
+        lifecycle: Lifecycle,
     },
     Finished(PendingStateFinished),
 }
-impl From<PendingState> for PendingStateMergedPause {
+impl From<PendingState> for PendingStateMerged {
     fn from(state: PendingState) -> Self {
         match state {
-            PendingState::Locked(s) => PendingStateMergedPause::Locked {
+            PendingState::Locked(s) => PendingStateMerged::Locked {
                 state: s,
-                paused: false,
+                lifecycle: Lifecycle::Active,
             },
 
-            PendingState::PendingAt(s) => PendingStateMergedPause::PendingAt {
+            PendingState::PendingAt(s) => PendingStateMerged::PendingAt {
                 state: s,
-                paused: false,
+                lifecycle: Lifecycle::Active,
             },
 
-            PendingState::BlockedByJoinSet(s) => PendingStateMergedPause::BlockedByJoinSet {
+            PendingState::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
                 state: s,
-                paused: false,
+                lifecycle: Lifecycle::Active,
             },
 
-            PendingState::Paused(paused) => match paused {
-                PendingStatePaused::PendingAt(s) => PendingStateMergedPause::PendingAt {
-                    state: s,
-                    paused: true,
-                },
-                PendingStatePaused::BlockedByJoinSet(s) => {
-                    PendingStateMergedPause::BlockedByJoinSet {
-                        state: s,
-                        paused: true,
-                    }
-                }
-            },
+            PendingState::Paused(inner) => Self::from_suspended(inner, Lifecycle::Paused),
 
-            PendingState::Finished(s) => PendingStateMergedPause::Finished(s),
+            PendingState::Cancelling(inner) => Self::from_suspended(inner, Lifecycle::Cancelling),
+
+            PendingState::Finished(s) => PendingStateMerged::Finished(s),
+        }
+    }
+}
+impl PendingStateMerged {
+    fn from_suspended(inner: PendingStateSuspended, lifecycle: Lifecycle) -> Self {
+        match inner {
+            PendingStateSuspended::PendingAt(s) => PendingStateMerged::PendingAt {
+                state: s,
+                lifecycle,
+            },
+            PendingStateSuspended::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
+                state: s,
+                lifecycle,
+            },
         }
     }
 }
@@ -2548,11 +2675,13 @@ pub struct PendingStateBlockedByJoinSet {
     pub closing: bool,
 }
 
-/// State of execution before it was paused.
+/// Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or
+/// cancelling execution.
 ///
-/// Pausing a locked execution must first append `Unlocked` and only then `Paused`.
+/// Suspending a locked execution must first append `Unlocked`, so `Locked` is
+/// never wrapped here.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub enum PendingStatePaused {
+pub enum PendingStateSuspended {
     #[display("PendingAt({_0})")]
     PendingAt(PendingStatePendingAt),
     #[display("BlockedByJoinSet({_0})")]
@@ -2707,6 +2836,12 @@ impl PendingState {
                 source: None,
                 loc: Location::caller(),
             }),
+            PendingState::Cancelling(..) => Err(DbErrorWriteNonRetriable::IllegalState {
+                reason: "cannot lock, execution is cancelling".into(),
+                context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
+            }),
         }
     }
 
@@ -2718,6 +2853,11 @@ impl PendingState {
     #[must_use]
     pub fn is_paused(&self) -> bool {
         matches!(self, PendingState::Paused(_))
+    }
+
+    #[must_use]
+    pub fn is_cancelling(&self) -> bool {
+        matches!(self, PendingState::Cancelling(_))
     }
 }
 

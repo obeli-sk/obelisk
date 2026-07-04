@@ -11,6 +11,7 @@ use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
 use chrono::Utc;
 use concepts::ComponentId;
+use concepts::ComponentType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
 use concepts::FunctionExtension;
@@ -109,6 +110,36 @@ impl GrpcServer {
             prepared_dirs,
             deployment_ctx,
             deployment_switch_manager,
+        }
+    }
+
+    async fn cancel_execution_by_id(
+        &self,
+        execution_id: &ExecutionId,
+        executed_at: DateTime<Utc>,
+    ) -> Result<storage::CancelOutcome, tonic::Status> {
+        let conn = self
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(map_to_status)?;
+        let create_req = conn.get_create_request(execution_id).await.to_status()?;
+        match create_req.component_id.component_type {
+            component_type if component_type.is_activity() => self
+                .cancel_registry
+                .cancel_activity(conn.as_ref(), execution_id, executed_at)
+                .await
+                .to_status(),
+            ComponentType::Workflow if create_req.ffqn.is_cancellable() => conn
+                .cancel_workflow_with_retries(execution_id, executed_at)
+                .await
+                .to_status(),
+            ComponentType::Workflow => Err(tonic::Status::invalid_argument(
+                "cancelled workflow must be marked cancellable",
+            )),
+            _ => Err(tonic::Status::invalid_argument(
+                "cancelled execution must be an activity or cancellable workflow",
+            )),
         }
     }
 }
@@ -425,6 +456,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                     ProtoStateFilter::Scheduled => Some(ExecutionStateFilter::Scheduled { now }),
                     ProtoStateFilter::Blocked => Some(ExecutionStateFilter::Blocked),
                     ProtoStateFilter::Paused => Some(ExecutionStateFilter::Paused),
+                    ProtoStateFilter::Cancelling => Some(ExecutionStateFilter::Cancelling),
                     ProtoStateFilter::Finished => Some(ExecutionStateFilter::Finished),
                     ProtoStateFilter::FinishedOk => Some(ExecutionStateFilter::FinishedOk),
                     ProtoStateFilter::FinishedError => Some(ExecutionStateFilter::FinishedError),
@@ -744,6 +776,28 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .map_err(|_| tonic::Status::internal("backtrace source is not valid UTF-8"))?;
         Ok(tonic::Response::new(grpc_gen::GetBacktraceSourceResponse {
             content,
+        }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn cancel_execution(
+        &self,
+        request: tonic::Request<grpc_gen::CancelExecutionRequest>,
+    ) -> std::result::Result<tonic::Response<grpc_gen::CancelExecutionResponse>, tonic::Status>
+    {
+        let request = request.into_inner();
+        let executed_at = Now.now();
+        let child_execution_id = request.execution_id.argument_must_exist("execution_id")?;
+        let execution_id = ExecutionId::try_from(child_execution_id)?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+
+        let outcome = self
+            .cancel_execution_by_id(&execution_id, executed_at)
+            .await?;
+
+        Ok(tonic::Response::new(grpc_gen::CancelExecutionResponse {
+            outcome: grpc_gen::cancel_execution_response::CancelExecutionOutcome::from(outcome)
+                .into(),
         }))
     }
 
@@ -2042,6 +2096,7 @@ fn deployment_summary_to_grpc(
                 scheduled: dep.scheduled,
                 blocked: dep.blocked,
                 paused: dep.paused,
+                cancelling: dep.cancelling,
                 finished_ok: dep.finished_ok,
                 finished_error: dep.finished_error,
                 finished_execution_failure: dep.finished_execution_failure,

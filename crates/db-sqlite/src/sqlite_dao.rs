@@ -9,7 +9,7 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
         ComponentMetadataRecord, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
         DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
@@ -19,11 +19,12 @@ use concepts::{
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, ListExecutionEventsResponse,
-        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
-        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
-        LogLevel, LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMergedPause, RESULT_KIND_JSON_ERROR,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
+        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
+        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
+        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
+        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
         RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
         VersionType,
@@ -31,8 +32,8 @@ use concepts::{
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
 use db_common::{
-    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
-    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
+    AppendNotifier, CancelWorkflowPlan, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
+    NotifierPendingAt, PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use hashbrown::HashMap;
 use rusqlite::{
@@ -972,8 +973,7 @@ impl SqlitePool {
                     deployment_id,
                     updated_at,
                     first_scheduled_at,
-                    intermittent_event_count,
-                    is_paused
+                    intermittent_event_count
                     )
                 VALUES (
                     :execution_id,
@@ -988,11 +988,10 @@ impl SqlitePool {
                     :deployment_id,
                     CURRENT_TIMESTAMP,
                     :first_scheduled_at,
-                    0,
-                    false
+                    0
                     )
                 ",
-            )? // paused set to false here to avoid "execution is already paused" error.
+            )? // lifecycle defaults to 'active'
             .execute(named_params! {
                 ":execution_id": execution_id.to_string(),
                 ":is_top_level": execution_id.is_top_level(),
@@ -1255,7 +1254,7 @@ impl SqlitePool {
 
                     result_kind = NULL
                 WHERE execution_id = :execution_id
-                AND is_paused = false
+                AND lifecycle = 'active'
             ",
         )?;
         let updated = stmt.execute(named_params! {
@@ -1371,7 +1370,7 @@ impl SqlitePool {
                     join_set_id = NULL,
                     join_set_closing = NULL,
 
-                    is_paused = FALSE,
+                    lifecycle = 'active',
                     result_kind = :result_kind
                 WHERE execution_id = :execution_id
             ",
@@ -1402,12 +1401,17 @@ impl SqlitePool {
             if is_paused { "paused" } else { "unpaused" }
         );
         let execution_id_str = execution_id.to_string();
+        let lifecycle = if is_paused {
+            LIFECYCLE_PAUSED
+        } else {
+            LIFECYCLE_ACTIVE
+        };
         let mut stmt = tx.prepare_cached(
             r"
                 UPDATE t_state
                 SET
                     corresponding_version = :appending_version,
-                    is_paused = :is_paused,
+                    lifecycle = :lifecycle,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE execution_id = :execution_id
             ",
@@ -1416,7 +1420,37 @@ impl SqlitePool {
         let updated = stmt.execute(named_params! {
             ":execution_id": execution_id_str,
             ":appending_version": appending_version.0,
-            ":is_paused": is_paused,
+            ":lifecycle": lifecycle,
+        })?;
+        if updated != 1 {
+            return Err(DbErrorWrite::NotFound);
+        }
+        Ok(appending_version.increment())
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %appending_version))]
+    fn update_state_cancelling(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        appending_version: &Version,
+    ) -> Result<AppendResponse, DbErrorWrite> {
+        debug!("Setting t_state lifecycle to cancelling");
+        let execution_id_str = execution_id.to_string();
+        let mut stmt = tx.prepare_cached(
+            r"
+                UPDATE t_state
+                SET
+                    corresponding_version = :appending_version,
+                    lifecycle = :lifecycle,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE execution_id = :execution_id
+            ",
+        )?;
+
+        let updated = stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":appending_version": appending_version.0,
+            ":lifecycle": LIFECYCLE_CANCELLING,
         })?;
         if updated != 1 {
             return Err(DbErrorWrite::NotFound);
@@ -1486,7 +1520,7 @@ impl SqlitePool {
                     corresponding_version, pending_expires_finished,
                     last_lock_version, executor_id, run_id,
                     join_set_id, join_set_closing,
-                    result_kind, is_paused
+                    result_kind, lifecycle
                     FROM t_state
                 WHERE
                     execution_id = :execution_id
@@ -1521,7 +1555,8 @@ impl SqlitePool {
                                 "result_kind",
                             )?
                             .map(|wrapper| wrapper.0),
-                        is_paused: row.get("is_paused")?,
+                        lifecycle: Lifecycle::from_column(&row.get::<_, String>("lifecycle")?)
+                            .ok_or_else(|| consistency_rusqlite("invalid t_state.lifecycle"))?,
                     },
                     Version::new(row.get("corresponding_version")?),
                 )
@@ -1687,7 +1722,7 @@ impl SqlitePool {
             state, execution_id, ffqn, corresponding_version, pending_expires_finished,
             last_lock_version, executor_id, run_id,
             join_set_id, join_set_closing,
-            result_kind, is_paused
+            result_kind, lifecycle
             FROM t_state {where_str} ORDER BY created_at {inner_order} LIMIT {limit}",
             limit = statement_mod.limit,
         );
@@ -1730,7 +1765,8 @@ impl SqlitePool {
                                     "result_kind",
                                 )?
                                 .map(|wrapper| wrapper.0),
-                            is_paused: row.get("is_paused")?,
+                            lifecycle: Lifecycle::from_column(&row.get::<_, String>("lifecycle")?)
+                                .ok_or_else(|| consistency_rusqlite("invalid t_state.lifecycle"))?,
                         },
                         Version::new(row.get("corresponding_version")?),
                     )
@@ -2213,6 +2249,11 @@ impl SqlitePool {
                             DbErrorWriteNonRetriable::UnlockedCannotBeAppended("paused"),
                         ));
                     }
+                    PendingState::Cancelling(_) => {
+                        return Err(DbErrorWrite::NonRetriable(
+                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("cancelling"),
+                        ));
+                    }
                     PendingState::Finished(_) => {
                         unreachable!("handled above");
                     }
@@ -2271,6 +2312,15 @@ impl SqlitePool {
                         }
                         .into());
                     }
+                    PendingState::Cancelling(..) => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason: "cannot pause, execution is cancelling".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
                     _ => {}
                 }
                 let next_version =
@@ -2294,6 +2344,40 @@ impl SqlitePool {
                 }
                 let next_version =
                     Self::update_state_paused(tx, execution_id, &appending_version, false)?;
+                return Ok((next_version, AppendNotifier::default()));
+            }
+
+            ExecutionRequest::CancellationRequested => {
+                match &combined_state.execution_with_state.pending_state {
+                    PendingState::Finished { .. } => {
+                        unreachable!("handled above");
+                    }
+                    // Locked and Paused must first be released (`Unlocked` / `Unpaused`)
+                    // by `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+                    PendingState::Locked(..) | PendingState::Paused(..) => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason:
+                                "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
+                                    .into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
+                    PendingState::Cancelling(..) => {
+                        return Err(DbErrorWriteNonRetriable::IllegalState {
+                            reason: "cannot append CancellationRequested event, execution is already cancelling".into(),
+                            context: SpanTrace::capture(),
+                            source: None,
+                            loc: Location::caller(),
+                        }
+                        .into());
+                    }
+                    PendingState::PendingAt(..) | PendingState::BlockedByJoinSet(..) => {}
+                }
+                let next_version =
+                    Self::update_state_cancelling(tx, execution_id, &appending_version)?;
                 return Ok((next_version, AppendNotifier::default()));
             }
 
@@ -2465,16 +2549,16 @@ impl SqlitePool {
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         debug!("previous_pending_state: {combined_state:?}");
-        let mut notifier = if let PendingStateMergedPause::BlockedByJoinSet {
+        let mut notifier = if let PendingStateMerged::BlockedByJoinSet {
             state:
                 PendingStateBlockedByJoinSet {
                     join_set_id: found_join_set_id,
                     lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                     closing: _,
                 },
-            paused: _,
+            lifecycle: _,
         } =
-            PendingStateMergedPause::from(combined_state.execution_with_state.pending_state)
+            PendingStateMerged::from(combined_state.execution_with_state.pending_state)
             && *join_set_id == found_join_set_id
         {
             // PendingAt should be set to current time if called from expired_timers_watcher,
@@ -2943,7 +3027,7 @@ impl SqlitePool {
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND is_paused = false
+                    AND lifecycle = 'active'
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
             ))?;
@@ -2977,7 +3061,7 @@ impl SqlitePool {
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND is_paused = false
+                    AND lifecycle = 'active'
                     AND (incompatible_digest IS NULL OR incompatible_digest <> :current_digest)
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
@@ -3023,7 +3107,7 @@ impl SqlitePool {
                 state = "{STATE_PENDING_AT}" AND
                 pending_expires_finished <= :pending_expires_finished AND
                 component_id_input_digest = :component_id_input_digest
-                AND is_paused = false
+                AND lifecycle = 'active'
                 ORDER BY pending_expires_finished LIMIT :batch_size
                 "#
         ))?;
@@ -3335,11 +3419,12 @@ impl SqlitePool {
         let count_cols = if include_execution_counts {
             format!(
                 r"
-            COALESCE(SUM(s.state = '{STATE_LOCKED}' AND s.is_paused = false), 0) AS locked,
-            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished <= :now), 0) AS pending,
-            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.is_paused = false AND s.pending_expires_finished > :now), 0) AS scheduled,
-            COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.is_paused = false), 0) AS blocked,
-            COALESCE(SUM(s.is_paused = true), 0) AS paused,
+            COALESCE(SUM(s.state = '{STATE_LOCKED}' AND s.lifecycle = 'active'), 0) AS locked,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.lifecycle = 'active' AND s.pending_expires_finished <= :now), 0) AS pending,
+            COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.lifecycle = 'active' AND s.pending_expires_finished > :now), 0) AS scheduled,
+            COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.lifecycle = 'active'), 0) AS blocked,
+            COALESCE(SUM(s.lifecycle = 'paused'), 0) AS paused,
+            COALESCE(SUM(s.lifecycle = 'cancelling'), 0) AS cancelling,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_OK}'), 0) AS finished_ok,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_ERROR}'), 0) AS finished_error,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind IS NOT NULL
@@ -3352,6 +3437,7 @@ impl SqlitePool {
             0 AS scheduled,
             0 AS blocked,
             0 AS paused,
+            0 AS cancelling,
             0 AS finished_ok,
             0 AS finished_error,
             0 AS finished_execution_failure,"
@@ -3452,6 +3538,7 @@ impl SqlitePool {
                         scheduled: row.get("scheduled")?,
                         blocked: row.get("blocked")?,
                         paused: row.get("paused")?,
+                        cancelling: row.get("cancelling")?,
                         finished_ok: row.get("finished_ok")?,
                         finished_error: row.get("finished_error")?,
                         finished_execution_failure: row.get("finished_execution_failure")?,
@@ -3896,6 +3983,75 @@ impl SqlitePool {
             appending_version,
         )?;
         Ok(next_version)
+    }
+
+    fn cancel_workflow(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
+        let plan = combined_state.plan_cancel_workflow()?;
+        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
+    }
+
+    fn request_cancellation(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
+        let plan = combined_state.plan_request_cancellation();
+        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
+    }
+
+    fn apply_cancellation_plan(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+        combined_state: &CombinedState,
+        plan: CancelWorkflowPlan,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let (unlock, unpause) = match plan {
+            CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
+            CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
+            CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
+        };
+        let mut version = combined_state.get_next_version_assert_not_finished();
+        if unlock {
+            (version, _) = Self::append(
+                tx,
+                execution_id,
+                AppendRequest {
+                    created_at: cancelled_at,
+                    event: ExecutionRequest::Unlocked(Unlocked {
+                        unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
+                        reason: "cancelling".into(),
+                    }),
+                },
+                version,
+            )?;
+        } else if unpause {
+            (version, _) = Self::append(
+                tx,
+                execution_id,
+                AppendRequest {
+                    created_at: cancelled_at,
+                    event: ExecutionRequest::Unpaused,
+                },
+                version,
+            )?;
+        }
+        Self::append(
+            tx,
+            execution_id,
+            AppendRequest {
+                created_at: cancelled_at,
+                event: ExecutionRequest::CancellationRequested,
+            },
+            version,
+        )?;
+        Ok(CancelOutcome::Cancelled)
     }
 }
 
@@ -4372,6 +4528,21 @@ impl DbExecutor for SqlitePool {
             move |tx| Self::get_last_execution_event(tx, &execution_id),
             TxType::Other, // read only
             "get_last_execution_event",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn request_cancellation(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| SqlitePool::request_cancellation(tx, &execution_id, cancelled_at),
+            TxType::MultipleWrites,
+            "request_cancellation",
         )
         .await
     }
@@ -4969,6 +5140,21 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip(self))]
+    async fn cancel_workflow(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at),
+            TxType::MultipleWrites,
+            "cancel_workflow",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
     async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let delay_id = delay_id.clone();
         self.transaction(
@@ -5084,6 +5270,37 @@ impl DbConnection for SqlitePool {
             move |tx| Self::get(tx, &execution_id),
             TxType::Other, // read only
             "get",
+        )
+        .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get_cancelling(&self, batch_size: u32) -> Result<Vec<ExecutionId>, DbErrorRead> {
+        self.transaction(
+            move |tx| {
+                let mut stmt = tx.prepare(
+                    "SELECT execution_id FROM t_state WHERE lifecycle = :lifecycle \
+                     ORDER BY created_at LIMIT :batch_size",
+                )?;
+                let rows = stmt
+                    .query_map(
+                        named_params! {
+                            ":lifecycle": LIFECYCLE_CANCELLING,
+                            ":batch_size": batch_size,
+                        },
+                        |row| row.get::<_, String>("execution_id"),
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows.into_iter()
+                    .map(|id| {
+                        ExecutionId::from_str(&id)
+                            .map_err(|_| consistency_rusqlite("invalid t_state.execution_id"))
+                            .map_err(DbErrorRead::from)
+                    })
+                    .collect()
+            },
+            TxType::Other, // read only
+            "get_cancelling",
         )
         .await
     }
@@ -5467,7 +5684,7 @@ impl DbConnection for SqlitePool {
                 // Extend with expired locks
                 let expired = conn.prepare(&format!(r#"
                     SELECT execution_id, last_lock_version, corresponding_version, intermittent_event_count, max_retries, retry_exp_backoff_millis,
-                    executor_id, run_id, is_paused
+                    executor_id, run_id, lifecycle
                     FROM t_state
                     WHERE pending_expires_finished <= :at AND state = "{STATE_LOCKED}"
                     "#
@@ -5479,9 +5696,9 @@ impl DbConnection for SqlitePool {
                         },
                         |row| {
                             let execution_id = row.get("execution_id")?;
-                            let is_paused: bool = row.get("is_paused")?;
-                            if is_paused {
-                                error!(%execution_id, "encountered invalid paused locked execution while scanning expired locks");
+                            let lifecycle: String = row.get("lifecycle")?;
+                            if lifecycle != LIFECYCLE_ACTIVE {
+                                error!(%execution_id, %lifecycle, "encountered invalid non-active locked execution while scanning expired locks");
                                 return Ok(None);
                             }
                             let locked_at_version = Version::new(row.get("last_lock_version")?);

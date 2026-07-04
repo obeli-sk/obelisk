@@ -306,6 +306,11 @@
             "history_event"
           ],
           "additionalProperties": false
+        },
+        {
+          "description": "Requests cancellation of a cancellable workflow. Sets `lifecycle` to\n`cancelling` without changing the underlying state; the cancellation driver\nthen closes the subtree and appends `Finished(Cancelled)`.\n\nState transition semantics (mirrors [`ExecutionRequest::Paused`]):\n- [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set\n  `lifecycle = cancelling`, underlying state unchanged.\n- [`PendingState::Locked`] and [`PendingState::Paused`] are rejected on the\n  raw append path; they must first be released (`Unlocked` / `Unpaused`) by\n  `cancel_workflow` so `cancelling` never coexists with a lock or pause.\n- [`PendingState::Finished`] is rejected (already terminal).",
+          "type": "string",
+          "const": "cancellation_requested"
         }
       ]
     },
@@ -1623,12 +1628,49 @@
           ]
         },
         {
-          "description": "State of execution before it was paused.\n\nPausing a locked execution must first append `Unlocked` and only then `Paused`.",
+          "description": "Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or\ncancelling execution.\n\nSuspending a locked execution must first append `Unlocked`, so `Locked` is\nnever wrapped here.",
           "type": "object",
           "properties": {
             "status": {
               "type": "string",
               "const": "paused"
+            }
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "PendingAt": {
+                  "$ref": "#/$defs/PendingStatePendingAt"
+                }
+              },
+              "required": [
+                "PendingAt"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "BlockedByJoinSet": {
+                  "$ref": "#/$defs/PendingStateBlockedByJoinSet"
+                }
+              },
+              "required": [
+                "BlockedByJoinSet"
+              ]
+            }
+          ],
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "description": "Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or\ncancelling execution.\n\nSuspending a locked execution must first append `Unlocked`, so `Locked` is\nnever wrapped here.",
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "cancelling"
             }
           },
           "oneOf": [

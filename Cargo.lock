@@ -3140,6 +3140,7 @@ version = "0.39.4"
 dependencies = [
  "chrono",
  "hashbrown 0.16.1",
+ "indexmap 2.14.0",
  "obeli-sk-concepts",
  "thiserror 2.0.18",
  "tokio",
@@ -3370,6 +3371,7 @@ dependencies = [
  "obeli-db-tests",
  "obeli-sk-boa-engine",
  "obeli-sk-concepts",
+ "obeli-sk-db-common",
  "obeli-sk-db-sqlite",
  "obeli-sk-deployment-config",
  "obeli-sk-executor",

@@ -73,6 +73,12 @@ expression: functions
     "ffqn": "testing:integration/workflow-add.add-workflow"
   },
   {
+    "ffqn": "testing:integration/workflow-add.add-workflow-cancellable"
+  },
+  {
+    "ffqn": "testing:integration/workflow-sleep.sleep-cancellable"
+  },
+  {
     "ffqn": "testing:integration/workflow-add-via-activity.add-via-activity"
   },
   {

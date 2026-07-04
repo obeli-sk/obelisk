@@ -14,13 +14,10 @@ use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
-use crate::workflow::host_exports::response_id::INVALID_CHILD_TYPE_FOR_DELAYS;
-use crate::workflow::host_exports::response_id::ResponseId;
 use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ComponentId;
-use concepts::ComponentType;
 use concepts::ExecutionMetadata;
 use concepts::FunctionRegistry;
 use concepts::InvalidNameError;
@@ -50,6 +47,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params};
+use db_common::{JoinSetFold, JoinSetFoldError, JoinSetResponseId};
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
@@ -69,8 +67,8 @@ use wasmtime::component::Val;
 enum ChildReturnValue {
     WastVal(WastVal),
     JoinSetCreate(JoinSetId),
-    JoinNext(Result<(ResponseId, Result<(), ()>), JoinNextError>),
-    JoinNextTry(Result<(ResponseId, Result<(), ()>), JoinNextTryError>),
+    JoinNext(Result<(JoinSetResponseId, Result<(), ()>), JoinNextError>),
+    JoinNextTry(Result<(JoinSetResponseId, Result<(), ()>), JoinNextTryError>),
     JoinNextRequestingFfqn(Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>),
     OneOffDelay {
         scheduled_at: DateTime<Utc>,
@@ -123,6 +121,10 @@ impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
     }
 }
 
+fn join_set_fold_error_to_constraint(err: &JoinSetFoldError) -> StrVariant {
+    err.to_string().into()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum UpsertStubOrReplayInterrupt {
     #[error("stub conflict")]
@@ -155,7 +157,7 @@ pub(crate) struct EventHistory {
     subscription_interruption: Option<Duration>,
 
     // Tracks join set contents for closing. One-offs are ignored, response id is removed when the response is processed.
-    index_join_set_to_unawaited_requests: IndexMap<JoinSetId, IndexMap<ResponseId, ComponentType>>,
+    join_set_fold: JoinSetFold,
 }
 
 #[derive(Debug)]
@@ -206,7 +208,7 @@ impl EventHistory {
             locked_event,
             lock_extension: lock_extension.unwrap_or_default(),
             subscription_interruption,
-            index_join_set_to_unawaited_requests: IndexMap::default(),
+            join_set_fold: JoinSetFold::new(),
         }
     }
 
@@ -505,37 +507,41 @@ impl EventHistory {
         called_at: DateTime<Utc>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
-        let (_, response_ids) = self
-            .index_join_set_to_unawaited_requests
-            .shift_remove_entry(join_set_id)
-            .ok_or_else(|| {
-                ApplyError::ConstraintViolation(
-                    format!("not found in open join sets: `{join_set_id}`").into(),
-                )
+        let response_ids = self
+            .join_set_fold
+            .close_join_set(join_set_id)
+            .map_err(|err| {
+                ApplyError::ConstraintViolation(join_set_fold_error_to_constraint(&err))
             })?;
         debug!("Closing `{join_set_id}` with unawaited {response_ids:?}");
 
         let join_next_count = response_ids.len();
-        // Attempt to cancel activities and delays.
-        // Retain order, keep only activities and delays.
-        let activity_and_delay_ids: Vec<_> = response_ids
-            .into_iter()
-            .filter_map(|(response_id, component_type)| {
-                if matches!(response_id, ResponseId::DelayId(_)) || component_type.is_activity() {
-                    Some(response_id)
-                } else {
-                    None
+        // Activities+delays are cancelled, cancellable children are signalled, other
+        // children are merely awaited. Order retained (cancelled in reverse later).
+        let mut activity_and_delay_ids = Vec::new();
+        let mut cancellable_child_ids = Vec::new();
+        for (response_id, member) in response_ids {
+            match &response_id {
+                JoinSetResponseId::DelayId(_) => activity_and_delay_ids.push(response_id),
+                JoinSetResponseId::ChildExecutionId(child_id) => {
+                    if member.is_activity() {
+                        activity_and_delay_ids.push(response_id);
+                    } else if member.is_cancellable_workflow() {
+                        cancellable_child_ids.push(child_id.clone());
+                    }
                 }
-            })
-            .collect();
-        let mut cancellations = if activity_and_delay_ids.is_empty() {
-            None
-        } else {
-            Some(JoinSetCloseCancellations::new(
-                activity_and_delay_ids,
-                called_at,
-            ))
-        };
+            }
+        }
+        let mut cancellations =
+            if activity_and_delay_ids.is_empty() && cancellable_child_ids.is_empty() {
+                None
+            } else {
+                Some(JoinSetCloseCancellations::new(
+                    activity_and_delay_ids,
+                    cancellable_child_ids,
+                    called_at,
+                ))
+            };
         for _ in 0..join_next_count {
             let event_call = EventCall::Blocking(EventCallBlocking::JoinSetClose(JoinSetClose {
                 join_set_id: join_set_id.clone(),
@@ -556,17 +562,18 @@ impl EventHistory {
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<(), ApplyError> {
-        while let Some(join_set_id) = self
-            .index_join_set_to_unawaited_requests
-            .iter()
-            .rev()
-            .find_map(|(js, remaining)| {
-                if !remaining.is_empty() {
-                    Some(js.clone())
-                } else {
-                    None
-                }
-            })
+        while let Some(join_set_id) =
+            self.join_set_fold
+                .open_join_sets()
+                .iter()
+                .rev()
+                .find_map(|(js, remaining)| {
+                    if !remaining.is_empty() {
+                        Some(js.clone())
+                    } else {
+                        None
+                    }
+                })
         {
             self.join_set_close_inner(&join_set_id, db_connection, called_at, None)
                 .await?;
@@ -885,7 +892,9 @@ impl EventHistory {
                         let function_mismatch = AwaitNextExtensionError::FunctionMismatch {
                             specified_function: requested_ffqn.clone(),
                             actual_function: Some(response_ffqn.clone()),
-                            actual_id: ResponseId::ChildExecutionId(child_execution_id.clone()),
+                            actual_id: JoinSetResponseId::ChildExecutionId(
+                                child_execution_id.clone(),
+                            ),
                         };
                         Ok(FindMatchingResponse::Found(
                             ChildReturnValue::JoinNextRequestingFfqn(Err(function_mismatch)),
@@ -899,7 +908,7 @@ impl EventHistory {
                         let function_mismatch = AwaitNextExtensionError::FunctionMismatch {
                             specified_function: requested_ffqn.clone(),
                             actual_function: None,
-                            actual_id: ResponseId::DelayId(delay_id.clone()),
+                            actual_id: JoinSetResponseId::DelayId(delay_id.clone()),
                         };
                         Ok(FindMatchingResponse::Found(
                             ChildReturnValue::JoinNextRequestingFfqn(Err(function_mismatch)),
@@ -969,7 +978,7 @@ impl EventHistory {
                         trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNext: Matched ChildExecutionFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
                             (
-                                ResponseId::ChildExecutionId(child_execution_id.clone()),
+                                JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
                                 res.as_pending_state_finished_result()
                                     .as_result()
                                     .map_err(|_| ()),
@@ -983,7 +992,7 @@ impl EventHistory {
                     }) => {
                         trace!(%join_set_id, %delay_id, "DeterministicKey::JoinNext: Matched DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNext(Ok(
-                            (ResponseId::DelayId(delay_id.clone()), result),
+                            (JoinSetResponseId::DelayId(delay_id.clone()), result),
                         ))))
                     }
                     None => Ok(FindMatchingResponse::FoundRequestButNotResponse {
@@ -1030,7 +1039,7 @@ impl EventHistory {
                         trace!(%join_set_id, %child_execution_id, "DeterministicKey::JoinNextTry: Matched ChildExecutionFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
                             Ok((
-                                ResponseId::ChildExecutionId(child_execution_id.clone()),
+                                JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
                                 res.as_pending_state_finished_result()
                                     .as_result()
                                     .map_err(|_| ()),
@@ -1044,7 +1053,7 @@ impl EventHistory {
                     }) => {
                         trace!(%join_set_id, %delay_id, "DeterministicKey::JoinNextTry: Matched DelayFinished");
                         Ok(FindMatchingResponse::Found(ChildReturnValue::JoinNextTry(
-                            Ok((ResponseId::DelayId(delay_id.clone()), result)),
+                            Ok((JoinSetResponseId::DelayId(delay_id.clone()), result)),
                         )))
                     }
                     None => {
@@ -1522,7 +1531,8 @@ impl EventHistory {
                 let outcome = if self.has_unprocessed_response_for_join_set(&join_set_id) {
                     JoinNextTryOutcome::Found
                 } else if self
-                    .index_join_set_to_unawaited_requests
+                    .join_set_fold
+                    .open_join_sets()
                     .get(&join_set_id)
                     .is_some_and(|requests| !requests.is_empty())
                 {
@@ -2043,7 +2053,7 @@ enum AwaitNextExtensionError {
     FunctionMismatch {
         specified_function: FunctionFqn,
         actual_function: Option<FunctionFqn>, // None on delay
-        actual_id: ResponseId,
+        actual_id: JoinSetResponseId,
     },
     AllProcessed,
 }
@@ -2060,10 +2070,12 @@ impl AwaitNextExtensionError {
                 actual_id,
             } => {
                 let (actual_id_field_name, actual_str_value) = match actual_id {
-                    ResponseId::ChildExecutionId(id) => {
+                    JoinSetResponseId::ChildExecutionId(id) => {
                         (ValKey::new_snake("execution_id"), id.to_string())
                     }
-                    ResponseId::DelayId(id) => (ValKey::new_snake("delay_id"), id.to_string()),
+                    JoinSetResponseId::DelayId(id) => {
+                        (ValKey::new_snake("delay_id"), id.to_string())
+                    }
                 };
                 WastVal::Variant(
                     ValKey::new_snake("function_mismatch"),
@@ -2205,13 +2217,10 @@ impl JoinSetCreate {
         let value = assert_matches!(value,
             ChildReturnValue::JoinSetCreate(join_set_id) => join_set_id);
         assert_eq!(join_set_id, value);
-        let prev_val = event_history
-            .index_join_set_to_unawaited_requests
-            .insert(join_set_id, IndexMap::default());
-        assert!(
-            prev_val.is_none(),
-            "conflict check must have been performed by the caller"
-        );
+        event_history
+            .join_set_fold
+            .create_join_set(join_set_id)
+            .expect("conflict check must have been performed by the caller");
         Ok(value)
     }
 }
@@ -2240,6 +2249,7 @@ impl SubmitChildExecution {
         );
         let join_set_id = self.join_set_id.clone();
         let child_execution_id = self.child_execution_id.clone();
+        let target_ffqn = self.target_ffqn.clone();
         // Get component_type from intent if Ok
         let component_type = match &self.intent {
             SubmitChildIntent::Ok {
@@ -2261,17 +2271,18 @@ impl SubmitChildExecution {
             && let Some(component_type) = component_type
         {
             event_history
-                .index_join_set_to_unawaited_requests
-                .get_mut(&join_set_id)
-                .ok_or_else(|| {
-                    WorkflowFunctionError::ConstraintViolation(
-                        format!("not found in open join sets: `{join_set_id}`").into(),
-                    )
-                })?
-                .insert(
-                    ResponseId::ChildExecutionId(child_execution_id),
+                .join_set_fold
+                .insert_child(
+                    &join_set_id,
+                    child_execution_id,
                     component_type,
-                );
+                    target_ffqn,
+                )
+                .map_err(|err| {
+                    WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
+                        &err,
+                    ))
+                })?;
         }
 
         Ok(result)
@@ -2309,17 +2320,11 @@ impl SubmitDelay {
             .await?;
         assert_matches!(value, ChildReturnValue::SubmitDelay);
         event_history
-            .index_join_set_to_unawaited_requests
-            .get_mut(&join_set_id)
-            .ok_or_else(|| {
-                WorkflowFunctionError::ConstraintViolation(
-                    format!("not found in open join sets: `{join_set_id}`").into(),
-                )
-            })?
-            .insert(
-                ResponseId::DelayId(delay_id.clone()),
-                INVALID_CHILD_TYPE_FOR_DELAYS, // TODO - remove
-            );
+            .join_set_fold
+            .insert_delay(&join_set_id, delay_id.clone())
+            .map_err(|err| {
+                WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(&err))
+            })?;
         Ok(delay_id)
     }
 }
@@ -2470,32 +2475,31 @@ impl JoinNextRequestingFfqn {
                     execution_id_derived_into_wast_val(&child_execution_id),
                     wast_val_result,
                 ])))));
-                let was_present = event_history
-                    .index_join_set_to_unawaited_requests
-                    .get_mut(&join_set_id)
-                    .ok_or_else(|| {
+                event_history
+                    .join_set_fold
+                    .remove_response(
+                        &join_set_id,
+                        &JoinSetResponseId::ChildExecutionId(child_execution_id),
+                    )
+                    .map_err(|err| {
                         WorkflowFunctionError::ConstraintViolation(
-                            format!("not found in open join sets: `{join_set_id}`").into(),
+                            join_set_fold_error_to_constraint(&err),
                         )
-                    })?
-                    .shift_remove(&ResponseId::ChildExecutionId(child_execution_id));
-                assert!(was_present.is_some());
+                    })?;
                 wast_val_res
             }
             Err(await_ext_err) => {
                 if let AwaitNextExtensionError::FunctionMismatch { actual_id, .. } = &await_ext_err
                 {
-                    let was_present = event_history
-                        .index_join_set_to_unawaited_requests
-                        .get_mut(&join_set_id)
-                        .ok_or_else(|| {
+                    event_history
+                        .join_set_fold
+                        .remove_response(&join_set_id, actual_id)
+                        .map_err(|err| {
                             WorkflowFunctionError::ConstraintViolation(
-                                format!("not found in open join sets: `{join_set_id}`").into(),
+                                join_set_fold_error_to_constraint(&err),
                             )
-                        })?
-                        .shift_remove(actual_id);
-                    assert!(was_present.is_some());
-                } // all-processed does not change `index_join_set_to_unawaited_requests`
+                        })?;
+                } // all-processed does not change the join-set fold
                 await_ext_err.as_wast_val_result()
             }
         }
@@ -2535,16 +2539,14 @@ impl JoinNext {
             .await?;
         let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
         if let Ok((response_id, _)) = &value {
-            let was_present = event_history
-                .index_join_set_to_unawaited_requests
-                .get_mut(&join_set_id)
-                .ok_or_else(|| {
-                    WorkflowFunctionError::ConstraintViolation(
-                        format!("not found in open join sets: `{join_set_id}`").into(),
-                    )
-                })?
-                .shift_remove(response_id);
-            assert!(was_present.is_some());
+            event_history
+                .join_set_fold
+                .remove_response(&join_set_id, response_id)
+                .map_err(|err| {
+                    WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
+                        &err,
+                    ))
+                })?;
         }
         let value = value
             .map(|(response_id, result)| (types_execution::ResponseId::from(response_id), result));
@@ -2590,16 +2592,14 @@ impl JoinNextTry {
             .await?;
         let value = assert_matches!(value, ChildReturnValue::JoinNextTry(value) => value);
         if let Ok((response_id, _)) = &value {
-            let was_present = event_history
-                .index_join_set_to_unawaited_requests
-                .get_mut(&join_set_id)
-                .ok_or_else(|| {
-                    WorkflowFunctionError::ConstraintViolation(
-                        format!("not found in open join sets: `{join_set_id}`").into(),
-                    )
-                })?
-                .shift_remove(response_id);
-            assert!(was_present.is_some());
+            event_history
+                .join_set_fold
+                .remove_response(&join_set_id, response_id)
+                .map_err(|err| {
+                    WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
+                        &err,
+                    ))
+                })?;
         } // else it is JoinNextTryError
         let value = value
             .map(|(response_id, result)| (types_execution::ResponseId::from(response_id), result));
@@ -3078,7 +3078,6 @@ mod tests {
         JoinNextTryError, JoinSetCreate, Schedule, ScheduleIntent, Stub, StubIntent, StubParams,
         SubmitChildIntent, SubmitDelay,
     };
-    use crate::workflow::host_exports::response_id::ResponseId;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
@@ -3095,6 +3094,7 @@ mod tests {
         SUPPORTED_RETURN_VALUE_OK_EMPTY, SupportedFunctionReturnValue,
     };
     use concepts::{JoinSetId, StrVariant};
+    use db_common::JoinSetResponseId;
     use db_tests::Database;
     use rstest::rstest;
     use std::sync::Arc;
@@ -3485,7 +3485,7 @@ mod tests {
                 AwaitNextExtensionError::FunctionMismatch {
                     specified_function: submit_ffqn_1,
                     actual_function: Some(submit_ffqn_2),
-                    actual_id: ResponseId::ChildExecutionId(child_execution_id_b)
+                    actual_id: JoinSetResponseId::ChildExecutionId(child_execution_id_b)
                 },
                 err
             );
