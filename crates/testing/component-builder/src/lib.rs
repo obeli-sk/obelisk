@@ -99,7 +99,17 @@ fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
 /// ```
 fn get_target_dir() -> PathBuf {
     if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        PathBuf::from(target_dir)
+        let target_dir = PathBuf::from(target_dir);
+        if target_dir.is_relative() {
+            // Cargo resolves a relative `CARGO_TARGET_DIR` against the workspace root;
+            // do the same so the baked-in wasm paths are absolute and resolve regardless
+            // of the test's cwd.
+            let workspace_dir =
+                std::env::var("CARGO_WORKSPACE_DIR").expect("CARGO_WORKSPACE_DIR must be set");
+            Path::new(&workspace_dir).join(target_dir)
+        } else {
+            target_dir
+        }
     } else if let Ok(workspace_dir) = std::env::var("CARGO_WORKSPACE_DIR") {
         Path::new(&workspace_dir).join("target")
     } else {
