@@ -906,7 +906,7 @@
         "tags": [
           "executions"
         ],
-        "summary": "Cancel an activity execution",
+        "summary": "Cancel an activity or cancellable workflow execution",
         "operationId": "execution_cancel",
         "parameters": [
           {
@@ -921,13 +921,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Execution cancelled"
+            "description": "Cancellation requested"
           },
           "409": {
-            "description": "Already finished"
+            "description": "Already finished or already cancelling"
           },
           "422": {
-            "description": "Not an activity"
+            "description": "Not an activity or cancellable workflow"
           }
         }
       }
@@ -2084,6 +2084,7 @@
           "scheduled",
           "blocked",
           "paused",
+          "cancelling",
           "finished_ok",
           "finished_error",
           "finished_execution_failure"
@@ -2093,6 +2094,12 @@
             "type": "integer",
             "format": "int32",
             "description": "Number of blocked executions",
+            "minimum": 0
+          },
+          "cancelling": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of executions with cancellation requested; teardown in progress",
             "minimum": 0
           },
           "component_summary": {

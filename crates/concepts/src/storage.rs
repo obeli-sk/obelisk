@@ -1422,6 +1422,8 @@ pub enum ExecutionStateFilter {
     Blocked,
     /// Paused regardless of the underlying state (locked, pending or blocked).
     Paused,
+    /// Cancellation requested; teardown in progress (underlying state pending or blocked).
+    Cancelling,
     /// Finished with any result.
     Finished,
     /// Finished successfully.
@@ -1729,6 +1731,8 @@ pub struct DeploymentState {
     pub blocked: u32,
     // Paused regardless of the underlying state (locked, pending or blocked).
     pub paused: u32,
+    // Cancellation requested; teardown in progress. Disjoint from the buckets above.
+    pub cancelling: u32,
     pub finished_ok: u32,
     pub finished_error: u32,
     pub finished_execution_failure: u32,

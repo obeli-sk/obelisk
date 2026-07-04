@@ -3115,6 +3115,8 @@ mod deployment {
         pub blocked: u32,
         /// Number of paused executions, regardless of the underlying state
         pub paused: u32,
+        /// Number of executions with cancellation requested; teardown in progress
+        pub cancelling: u32,
         /// Number of executions finished successfully
         pub finished_ok: u32,
         /// Number of executions finished with the `err` variant of the result type
@@ -3147,6 +3149,7 @@ mod deployment {
                 scheduled: deployment_state.scheduled,
                 blocked: deployment_state.blocked,
                 paused: deployment_state.paused,
+                cancelling: deployment_state.cancelling,
                 finished_ok: deployment_state.finished_ok,
                 finished_error: deployment_state.finished_error,
                 finished_execution_failure: deployment_state.finished_execution_failure,
@@ -3226,7 +3229,7 @@ mod deployment {
                 for s in states {
                     writeln!(
                         &mut output,
-                        "{} locked={} pending={} scheduled={} blocked={} paused={} \
+                        "{} locked={} pending={} scheduled={} blocked={} paused={} cancelling={} \
                         finished_ok={} finished_error={} finished_execution_failure={}",
                         s.deployment_id,
                         s.locked,
@@ -3234,6 +3237,7 @@ mod deployment {
                         s.scheduled,
                         s.blocked,
                         s.paused,
+                        s.cancelling,
                         s.finished_ok,
                         s.finished_error,
                         s.finished_execution_failure,

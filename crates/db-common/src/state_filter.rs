@@ -4,8 +4,9 @@
 
 use chrono::{DateTime, Utc};
 use concepts::storage::{
-    ExecutionStateFilter, LIFECYCLE_ACTIVE, LIFECYCLE_PAUSED, RESULT_KIND_JSON_ERROR,
-    RESULT_KIND_JSON_OK, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
+    ExecutionStateFilter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED,
+    RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+    STATE_LOCKED, STATE_PENDING_AT,
 };
 
 /// Render one filter as a parenthesized SQL condition.
@@ -37,6 +38,7 @@ pub fn state_filter_to_sql(
             format!("(state = '{STATE_BLOCKED_BY_JOIN_SET}' AND lifecycle = '{LIFECYCLE_ACTIVE}')")
         }
         ExecutionStateFilter::Paused => format!("(lifecycle = '{LIFECYCLE_PAUSED}')"),
+        ExecutionStateFilter::Cancelling => format!("(lifecycle = '{LIFECYCLE_CANCELLING}')"),
         ExecutionStateFilter::Finished => format!("(state = '{STATE_FINISHED}')"),
         ExecutionStateFilter::FinishedOk => format!(
             "(state = '{STATE_FINISHED}' AND result_kind = '{RESULT_KIND_JSON_OK}'{jsonb_cast})"

@@ -85,6 +85,8 @@ message ListExecutionsRequest {
         EXECUTION_STATE_FILTER_FINISHED = 5;
         // Paused regardless of the underlying state (locked, pending or blocked).
         EXECUTION_STATE_FILTER_PAUSED = 9;
+        // Cancellation requested; teardown in progress.
+        EXECUTION_STATE_FILTER_CANCELLING = 10;
         // Finished successfully.
         EXECUTION_STATE_FILTER_FINISHED_OK = 6;
         // Finished with the `err` variant of its result type.
@@ -1112,6 +1114,8 @@ message DeploymentExecutionSummary {
     uint32 finished_error = 7;
     // Execution failure: trap, timeout, nondeterminism, cancellation etc.
     uint32 finished_execution_failure = 8;
+    // Cancellation requested; teardown in progress.
+    uint32 cancelling = 9;
 }
 
 message Deployment {

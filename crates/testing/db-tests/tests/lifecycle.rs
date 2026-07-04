@@ -5353,6 +5353,22 @@ async fn list_executions_filters_by_state(database: Database) {
         .create(create(paused_id.clone()))
         .await
         .unwrap();
+    let cancelling_id = ExecutionId::generate();
+    db_connection
+        .create(create(cancelling_id.clone()))
+        .await
+        .unwrap();
+    db_connection
+        .append(
+            cancelling_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
     drop(db_connection);
 
     let api_conn = db_pool.external_api_conn().await.unwrap();
@@ -5390,7 +5406,11 @@ async fn list_executions_filters_by_state(database: Database) {
         vec![paused_id.clone()],
         list(ExecutionStateFilter::Paused).await
     );
-    // A paused row is excluded from the active buckets (lifecycle = 'active').
+    assert_eq!(
+        vec![cancelling_id.clone()],
+        list(ExecutionStateFilter::Cancelling).await
+    );
+    // Paused and cancelling rows are excluded from the active buckets (lifecycle = 'active').
     assert!(
         list(ExecutionStateFilter::Scheduled { now })
             .await

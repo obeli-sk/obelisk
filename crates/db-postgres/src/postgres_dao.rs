@@ -1913,6 +1913,8 @@ async fn list_deployment_states(
 
             COUNT(*) FILTER (WHERE s.lifecycle = 'paused') AS paused,
 
+            COUNT(*) FILTER (WHERE s.lifecycle = 'cancelling') AS cancelling,
+
             COUNT(*) FILTER (
                 WHERE s.state = '{STATE_FINISHED}'
                   AND s.result_kind = '{RESULT_KIND_JSON_OK}'::jsonb
@@ -1941,6 +1943,7 @@ async fn list_deployment_states(
             0::BIGINT AS scheduled,
             0::BIGINT AS blocked,
             0::BIGINT AS paused,
+            0::BIGINT AS cancelling,
             0::BIGINT AS finished_ok,
             0::BIGINT AS finished_error,
             0::BIGINT AS finished_execution_failure,"
@@ -2033,6 +2036,8 @@ async fn list_deployment_states(
             blocked: u32::try_from(get::<i64, _>(&row, "blocked")?)
                 .expect("count is never negative"),
             paused: u32::try_from(get::<i64, _>(&row, "paused")?).expect("count is never negative"),
+            cancelling: u32::try_from(get::<i64, _>(&row, "cancelling")?)
+                .expect("count is never negative"),
             finished_ok: u32::try_from(get::<i64, _>(&row, "finished_ok")?)
                 .expect("count is never negative"),
             finished_error: u32::try_from(get::<i64, _>(&row, "finished_error")?)

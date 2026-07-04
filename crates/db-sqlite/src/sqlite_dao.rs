@@ -3424,6 +3424,7 @@ impl SqlitePool {
             COALESCE(SUM(s.state = '{STATE_PENDING_AT}' AND s.lifecycle = 'active' AND s.pending_expires_finished > :now), 0) AS scheduled,
             COALESCE(SUM(s.state = '{STATE_BLOCKED_BY_JOIN_SET}' AND s.lifecycle = 'active'), 0) AS blocked,
             COALESCE(SUM(s.lifecycle = 'paused'), 0) AS paused,
+            COALESCE(SUM(s.lifecycle = 'cancelling'), 0) AS cancelling,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_OK}'), 0) AS finished_ok,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind = '{RESULT_KIND_JSON_ERROR}'), 0) AS finished_error,
             COALESCE(SUM(s.state = '{STATE_FINISHED}' AND s.result_kind IS NOT NULL
@@ -3436,6 +3437,7 @@ impl SqlitePool {
             0 AS scheduled,
             0 AS blocked,
             0 AS paused,
+            0 AS cancelling,
             0 AS finished_ok,
             0 AS finished_error,
             0 AS finished_execution_failure,"
@@ -3536,6 +3538,7 @@ impl SqlitePool {
                         scheduled: row.get("scheduled")?,
                         blocked: row.get("blocked")?,
                         paused: row.get("paused")?,
+                        cancelling: row.get("cancelling")?,
                         finished_ok: row.get("finished_ok")?,
                         finished_error: row.get("finished_error")?,
                         finished_execution_failure: row.get("finished_execution_failure")?,
