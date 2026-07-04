@@ -1560,6 +1560,9 @@ async fn execution_events_cmd(
         req = req
             .query(&[("version", from.to_string())])
             .query(&[("including_cursor", "true")]);
+    } else {
+        // Without an explicit cursor, fetch the newest events from the latest version.
+        req = req.query(&[("direction", "older")]);
     }
     send_and_print(req).await
 }
@@ -1585,6 +1588,9 @@ async fn execution_responses_cmd(
         req = req
             .query(&[("cursor", from.to_string())])
             .query(&[("including_cursor", "true")]);
+    } else {
+        // Without an explicit cursor, fetch the newest responses from the latest cursor.
+        req = req.query(&[("direction", "older")]);
     }
     send_and_print(req).await
 }
