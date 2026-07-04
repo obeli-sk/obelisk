@@ -52,11 +52,11 @@ pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
 ];
 
 pub const WIT_OBELISK_WEBHOOK_PACKAGE: [&str; 3] = [
-    "obelisk_webhook@5.2.0",
-    "obelisk_webhook@5.2.0.wit",
+    "obelisk_webhook@5.3.0",
+    "obelisk_webhook@5.3.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_webhook@5.2.0/obelisk_webhook@5.2.0.wit"
+        "/wit/obelisk_webhook@5.3.0/obelisk_webhook@5.3.0.wit"
     )),
 ];
 

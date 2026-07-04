@@ -1,4 +1,4 @@
-package obelisk:webhook@5.2.0;
+package obelisk:webhook@5.3.0;
 
 @since(version = 5.0.0)
 interface webhook-support {
@@ -36,6 +36,9 @@ interface webhook-support {
     }
 
     /// The status of an execution.
+    ///
+    /// Superseded by `execution-status-v2`, which additionally reports the
+    /// `cancelling` state. Kept unchanged for backwards compatibility.
     @since(version = 5.0.0)
     variant execution-status {
         /// Execution is scheduled to run at a specific time.
@@ -46,6 +49,24 @@ interface webhook-support {
         paused,
         /// Execution is waiting for child executions to complete (workflows only).
         blocked-by-join-set,
+        /// Execution has finished.
+        finished(execution-status-finished),
+    }
+
+    /// The status of an execution, including cancellation.
+    @since(version = 5.3.0)
+    variant execution-status-v2 {
+        /// Execution is scheduled to run at a specific time.
+        pending-at(datetime),
+        /// Execution is currently being processed.
+        locked,
+        /// Execution is currently paused.
+        paused,
+        /// Execution is waiting for child executions to complete (workflows only).
+        blocked-by-join-set,
+        /// Cancellation has been requested; the execution is being torn down
+        /// (cancellable workflows only).
+        cancelling,
         /// Execution has finished.
         finished(execution-status-finished),
     }
@@ -91,9 +112,17 @@ interface webhook-support {
     @since(version = 5.0.0)
     schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
 
-    /// Get the current status of an execution.
+    /// Use `get-status-v2`, which additionally reports the `cancelling` state.
+    // TODO: Remove this deprecated function (and `execution-status`) on the next
+    // major version bump of this package.
     @since(version = 5.0.0)
+    @deprecated(version = 5.3.0)
     get-status: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<execution-status, get-status-error>;
+
+    /// Get the current status of an execution.
+    /// Additionally reports the `cancelling` state for cancellable workflows.
+    @since(version = 5.3.0)
+    get-status-v2: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<execution-status-v2, get-status-error>;
 
     /// Get the result of an execution, blocking until it finishes.
     /// Returns Ok(Some(json)) for successful result with value,

@@ -73,7 +73,7 @@ pub(crate) mod types {
                     import obelisk:types/execution@4.2.0;
                     import obelisk:types/backtrace@4.2.0;
                     import obelisk:types/join-set@4.2.0;
-                    import obelisk:webhook/webhook-support@5.2.0;
+                    import obelisk:webhook/webhook-support@5.3.0;
                 }",
         world: "any:any/bindings",
         imports: {
@@ -129,6 +129,35 @@ pub(crate) mod types {
 }
 
 // Conversions from webhook types to internal types
+
+/// Convert a `PendingAt` scheduled time to the WIT `datetime`.
+fn datetime_from_scheduled_at(
+    scheduled_at: &chrono::DateTime<chrono::Utc>,
+) -> types::obelisk::types::time::Datetime {
+    types::obelisk::types::time::Datetime {
+        seconds: u64::try_from(scheduled_at.timestamp())
+            .expect("pending at before unix epoch is unsupported"),
+        nanoseconds: scheduled_at.timestamp_subsec_nanos(),
+    }
+}
+
+/// Map a finished execution's `result_kind` to the WIT `execution-status-finished`
+/// (shared by `get-status` and `get-status-v2`).
+fn finished_status_to_wit(
+    result_kind: &PendingStateFinishedResultKind,
+) -> types::obelisk::webhook::webhook_support::ExecutionStatusFinished {
+    use types::obelisk::webhook::webhook_support::ExecutionStatusFinished;
+    match result_kind {
+        PendingStateFinishedResultKind::Ok => ExecutionStatusFinished::Ok,
+        PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {
+            ExecutionStatusFinished::Err
+        }
+        PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(_)) => {
+            ExecutionStatusFinished::ExecutionFailure
+        }
+    }
+}
+
 /// Convert `SupportedFunctionReturnValue` to the JSON result format expected by webhook-support.
 /// Returns Ok(Some(json)) for successful result with value,
 /// Ok(None) for successful result with no value,
@@ -1053,57 +1082,22 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         }
     }
 
+    /// Deprecated, use `get_status_v2`. Reports a `cancelling` execution as the
+    /// underlying state it is suspended from, since `execution-status` has no
+    /// `cancelling` case.
     async fn get_status(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
         _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<types::obelisk::webhook::webhook_support::ExecutionStatus, GetStatusErrorTrappable>
     {
-        use types::obelisk::webhook::webhook_support::{
-            ExecutionStatus, ExecutionStatusFinished, GetStatusError,
-        };
+        use types::obelisk::webhook::webhook_support::ExecutionStatus;
 
-        // Parse the execution ID
-        let execution_id = match concepts::ExecutionId::from_str(&execution_id.id) {
-            Ok(id) => id,
-            Err(err) => {
-                let msg = format!("get-status: cannot parse execution ID: {err}");
-                self.error(msg.clone()).await;
-                return Err(GetStatusError::ExecutionIdParsingError(msg).into());
-            }
-        };
-
-        // Get execution status from database
-        let db_connection = match self.db_pool.connection().await {
-            Ok(conn) => conn,
-            Err(err) => {
-                return Err(
-                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
-                );
-            }
-        };
-
-        let execution_with_state = match db_connection.get_pending_state(&execution_id).await {
-            Ok(state) => state,
-            Err(DbErrorRead::NotFound) => {
-                return Err(GetStatusError::NotFound.into());
-            }
-            Err(err) => {
-                return Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into());
-            }
-        };
-
-        // Convert PendingState to ExecutionStatus.
-        // The webhook host API has no dedicated `cancelling` status yet, so a
-        // cancelling execution reports the underlying state it is suspended from.
-        let status = match execution_with_state.pending_state {
+        let pending_state = self.get_status_pending_state(&execution_id).await?;
+        let status = match pending_state {
             PendingState::PendingAt(state)
             | PendingState::Cancelling(PendingStateSuspended::PendingAt(state)) => {
-                ExecutionStatus::PendingAt(types::obelisk::types::time::Datetime {
-                    seconds: u64::try_from(state.scheduled_at.timestamp())
-                        .expect("pending at before unix epoch is unsupported"),
-                    nanoseconds: state.scheduled_at.timestamp_subsec_nanos(),
-                })
+                ExecutionStatus::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
             }
             PendingState::Locked(_) => ExecutionStatus::Locked,
             PendingState::BlockedByJoinSet(_)
@@ -1112,16 +1106,32 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             }
             PendingState::Paused(_) => ExecutionStatus::Paused,
             PendingState::Finished(finished) => {
-                let finished_status = match finished.result_kind {
-                    PendingStateFinishedResultKind::Ok => ExecutionStatusFinished::Ok,
-                    PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {
-                        ExecutionStatusFinished::Err
-                    }
-                    PendingStateFinishedResultKind::Err(
-                        PendingStateFinishedError::ExecutionFailure(_),
-                    ) => ExecutionStatusFinished::ExecutionFailure,
-                };
-                ExecutionStatus::Finished(finished_status)
+                ExecutionStatus::Finished(finished_status_to_wit(&finished.result_kind))
+            }
+        };
+
+        Ok(status)
+    }
+
+    async fn get_status_v2(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
+    ) -> Result<types::obelisk::webhook::webhook_support::ExecutionStatusV2, GetStatusErrorTrappable>
+    {
+        use types::obelisk::webhook::webhook_support::ExecutionStatusV2;
+
+        let pending_state = self.get_status_pending_state(&execution_id).await?;
+        let status = match pending_state {
+            PendingState::PendingAt(state) => {
+                ExecutionStatusV2::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
+            }
+            PendingState::Locked(_) => ExecutionStatusV2::Locked,
+            PendingState::BlockedByJoinSet(_) => ExecutionStatusV2::BlockedByJoinSet,
+            PendingState::Cancelling(_) => ExecutionStatusV2::Cancelling,
+            PendingState::Paused(_) => ExecutionStatusV2::Paused,
+            PendingState::Finished(finished) => {
+                ExecutionStatusV2::Finished(finished_status_to_wit(&finished.result_kind))
             }
         };
 
@@ -1263,6 +1273,37 @@ impl wasmtime::component::HasData for WebhookEndpointCtx {
 }
 
 impl WebhookEndpointCtx {
+    /// Parse the execution ID and read its current `PendingState`, shared by
+    /// `get_status` and `get_status_v2`.
+    async fn get_status_pending_state(
+        &mut self,
+        execution_id: &types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<PendingState, GetStatusErrorTrappable> {
+        use types::obelisk::webhook::webhook_support::GetStatusError;
+
+        let execution_id = match concepts::ExecutionId::from_str(&execution_id.id) {
+            Ok(id) => id,
+            Err(err) => {
+                let msg = format!("get-status: cannot parse execution ID: {err}");
+                self.error(msg.clone()).await;
+                return Err(GetStatusError::ExecutionIdParsingError(msg).into());
+            }
+        };
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
+            }
+        };
+        match db_connection.get_pending_state(&execution_id).await {
+            Ok(state) => Ok(state.pending_state),
+            Err(DbErrorRead::NotFound) => Err(GetStatusError::NotFound.into()),
+            Err(err) => Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into()),
+        }
+    }
+
     // Create new execution if this is the first call of the request/response cycle
     async fn get_version_or_create(&mut self) -> Result<Version, DbErrorWrite> {
         if let Some(found) = &self.version {
