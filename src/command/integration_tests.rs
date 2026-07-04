@@ -1505,6 +1505,95 @@ impl TestServer {
         summary.expect("summary must be present")
     }
 
+    /// Seed a cancellable parent workflow blocked on a join set holding an unfinished
+    /// **uncancellable** child, directly in the server's sqlite DB, and return the
+    /// parent id.
+    ///
+    /// The uncancellable child is a permanent await barrier, so once the parent is
+    /// cancelled the cancellation driver can never advance it to `Finished` — it stays
+    /// `Cancelling` for the rest of the test. Cancelling a trivial workflow instead
+    /// races the driver, which finishes an empty-join-set cancellation on its next tick.
+    async fn seed_cancellable_parent_blocked_on_uncancellable_child(&self) -> concepts::ExecutionId {
+        use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+        use concepts::storage::{
+            AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, JoinSetRequest,
+        };
+        use concepts::{
+            ComponentId, ExecutionId, ExecutionMetadata, JoinSetId, JoinSetKind, Params, StrVariant,
+        };
+
+        const PARENT_FFQN: FunctionFqn =
+            FunctionFqn::new_static("testing:cancel/ifc", "parent-cancellable");
+        const CHILD_FFQN: FunctionFqn = FunctionFqn::new_static("testing:cancel/ifc", "child");
+
+        let pool = SqlitePool::new(&self.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.connection().await.unwrap();
+        let now = chrono::Utc::now();
+        let create = |execution_id: ExecutionId, ffqn: FunctionFqn| CreateRequest {
+            created_at: now,
+            execution_id,
+            ffqn,
+            params: Params::empty(),
+            parent: None,
+            scheduled_at: now,
+            component_id: ComponentId::dummy_workflow(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            metadata: ExecutionMetadata::empty(),
+            scheduled_by: None,
+            paused: false,
+        };
+
+        let parent_id = ExecutionId::generate();
+        let version = conn
+            .create(create(parent_id.clone(), PARENT_FFQN))
+            .await
+            .unwrap();
+        let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let version = conn
+            .append(
+                parent_id.clone(),
+                version,
+                AppendRequest {
+                    created_at: now,
+                    event: ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinSetCreate {
+                            join_set_id: join_set_id.clone(),
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let child_id = parent_id.next_level(&join_set_id);
+        conn.append(
+            parent_id.clone(),
+            version,
+            AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id: child_id.clone(),
+                            target_ffqn: CHILD_FFQN,
+                            params: Params::empty(),
+                            result: Ok(()),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+        conn.create(create(ExecutionId::Derived(child_id), CHILD_FFQN))
+            .await
+            .unwrap();
+        pool.close().await;
+        parent_id
+    }
+
     async fn step_execution_until_finished_grpc(
         &self,
         ffqn: &str,
@@ -2608,14 +2697,10 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
         Some(grpc::grpc_gen::execution_status::Status::Finished(_))
     ));
 
-    let cancellable_workflow_id = server.generate_execution_id().await;
-    server
-        .submit_paused_grpc(
-            &cancellable_workflow_id,
-            "testing:integration/workflow-add.add-workflow-cancellable",
-            vec![json!(10), json!(20)],
-        )
-        .await;
+    let cancellable_workflow_id = server
+        .seed_cancellable_parent_blocked_on_uncancellable_child()
+        .await
+        .to_string();
     let resp = grpc_client
         .cancel_execution(CancelExecutionRequest {
             execution_id: Some(GrpcExecutionId {
@@ -2706,14 +2791,10 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
         Some(grpc::grpc_gen::execution_status::Status::Finished(_))
     ));
 
-    let cancellable_workflow_id = server.generate_execution_id().await;
-    server
-        .submit_paused_webapi(
-            &cancellable_workflow_id,
-            "testing:integration/workflow-add.add-workflow-cancellable",
-            vec![json!(10), json!(20)],
-        )
-        .await;
+    let cancellable_workflow_id = server
+        .seed_cancellable_parent_blocked_on_uncancellable_child()
+        .await
+        .to_string();
     let resp = server
         .client
         .put(format!(
