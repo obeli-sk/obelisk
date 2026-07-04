@@ -16,15 +16,15 @@ OUTPUT_FILE="${2:-assets/webhook-js-runtime-version.txt}"
 cargo check --package webhook-js-runtime-builder # triggers build.rs of webhook-js-runtime-builder
 
 if [ "$TAG" != "dry-run" ]; then
-    TMP_TOML=$(mktemp -t webhook-deployment-XXXXXX.toml)
+    TMP_TOML="webhook-deployment-for-push.toml"
     trap "rm -f $TMP_TOML" EXIT
     cat > "$TMP_TOML" <<EOF
 [[webhook_endpoint_wasm]]
-name = "pushed"
-location = "$(pwd)/target/wasm-cache/webhook_js_runtime.wasm"
+name = "target_component"
+location = "target/wasm-cache/webhook_js_runtime.wasm"
 routes = [""]
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
-        pushed "oci://docker.io/getobelisk/webhook-js-runtime:$TAG")
+        target_component "oci://docker.io/getobelisk/webhook-js-runtime:$TAG")
     echo -n $OUTPUT > $OUTPUT_FILE
 fi
