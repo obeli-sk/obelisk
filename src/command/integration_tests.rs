@@ -2794,7 +2794,9 @@ async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled(
     let exec_id = server.generate_execution_id().await;
     grpc_client
         .submit(SubmitRequest {
-            execution_id: Some(GrpcExecutionId { id: exec_id.clone() }),
+            execution_id: Some(GrpcExecutionId {
+                id: exec_id.clone(),
+            }),
             function_name: Some(FFQN.parse::<FunctionFqn>().unwrap().into()),
             params: Some(
                 grpc::grpc_mapping::to_any(
@@ -2828,12 +2830,17 @@ async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled(
 
     let resp = grpc_client
         .cancel_execution(CancelExecutionRequest {
-            execution_id: Some(GrpcExecutionId { id: exec_id.clone() }),
+            execution_id: Some(GrpcExecutionId {
+                id: exec_id.clone(),
+            }),
         })
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(resp.outcome(), CancelExecutionOutcome::CancellationRequested);
+    assert_eq!(
+        resp.outcome(),
+        CancelExecutionOutcome::CancellationRequested
+    );
 
     // The driver drives it to Finished(Cancelled) without the 100s sleep ever expiring.
     let mut finished_kind = None;
@@ -2848,7 +2855,7 @@ async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled(
                 finished
                     .result_kind
                     .as_ref()
-                    .and_then(|rk| rk.value.clone())
+                    .and_then(|rk| rk.value)
                     .expect("finished must carry a result kind"),
             );
             break;
