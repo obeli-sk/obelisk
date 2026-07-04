@@ -581,6 +581,11 @@ location = "{ws}/crates/testing/test-programs/js/webhook/generate_execution_id.j
 routes = [{{ methods = ["GET"], route = "/generate-execution-id" }}]
 
 [[webhook_endpoint_js]]
+name = "test_get_status_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/get_status.js"
+routes = [{{ methods = ["GET"], route = "/get-status" }}]
+
+[[webhook_endpoint_js]]
 name = "test_import_call_activity_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/import_call_activity.js"
 routes = [{{ methods = ["GET"], route = "/import-call-activity" }}]
@@ -1498,6 +1503,97 @@ impl TestServer {
             }
         }
         summary.expect("summary must be present")
+    }
+
+    /// Seed a cancellable parent workflow blocked on a join set holding an unfinished
+    /// **uncancellable** child, directly in the server's sqlite DB, and return the
+    /// parent id.
+    ///
+    /// The uncancellable child is a permanent await barrier, so once the parent is
+    /// cancelled the cancellation driver can never advance it to `Finished` — it stays
+    /// `Cancelling` for the rest of the test. Cancelling a trivial workflow instead
+    /// races the driver, which finishes an empty-join-set cancellation on its next tick.
+    async fn seed_cancellable_parent_blocked_on_uncancellable_child(
+        &self,
+    ) -> concepts::ExecutionId {
+        use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+        use concepts::storage::{
+            AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, JoinSetRequest,
+        };
+        use concepts::{
+            ComponentId, ExecutionId, ExecutionMetadata, JoinSetId, JoinSetKind, Params, StrVariant,
+        };
+
+        const PARENT_FFQN: FunctionFqn =
+            FunctionFqn::new_static("testing:cancel/ifc", "parent-cancellable");
+        const CHILD_FFQN: FunctionFqn = FunctionFqn::new_static("testing:cancel/ifc", "child");
+
+        let pool = SqlitePool::new(&self.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.connection().await.unwrap();
+        let now = chrono::Utc::now();
+        let create = |execution_id: ExecutionId, ffqn: FunctionFqn| CreateRequest {
+            created_at: now,
+            execution_id,
+            ffqn,
+            params: Params::empty(),
+            parent: None,
+            scheduled_at: now,
+            component_id: ComponentId::dummy_workflow(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            metadata: ExecutionMetadata::empty(),
+            scheduled_by: None,
+            paused: false,
+        };
+
+        let parent_id = ExecutionId::generate();
+        let version = conn
+            .create(create(parent_id.clone(), PARENT_FFQN))
+            .await
+            .unwrap();
+        let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let version = conn
+            .append(
+                parent_id.clone(),
+                version,
+                AppendRequest {
+                    created_at: now,
+                    event: ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinSetCreate {
+                            join_set_id: join_set_id.clone(),
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let child_id = parent_id.next_level(&join_set_id);
+        conn.append(
+            parent_id.clone(),
+            version,
+            AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id: child_id.clone(),
+                            target_ffqn: CHILD_FFQN,
+                            params: Params::empty(),
+                            result: Ok(()),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+        conn.create(create(ExecutionId::Derived(child_id), CHILD_FFQN))
+            .await
+            .unwrap();
+        pool.close().await;
+        parent_id
     }
 
     async fn step_execution_until_finished_grpc(
@@ -2603,14 +2699,10 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
         Some(grpc::grpc_gen::execution_status::Status::Finished(_))
     ));
 
-    let cancellable_workflow_id = server.generate_execution_id().await;
-    server
-        .submit_paused_grpc(
-            &cancellable_workflow_id,
-            "testing:integration/workflow-add.add-workflow-cancellable",
-            vec![json!(10), json!(20)],
-        )
-        .await;
+    let cancellable_workflow_id = server
+        .seed_cancellable_parent_blocked_on_uncancellable_child()
+        .await
+        .to_string();
     let resp = grpc_client
         .cancel_execution(CancelExecutionRequest {
             execution_id: Some(GrpcExecutionId {
@@ -2701,14 +2793,10 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
         Some(grpc::grpc_gen::execution_status::Status::Finished(_))
     ));
 
-    let cancellable_workflow_id = server.generate_execution_id().await;
-    server
-        .submit_paused_webapi(
-            &cancellable_workflow_id,
-            "testing:integration/workflow-add.add-workflow-cancellable",
-            vec![json!(10), json!(20)],
-        )
-        .await;
+    let cancellable_workflow_id = server
+        .seed_cancellable_parent_blocked_on_uncancellable_child()
+        .await
+        .to_string();
     let resp = server
         .client
         .put(format!(
@@ -3459,6 +3547,121 @@ async fn webhook_js_hello() {
     );
     let body = resp.text().await.unwrap();
     assert_eq!(body, "Hello from JS webhook!");
+    server.shutdown().await;
+}
+
+/// A JS webhook's `getStatus` reports the first-class `cancelling` state
+/// (via `get-status-v2`).
+///
+/// The seed needs an *uncancellable* child, not just one execution: the running
+/// server's cancellation driver finishes any `cancelling` execution once all its
+/// join-set members have responded, so a lone one would be `Finished(Cancelled)`
+/// before the webhook reads it. An uncancellable child that never responds is an
+/// await barrier the driver can't clear, holding the parent in `cancelling`.
+#[tokio::test]
+async fn webhook_js_get_status_cancelling() {
+    use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
+    use concepts::storage::{
+        AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, JoinSetRequest,
+    };
+    use concepts::{
+        ComponentId, ExecutionId, ExecutionMetadata, JoinSetId, JoinSetKind, Params, StrVariant,
+    };
+
+    // Uncancellable child (no `-cancellable` suffix) → permanent await barrier.
+    const PARENT_FFQN: FunctionFqn =
+        FunctionFqn::new_static("testing:cancel/ifc", "parent-cancellable");
+    const CHILD_FFQN: FunctionFqn = FunctionFqn::new_static("testing:cancel/ifc", "child");
+
+    let server = TestServer::start(test_addr!(86)).await;
+
+    // Seed a cancelling parent with an unfinished uncancellable child directly in
+    // the server's sqlite DB.
+    let parent_id = {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let conn = pool.connection().await.unwrap();
+        let now = chrono::Utc::now();
+        let create = |execution_id: ExecutionId, ffqn: FunctionFqn| CreateRequest {
+            created_at: now,
+            execution_id,
+            ffqn,
+            params: Params::empty(),
+            parent: None,
+            scheduled_at: now,
+            component_id: ComponentId::dummy_workflow(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            metadata: ExecutionMetadata::empty(),
+            scheduled_by: None,
+            paused: false,
+        };
+
+        let parent_id = ExecutionId::generate();
+        let version = conn
+            .create(create(parent_id.clone(), PARENT_FFQN))
+            .await
+            .unwrap();
+        let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        let version = conn
+            .append(
+                parent_id.clone(),
+                version,
+                AppendRequest {
+                    created_at: now,
+                    event: ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinSetCreate {
+                            join_set_id: join_set_id.clone(),
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let child_id = parent_id.next_level(&join_set_id);
+        conn.append(
+            parent_id.clone(),
+            version,
+            AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id: child_id.clone(),
+                            target_ffqn: CHILD_FFQN,
+                            params: Params::empty(),
+                            result: Ok(()),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+        conn.create(create(ExecutionId::Derived(child_id), CHILD_FFQN))
+            .await
+            .unwrap();
+        conn.request_cancellation_with_retries(&parent_id, now)
+            .await
+            .unwrap();
+        pool.close().await;
+        parent_id
+    };
+
+    let resp = server
+        .client
+        .get(format!("{}/get-status", server.webhook_base_url))
+        .header("x-execution-id", parent_id.to_string())
+        .send()
+        .await
+        .expect("webhook request failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["executionStatus"]["status"],
+        serde_json::json!("cancelling")
+    );
     server.shutdown().await;
 }
 

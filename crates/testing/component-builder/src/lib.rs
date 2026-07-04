@@ -89,7 +89,7 @@ fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
     target_tripple == WASM_CORE_MODULE
 }
 
-/// Get the path to the target directory using `CARGO_WORKSPACE_DIR` environment variable.
+/// Get the path to the target directory using `CARGO_TARGET_DIR` or `CARGO_WORKSPACE_DIR` environment variable.
 ///
 /// To set the environment variable automatically, modify `.cargo/config.toml`:
 /// ```toml
@@ -98,8 +98,19 @@ fn is_transformation_to_wasm_component_needed(target_tripple: &str) -> bool {
 /// CARGO_WORKSPACE_DIR = { value = "", relative = true }
 /// ```
 fn get_target_dir() -> PathBuf {
-    // Try to get `CARGO_WORKSPACE_DIR` from the environment
-    if let Ok(workspace_dir) = std::env::var("CARGO_WORKSPACE_DIR") {
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let target_dir = PathBuf::from(target_dir);
+        if target_dir.is_relative() {
+            // Cargo resolves a relative `CARGO_TARGET_DIR` against the workspace root;
+            // do the same so the baked-in wasm paths are absolute and resolve regardless
+            // of the test's cwd.
+            let workspace_dir =
+                std::env::var("CARGO_WORKSPACE_DIR").expect("CARGO_WORKSPACE_DIR must be set");
+            Path::new(&workspace_dir).join(target_dir)
+        } else {
+            target_dir
+        }
+    } else if let Ok(workspace_dir) = std::env::var("CARGO_WORKSPACE_DIR") {
         Path::new(&workspace_dir).join("target")
     } else {
         unreachable!("CARGO_WORKSPACE_DIR must be set")

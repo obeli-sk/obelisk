@@ -209,6 +209,13 @@ expression: components
   {
     "component_id": {
       "component_type": "webhook_endpoint",
+      "name": "test_get_status_webhook",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
       "name": "test_headers_webhook",
       "component_digest": "sha256:<REDACTED>"
     }
