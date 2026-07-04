@@ -74,7 +74,7 @@ impl CancelRegistry {
     /// Best-effort local interrupt for an activity currently running in this process.
     /// Unlike `cancel_activity`, this does not write terminal cancellation state to the DB.
     /// Noop if the execution is not an activity tracked by this registry.
-    pub fn interrupt_running_activity(&self, execution_id: &ExecutionId) {
+    fn interrupt_running_activity(&self, execution_id: &ExecutionId) {
         let info = {
             let mut guard = self.tokens.lock().unwrap();
             guard.remove(execution_id)
