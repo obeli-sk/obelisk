@@ -2337,9 +2337,7 @@ async fn pause_finished_execution_should_fail(database: Database) {
 #[case(Database::Sqlite)]
 #[case(Database::Postgres)]
 #[tokio::test]
-async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
-    #[case] database: Database,
-) {
+async fn pause_and_unpause_locked_workflow_should_return_to_pending_at(#[case] database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2347,7 +2345,8 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
     let db_external = db_pool.external_api_conn().await.unwrap();
 
     let execution_id = ExecutionId::generate();
-    // Create with current scheduled time (ready to run)
+    // Create with current scheduled time (ready to run). A workflow, since pausing a running
+    // activity is rejected; see `cannot_pause_running_activity`.
     db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
@@ -2357,7 +2356,7 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
             parent: None,
             metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: sim_clock.now(),
-            component_id: ComponentId::dummy_activity(),
+            component_id: ComponentId::dummy_workflow(),
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
@@ -2417,6 +2416,63 @@ async fn pause_and_unpause_locked_execution_should_return_to_pending_at(
         PendingState::PendingAt(PendingStatePendingAt { scheduled_at, last_lock }) => (scheduled_at, last_lock));
     assert_eq!(paused_at, pending_at.0);
     assert_eq!(Some(found_locked_by), pending_at.1);
+
+    drop(db_connection);
+    drop(db_external);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_pause_running_activity(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let db_external = db_pool.external_api_conn().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+
+    lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + Duration::from_secs(30),
+        RunId::generate(),
+    )
+    .await;
+
+    let err = db_external
+        .pause_execution(&execution_id, sim_clock.now())
+        .await
+        .unwrap_err();
+    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
+    assert_eq!(
+        "cannot pause a running activity; cancel it instead",
+        reason.as_ref()
+    );
+
+    // The row is untouched: still locked, no Unlocked/Paused appended.
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(log.pending_state, PendingState::Locked(_));
 
     drop(db_connection);
     drop(db_external);

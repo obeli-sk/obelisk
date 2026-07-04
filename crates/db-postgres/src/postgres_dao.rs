@@ -5286,6 +5286,26 @@ impl DbExternalApi for PostgresConnection {
         let combined_state = get_combined_state(&tx, execution_id).await?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
+        // A running (Locked) activity cannot be paused: pausing would unlock without confirming
+        // the in-flight WASM/exec invocation has stopped, so `Paused` would not mean quiescent and
+        // an unpause could start a second run in parallel. Cancel it instead. Workflows and
+        // not-yet-running activities remain pausable.
+        if matches!(
+            combined_state.execution_with_state.pending_state,
+            PendingState::Locked(_)
+        ) && combined_state
+            .execution_with_state
+            .component_type
+            .is_activity()
+        {
+            return Err(DbErrorWriteNonRetriable::IllegalState {
+                reason: "cannot pause a running activity; cancel it instead".into(),
+                context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
+            }
+            .into());
+        }
         let next_version = if matches!(
             combined_state.execution_with_state.pending_state,
             PendingState::Locked(_)
