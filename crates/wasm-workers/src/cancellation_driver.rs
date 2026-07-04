@@ -55,11 +55,22 @@ impl CancellationDriver {
             tokio::spawn(
                 async move {
                     debug!("Spawned the cancellation driver");
+                    // Members already actioned (cancelled/signalled) this process, so a
+                    // member is signalled at most once instead of every tick until it
+                    // responds. Pruned as responses land; empty on restart (re-signal is
+                    // idempotent), so no durable state is needed.
+                    let mut handled: HashSet<JoinSetResponseId> = HashSet::new();
                     loop {
                         match db_pool.connection().await {
                             Ok(conn) => {
-                                tick(conn.as_ref(), &cancel_registry, clock_fn.now(), batch_size)
-                                    .await;
+                                tick(
+                                    conn.as_ref(),
+                                    &cancel_registry,
+                                    clock_fn.now(),
+                                    batch_size,
+                                    &mut handled,
+                                )
+                                .await;
                             }
                             Err(err) => warn!("Cannot obtain a db connection - {err:?}"),
                         }
@@ -78,6 +89,7 @@ async fn tick(
     cancel_registry: &CancelRegistry,
     now: DateTime<Utc>,
     batch_size: u32,
+    handled: &mut HashSet<JoinSetResponseId>,
 ) {
     let ids = match conn.get_cancelling(batch_size).await {
         Ok(ids) => ids,
@@ -87,7 +99,7 @@ async fn tick(
         }
     };
     for execution_id in ids {
-        if let Err(err) = close_step(conn, cancel_registry, &execution_id, now).await {
+        if let Err(err) = close_step(conn, cancel_registry, &execution_id, now, handled).await {
             debug!(%execution_id, "Cancellation close-step failed, retrying next tick - {err:?}");
         }
     }
@@ -99,6 +111,7 @@ async fn close_step(
     cancel_registry: &CancelRegistry,
     execution_id: &ExecutionId,
     now: DateTime<Utc>,
+    handled: &mut HashSet<JoinSetResponseId>,
 ) -> Result<(), CloseStepError> {
     let log = conn.get(execution_id).await?;
 
@@ -113,16 +126,18 @@ async fn close_step(
     }
 
     // Resolve each child's component type (activity vs workflow) from its Created event.
-    let child_component_types = resolve_child_component_types(conn, &log).await;
+    // A resolution failure fails the whole step (retried next tick) rather than guessing
+    // a type: mis-classifying an activity as an uncancellable workflow would silently
+    // strand it as a permanent await barrier.
+    let child_component_types = resolve_child_component_types(conn, &log).await?;
 
     let fold = JoinSetFold::reconstruct(
         log.event_history().map(|(event, _version)| event),
         responses,
         |child_id| {
-            child_component_types
+            *child_component_types
                 .get(child_id)
-                .copied()
-                .unwrap_or(ComponentType::Workflow)
+                .expect("every open child was resolved above")
         },
     )?;
 
@@ -132,10 +147,13 @@ async fn close_step(
     for members in fold.open_join_sets().values() {
         for (response_id, member) in members {
             if responded.contains(response_id) {
+                // Response landed: this member is done, drop it from the handled set to
+                // keep the set bounded to in-flight members.
+                handled.remove(response_id);
                 continue;
             }
             all_responded = false;
-            signal_member(conn, cancel_registry, response_id, member, now).await;
+            signal_member(conn, cancel_registry, response_id, member, now, handled).await;
         }
     }
 
@@ -148,7 +166,7 @@ async fn close_step(
 async fn resolve_child_component_types(
     conn: &dyn DbConnection,
     log: &ExecutionLog,
-) -> HashMap<ExecutionIdDerived, ComponentType> {
+) -> Result<HashMap<ExecutionIdDerived, ComponentType>, DbErrorRead> {
     let mut types = HashMap::new();
     for (event, _version) in log.event_history() {
         if let HistoryEvent::JoinSetRequest {
@@ -162,52 +180,66 @@ async fn resolve_child_component_types(
         } = &event
             && !types.contains_key(child_execution_id)
         {
-            match conn
+            let create_req = conn
                 .get_create_request(&ExecutionId::Derived(child_execution_id.clone()))
-                .await
-            {
-                Ok(create_req) => {
-                    types.insert(
-                        child_execution_id.clone(),
-                        create_req.component_id.component_type,
-                    );
-                }
-                Err(err) => {
-                    debug!(%child_execution_id, "Cannot resolve child component type - {err:?}")
-                }
-            }
+                .await?;
+            types.insert(
+                child_execution_id.clone(),
+                create_req.component_id.component_type,
+            );
         }
     }
-    types
+    Ok(types)
 }
 
 /// Best-effort teardown of one running member: cancel activities/delays, signal
-/// cancellable children (recursion). An uncancellable child is merely awaited.
+/// cancellable children (recursion). An uncancellable child is merely awaited. Each
+/// member is actioned at most once (tracked in `handled`); the action is idempotent,
+/// so re-doing it after a restart (empty set) is harmless.
 async fn signal_member(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     response_id: &JoinSetResponseId,
     member: &JoinSetMember,
     now: DateTime<Utc>,
+    handled: &mut HashSet<JoinSetResponseId>,
 ) {
-    match response_id {
-        JoinSetResponseId::DelayId(delay_id) => {
-            if let Err(err) = storage::cancel_delay(conn, delay_id.clone(), now).await {
-                debug!("Ignoring failure to cancel delay {delay_id} - {err:?}");
-            }
-        }
+    if handled.contains(response_id) {
+        return;
+    }
+    let outcome = match response_id {
+        JoinSetResponseId::DelayId(delay_id) => storage::cancel_delay(conn, delay_id.clone(), now)
+            .await
+            .map(|_| ())
+            .map_err(|err| format!("Ignoring failure to cancel delay {delay_id} - {err:?}")),
         JoinSetResponseId::ChildExecutionId(child_id) => {
             let child = ExecutionId::Derived(child_id.clone());
             if member.is_activity() {
-                if let Err(err) = cancel_registry.cancel_activity(conn, &child, now).await {
-                    debug!("Ignoring failure to cancel activity {child_id} - {err:?}");
-                }
-            } else if member.is_cancellable_workflow()
-                && let Err(err) = conn.request_cancellation_with_retries(&child, now).await
-            {
-                debug!("Ignoring failure to signal cancellable child {child_id} - {err:?}");
+                cancel_registry
+                    .cancel_activity(conn, &child, now)
+                    .await
+                    .map(|_| ())
+                    .map_err(|err| {
+                        format!("Ignoring failure to cancel activity {child_id} - {err:?}")
+                    })
+            } else if member.is_cancellable_workflow() {
+                conn.request_cancellation_with_retries(&child, now)
+                    .await
+                    .map(|_| ())
+                    .map_err(|err| {
+                        format!("Ignoring failure to signal cancellable child {child_id} - {err:?}")
+                    })
+            } else {
+                // Uncancellable child: nothing to signal, it is simply awaited.
+                Ok(())
             }
         }
+    };
+    match outcome {
+        Ok(()) => {
+            handled.insert(response_id.clone());
+        }
+        Err(msg) => debug!("{msg}"),
     }
 }
 
@@ -356,8 +388,9 @@ mod tests {
 
         // A handful of ticks drives: parent signals child, child finishes and responds,
         // parent then finishes.
+        let mut handled = HashSet::new();
         for _ in 0..5 {
-            tick(conn.as_ref(), &cancel_registry, now, 10).await;
+            tick(conn.as_ref(), &cancel_registry, now, 10, &mut handled).await;
         }
 
         for id in [ExecutionId::Derived(child_id), parent_id] {
