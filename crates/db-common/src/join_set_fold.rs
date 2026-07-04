@@ -500,8 +500,8 @@ mod tests {
     /// the next unconsumed arrival — and a close drops the whole set. This test
     /// generates randomized-but-valid scripts, computes the expected open set with a
     /// worker-faithful FIFO model, and asserts `reconstruct` matches, guarding the
-    /// two folds against drift (the P8 "fiddly part": JoinNext<->response pairing,
-    /// closing JoinNexts, per-join-set isolation).
+    /// two folds against drift (the P8 "fiddly part": `JoinNext`<->response pairing,
+    /// closing `JoinNext`s, per-join-set isolation).
     #[test]
     fn reconstruct_matches_worker_fifo_model() {
         // Self-contained deterministic PRNG (db-common has no `rand` dev-dep).
@@ -515,7 +515,7 @@ mod tests {
                 self.0 >> 33
             }
             fn below(&mut self, n: usize) -> usize {
-                (self.next_u64() as usize) % n
+                usize::try_from(self.next_u64() % n as u64).expect("modulo n fits in usize")
             }
             fn coin(&mut self) -> bool {
                 self.next_u64() & 1 == 0
@@ -527,7 +527,7 @@ mod tests {
 
         for seed in 0..2000u64 {
             let mut rng = Lcg(seed.wrapping_mul(2_654_435_761).wrapping_add(1));
-            let mut uid: u128 = 0; // globally-unique id source across join sets
+            let mut uid: u64 = 0; // globally-unique id source across join sets
 
             let mut history: Vec<HistoryEvent> = Vec::new();
             let mut responses: Vec<(JoinSetId, JoinSetResponseId)> = Vec::new();
@@ -538,8 +538,8 @@ mod tests {
 
             let num_sets = 1 + rng.below(3);
             for s in 0..num_sets {
-                let js = JoinSetId::new(JoinSetKind::Named, StrVariant::from(format!("js{s}")))
-                    .unwrap();
+                let js =
+                    JoinSetId::new(JoinSetKind::Named, StrVariant::from(format!("js{s}"))).unwrap();
                 history.push(HistoryEvent::JoinSetCreate {
                     join_set_id: js.clone(),
                 });
@@ -552,7 +552,7 @@ mod tests {
                     uid += 1;
                     if rng.below(3) == 0 {
                         // Delay member.
-                        let did = delay_id(&js, uid as u64);
+                        let did = delay_id(&js, uid);
                         history.push(HistoryEvent::JoinSetRequest {
                             join_set_id: js.clone(),
                             request: JoinSetRequest::DelayRequest {
@@ -565,7 +565,7 @@ mod tests {
                         members.push((JoinSetResponseId::DelayId(did), JoinSetMember::Delay));
                     } else {
                         // Child member (activity, plain workflow, or cancellable workflow).
-                        let cid = child_id(&js, uid);
+                        let cid = child_id(&js, u128::from(uid));
                         let (component_type, ffqn) = match rng.below(3) {
                             0 => (ComponentType::Activity, plain.clone()),
                             1 => (ComponentType::Workflow, plain.clone()),
@@ -615,7 +615,11 @@ mod tests {
                         join_set_id: js.clone(),
                         run_expires_at: chrono::DateTime::UNIX_EPOCH,
                         // Vary requested_ffqn to also cover the await-next log shape.
-                        requested_ffqn: if rng.coin() { Some(plain.clone()) } else { None },
+                        requested_ffqn: if rng.coin() {
+                            Some(plain.clone())
+                        } else {
+                            None
+                        },
                         closing: false,
                     });
                 }
