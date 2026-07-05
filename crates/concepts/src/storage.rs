@@ -1272,7 +1272,10 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
-            match self.cancel_activity(execution_id, cancelled_at).await {
+            match self
+                .append_activity_cancellation_requested(execution_id, cancelled_at)
+                .await
+            {
                 Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
                     ..
                 })) if retries > 0 => retries -= 1,
@@ -1317,7 +1320,7 @@ pub trait DbExecutor: Send + Sync {
         execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead>;
 
-    async fn cancel_activity(
+    async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,

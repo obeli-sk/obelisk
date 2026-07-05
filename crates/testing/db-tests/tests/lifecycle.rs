@@ -2701,7 +2701,7 @@ async fn cancel_activity_on_locked_execution_requests_cancellation(database: Dat
     .await;
 
     let outcome = db_connection
-        .cancel_activity(&execution_id, sim_clock.now())
+        .append_activity_cancellation_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
     assert_eq!(CancelOutcome::Cancelled, outcome);

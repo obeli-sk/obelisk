@@ -4079,7 +4079,7 @@ impl SqlitePool {
         Ok(CancelOutcome::Cancelled)
     }
 
-    fn apply_activity_cancellation(
+    fn append_activity_cancellation_requested_tx(
         tx: &Transaction,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -4592,7 +4592,7 @@ impl DbExecutor for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn cancel_activity(
+    async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -4601,7 +4601,7 @@ impl DbExecutor for SqlitePool {
         self.transaction(
             move |tx| {
                 let combined_state = Self::get_combined_state(tx, &execution_id)?;
-                SqlitePool::apply_activity_cancellation(
+                SqlitePool::append_activity_cancellation_requested_tx(
                     tx,
                     &execution_id,
                     cancelled_at,
@@ -4609,7 +4609,7 @@ impl DbExecutor for SqlitePool {
                 )
             },
             TxType::MultipleWrites,
-            "cancel_activity",
+            "append_activity_cancellation_requested",
         )
         .await
     }

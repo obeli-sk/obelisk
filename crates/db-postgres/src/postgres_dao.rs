@@ -1365,7 +1365,7 @@ async fn apply_cancellation_plan(
     Ok(CancelOutcome::Cancelled)
 }
 
-async fn apply_activity_cancellation(
+async fn append_activity_cancellation_requested_tx(
     tx: deadpool_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
     cancelled_at: DateTime<Utc>,
@@ -4072,7 +4072,7 @@ impl DbExecutor for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    async fn cancel_activity(
+    async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -4081,7 +4081,8 @@ impl DbExecutor for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
-        apply_activity_cancellation(tx, execution_id, cancelled_at, &combined_state).await
+        append_activity_cancellation_requested_tx(tx, execution_id, cancelled_at, &combined_state)
+            .await
     }
 
     #[instrument(skip(self))]
