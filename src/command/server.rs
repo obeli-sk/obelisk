@@ -3495,8 +3495,8 @@ impl DeploymentVerified {
                 Ok(deployment_verified)
             },
             _ = termination_watcher.changed() => {
-                warn!("Received SIGINT, canceling while resolving the WASM files");
-                anyhow::bail!("canceling while resolving the WASM files")
+                warn!("Received SIGINT, cancelling while resolving the WASM files");
+                anyhow::bail!("cancelling while resolving the WASM files")
             }
         }
     }
@@ -3846,8 +3846,8 @@ async fn compile_and_link(
     let results_of_results = tokio::select! {
         results_of_results = pre_spawns => results_of_results,
         _ = termination_watcher.changed() => {
-            warn!("Received SIGINT, canceling while compiling the components");
-            anyhow::bail!("canceling while compiling the components")
+            warn!("Received SIGINT, cancelling while compiling the components");
+            anyhow::bail!("cancelling while compiling the components")
         }
     };
 
