@@ -32,8 +32,8 @@ use concepts::{
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
 use db_common::{
-    AppendNotifier, CancelWorkflowPlan, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
-    NotifierPendingAt, PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
+    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
+    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use hashbrown::HashMap;
 use rusqlite::{
@@ -4004,8 +4004,11 @@ impl SqlitePool {
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let plan = combined_state.plan_cancel_workflow()?;
-        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
+        if let Some(outcome) = combined_state.cancel_short_circuit() {
+            return Ok(outcome);
+        }
+        combined_state.assert_cancellable_workflow_ffqn()?;
+        Self::append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state)
     }
 
     fn request_cancellation(
@@ -4014,22 +4017,18 @@ impl SqlitePool {
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let plan = combined_state.plan_request_cancellation();
-        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
+        if let Some(outcome) = combined_state.cancel_short_circuit() {
+            return Ok(outcome);
+        }
+        Self::append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state)
     }
 
-    fn apply_cancellation_plan(
+    fn append_cancellation_requested(
         tx: &Transaction,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
         combined_state: &CombinedState,
-        plan: CancelWorkflowPlan,
     ) -> Result<CancelOutcome, DbErrorWrite> {
-        match plan {
-            CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
-            CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
-            CancelWorkflowPlan::Proceed => {}
-        }
         Self::append(
             tx,
             execution_id,
@@ -4064,16 +4063,7 @@ impl SqlitePool {
             PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
             _ => {}
         }
-        Self::append(
-            tx,
-            execution_id,
-            AppendRequest {
-                created_at: cancelled_at,
-                event: ExecutionRequest::CancellationRequested,
-            },
-            combined_state.get_next_version_assert_not_finished(),
-        )?;
-        Ok(CancelOutcome::Cancelled)
+        Self::append_cancellation_requested(tx, execution_id, cancelled_at, combined_state)
     }
 }
 

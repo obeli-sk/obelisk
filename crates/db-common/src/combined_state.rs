@@ -6,8 +6,8 @@ use concepts::{
     component_id::ComponentDigest,
     prefixed_ulid::{DeploymentId, ExecutorId, RunId},
     storage::{
-        DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState, Lifecycle,
-        LockedBy, PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
+        CancelOutcome, DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState,
+        Lifecycle, LockedBy, PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
         PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt,
         PendingStateSuspended, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
         STATE_PENDING_AT, Version,
@@ -48,14 +48,6 @@ pub struct CombinedState {
     pub corresponding_version: Version,
 }
 
-/// What `cancel_workflow` should do, derived from the current [`CombinedState`].
-#[derive(Debug, Clone, Copy)]
-pub enum CancelWorkflowPlan {
-    AlreadyFinished,
-    AlreadyCancelling,
-    Proceed,
-}
-
 impl CombinedState {
     #[must_use]
     pub fn get_next_version_assert_not_finished(&self) -> Version {
@@ -73,38 +65,35 @@ impl CombinedState {
         Ok(self.corresponding_version.increment())
     }
 
-    /// Decide how a cancellation should reach the cancelling state, without the
-    /// `is_cancellable` guard. Used by the worker join-set close and the
-    /// cancellation driver, which have already classified the target as cancellable.
-    /// No state needs releasing first: paused executions are never running, and a
-    /// locked workflow's run is fenced by the version bump of `CancellationRequested`.
+    /// Outcome to return without appending `CancellationRequested`: cancellation is
+    /// already underway or the execution already finished. `None` means the append
+    /// should proceed; no state needs releasing first, since paused executions are
+    /// never running and a locked workflow's run is fenced by the version bump.
     #[must_use]
-    pub fn plan_request_cancellation(&self) -> CancelWorkflowPlan {
+    pub fn cancel_short_circuit(&self) -> Option<CancelOutcome> {
         match &self.execution_with_state.pending_state {
-            PendingState::Finished(_) => CancelWorkflowPlan::AlreadyFinished,
-            PendingState::Cancelling(_) => CancelWorkflowPlan::AlreadyCancelling,
-            _ => CancelWorkflowPlan::Proceed,
+            PendingState::Finished(_) => Some(CancelOutcome::AlreadyFinished),
+            PendingState::Cancelling(_) => Some(CancelOutcome::AlreadyCancelling),
+            _ => None,
         }
     }
 
-    /// Decide how `cancel_workflow` should reach the cancelling state, rejecting a
-    /// non-cancellable target. Control-plane entrypoint; the worker/driver paths use
-    /// [`Self::plan_request_cancellation`] instead.
-    pub fn plan_cancel_workflow(&self) -> Result<CancelWorkflowPlan, DbErrorWrite> {
-        let plan = self.plan_request_cancellation();
-        if matches!(plan, CancelWorkflowPlan::Proceed { .. })
-            && !self.execution_with_state.ffqn.is_cancellable()
-        {
-            return Err(DbErrorWrite::NonRetriable(
+    /// `cancel_workflow` guard rejecting a non-cancellable target. Control-plane
+    /// entrypoint only; the worker/driver paths skip it, having already classified
+    /// the target as cancellable.
+    pub fn assert_cancellable_workflow_ffqn(&self) -> Result<(), DbErrorWrite> {
+        if self.execution_with_state.ffqn.is_cancellable() {
+            Ok(())
+        } else {
+            Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::IllegalState {
                     reason: "cannot cancel, execution is not a cancellable workflow".into(),
                     context: SpanTrace::capture(),
                     source: None,
                     loc: Location::caller(),
                 },
-            ));
+            ))
         }
-        Ok(plan)
     }
 
     #[must_use]

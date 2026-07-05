@@ -31,7 +31,7 @@ use concepts::{
     },
 };
 use db_common::{
-    AppendNotifier, CancelWorkflowPlan, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
+    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
     NotifierPendingAt, PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
@@ -1310,20 +1310,13 @@ async fn get_combined_state(
     CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
 }
 
-/// Shared body of `cancel_workflow` / `request_cancellation`: append
-/// `CancellationRequested` and commit.
-async fn apply_cancellation_plan(
+/// Appends `CancellationRequested` and commits.
+async fn append_cancellation_requested(
     tx: deadpool_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
     cancelled_at: DateTime<Utc>,
     combined_state: &CombinedState,
-    plan: CancelWorkflowPlan,
 ) -> Result<CancelOutcome, DbErrorWrite> {
-    match plan {
-        CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
-        CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
-        CancelWorkflowPlan::Proceed => {}
-    }
     append(
         &tx,
         execution_id,
@@ -1358,18 +1351,7 @@ async fn append_activity_cancellation_requested_tx(
         PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
         _ => {}
     }
-    append(
-        &tx,
-        execution_id,
-        AppendRequest {
-            created_at: cancelled_at,
-            event: ExecutionRequest::CancellationRequested,
-        },
-        combined_state.get_next_version_assert_not_finished(),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(CancelOutcome::Cancelled)
+    append_cancellation_requested(tx, execution_id, cancelled_at, combined_state).await
 }
 
 async fn list_executions(
@@ -4056,8 +4038,10 @@ impl DbExecutor for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
-        let plan = combined_state.plan_request_cancellation();
-        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
+        if let Some(outcome) = combined_state.cancel_short_circuit() {
+            return Ok(outcome);
+        }
+        append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state).await
     }
 }
 #[async_trait]
@@ -5392,8 +5376,11 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
-        let plan = combined_state.plan_cancel_workflow()?;
-        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
+        if let Some(outcome) = combined_state.cancel_short_circuit() {
+            return Ok(outcome);
+        }
+        combined_state.assert_cancellable_workflow_ffqn()?;
+        append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state).await
     }
 
     #[instrument(skip(self))]
