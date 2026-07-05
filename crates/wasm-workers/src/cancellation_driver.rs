@@ -126,15 +126,33 @@ async fn close_step(
 ) -> Result<(), CloseStepError> {
     let log = conn.get(execution_id).await?;
     if log.component_type.is_activity() {
-        if let PendingState::Cancelling(PendingStateCancelling::Locked(locked)) = &log.pending_state
-            && locked.lock_expires_at > now
-        {
-            return Ok(());
-        }
-        finish_cancelled(conn, &log, now).await?;
+        activity_finish_if_expired(conn, &log, now).await
+    } else {
+        close_workflow_step(conn, cancel_registry, &log, now, handled).await
+    }
+}
+
+async fn activity_finish_if_expired(
+    conn: &dyn DbConnection,
+    log: &ExecutionLog,
+    now: DateTime<Utc>,
+) -> Result<(), CloseStepError> {
+    if let PendingState::Cancelling(PendingStateCancelling::Locked(locked)) = &log.pending_state
+        && locked.lock_expires_at > now
+    {
         return Ok(());
     }
+    append_finish_cancelled(conn, log, now).await?;
+    Ok(())
+}
 
+async fn close_workflow_step(
+    conn: &dyn DbConnection,
+    cancel_registry: &CancelRegistry,
+    log: &ExecutionLog,
+    now: DateTime<Utc>,
+    handled: &mut HashSet<JoinSetResponseId>,
+) -> Result<(), CloseStepError> {
     // Responses in cursor order, plus the set of children/delays that have one.
     let mut responses = Vec::with_capacity(log.responses.len());
     let mut responded: HashSet<JoinSetResponseId> = HashSet::with_capacity(log.responses.len());
@@ -173,12 +191,12 @@ async fn close_step(
                 continue;
             }
             all_responded = false;
-            signal_member(conn, cancel_registry, response_id, member, now, handled).await;
+            signal_child_or_delay(conn, cancel_registry, response_id, member, now, handled).await;
         }
     }
 
     if all_responded {
-        finish_cancelled(conn, &log, now).await?;
+        append_finish_cancelled(conn, log, now).await?;
     }
     Ok(())
 }
@@ -216,7 +234,7 @@ async fn resolve_child_component_types(
 /// signal cancellable children (recursion). An uncancellable child is merely
 /// awaited. Each child/delay is actioned at most once (tracked in `handled`); the
 /// action is idempotent, so re-doing it after a restart (empty set) is harmless.
-async fn signal_member(
+async fn signal_child_or_delay(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     response_id: &JoinSetResponseId,
@@ -264,7 +282,7 @@ async fn signal_member(
 }
 
 /// Append `Finished(Cancelled)`, responding to the parent if this is a child.
-async fn finish_cancelled(
+async fn append_finish_cancelled(
     conn: &dyn DbConnection,
     log: &ExecutionLog,
     now: DateTime<Utc>,
