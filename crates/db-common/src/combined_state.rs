@@ -7,10 +7,10 @@ use concepts::{
     prefixed_ulid::{DeploymentId, ExecutorId, RunId},
     storage::{
         CancelOutcome, DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState,
-        Lifecycle, LockedBy, PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt,
-        PendingStateSuspended, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, Version,
+        Lifecycle, LockedBy, PendingState, PendingStateBlockedByJoinSet, PendingStateCancelling,
+        PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
+        PendingStatePaused, PendingStatePendingAt, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, Version,
     },
 };
 use std::panic::Location;
@@ -257,7 +257,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Cancelling(PendingStateSuspended::Locked(
+                pending_state: PendingState::Cancelling(PendingStateCancelling::Locked(
                     PendingStateLocked {
                         locked_by: LockedBy {
                             executor_id,
@@ -355,7 +355,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: None,
@@ -388,7 +388,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: Some(LockedBy {
@@ -424,7 +424,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStateSuspended::BlockedByJoinSet(
+                pending_state: PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
                     PendingStateBlockedByJoinSet {
                         join_set_id: join_set_id.clone(),
                         closing: join_set_closing,
@@ -458,7 +458,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Cancelling(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Cancelling(PendingStateCancelling::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: None,
@@ -491,7 +491,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Cancelling(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Cancelling(PendingStateCancelling::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: Some(LockedBy {
@@ -527,7 +527,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Cancelling(PendingStateSuspended::BlockedByJoinSet(
+                pending_state: PendingState::Cancelling(PendingStateCancelling::BlockedByJoinSet(
                     PendingStateBlockedByJoinSet {
                         join_set_id: join_set_id.clone(),
                         closing: join_set_closing,

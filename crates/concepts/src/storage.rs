@@ -2521,11 +2521,20 @@ pub enum PendingState {
     #[display("BlockedByJoinSet({_0})")]
     BlockedByJoinSet(PendingStateBlockedByJoinSet),
 
+    /// Started by appending [`ExecutionRequest::Paused`] and
+    /// ended with [`ExecutionRequest::Unpaused`] or [`ExecutionRequest::CancellationRequested`].
+    ///
+    /// Activity must not be in-flight, cancelling or finished when pausing.
+    /// Workflow must not be cancelling or finished.
+    /// Pausing a locked workflow must first append `Unlocked`.
+    /// The previous pending state is stored for workflow unpause.
     #[display("Paused({_0})")]
-    Paused(PendingStateSuspended),
+    Paused(PendingStatePaused),
 
+    /// Started by appending [`ExecutionRequest::CancellationRequested`] and
+    /// ended with [`ExecutionRequest::Finished`].
     #[display("Cancelling({_0})")]
-    Cancelling(PendingStateSuspended),
+    Cancelling(PendingStateCancelling),
 
     #[display("Finished: {_0}")]
     Finished(PendingStateFinished),
@@ -2566,29 +2575,35 @@ impl From<PendingState> for PendingStateMerged {
                 lifecycle: Lifecycle::Active,
             },
 
-            PendingState::Paused(inner) => Self::from_suspended(inner, Lifecycle::Paused),
+            PendingState::Paused(inner) => match inner {
+                PendingStatePaused::PendingAt(s) => PendingStateMerged::PendingAt {
+                    state: s,
+                    lifecycle: Lifecycle::Paused,
+                },
+                PendingStatePaused::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
+                    state: s,
+                    lifecycle: Lifecycle::Paused,
+                },
+            },
 
-            PendingState::Cancelling(inner) => Self::from_suspended(inner, Lifecycle::Cancelling),
+            PendingState::Cancelling(inner) => match inner {
+                PendingStateCancelling::Locked(s) => PendingStateMerged::Locked {
+                    state: s,
+                    lifecycle: Lifecycle::Cancelling,
+                },
+                PendingStateCancelling::PendingAt(s) => PendingStateMerged::PendingAt {
+                    state: s,
+                    lifecycle: Lifecycle::Cancelling,
+                },
+                PendingStateCancelling::BlockedByJoinSet(s) => {
+                    PendingStateMerged::BlockedByJoinSet {
+                        state: s,
+                        lifecycle: Lifecycle::Cancelling,
+                    }
+                }
+            },
 
             PendingState::Finished(s) => PendingStateMerged::Finished(s),
-        }
-    }
-}
-impl PendingStateMerged {
-    fn from_suspended(inner: PendingStateSuspended, lifecycle: Lifecycle) -> Self {
-        match inner {
-            PendingStateSuspended::Locked(s) => PendingStateMerged::Locked {
-                state: s,
-                lifecycle,
-            },
-            PendingStateSuspended::PendingAt(s) => PendingStateMerged::PendingAt {
-                state: s,
-                lifecycle,
-            },
-            PendingStateSuspended::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
-                state: s,
-                lifecycle,
-            },
         }
     }
 }
@@ -2618,13 +2633,25 @@ pub struct PendingStateBlockedByJoinSet {
     pub closing: bool,
 }
 
-/// Underlying runnable state of a paused or cancelling execution.
+/// State of execution before it was paused.
 ///
-/// Pausing a locked execution must first append `Unlocked`. Cancelling keeps any
-/// lock: a running activity holds it until the owner confirms teardown or the lease
-/// expires, a running workflow is fenced by the cancellation's version bump.
+/// A paused activity is always `PendingAt`. Pausing a locked workflow must first
+/// append `Unlocked`, so `Locked` is never wrapped here.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub enum PendingStateSuspended {
+pub enum PendingStatePaused {
+    #[display("PendingAt({_0})")]
+    PendingAt(PendingStatePendingAt),
+    #[display("BlockedByJoinSet({_0})")]
+    BlockedByJoinSet(PendingStateBlockedByJoinSet),
+}
+
+/// Underlying state of a cancelling execution.
+///
+/// Cancelling keeps any lock: a running activity holds it until the owner confirms
+/// teardown or the lease expires, a running workflow is fenced by the cancellation's
+/// version bump.
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub enum PendingStateCancelling {
     #[display("Locked({_0})")]
     Locked(PendingStateLocked),
     #[display("PendingAt({_0})")]

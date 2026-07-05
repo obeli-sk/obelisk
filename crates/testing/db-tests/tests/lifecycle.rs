@@ -8,7 +8,7 @@ use concepts::storage::{
     ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, ExpiredDelay, ExpiredLock,
     ExpiredTimer, FrameInfo, FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse,
     JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination, PendingState,
-    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, PendingStateSuspended,
+    PendingStateBlockedByJoinSet, PendingStateLocked, PendingStatePendingAt, PendingStateCancelling, PendingStatePaused,
     ResponseCursor, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{
@@ -2392,7 +2392,7 @@ async fn pause_and_unpause_locked_workflow_should_return_to_pending_at(#[case] d
     // Verify the lock was released before the execution was paused.
     let log = db_connection.get(&execution_id).await.unwrap();
     let paused_pending_at = assert_matches!(log.pending_state,
-        PendingState::Paused(PendingStateSuspended::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
+        PendingState::Paused(PendingStatePaused::PendingAt(PendingStatePendingAt { scheduled_at, last_lock })) => (scheduled_at, last_lock));
     assert_eq!(paused_at, paused_pending_at.0);
     assert_eq!(Some(found_locked_by.clone()), paused_pending_at.1);
     let reason = assert_matches!(
@@ -2600,7 +2600,7 @@ async fn cancellation_requested_from_pending_at_should_keep_underlying_state(dat
     // PendingAt.
     let scheduled = assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::PendingAt(PendingStatePendingAt {
+        PendingState::Cancelling(PendingStateCancelling::PendingAt(PendingStatePendingAt {
             scheduled_at,
             ..
         })) => scheduled_at
@@ -2669,7 +2669,7 @@ async fn cancellation_requested_on_locked_workflow_should_keep_underlying_state(
     let log = db_connection.get(&execution_id).await.unwrap();
     let locked = assert_matches!(
         &log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::Locked(locked)) => locked
+        PendingState::Cancelling(PendingStateCancelling::Locked(locked)) => locked
     );
     assert_eq!(lock_expires_at, locked.lock_expires_at);
 
@@ -2714,7 +2714,7 @@ async fn cancel_activity_on_locked_execution_requests_cancellation(database: Dat
     let log = db_connection.get(&execution_id).await.unwrap();
     let locked = assert_matches!(
         &log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::Locked(locked)) => locked
+        PendingState::Cancelling(PendingStateCancelling::Locked(locked)) => locked
     );
     assert_eq!(lock_expires_at, locked.lock_expires_at);
     assert_matches!(
@@ -2764,7 +2764,7 @@ async fn cancel_activity_on_paused_execution_requests_cancellation(database: Dat
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+        PendingState::Cancelling(PendingStateCancelling::PendingAt(_))
     );
     assert_matches!(
         log.last_event().event,
@@ -2831,7 +2831,7 @@ async fn cancellation_requested_on_paused_workflow_should_keep_underlying_state(
     // Cancel supersedes pause: cancelling, not paused.
     assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+        PendingState::Cancelling(PendingStateCancelling::PendingAt(_))
     );
 
     drop(db_connection);
@@ -2950,7 +2950,7 @@ async fn cancel_workflow_from_pending_at(database: Database) {
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+        PendingState::Cancelling(PendingStateCancelling::PendingAt(_))
     );
     assert_matches!(
         log.last_event().event,
@@ -3003,7 +3003,7 @@ async fn cancel_workflow_from_locked_should_keep_underlying_state(database: Data
     // The lock is kept; the running workflow is fenced by the version bump.
     assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::Locked(_))
+        PendingState::Cancelling(PendingStateCancelling::Locked(_))
     );
     // ..., Locked, CancellationRequested
     assert_matches!(
@@ -3051,7 +3051,7 @@ async fn cancel_workflow_from_paused_should_keep_underlying_state(database: Data
     // Cancel supersedes pause: cancelling, not paused.
     assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+        PendingState::Cancelling(PendingStateCancelling::PendingAt(_))
     );
     // ..., Paused, CancellationRequested (no Unpaused: paused executions are never running)
     assert_matches!(
@@ -3164,7 +3164,7 @@ async fn request_cancellation_bypasses_cancellable_guard(database: Database) {
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+        PendingState::Cancelling(PendingStateCancelling::PendingAt(_))
     );
     assert_matches!(
         log.last_event().event,
@@ -3528,7 +3528,7 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
         log.pending_state,
-        PendingState::Paused(PendingStateSuspended::BlockedByJoinSet(
+        PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
             PendingStateBlockedByJoinSet {
                 join_set_id: actual_join_set_id,
                 ..
