@@ -25,7 +25,7 @@ use concepts::{
     },
     time::{ClockFn, Sleep},
 };
-use db_common::{JoinSetFold, JoinSetFoldError, JoinSetMember, JoinSetResponseId};
+use db_common::{JoinSetFold, JoinSetFoldError, JoinSetResponseId};
 use executor::AbortOnDropHandle;
 use std::{collections::HashMap, collections::HashSet, sync::Arc, time::Duration};
 use tracing::{Instrument, debug, info_span, warn};
@@ -56,11 +56,11 @@ impl CancellationDriver {
             tokio::spawn(
                 async move {
                     debug!("Spawned the cancellation driver");
-                    // Child executions and delays already actioned (cancelled/signalled)
-                    // this process, so each is signalled at most once instead of every tick
-                    // until it responds. Pruned as responses land; empty on restart
-                    // (re-signal is idempotent), so no durable state is needed.
-                    let mut handled: HashSet<JoinSetResponseId> = HashSet::new();
+                    // Child executions and delays whose cancellation was already
+                    // requested/signalled this process. Pruned as responses land;
+                    // empty on restart (re-request is idempotent), so no durable state
+                    // is needed.
+                    let mut cancellation_requested: HashSet<JoinSetResponseId> = HashSet::new();
                     loop {
                         match db_pool.connection().await {
                             Ok(conn) => {
@@ -69,7 +69,7 @@ impl CancellationDriver {
                                     &cancel_registry,
                                     clock_fn.now(),
                                     batch_size,
-                                    &mut handled,
+                                    &mut cancellation_requested,
                                 )
                                 .await;
                             }
@@ -90,7 +90,7 @@ async fn tick(
     cancel_registry: &CancelRegistry,
     now: DateTime<Utc>,
     batch_size: u32,
-    handled: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested: &mut HashSet<JoinSetResponseId>,
 ) {
     let ids = match conn.get_cancelling(batch_size).await {
         Ok(ids) => ids,
@@ -100,7 +100,15 @@ async fn tick(
         }
     };
     for execution_id in ids {
-        if let Err(err) = close_step(conn, cancel_registry, &execution_id, now, handled).await {
+        if let Err(err) = close_step(
+            conn,
+            cancel_registry,
+            &execution_id,
+            now,
+            cancellation_requested,
+        )
+        .await
+        {
             debug!(%execution_id, "Cancellation close-step failed, retrying next tick - {err:?}");
         }
     }
@@ -112,8 +120,8 @@ pub(crate) async fn tick_test(
     cancel_registry: &CancelRegistry,
     now: DateTime<Utc>,
 ) {
-    let mut handled = HashSet::new();
-    tick(conn, cancel_registry, now, 10, &mut handled).await;
+    let mut cancellation_requested = HashSet::new();
+    tick(conn, cancel_registry, now, 10, &mut cancellation_requested).await;
 }
 
 /// Advance one cancelling execution by a single close-step.
@@ -122,13 +130,13 @@ async fn close_step(
     cancel_registry: &CancelRegistry,
     execution_id: &ExecutionId,
     now: DateTime<Utc>,
-    handled: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested: &mut HashSet<JoinSetResponseId>,
 ) -> Result<(), CloseStepError> {
     let log = conn.get(execution_id).await?;
     if log.component_type.is_activity() {
         activity_finish_if_expired(conn, &log, now).await
     } else {
-        close_workflow_step(conn, cancel_registry, &log, now, handled).await
+        close_workflow_step(conn, cancel_registry, &log, now, cancellation_requested).await
     }
 }
 
@@ -151,7 +159,7 @@ async fn close_workflow_step(
     cancel_registry: &CancelRegistry,
     log: &ExecutionLog,
     now: DateTime<Utc>,
-    handled: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested: &mut HashSet<JoinSetResponseId>,
 ) -> Result<(), CloseStepError> {
     // Responses in cursor order, plus the set of children/delays that have one.
     let mut responses = Vec::with_capacity(log.responses.len());
@@ -179,20 +187,47 @@ async fn close_workflow_step(
         },
     )?;
 
-    // Cancel/signal every still-running child or delay; the execution is ready to
-    // finish only once each child/delay has landed a response.
+    // Classify every still-running child or delay. Activities and delays are
+    // cancelled in reverse creation order below, matching normal join-set close;
+    // cancellable workflow children are signalled; uncancellable workflow children
+    // are only awaited.
     let mut all_responded = true;
+    let mut activity_and_delay_ids = Vec::new();
+    let mut cancellable_child_ids = Vec::new();
     for members in fold.open_join_sets().values() {
         for (response_id, member) in members {
             if responded.contains(response_id) {
-                // Response landed: this child/delay is done, drop it from the handled
-                // set to keep it bounded to in-flight children/delays.
-                handled.remove(response_id);
+                // Response landed: this child/delay is done, drop it from the
+                // process-local set to keep it bounded to in-flight children/delays.
+                cancellation_requested.remove(response_id);
                 continue;
             }
             all_responded = false;
-            signal_child_or_delay(conn, cancel_registry, response_id, member, now, handled).await;
+            match response_id {
+                JoinSetResponseId::DelayId(_) => activity_and_delay_ids.push(response_id.clone()),
+                JoinSetResponseId::ChildExecutionId(child_id) => {
+                    if member.is_activity() {
+                        activity_and_delay_ids.push(response_id.clone());
+                    } else if member.is_cancellable_workflow() {
+                        cancellable_child_ids.push(child_id.clone());
+                    }
+                }
+            }
         }
+    }
+
+    for response_id in activity_and_delay_ids.iter().rev() {
+        cancel_activity_or_delay(
+            conn,
+            cancel_registry,
+            response_id,
+            now,
+            cancellation_requested,
+        )
+        .await;
+    }
+    for child_id in cancellable_child_ids {
+        signal_cancellable_child_workflow(conn, &child_id, now, cancellation_requested).await;
     }
 
     if all_responded {
@@ -230,54 +265,56 @@ async fn resolve_child_component_types(
     Ok(types)
 }
 
-/// Best-effort teardown of one running child or delay: cancel activities/delays,
-/// signal cancellable children (recursion). An uncancellable child is merely
-/// awaited. Each child/delay is actioned at most once (tracked in `handled`); the
-/// action is idempotent, so re-doing it after a restart (empty set) is harmless.
-async fn signal_child_or_delay(
+/// Best-effort teardown of one running activity or delay. Each child/delay has
+/// cancellation requested at most once per process; the action is idempotent, so
+/// re-doing it after a restart (empty set) is harmless.
+async fn cancel_activity_or_delay(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     response_id: &JoinSetResponseId,
-    member: &JoinSetMember,
     now: DateTime<Utc>,
-    handled: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested: &mut HashSet<JoinSetResponseId>,
 ) {
-    if handled.contains(response_id) {
+    if cancellation_requested.contains(response_id) {
         return;
     }
     let outcome = match response_id {
         JoinSetResponseId::DelayId(delay_id) => storage::cancel_delay(conn, delay_id.clone(), now)
             .await
             .map(|_| ())
-            .map_err(|err| format!("Ignoring failure to cancel delay {delay_id} - {err:?}")),
+            .map_err(|err| debug!("Ignoring failure to cancel delay {delay_id} - {err:?}")),
         JoinSetResponseId::ChildExecutionId(child_id) => {
             let child = ExecutionId::Derived(child_id.clone());
-            if member.is_activity() {
-                cancel_registry
-                    .cancel_activity(conn, &child, now)
-                    .await
-                    .map(|_| ())
-                    .map_err(|err| {
-                        format!("Ignoring failure to cancel activity {child_id} - {err:?}")
-                    })
-            } else if member.is_cancellable_workflow() {
-                conn.request_cancellation_with_retries(&child, now)
-                    .await
-                    .map(|_| ())
-                    .map_err(|err| {
-                        format!("Ignoring failure to signal cancellable child {child_id} - {err:?}")
-                    })
-            } else {
-                // Uncancellable child: nothing to signal, it is simply awaited.
-                Ok(())
-            }
+            cancel_registry
+                .cancel_activity(conn, &child, now)
+                .await
+                .map(|_| ())
+                .map_err(|err| debug!("Ignoring failure to cancel activity {child_id} - {err:?}"))
         }
     };
-    match outcome {
-        Ok(()) => {
-            handled.insert(response_id.clone());
+    if outcome.is_ok() {
+        cancellation_requested.insert(response_id.clone());
+    }
+}
+
+/// Signal one cancellable workflow child. It is not finished here; its own
+/// cancellation close will append the response that lets this workflow finish.
+async fn signal_cancellable_child_workflow(
+    conn: &dyn DbConnection,
+    child_id: &ExecutionIdDerived,
+    now: DateTime<Utc>,
+    cancellation_requested: &mut HashSet<JoinSetResponseId>,
+) {
+    let response_id = JoinSetResponseId::ChildExecutionId(child_id.clone());
+    if cancellation_requested.contains(&response_id) {
+        return;
+    }
+    let child = ExecutionId::Derived(child_id.clone());
+    match conn.request_cancellation_with_retries(&child, now).await {
+        Ok(_) => {
+            cancellation_requested.insert(response_id);
         }
-        Err(msg) => debug!("{msg}"),
+        Err(err) => debug!("Ignoring failure to signal cancellable child {child_id} - {err:?}"),
     }
 }
 
@@ -426,9 +463,16 @@ mod tests {
 
         // A handful of ticks drives: parent signals child, child finishes and responds,
         // parent then finishes.
-        let mut handled = HashSet::new();
+        let mut cancellation_requested = HashSet::new();
         for _ in 0..5 {
-            tick(conn.as_ref(), &cancel_registry, now, 10, &mut handled).await;
+            tick(
+                conn.as_ref(),
+                &cancel_registry,
+                now,
+                10,
+                &mut cancellation_requested,
+            )
+            .await;
         }
 
         for id in [ExecutionId::Derived(child_id), parent_id] {
@@ -509,8 +553,15 @@ mod tests {
         .await
         .unwrap();
 
-        let mut handled = HashSet::new();
-        tick(conn.as_ref(), &cancel_registry, now, 10, &mut handled).await;
+        let mut cancellation_requested = HashSet::new();
+        tick(
+            conn.as_ref(),
+            &cancel_registry,
+            now,
+            10,
+            &mut cancellation_requested,
+        )
+        .await;
         let log = conn.get(&execution_id).await.unwrap();
         assert_matches::assert_matches!(
             log.pending_state,
@@ -522,7 +573,7 @@ mod tests {
             &cancel_registry,
             lock_expires_at + Duration::from_millis(1),
             10,
-            &mut handled,
+            &mut cancellation_requested,
         )
         .await;
         let log = conn.get(&execution_id).await.unwrap();
