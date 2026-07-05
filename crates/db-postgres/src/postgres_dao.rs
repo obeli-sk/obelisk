@@ -1628,7 +1628,7 @@ async fn list_responses(
 
     let mut sql = format!(
         "SELECT \
-            r.id, r.created_at, r.join_set_id, r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
+            r.id, r.seq, r.created_at, r.join_set_id, r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
             FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
             WHERE \
             r.execution_id = {p_execution_id} \
@@ -1642,7 +1642,7 @@ async fn list_responses(
             let p_cursor = add_param(Box::new(i64::from(*cursor)));
 
             // Add WHERE clause for cursor
-            write!(sql, " AND r.id {} {}", p.rel(), p_cursor).unwrap();
+            write!(sql, " AND r.seq {} {}", p.rel(), p_cursor).unwrap();
 
             Some(p.length())
         }
@@ -1650,7 +1650,7 @@ async fn list_responses(
     };
 
     // 3. Ordering
-    sql.push_str(" ORDER BY r.id");
+    sql.push_str(" ORDER BY r.seq");
     let is_desc = pagination.as_ref().is_some_and(Pagination::is_desc);
     if is_desc {
         sql.push_str(" DESC");
@@ -1665,7 +1665,7 @@ async fn list_responses(
 
     // Re-order to ascending for consistent oldest-to-newest results
     if is_desc {
-        sql = format!("SELECT * FROM ({sql}) AS sub ORDER BY id ASC");
+        sql = format!("SELECT * FROM ({sql}) AS sub ORDER BY seq ASC");
     }
 
     let params_refs: Vec<&(dyn ToSql + Sync)> = params
@@ -2085,9 +2085,10 @@ async fn list_deployment_states(
 fn parse_response_with_cursor(
     row: &tokio_postgres::Row,
 ) -> Result<ResponseWithCursor, DbErrorRead> {
-    // Postgres BIGINT = i64.
-    let id = u32::try_from(get::<i64, _>(row, "id")?)
-        .map_err(|_| consistency_db_err("id must not be negative"))?;
+    // Postgres BIGINT = i64. `id` is the opaque primary key; `seq` is the public cursor.
+    let id = get::<i64, _>(row, "id")?;
+    let seq = u32::try_from(get::<i64, _>(row, "seq")?)
+        .map_err(|_| consistency_db_err("seq must not be negative"))?;
 
     let created_at: DateTime<Utc> = get(row, "created_at")?;
     let join_set_id_str: String = get(row, "join_set_id")?;
@@ -2144,7 +2145,7 @@ fn parse_response_with_cursor(
     };
 
     Ok(ResponseWithCursor {
-        cursor: ResponseCursor(id),
+        cursor: ResponseCursor(seq),
         event: JoinSetResponseEventOuter {
             event: JoinSetResponseEvent { join_set_id, event },
             created_at,
@@ -2346,7 +2347,7 @@ async fn nth_response(
 ) -> Result<Option<ResponseWithCursor>, DbErrorRead> {
     let row = tx
             .query_opt(
-                "SELECT r.id, r.created_at, r.join_set_id, \
+                "SELECT r.id, r.seq, r.created_at, r.join_set_id, \
                  r.delay_id, r.delay_success, \
                  r.child_execution_id, r.finished_version, l.json_value \
                  FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
@@ -2357,7 +2358,7 @@ async fn nth_response(
                  OR \
                  r.child_execution_id IS NULL \
                  ) \
-                 ORDER BY id \
+                 ORDER BY seq \
                  LIMIT 1 OFFSET $3",
                  &[
                      &execution_id.to_string(),
@@ -2809,9 +2810,17 @@ async fn append_response(
         JoinSetResponse::DelayFinished { .. } => (None, None),
     };
 
+    // The advisory lock above serializes response appends per parent execution, which
+    // this insert relies on twice. Uniqueness of `seq` is enforced by the
+    // (execution_id, seq) index, but serializing MAX(seq)+1 avoids siblings racing and
+    // losing an insert to a unique-violation conflict. More importantly, it forces
+    // per-execution appends to commit in `seq` order, so a watermark reader
+    // (get_responses_after, seq > cursor) can never see seq=N+1 before seq=N commits and
+    // skip a response during replay.
     let row = tx.query_one(
-            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, delay_success, child_execution_id, finished_version) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, delay_success, child_execution_id, finished_version, seq) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, \
+             (SELECT COALESCE(MAX(seq), 0) + 1 FROM t_join_set_response WHERE execution_id = $1)) RETURNING seq",
              &[
                  &execution_id.to_string(),
                  &event.created_at,
@@ -2824,7 +2833,7 @@ async fn append_response(
         ).await?;
     let cursor = ResponseCursor(
         u32::try_from(get::<i64, _>(&row, 0)?)
-            .map_err(|_| consistency_db_err("t_join_set_response.id must not be negative"))?,
+            .map_err(|_| consistency_db_err("t_join_set_response.seq must not be negative"))?,
     );
     // if the execution is going to be unblocked by this response...
     let combined_state = get_combined_state(tx, execution_id).await?;
@@ -3041,14 +3050,14 @@ async fn get_max_response_cursor(
 ) -> Result<ResponseCursor, DbErrorRead> {
     let row = tx
         .query_one(
-            "SELECT MAX(id) as id FROM t_join_set_response WHERE execution_id = $1",
+            "SELECT MAX(seq) as seq FROM t_join_set_response WHERE execution_id = $1",
             &[&execution_id.to_string()],
         )
         .await?;
     // Assume the execution exists and has no responses
-    let max_cursor = get::<Option<i64>, _>(&row, "id")?.unwrap_or_default();
+    let max_cursor = get::<Option<i64>, _>(&row, "seq")?.unwrap_or_default();
     let max_cursor = ResponseCursor(
-        u32::try_from(max_cursor).map_err(|_| consistency_db_err("id must not be negative"))?,
+        u32::try_from(max_cursor).map_err(|_| consistency_db_err("seq must not be negative"))?,
     );
     Ok(max_cursor)
 }
@@ -3246,19 +3255,19 @@ async fn get_responses_after(
 ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
     let rows = tx
             .query(
-                "SELECT r.id, r.created_at, r.join_set_id, \
+                "SELECT r.id, r.seq, r.created_at, r.join_set_id, \
                  r.delay_id, r.delay_success, \
                  r.child_execution_id, r.finished_version, child.json_value \
                  FROM t_join_set_response r LEFT OUTER JOIN t_execution_log child ON r.child_execution_id = child.execution_id \
                  WHERE \
-                 r.id > $1 AND \
+                 r.seq > $1 AND \
                  r.execution_id = $2 AND \
                  ( \
                  r.finished_version = child.version \
                  OR \
                  r.child_execution_id IS NULL \
                  ) \
-                 ORDER BY id \
+                 ORDER BY seq \
                  ",
                  &[
                      &i64::from(last_response.0),

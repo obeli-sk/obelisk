@@ -1802,7 +1802,7 @@ impl SqlitePool {
         // TODO: Add test
         let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
         let mut sql = "SELECT \
-            r.id, r.created_at, r.join_set_id,  r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
+            r.id, r.seq, r.created_at, r.join_set_id,  r.delay_id, r.delay_success, r.child_execution_id, r.finished_version, l.json_value \
             FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
             WHERE \
             r.execution_id = :execution_id \
@@ -1815,12 +1815,12 @@ impl SqlitePool {
                 | Pagination::OlderThan { cursor, .. }),
             ) => {
                 params.push((":cursor", Box::new(cursor)));
-                write!(sql, " AND r.id {rel} :cursor", rel = pagination.rel()).unwrap();
+                write!(sql, " AND r.seq {rel} :cursor", rel = pagination.rel()).unwrap();
                 Some(pagination.length())
             }
             None => None,
         };
-        sql.push_str(" ORDER BY id");
+        sql.push_str(" ORDER BY seq");
         let is_desc = pagination.as_ref().is_some_and(Pagination::is_desc);
         if is_desc {
             sql.push_str(" DESC");
@@ -1830,7 +1830,7 @@ impl SqlitePool {
         }
         // Re-order to ascending for consistent oldest-to-newest results
         if is_desc {
-            sql = format!("SELECT * FROM ({sql}) ORDER BY id ASC");
+            sql = format!("SELECT * FROM ({sql}) ORDER BY seq ASC");
         }
         params.push((":execution_id", Box::new(execution_id.to_string())));
         tx.prepare(&sql)?
@@ -1849,7 +1849,8 @@ impl SqlitePool {
     fn parse_response_with_cursor(
         row: &rusqlite::Row<'_>,
     ) -> Result<ResponseWithCursor, rusqlite::Error> {
-        let id = row.get("id")?;
+        let id: i64 = row.get("id")?;
+        let seq: u32 = row.get("seq")?;
         let created_at: DateTime<Utc> = row.get("created_at")?;
         let join_set_id = row.get::<_, JoinSetId>("join_set_id")?;
         let event = match (
@@ -1885,7 +1886,7 @@ impl SqlitePool {
             }
         };
         Ok(ResponseWithCursor {
-            cursor: ResponseCursor(id),
+            cursor: ResponseCursor(seq),
             event: JoinSetResponseEventOuter {
                 event: JoinSetResponseEvent { join_set_id, event },
                 created_at,
@@ -2086,7 +2087,7 @@ impl SqlitePool {
         // TODO: Add test
         tx
             .prepare(
-                "SELECT r.id, r.created_at, r.join_set_id, \
+                "SELECT r.id, r.seq, r.created_at, r.join_set_id, \
                     r.delay_id, r.delay_success, \
                     r.child_execution_id, r.finished_version, l.json_value \
                     FROM t_join_set_response r LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
@@ -2097,7 +2098,7 @@ impl SqlitePool {
                     OR \
                     r.child_execution_id IS NULL \
                     ) \
-                    ORDER BY id \
+                    ORDER BY seq \
                     LIMIT 1 OFFSET :offset",
             )
             ?
@@ -2508,9 +2509,13 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         event: JoinSetResponseEventOuter,
     ) -> Result<AppendNotifier, DbErrorWrite> {
+        // SQLite has a single global writer, so the read-modify-write of MAX(seq)+1
+        // is serialized without extra locking; `seq` is contiguous and 1-based per execution.
         let mut stmt = tx.prepare(
-            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, delay_success, child_execution_id, finished_version) \
-                    VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :delay_success, :child_execution_id, :finished_version)",
+            "INSERT INTO t_join_set_response (execution_id, created_at, join_set_id, delay_id, delay_success, child_execution_id, finished_version, seq) \
+                    VALUES (:execution_id, :created_at, :join_set_id, :delay_id, :delay_success, :child_execution_id, :finished_version, \
+                    (SELECT COALESCE(MAX(seq), 0) + 1 FROM t_join_set_response WHERE execution_id = :execution_id)) \
+                    RETURNING seq",
         )?;
         let join_set_id = &event.event.join_set_id;
         let (delay_id, delay_success) = match &event.event.event {
@@ -2531,19 +2536,19 @@ impl SqlitePool {
             JoinSetResponse::DelayFinished { .. } => (None, None),
         };
 
-        stmt.execute(named_params! {
-            ":execution_id": execution_id.to_string(),
-            ":created_at": event.created_at,
-            ":join_set_id": join_set_id.to_string(),
-            ":delay_id": delay_id,
-            ":delay_success": delay_success,
-            ":child_execution_id": child_execution_id,
-            ":finished_version": finished_version,
-        })?;
-        let cursor = ResponseCursor(
-            u32::try_from(tx.last_insert_rowid())
-                .map_err(|_| consistency_db_err("t_join_set_response.id must not be negative"))?,
-        );
+        let seq = stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":created_at": event.created_at,
+                ":join_set_id": join_set_id.to_string(),
+                ":delay_id": delay_id,
+                ":delay_success": delay_success,
+                ":child_execution_id": child_execution_id,
+                ":finished_version": finished_version,
+            },
+            |row| row.get::<_, u32>(0),
+        )?;
+        let cursor = ResponseCursor(seq);
 
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
@@ -2752,7 +2757,7 @@ impl SqlitePool {
         execution_id: &ExecutionId,
     ) -> Result<ResponseCursor, DbErrorRead> {
         let max_cursor = tx
-            .prepare("SELECT MAX(id) FROM t_join_set_response WHERE execution_id = :execution_id")?
+            .prepare("SELECT MAX(seq) FROM t_join_set_response WHERE execution_id = :execution_id")?
             .query_row(
                 named_params! { ":execution_id": execution_id.to_string() },
                 |row| row.get::<_, Option<u32>>(0),
@@ -2952,23 +2957,23 @@ impl SqlitePool {
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
         // TODO: Add test
         tx.prepare(
-            "SELECT r.id, r.created_at, r.join_set_id, \
+            "SELECT r.id, r.seq, r.created_at, r.join_set_id, \
             r.delay_id, r.delay_success, \
             r.child_execution_id, r.finished_version, child.json_value \
             FROM t_join_set_response r LEFT OUTER JOIN t_execution_log child ON r.child_execution_id = child.execution_id \
             WHERE \
-            r.id > :last_response_id AND \
+            r.seq > :last_response_seq AND \
             r.execution_id = :execution_id AND \
             ( \
             r.finished_version = child.version \
             OR r.child_execution_id IS NULL \
             ) \
-            ORDER BY id",
+            ORDER BY seq",
         )
         ?
         .query_map(
             named_params! {
-                ":last_response_id": last_response.0,
+                ":last_response_seq": last_response.0,
                 ":execution_id": execution_id.to_string(),
             },
             Self::parse_response_with_cursor,
