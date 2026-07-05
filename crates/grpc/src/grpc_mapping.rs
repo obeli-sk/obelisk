@@ -282,10 +282,10 @@ impl<T> TonicServerResultExt<T> for Result<T, DbErrorGeneric> {
 pub fn db_error_write_to_status(db_err: &DbErrorWrite) -> tonic::Status {
     match db_err {
         DbErrorWrite::NotFound => tonic::Status::not_found("entity not found"),
-        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::ValidationFailed(reason)
-| DbErrorWriteNonRetriable::IllegalState { reason, .. }) => {
-            tonic::Status::invalid_argument(reason.to_string())
-        }
+        DbErrorWrite::NonRetriable(
+            DbErrorWriteNonRetriable::ValidationFailed(reason)
+            | DbErrorWriteNonRetriable::IllegalState { reason, .. },
+        ) => tonic::Status::invalid_argument(reason.to_string()),
         _ => {
             warn!("Got db error {db_err:?}");
             tonic::Status::internal("database error".to_string())
