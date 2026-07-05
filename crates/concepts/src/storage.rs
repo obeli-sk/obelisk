@@ -2647,9 +2647,10 @@ pub enum PendingStatePaused {
 
 /// Underlying state of a cancelling execution.
 ///
-/// Cancelling keeps any lock: a running activity holds it until the owner confirms
-/// teardown or the lease expires, a running workflow is fenced by the cancellation's
-/// version bump.
+/// Tracked for the cancellation driver: an activity whose worker fails to confirm
+/// teardown is pronounced finished once the `Locked` lease expires. The other
+/// variants are a frozen snapshot from when cancellation was requested (incoming
+/// responses do not unblock a cancelling execution), kept for observability.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub enum PendingStateCancelling {
     #[display("Locked({_0})")]

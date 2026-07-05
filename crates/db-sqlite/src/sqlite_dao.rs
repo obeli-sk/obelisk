@@ -2542,6 +2542,8 @@ impl SqlitePool {
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         debug!("previous_pending_state: {combined_state:?}");
+        // A cancelling execution is finished by the cancellation driver; it is never
+        // picked up by executors again, so do not unblock or notify it.
         let mut notifier = if let PendingStateMerged::BlockedByJoinSet {
             state:
                 PendingStateBlockedByJoinSet {
@@ -2549,7 +2551,7 @@ impl SqlitePool {
                     lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                     closing: _,
                 },
-            lifecycle: _,
+            lifecycle: Lifecycle::Active | Lifecycle::Paused,
         } =
             PendingStateMerged::from(combined_state.execution_with_state.pending_state)
             && *join_set_id == found_join_set_id
