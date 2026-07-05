@@ -282,6 +282,12 @@ enum TxType {
     Other,          // Read only or a single write LTX. Continue the PhyTx if LTX returns error.
 }
 
+#[derive(Debug, Clone, Copy)]
+enum CancellationFfqnCheck {
+    Required,
+    Skipped,
+}
+
 #[derive(Clone)]
 struct CommitError(RusqliteError);
 
@@ -3983,20 +3989,13 @@ impl SqlitePool {
         if let Some(outcome) = combined_state.cancel_short_circuit() {
             return Ok(outcome);
         }
-        combined_state.assert_cancellable_workflow_ffqn()?;
-        Self::append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state)
-    }
-
-    fn request_cancellation(
-        tx: &Transaction,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        let combined_state = Self::get_combined_state(tx, execution_id)?;
-        if let Some(outcome) = combined_state.cancel_short_circuit() {
-            return Ok(outcome);
-        }
-        Self::append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state)
+        Self::append_cancellation_requested(
+            tx,
+            execution_id,
+            cancelled_at,
+            &combined_state,
+            CancellationFfqnCheck::Required,
+        )
     }
 
     fn append_cancellation_requested(
@@ -4004,7 +4003,11 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
         combined_state: &CombinedState,
+        ffqn_check: CancellationFfqnCheck,
     ) -> Result<CancelOutcome, DbErrorWrite> {
+        if matches!(ffqn_check, CancellationFfqnCheck::Required) {
+            combined_state.assert_cancellable_workflow_ffqn()?;
+        }
         Self::append(
             tx,
             execution_id,
@@ -4039,7 +4042,13 @@ impl SqlitePool {
             PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
             _ => {}
         }
-        Self::append_cancellation_requested(tx, execution_id, cancelled_at, combined_state)
+        Self::append_cancellation_requested(
+            tx,
+            execution_id,
+            cancelled_at,
+            combined_state,
+            CancellationFfqnCheck::Skipped,
+        )
     }
 }
 
@@ -4544,16 +4553,16 @@ impl DbExecutor for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn request_cancellation(
+    async fn cancel_workflow(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| SqlitePool::request_cancellation(tx, &execution_id, cancelled_at),
+            move |tx| SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at),
             TxType::MultipleWrites,
-            "request_cancellation",
+            "cancel_workflow",
         )
         .await
     }
@@ -5146,21 +5155,6 @@ impl DbExternalApi for SqlitePool {
             move |tx| SqlitePool::unpause_execution(tx, &execution_id, unpaused_at),
             TxType::MultipleWrites,
             "unpause_execution",
-        )
-        .await
-    }
-
-    #[instrument(skip(self))]
-    async fn cancel_workflow(
-        &self,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        let execution_id = execution_id.clone();
-        self.transaction(
-            move |tx| SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at),
-            TxType::MultipleWrites,
-            "cancel_workflow",
         )
         .await
     }

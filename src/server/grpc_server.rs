@@ -130,13 +130,10 @@ impl GrpcServer {
                 .cancel_activity(conn.as_ref(), execution_id, executed_at)
                 .await
                 .to_status(),
-            ComponentType::Workflow if create_req.ffqn.is_cancellable() => conn
+            ComponentType::Workflow => conn
                 .cancel_workflow_with_retries(execution_id, executed_at)
                 .await
                 .to_status(),
-            ComponentType::Workflow => Err(tonic::Status::invalid_argument(
-                "cancelled workflow must be marked cancellable",
-            )),
             _ => Err(tonic::Status::invalid_argument(
                 "cancelled execution must be an activity or cancellable workflow",
             )),

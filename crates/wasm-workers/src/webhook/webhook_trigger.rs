@@ -17,8 +17,8 @@ use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent,
     HistoryEventScheduleAt, JoinSetRequest, LogInfoAppendRow, LogLevel, LogStreamType,
-    PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateCancelling,
-    TimeoutOutcome, Version, http_client_trace::HttpClientTrace,
+    PendingState, PendingStateCancelling, PendingStateFinishedError,
+    PendingStateFinishedResultKind, TimeoutOutcome, Version, http_client_trace::HttpClientTrace,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -1100,7 +1100,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
                 ExecutionStatus::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
             }
             PendingState::Locked(_)
-            | PendingState::Cancelling(PendingStateCancelling::Locked(_)) => ExecutionStatus::Locked,
+            | PendingState::Cancelling(PendingStateCancelling::Locked(_)) => {
+                ExecutionStatus::Locked
+            }
             PendingState::BlockedByJoinSet(_)
             | PendingState::Cancelling(PendingStateCancelling::BlockedByJoinSet(_)) => {
                 ExecutionStatus::BlockedByJoinSet

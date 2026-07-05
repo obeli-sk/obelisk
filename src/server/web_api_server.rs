@@ -653,16 +653,9 @@ async fn execution_cancel(
                 .cancel_activity(conn.as_ref(), &execution_id, executed_at)
                 .await
         }
-        ComponentType::Workflow if create_req.ffqn.is_cancellable() => {
+        ComponentType::Workflow => {
             conn.cancel_workflow_with_retries(&execution_id, executed_at)
                 .await
-        }
-        ComponentType::Workflow => {
-            return Err(HttpResponse {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                message: "cancelled workflow must be marked cancellable".to_string(),
-                accept,
-            });
         }
         _ => {
             return Err(HttpResponse {
@@ -4178,21 +4171,32 @@ impl From<ErrorWrapper<DbErrorWriteNonRetriable>> for HttpResponse {
     fn from(value: ErrorWrapper<DbErrorWriteNonRetriable>) -> Self {
         let err = value.0;
         let accept = value.1;
-        if err == DbErrorWriteNonRetriable::Conflict {
-            HttpResponse {
+        match err {
+            DbErrorWriteNonRetriable::ValidationFailed(reason) => HttpResponse {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: reason.to_string(),
+                accept,
+            },
+            DbErrorWriteNonRetriable::IllegalState { reason, .. } => HttpResponse {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: reason.to_string(),
+                accept,
+            },
+            DbErrorWriteNonRetriable::Conflict => HttpResponse {
                 status: StatusCode::CONFLICT,
                 message: "conflict".to_string(),
                 accept,
-            }
-        } else {
-            let loc = std::panic::Location::caller();
-            let (loc_file, loc_line) = (loc.file(), loc.line());
+            },
+            err => {
+                let loc = std::panic::Location::caller();
+                let (loc_file, loc_line) = (loc.file(), loc.line());
 
-            warn!(loc_file, loc_line, "{err:?}");
-            HttpResponse {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                message: "database error".to_string(),
-                accept,
+                warn!(loc_file, loc_line, "{err:?}");
+                HttpResponse {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: "database error".to_string(),
+                    accept,
+                }
             }
         }
     }

@@ -10,9 +10,9 @@ use concepts::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
         CancelOutcome, CapturedDbWrite, ChildExecutionRequestError, ComponentUpgradeOutcome,
         ComponentUpgradeReason, CreateRequest, DbErrorGeneric, DbErrorRead, DbErrorWrite,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy, LogEntry,
-        LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
+        DbErrorWriteNonRetriable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy,
+        LogEntry, LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
         PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, PersistKind,
         ScheduleRequestError, StubError, Unlocked, Version, VersionParseError,
@@ -280,11 +280,18 @@ impl<T> TonicServerResultExt<T> for Result<T, DbErrorGeneric> {
 }
 
 pub fn db_error_write_to_status(db_err: &DbErrorWrite) -> tonic::Status {
-    if matches!(*db_err, DbErrorWrite::NotFound) {
-        tonic::Status::not_found("entity not found")
-    } else {
-        warn!("Got db error {db_err:?}");
-        tonic::Status::internal("database error".to_string())
+    match db_err {
+        DbErrorWrite::NotFound => tonic::Status::not_found("entity not found"),
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::ValidationFailed(reason)) => {
+            tonic::Status::invalid_argument(reason.to_string())
+        }
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => {
+            tonic::Status::invalid_argument(reason.to_string())
+        }
+        _ => {
+            warn!("Got db error {db_err:?}");
+            tonic::Status::internal("database error".to_string())
+        }
     }
 }
 

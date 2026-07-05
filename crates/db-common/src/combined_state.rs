@@ -98,9 +98,8 @@ impl CombinedState {
         Ok(locked)
     }
 
-    /// `cancel_workflow` guard rejecting a non-cancellable target. Control-plane
-    /// entrypoint only; the worker/driver paths skip it, having already classified
-    /// the target as cancellable.
+    /// `cancel_workflow` guard rejecting a non-cancellable target. The check reads
+    /// the already-loaded ffqn, so control-plane and worker/driver paths alike run it.
     pub fn assert_cancellable_workflow_ffqn(&self) -> Result<(), DbErrorWrite> {
         if self.execution_with_state.ffqn.is_cancellable() {
             Ok(())

@@ -2753,7 +2753,11 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
         .await
         .unwrap_err();
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
-    assert!(status.message().contains("must be marked cancellable"));
+    assert!(
+        status
+            .message()
+            .contains("cannot cancel, execution is not a cancellable workflow")
+    );
 
     server.shutdown().await;
 }
@@ -2861,7 +2865,7 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     assert_eq!(resp.status().as_u16(), 422);
     assert_eq!(
         resp.json::<Value>().await.unwrap(),
-        json!({ "err": "cancelled workflow must be marked cancellable" })
+        json!({ "err": "cannot cancel, execution is not a cancellable workflow" })
     );
 
     server.shutdown().await;
@@ -3644,7 +3648,7 @@ async fn webhook_js_get_status_cancelling() {
         conn.create(create(ExecutionId::Derived(child_id), CHILD_FFQN))
             .await
             .unwrap();
-        conn.request_cancellation_with_retries(&parent_id, now)
+        conn.cancel_workflow_with_retries(&parent_id, now)
             .await
             .unwrap();
         pool.close().await;

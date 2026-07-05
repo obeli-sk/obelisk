@@ -76,6 +76,12 @@ mod embedded {
 
 const JOIN_SET_RESPONSE_LOCK_NAMESPACE: i32 = 0x4f42_4c52; // "OBLR"
 
+#[derive(Debug, Clone, Copy)]
+enum CancellationFfqnCheck {
+    Required,
+    Skipped,
+}
+
 #[derive(Debug, Clone)]
 pub struct PostgresConfig {
     pub host: String,
@@ -1316,7 +1322,11 @@ async fn append_cancellation_requested(
     execution_id: &ExecutionId,
     cancelled_at: DateTime<Utc>,
     combined_state: &CombinedState,
+    ffqn_check: CancellationFfqnCheck,
 ) -> Result<CancelOutcome, DbErrorWrite> {
+    if matches!(ffqn_check, CancellationFfqnCheck::Required) {
+        combined_state.assert_cancellable_workflow_ffqn()?;
+    }
     append(
         &tx,
         execution_id,
@@ -1329,6 +1339,25 @@ async fn append_cancellation_requested(
     .await?;
     tx.commit().await?;
     Ok(CancelOutcome::Cancelled)
+}
+
+async fn cancel_workflow_tx(
+    tx: deadpool_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+    cancelled_at: DateTime<Utc>,
+) -> Result<CancelOutcome, DbErrorWrite> {
+    let combined_state = get_combined_state(&tx, execution_id).await?;
+    if let Some(outcome) = combined_state.cancel_short_circuit() {
+        return Ok(outcome);
+    }
+    append_cancellation_requested(
+        tx,
+        execution_id,
+        cancelled_at,
+        &combined_state,
+        CancellationFfqnCheck::Required,
+    )
+    .await
 }
 
 async fn append_activity_cancellation_requested_tx(
@@ -1351,7 +1380,14 @@ async fn append_activity_cancellation_requested_tx(
         PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
         _ => {}
     }
-    append_cancellation_requested(tx, execution_id, cancelled_at, combined_state).await
+    append_cancellation_requested(
+        tx,
+        execution_id,
+        cancelled_at,
+        combined_state,
+        CancellationFfqnCheck::Skipped,
+    )
+    .await
 }
 
 async fn list_executions(
@@ -4031,7 +4067,7 @@ impl DbExecutor for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    async fn request_cancellation(
+    async fn cancel_workflow(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -4039,11 +4075,7 @@ impl DbExecutor for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let combined_state = get_combined_state(&tx, execution_id).await?;
-        if let Some(outcome) = combined_state.cancel_short_circuit() {
-            return Ok(outcome);
-        }
-        append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state).await
+        cancel_workflow_tx(tx, execution_id, cancelled_at).await
     }
 }
 #[async_trait]
@@ -5340,23 +5372,6 @@ impl DbExternalApi for PostgresConnection {
 
         tx.commit().await?;
         Ok(next_version)
-    }
-
-    #[instrument(skip(self))]
-    async fn cancel_workflow(
-        &self,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
-        let tx = client_guard.transaction().await?;
-
-        let combined_state = get_combined_state(&tx, execution_id).await?;
-        if let Some(outcome) = combined_state.cancel_short_circuit() {
-            return Ok(outcome);
-        }
-        combined_state.assert_cancellable_workflow_ffqn()?;
-        append_cancellation_requested(tx, execution_id, cancelled_at, &combined_state).await
     }
 
     #[instrument(skip(self))]
