@@ -4281,6 +4281,148 @@ async fn test_list_responses(database: Database) {
     db_close.close().await;
 }
 
+async fn append_delay_response(
+    db_connection: &dyn DbConnectionTest,
+    execution_id: &ExecutionId,
+    join_set_id: &JoinSetId,
+    version: &mut Version,
+    index: u64,
+    now: DateTime<Utc>,
+) {
+    let delay_id = DelayId::new_with_index(execution_id, join_set_id, index);
+    *version = db_connection
+        .append(
+            execution_id.clone(),
+            version.clone(),
+            AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: join_set_id.clone(),
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id: delay_id.clone(),
+                            expires_at: now + Duration::from_secs(10),
+                            schedule_at: HistoryEventScheduleAt::Now,
+                            paused: false,
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    db_connection
+        .append_response(
+            now,
+            execution_id.clone(),
+            JoinSetResponseEvent {
+                join_set_id: join_set_id.clone(),
+                event: JoinSetResponse::DelayFinished {
+                    delay_id,
+                    result: Ok(()),
+                },
+            },
+        )
+        .await
+        .unwrap();
+}
+
+/// Two executions with interleaved responses must each observe contiguous 1-based
+/// cursors, independent of the global insertion order.
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn test_list_responses_per_execution_cursor(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+
+    // Create and lock two executions, each with its own join set. Create+lock
+    // sequentially so `lock_pending_by_ffqns(1, ..)` targets the intended one.
+    let lock_expiry = Duration::from_millis(100);
+    let mut executions = Vec::new();
+    for _ in 0..2 {
+        let execution_id = ExecutionId::generate();
+        let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: SOME_FFQN,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+        let mut version = lock(
+            db_connection.as_ref(),
+            &execution_id,
+            &sim_clock,
+            ExecutorId::generate(),
+            sim_clock.now() + lock_expiry,
+            RunId::generate(),
+        )
+        .await;
+        create_join_set(
+            &execution_id,
+            &mut version,
+            join_set_id.clone(),
+            sim_clock.now(),
+            db_connection.as_ref(),
+        )
+        .await;
+        executions.push((execution_id, join_set_id, version));
+    }
+
+    // Interleave three responses across the two executions: a, b, a, b, a, b.
+    for index in 1..=3 {
+        for (execution_id, join_set_id, version) in &mut executions {
+            append_delay_response(
+                db_connection.as_ref(),
+                execution_id,
+                join_set_id,
+                version,
+                index,
+                sim_clock.now(),
+            )
+            .await;
+        }
+    }
+
+    // Despite the interleaved global insertion order, each execution sees 1, 2, 3.
+    for (execution_id, _, _) in &executions {
+        let list_result = api_conn
+            .list_responses(
+                execution_id,
+                Pagination::NewerThan {
+                    length: 10,
+                    cursor: 0,
+                    including_cursor: true,
+                },
+            )
+            .await
+            .unwrap();
+        let cursors: Vec<_> = list_result.responses.iter().map(|r| r.cursor).collect();
+        assert_eq!(
+            vec![ResponseCursor(1), ResponseCursor(2), ResponseCursor(3)],
+            cursors
+        );
+        assert_eq!(ResponseCursor(3), list_result.max_cursor);
+    }
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
