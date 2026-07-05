@@ -167,7 +167,7 @@ return_type = "result<string, string>"
 
 [[workflow_js]]
 location = "crates/testing/test-programs/js/workflow/busy-sleep.js"
-ffqn = "testing:integration/workflow-busy.busy"
+ffqn = "testing:integration/workflow-busy.busy-cancellable"
 params = []
 return_type = "result<string, string>"
 
