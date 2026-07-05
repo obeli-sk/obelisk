@@ -110,6 +110,7 @@ concepts = { workspace = true, features = ["test"] }
 db-postgres = { workspace = true, features = ["test"] }
 db-sqlite = { workspace = true, features = ["test"] }
 wasm-workers = { workspace = true, features = ["test"] }
+test-programs-fibo-workflow-outer-builder.workspace = true
 
 hmac.workspace = true
 insta.workspace = true
@@ -219,6 +220,7 @@ test-db-macro = { path = "crates/testing/db-macro" }
 test-programs-fibo-activity-builder = { path = "crates/testing/test-programs/fibo/activity/builder" }
 test-programs-fibo-webhook-builder = { path = "crates/testing/test-programs/fibo/webhook/builder" }
 test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fibo/workflow/builder" }
+test-programs-fibo-workflow-outer-builder = { path = "crates/testing/test-programs/fibo/workflow-outer/builder" }
 test-programs-http-get-activity-builder = { path = "crates/testing/test-programs/http/activity/builder" }
 test-programs-http-get-webhook-builder = { path = "crates/testing/test-programs/http/webhook/builder" }
 test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs/http/workflow/builder" }

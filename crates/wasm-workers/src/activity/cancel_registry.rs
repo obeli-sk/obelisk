@@ -15,7 +15,7 @@ use tracing::{Instrument, debug, info, info_span};
 /// All currently running activities in this process.
 /// Activity worker tasks register themselves and listen on interruption token.
 /// Cancel RPCs and workflow workers call `cancel_activity`
-/// which writes the new state to db (no matter whether registered or not)
+/// which writes durable cancellation intent to db (no matter whether registered or not)
 /// and triggers the interruption token.
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
@@ -71,19 +71,6 @@ impl CancelRegistry {
         receiver
     }
 
-    /// Best-effort local interrupt for an activity currently running in this process.
-    /// Unlike `cancel_activity`, this does not write terminal cancellation state to the DB.
-    /// Noop if the execution is not an activity tracked by this registry.
-    fn interrupt_running_activity(&self, execution_id: &ExecutionId) {
-        let info = {
-            let mut guard = self.tokens.lock().unwrap();
-            guard.remove(execution_id)
-        };
-        if let Some(info) = info {
-            let _ = info.interrupt_sender.send(());
-        }
-    }
-
     /// It is the responsibility of the caller to check that the execution belongs to an activity!
     pub async fn cancel_activity(
         &self,
@@ -97,7 +84,13 @@ impl CancelRegistry {
             .await?;
         if outcome == CancelOutcome::Cancelled {
             // Sending the signal is best effort, the activity might not be registered yet.
-            self.interrupt_running_activity(execution_id);
+            let info = {
+                let mut guard = self.tokens.lock().unwrap();
+                guard.remove(execution_id)
+            };
+            if let Some(info) = info {
+                let _ = info.interrupt_sender.send(());
+            }
         }
         Ok(outcome)
     }

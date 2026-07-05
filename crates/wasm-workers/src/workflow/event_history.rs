@@ -47,7 +47,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params};
-use db_common::{JoinSetFold, JoinSetFoldError, JoinSetResponseId};
+use db_common::{JoinSetOpenTracker, JoinSetOpenTrackerError, JoinSetResponseId};
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
@@ -121,7 +121,7 @@ impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
     }
 }
 
-fn join_set_fold_error_to_constraint(err: &JoinSetFoldError) -> StrVariant {
+fn join_set_open_tracker_error_to_constraint(err: &JoinSetOpenTrackerError) -> StrVariant {
     err.to_string().into()
 }
 
@@ -157,7 +157,7 @@ pub(crate) struct EventHistory {
     subscription_interruption: Option<Duration>,
 
     // Tracks join set contents for closing. One-offs are ignored, response id is removed when the response is processed.
-    join_set_fold: JoinSetFold,
+    join_set_open_tracker: JoinSetOpenTracker,
 }
 
 #[derive(Debug)]
@@ -208,7 +208,7 @@ impl EventHistory {
             locked_event,
             lock_extension: lock_extension.unwrap_or_default(),
             subscription_interruption,
-            join_set_fold: JoinSetFold::new(),
+            join_set_open_tracker: JoinSetOpenTracker::new(),
         }
     }
 
@@ -508,10 +508,10 @@ impl EventHistory {
         wasm_backtrace: Option<storage::WasmBacktrace>,
     ) -> Result<(), ApplyError> {
         let response_ids = self
-            .join_set_fold
+            .join_set_open_tracker
             .close_join_set(join_set_id)
             .map_err(|err| {
-                ApplyError::ConstraintViolation(join_set_fold_error_to_constraint(&err))
+                ApplyError::ConstraintViolation(join_set_open_tracker_error_to_constraint(&err))
             })?;
         debug!("Closing `{join_set_id}` with unawaited {response_ids:?}");
 
@@ -562,18 +562,18 @@ impl EventHistory {
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<(), ApplyError> {
-        while let Some(join_set_id) =
-            self.join_set_fold
-                .open_join_sets()
-                .iter()
-                .rev()
-                .find_map(|(js, remaining)| {
-                    if !remaining.is_empty() {
-                        Some(js.clone())
-                    } else {
-                        None
-                    }
-                })
+        while let Some(join_set_id) = self
+            .join_set_open_tracker
+            .open_join_sets()
+            .iter()
+            .rev()
+            .find_map(|(js, remaining)| {
+                if !remaining.is_empty() {
+                    Some(js.clone())
+                } else {
+                    None
+                }
+            })
         {
             self.join_set_close_inner(&join_set_id, db_connection, called_at, None)
                 .await?;
@@ -1531,7 +1531,7 @@ impl EventHistory {
                 let outcome = if self.has_unprocessed_response_for_join_set(&join_set_id) {
                     JoinNextTryOutcome::Found
                 } else if self
-                    .join_set_fold
+                    .join_set_open_tracker
                     .open_join_sets()
                     .get(&join_set_id)
                     .is_some_and(|requests| !requests.is_empty())
@@ -2218,7 +2218,7 @@ impl JoinSetCreate {
             ChildReturnValue::JoinSetCreate(join_set_id) => join_set_id);
         assert_eq!(join_set_id, value);
         event_history
-            .join_set_fold
+            .join_set_open_tracker
             .create_join_set(join_set_id)
             .expect("conflict check must have been performed by the caller");
         Ok(value)
@@ -2271,7 +2271,7 @@ impl SubmitChildExecution {
             && let Some(component_type) = component_type
         {
             event_history
-                .join_set_fold
+                .join_set_open_tracker
                 .insert_child(
                     &join_set_id,
                     child_execution_id,
@@ -2279,9 +2279,9 @@ impl SubmitChildExecution {
                     target_ffqn,
                 )
                 .map_err(|err| {
-                    WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
-                        &err,
-                    ))
+                    WorkflowFunctionError::ConstraintViolation(
+                        join_set_open_tracker_error_to_constraint(&err),
+                    )
                 })?;
         }
 
@@ -2320,10 +2320,12 @@ impl SubmitDelay {
             .await?;
         assert_matches!(value, ChildReturnValue::SubmitDelay);
         event_history
-            .join_set_fold
+            .join_set_open_tracker
             .insert_delay(&join_set_id, delay_id.clone())
             .map_err(|err| {
-                WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(&err))
+                WorkflowFunctionError::ConstraintViolation(
+                    join_set_open_tracker_error_to_constraint(&err),
+                )
             })?;
         Ok(delay_id)
     }
@@ -2476,14 +2478,14 @@ impl JoinNextRequestingFfqn {
                     wast_val_result,
                 ])))));
                 event_history
-                    .join_set_fold
+                    .join_set_open_tracker
                     .remove_response(
                         &join_set_id,
                         &JoinSetResponseId::ChildExecutionId(child_execution_id),
                     )
                     .map_err(|err| {
                         WorkflowFunctionError::ConstraintViolation(
-                            join_set_fold_error_to_constraint(&err),
+                            join_set_open_tracker_error_to_constraint(&err),
                         )
                     })?;
                 wast_val_res
@@ -2492,14 +2494,14 @@ impl JoinNextRequestingFfqn {
                 if let AwaitNextExtensionError::FunctionMismatch { actual_id, .. } = &await_ext_err
                 {
                     event_history
-                        .join_set_fold
+                        .join_set_open_tracker
                         .remove_response(&join_set_id, actual_id)
                         .map_err(|err| {
                             WorkflowFunctionError::ConstraintViolation(
-                                join_set_fold_error_to_constraint(&err),
+                                join_set_open_tracker_error_to_constraint(&err),
                             )
                         })?;
-                } // all-processed does not change the join-set fold
+                } // all-processed does not change the join-set open-tracker
                 await_ext_err.as_wast_val_result()
             }
         }
@@ -2540,12 +2542,12 @@ impl JoinNext {
         let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
         if let Ok((response_id, _)) = &value {
             event_history
-                .join_set_fold
+                .join_set_open_tracker
                 .remove_response(&join_set_id, response_id)
                 .map_err(|err| {
-                    WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
-                        &err,
-                    ))
+                    WorkflowFunctionError::ConstraintViolation(
+                        join_set_open_tracker_error_to_constraint(&err),
+                    )
                 })?;
         }
         let value = value
@@ -2593,12 +2595,12 @@ impl JoinNextTry {
         let value = assert_matches!(value, ChildReturnValue::JoinNextTry(value) => value);
         if let Ok((response_id, _)) = &value {
             event_history
-                .join_set_fold
+                .join_set_open_tracker
                 .remove_response(&join_set_id, response_id)
                 .map_err(|err| {
-                    WorkflowFunctionError::ConstraintViolation(join_set_fold_error_to_constraint(
-                        &err,
-                    ))
+                    WorkflowFunctionError::ConstraintViolation(
+                        join_set_open_tracker_error_to_constraint(&err),
+                    )
                 })?;
         } // else it is JoinNextTryError
         let value = value

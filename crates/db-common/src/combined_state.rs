@@ -6,11 +6,11 @@ use concepts::{
     component_id::ComponentDigest,
     prefixed_ulid::{DeploymentId, ExecutorId, RunId},
     storage::{
-        DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState, Lifecycle,
-        LockedBy, PendingState, PendingStateBlockedByJoinSet, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt,
-        PendingStateSuspended, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, Version,
+        CancelOutcome, DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, ExecutionWithState,
+        Lifecycle, LockedBy, PendingState, PendingStateBlockedByJoinSet, PendingStateCancelling,
+        PendingStateFinished, PendingStateFinishedResultKind, PendingStateLocked,
+        PendingStatePaused, PendingStatePendingAt, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, Version,
     },
 };
 use std::panic::Location;
@@ -48,19 +48,6 @@ pub struct CombinedState {
     pub corresponding_version: Version,
 }
 
-/// What `cancel_workflow` should do, derived from the current [`CombinedState`].
-#[derive(Debug, Clone, Copy)]
-pub enum CancelWorkflowPlan {
-    AlreadyFinished,
-    AlreadyCancelling,
-    /// Release the current lock/pause (`unlock`/`unpause` are mutually exclusive)
-    /// before appending `CancellationRequested`.
-    Proceed {
-        unlock: bool,
-        unpause: bool,
-    },
-}
-
 impl CombinedState {
     #[must_use]
     pub fn get_next_version_assert_not_finished(&self) -> Version {
@@ -78,41 +65,54 @@ impl CombinedState {
         Ok(self.corresponding_version.increment())
     }
 
-    /// Decide how a cancellation should reach the cancelling state, without the
-    /// `is_cancellable` guard. Used by the worker join-set close and the
-    /// cancellation driver, which have already classified the target as cancellable.
-    /// A [`PendingState::Locked`]/[`PendingState::Paused`] execution must first be
-    /// released so `cancelling` never coexists with a lock or pause.
+    /// Outcome to return without appending `CancellationRequested`: cancellation is
+    /// already underway or the execution already finished. `None` means the append
+    /// should proceed; no state needs releasing first, since paused executions are
+    /// never running and a locked workflow's run is fenced by the version bump.
     #[must_use]
-    pub fn plan_request_cancellation(&self) -> CancelWorkflowPlan {
+    pub fn cancel_short_circuit(&self) -> Option<CancelOutcome> {
         match &self.execution_with_state.pending_state {
-            PendingState::Finished(_) => CancelWorkflowPlan::AlreadyFinished,
-            PendingState::Cancelling(_) => CancelWorkflowPlan::AlreadyCancelling,
-            pending_state => CancelWorkflowPlan::Proceed {
-                unlock: matches!(pending_state, PendingState::Locked(_)),
-                unpause: matches!(pending_state, PendingState::Paused(_)),
-            },
+            PendingState::Finished(_) => Some(CancelOutcome::AlreadyFinished),
+            PendingState::Cancelling(_) => Some(CancelOutcome::AlreadyCancelling),
+            _ => None,
         }
     }
 
-    /// Decide how `cancel_workflow` should reach the cancelling state, rejecting a
-    /// non-cancellable target. Control-plane entrypoint; the worker/driver paths use
-    /// [`Self::plan_request_cancellation`] instead.
-    pub fn plan_cancel_workflow(&self) -> Result<CancelWorkflowPlan, DbErrorWrite> {
-        let plan = self.plan_request_cancellation();
-        if matches!(plan, CancelWorkflowPlan::Proceed { .. })
-            && !self.execution_with_state.ffqn.is_cancellable()
-        {
+    /// `pause_execution` guard: disallow transitioning to `Paused`
+    /// if an activity can still be in-flight.
+    pub fn reject_locked_activities(&self) -> Result<bool, DbErrorWrite> {
+        let locked = matches!(
+            self.execution_with_state.pending_state,
+            PendingState::Locked(_)
+        );
+        if locked && self.execution_with_state.component_type.is_activity() {
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::IllegalState {
-                    reason: "cannot cancel, execution is not a cancellable workflow".into(),
+                    reason: "cannot pause a running activity; cancel it instead".into(),
                     context: SpanTrace::capture(),
                     source: None,
                     loc: Location::caller(),
                 },
             ));
         }
-        Ok(plan)
+        Ok(locked)
+    }
+
+    /// `cancel_workflow` guard rejecting a non-cancellable target. The check reads
+    /// the already-loaded ffqn, so control-plane and worker/driver paths alike run it.
+    pub fn assert_cancellable_workflow_ffqn(&self) -> Result<(), DbErrorWrite> {
+        if self.execution_with_state.ffqn.is_cancellable() {
+            Ok(())
+        } else {
+            Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot cancel, execution is not a cancellable workflow".into(),
+                    context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
+                },
+            ))
+        }
     }
 
     #[must_use]
@@ -230,6 +230,42 @@ impl CombinedState {
                     lock_expires_at,
                 }),
             },
+            // Cancelling - Locked (running activity teardown pending)
+            CombinedStateDTO {
+                execution_id,
+                created_at,
+                first_scheduled_at,
+                state,
+                ffqn,
+                component_digest,
+                component_type,
+                deployment_id,
+                pending_expires_finished: lock_expires_at,
+                last_lock_version: Some(_),
+                executor_id: Some(executor_id),
+                run_id: Some(run_id),
+                join_set_id: None,
+                join_set_closing: None,
+                result_kind: None,
+                lifecycle: Lifecycle::Cancelling,
+            } if state == STATE_LOCKED => ExecutionWithState {
+                component_digest,
+                component_type,
+                deployment_id,
+                execution_id,
+                ffqn,
+                created_at,
+                first_scheduled_at,
+                pending_state: PendingState::Cancelling(PendingStateCancelling::Locked(
+                    PendingStateLocked {
+                        locked_by: LockedBy {
+                            executor_id,
+                            run_id,
+                        },
+                        lock_expires_at,
+                    },
+                )),
+            },
             CombinedStateDTO {
                 execution_id,
                 created_at,
@@ -318,7 +354,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: None,
@@ -351,7 +387,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Paused(PendingStatePaused::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: Some(LockedBy {
@@ -387,7 +423,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Paused(PendingStateSuspended::BlockedByJoinSet(
+                pending_state: PendingState::Paused(PendingStatePaused::BlockedByJoinSet(
                     PendingStateBlockedByJoinSet {
                         join_set_id: join_set_id.clone(),
                         closing: join_set_closing,
@@ -421,7 +457,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Cancelling(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Cancelling(PendingStateCancelling::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: None,
@@ -454,7 +490,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Cancelling(PendingStateSuspended::PendingAt(
+                pending_state: PendingState::Cancelling(PendingStateCancelling::PendingAt(
                     PendingStatePendingAt {
                         scheduled_at,
                         last_lock: Some(LockedBy {
@@ -490,7 +526,7 @@ impl CombinedState {
                 ffqn,
                 created_at,
                 first_scheduled_at,
-                pending_state: PendingState::Cancelling(PendingStateSuspended::BlockedByJoinSet(
+                pending_state: PendingState::Cancelling(PendingStateCancelling::BlockedByJoinSet(
                     PendingStateBlockedByJoinSet {
                         join_set_id: join_set_id.clone(),
                         closing: join_set_closing,

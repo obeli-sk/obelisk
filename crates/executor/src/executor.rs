@@ -5,9 +5,9 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, RunId};
 use concepts::storage::{
-    AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbErrorGeneric,
-    DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, ExecutionLog, LockedExecution,
-    Unlocked,
+    AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbConnection,
+    DbErrorGeneric, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbPool, ExecutionLog,
+    LockedExecution, Unlocked,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -610,6 +610,25 @@ impl ExecTask {
         let worker_result = worker.run(ctx).await;
         debug!("Worker::run finished {worker_result:?}");
         let result_obtained_at = clock_fn.now();
+        if component_type == ComponentType::Activity
+            && matches!(
+                &worker_result,
+                WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, _))
+            )
+        {
+            let db_conn = db_pool.connection().await?;
+            if let Some(append) = Self::cancelled_activity_to_append(
+                db_conn.as_ref(),
+                execution_id,
+                result_obtained_at,
+            )
+            .await?
+            {
+                trace!("Appending activity cancellation {append:?}");
+                append.append(db_conn.as_ref()).await?;
+            }
+            return Ok(());
+        }
         match Self::worker_result_to_execution_event(
             component_type,
             execution_id,
@@ -626,6 +645,53 @@ impl ExecTask {
             }
             None => Ok(()),
         }
+    }
+
+    async fn cancelled_activity_to_append(
+        db_conn: &dyn DbConnection,
+        execution_id: ExecutionId,
+        result_obtained_at: DateTime<Utc>,
+    ) -> Result<Option<Append>, DbErrorWrite> {
+        let log = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+        if log.is_finished() {
+            return Ok(None);
+        }
+        if !log.pending_state.is_cancelling() {
+            warn!(
+                %execution_id,
+                "Activity reported cancellation after teardown, but storage is not cancelling"
+            );
+            return Ok(None);
+        }
+        let result = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+            reason: None,
+            kind: ExecutionFailureKind::Cancelled,
+            detail: None,
+        });
+        let child_finished =
+            log.parent().map(
+                |(parent_execution_id, parent_join_set)| ChildFinishedResponse {
+                    parent_execution_id,
+                    parent_join_set,
+                    result: result.clone(),
+                },
+            );
+        Ok(Some(Append {
+            created_at: result_obtained_at,
+            primary_event: AppendRequest {
+                created_at: result_obtained_at,
+                event: ExecutionRequest::Finished {
+                    retval: result,
+                    http_client_traces: None,
+                },
+            },
+            execution_id,
+            version: log.next_version,
+            child_finished,
+        }))
     }
 
     /// Map the `WorkerError` to an optional append event
@@ -834,7 +900,7 @@ impl ExecTask {
                     }
                     WorkerError::FatalError(FatalError::Cancelled, _version) => {
                         unreachable!(
-                            "activity workers must return DbUpdatedByWorkerOrWatcher, cancellation append happens in CancelRegistry::cancel_activity"
+                            "activity Cancelled is handled before this match; workflows are cancelled via the driver and never return FatalError::Cancelled"
                         )
                     }
                     WorkerError::FatalError(fatal_error, version) => {

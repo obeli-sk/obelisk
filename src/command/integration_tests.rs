@@ -1149,8 +1149,13 @@ impl TestServer {
 async fn deploy_local_wasm_to_empty_server() {
     let server = TestServer::start_empty(test_addr!(78)).await;
 
-    let toml_path = get_workspace_dir().join("obelisk-testing-wasm-local.toml");
-    let deployment_id = server.grpc_upload_and_submit_manifest(&toml_path).await;
+    let fixture = crate::command::test_support::target_aware_deployment_fixture(
+        &get_workspace_dir(),
+        "obelisk-testing-wasm-local.toml",
+    )
+    .await
+    .unwrap();
+    let deployment_id = server.grpc_upload_and_submit_manifest(fixture.path()).await;
     server.grpc_switch_hot_redeploy(deployment_id).await;
 
     // The WASM components from the manifest are now live.
@@ -2690,14 +2695,24 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
         resp.outcome(),
         CancelExecutionOutcome::CancellationRequested
     );
-    let summary = server.get_status_summary_grpc(&activity_id).await;
-    assert!(matches!(
-        summary
-            .current_status
-            .as_ref()
-            .and_then(|status| status.status.as_ref()),
-        Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-    ));
+    // Cancelling a paused activity is async: the driver finalizes it to
+    // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
+    let mut activity_finished = false;
+    for _ in 0..100 {
+        let summary = server.get_status_summary_grpc(&activity_id).await;
+        if matches!(
+            summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+        ) {
+            activity_finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(activity_finished, "cancelled paused activity must finish");
 
     let cancellable_workflow_id = server
         .seed_cancellable_parent_blocked_on_uncancellable_child()
@@ -2752,7 +2767,11 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
         .await
         .unwrap_err();
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
-    assert!(status.message().contains("must be marked cancellable"));
+    assert!(
+        status
+            .message()
+            .contains("cannot cancel, execution is not a cancellable workflow")
+    );
 
     server.shutdown().await;
 }
@@ -2784,14 +2803,24 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
         resp.json::<Value>().await.unwrap(),
         json!({ "ok": "cancellation requested" })
     );
-    let summary = server.get_status_summary_grpc(&activity_id).await;
-    assert!(matches!(
-        summary
-            .current_status
-            .as_ref()
-            .and_then(|status| status.status.as_ref()),
-        Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-    ));
+    // Cancelling a paused activity is async: the driver finalizes it to
+    // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
+    let mut activity_finished = false;
+    for _ in 0..100 {
+        let summary = server.get_status_summary_grpc(&activity_id).await;
+        if matches!(
+            summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+        ) {
+            activity_finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(activity_finished, "cancelled paused activity must finish");
 
     let cancellable_workflow_id = server
         .seed_cancellable_parent_blocked_on_uncancellable_child()
@@ -2859,7 +2888,7 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     assert_eq!(resp.status().as_u16(), 422);
     assert_eq!(
         resp.json::<Value>().await.unwrap(),
-        json!({ "err": "cancelled workflow must be marked cancellable" })
+        json!({ "err": "cannot cancel, execution is not a cancellable workflow" })
     );
 
     server.shutdown().await;
@@ -3642,7 +3671,7 @@ async fn webhook_js_get_status_cancelling() {
         conn.create(create(ExecutionId::Derived(child_id), CHILD_FFQN))
             .await
             .unwrap();
-        conn.request_cancellation_with_retries(&parent_id, now)
+        conn.cancel_workflow_with_retries(&parent_id, now)
             .await
             .unwrap();
         pool.close().await;

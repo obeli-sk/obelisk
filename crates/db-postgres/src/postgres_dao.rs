@@ -2,8 +2,8 @@ use crate::postgres_dao::ddl::ADMIN_DB_NAME;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
-    JoinSetId, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionFailureKind,
+    ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
@@ -24,15 +24,15 @@ use concepts::{
         ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
         LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
-        RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
-        VersionType, WasmBacktrace,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
+        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Unlocked, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
-    AppendNotifier, CancelWorkflowPlan, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
-    NotifierPendingAt, PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
+    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
+    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
 use hashbrown::HashMap;
@@ -75,6 +75,12 @@ mod embedded {
 }
 
 const JOIN_SET_RESPONSE_LOCK_NAMESPACE: i32 = 0x4f42_4c52; // "OBLR"
+
+#[derive(Debug, Clone, Copy)]
+enum CancellationFfqnCheck {
+    Required,
+    Skipped,
+}
 
 #[derive(Debug, Clone)]
 pub struct PostgresConfig {
@@ -1310,46 +1316,16 @@ async fn get_combined_state(
     CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
 }
 
-/// Shared body of `cancel_workflow` / `request_cancellation`: release any lock/pause
-/// then append `CancellationRequested`, and commit.
-async fn apply_cancellation_plan(
+/// Appends `CancellationRequested` and commits.
+async fn append_cancellation_requested(
     tx: deadpool_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
     cancelled_at: DateTime<Utc>,
     combined_state: &CombinedState,
-    plan: CancelWorkflowPlan,
+    ffqn_check: CancellationFfqnCheck,
 ) -> Result<CancelOutcome, DbErrorWrite> {
-    let (unlock, unpause) = match plan {
-        CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
-        CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
-        CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
-    };
-    let mut version = combined_state.get_next_version_assert_not_finished();
-    if unlock {
-        (version, _) = append(
-            &tx,
-            execution_id,
-            AppendRequest {
-                created_at: cancelled_at,
-                event: ExecutionRequest::Unlocked(Unlocked {
-                    unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
-                    reason: "cancelling".into(),
-                }),
-            },
-            version,
-        )
-        .await?;
-    } else if unpause {
-        (version, _) = append(
-            &tx,
-            execution_id,
-            AppendRequest {
-                created_at: cancelled_at,
-                event: ExecutionRequest::Unpaused,
-            },
-            version,
-        )
-        .await?;
+    if matches!(ffqn_check, CancellationFfqnCheck::Required) {
+        combined_state.assert_cancellable_workflow_ffqn()?;
     }
     append(
         &tx,
@@ -1358,11 +1334,60 @@ async fn apply_cancellation_plan(
             created_at: cancelled_at,
             event: ExecutionRequest::CancellationRequested,
         },
-        version,
+        combined_state.get_next_version_assert_not_finished(),
     )
     .await?;
     tx.commit().await?;
     Ok(CancelOutcome::Cancelled)
+}
+
+async fn cancel_workflow_tx(
+    tx: deadpool_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+    cancelled_at: DateTime<Utc>,
+) -> Result<CancelOutcome, DbErrorWrite> {
+    let combined_state = get_combined_state(&tx, execution_id).await?;
+    if let Some(outcome) = combined_state.cancel_short_circuit() {
+        return Ok(outcome);
+    }
+    append_cancellation_requested(
+        tx,
+        execution_id,
+        cancelled_at,
+        &combined_state,
+        CancellationFfqnCheck::Required,
+    )
+    .await
+}
+
+async fn append_activity_cancellation_requested_tx(
+    tx: deadpool_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+    cancelled_at: DateTime<Utc>,
+    combined_state: &CombinedState,
+) -> Result<CancelOutcome, DbErrorWrite> {
+    match &combined_state.execution_with_state.pending_state {
+        PendingState::Finished(finished) => {
+            if finished.result_kind
+                == PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(
+                    ExecutionFailureKind::Cancelled,
+                ))
+            {
+                return Ok(CancelOutcome::Cancelled);
+            }
+            return Ok(CancelOutcome::AlreadyFinished);
+        }
+        PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
+        _ => {}
+    }
+    append_cancellation_requested(
+        tx,
+        execution_id,
+        cancelled_at,
+        combined_state,
+        CancellationFfqnCheck::Skipped,
+    )
+    .await
 }
 
 async fn list_executions(
@@ -2590,19 +2615,6 @@ async fn append(
                 PendingState::Finished { .. } => {
                     unreachable!("handled above");
                 }
-                // Locked and Paused must first be released (`Unlocked` / `Unpaused`)
-                // by `cancel_workflow` so `cancelling` never coexists with a lock or pause.
-                PendingState::Locked(..) | PendingState::Paused(..) => {
-                    return Err(DbErrorWriteNonRetriable::IllegalState {
-                        reason:
-                            "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
-                                .into(),
-                        context: SpanTrace::capture(),
-                        source: None,
-                        loc: Location::caller(),
-                    }
-                    .into());
-                }
                 PendingState::Cancelling(..) => {
                     return Err(DbErrorWriteNonRetriable::IllegalState {
                         reason: "cannot append CancellationRequested event, execution is already cancelling".into(),
@@ -2612,7 +2624,13 @@ async fn append(
                     }
                     .into());
                 }
-                PendingState::PendingAt(..) | PendingState::BlockedByJoinSet(..) => {}
+                // Paused executions are never running; a locked activity keeps its lock
+                // until teardown or lease expiry; a locked workflow's run is fenced by
+                // this event's version bump.
+                PendingState::PendingAt(..)
+                | PendingState::BlockedByJoinSet(..)
+                | PendingState::Paused(..)
+                | PendingState::Locked(..) => {}
             }
             let next_version =
                 update_state_cancelling(tx, execution_id, &appending_version).await?;
@@ -2812,6 +2830,8 @@ async fn append_response(
     let combined_state = get_combined_state(tx, execution_id).await?;
     debug!("previous_pending_state: {combined_state:?}");
 
+    // A cancelling execution is finished by the cancellation driver; it is never
+    // picked up by executors again, so do not unblock or notify it.
     let mut notifier = if let PendingStateMerged::BlockedByJoinSet {
         state:
             PendingStateBlockedByJoinSet {
@@ -2819,7 +2839,7 @@ async fn append_response(
                 lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                 closing: _,
             },
-        lifecycle: _,
+        lifecycle: Lifecycle::Active | Lifecycle::Paused,
     } =
         PendingStateMerged::from(combined_state.execution_with_state.pending_state)
         && *join_set_id == found_join_set_id
@@ -4033,7 +4053,7 @@ impl DbExecutor for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    async fn request_cancellation(
+    async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -4042,8 +4062,20 @@ impl DbExecutor for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
-        let plan = combined_state.plan_request_cancellation();
-        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
+        append_activity_cancellation_requested_tx(tx, execution_id, cancelled_at, &combined_state)
+            .await
+    }
+
+    #[instrument(skip(self))]
+    async fn cancel_workflow(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+
+        cancel_workflow_tx(tx, execution_id, cancelled_at).await
     }
 }
 #[async_trait]
@@ -5284,49 +5316,23 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
-        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
-        // A running (Locked) activity cannot be paused: pausing would unlock without confirming
-        // the in-flight WASM/exec invocation has stopped, so `Paused` would not mean quiescent and
-        // an unpause could start a second run in parallel. Cancel it instead. Workflows and
-        // not-yet-running activities remain pausable.
-        if matches!(
-            combined_state.execution_with_state.pending_state,
-            PendingState::Locked(_)
-        ) && combined_state
-            .execution_with_state
-            .component_type
-            .is_activity()
-        {
-            return Err(DbErrorWriteNonRetriable::IllegalState {
-                reason: "cannot pause a running activity; cancel it instead".into(),
-                context: SpanTrace::capture(),
-                source: None,
-                loc: Location::caller(),
-            }
-            .into());
-        }
-        let next_version = if matches!(
-            combined_state.execution_with_state.pending_state,
-            PendingState::Locked(_)
-        ) {
-            let (next_version, _notifier) = append(
+        if combined_state.reject_locked_activities()? {
+            (appending_version, _) = append(
                 &tx,
                 execution_id,
                 AppendRequest {
                     created_at: paused_at,
                     event: ExecutionRequest::Unlocked(Unlocked {
-                        unlocked_at: paused_at,
+                        unlocked_at: paused_at, // does not matter, about to append `Paused` in same tx.
                         reason: "paused".into(),
                     }),
                 },
                 appending_version,
             )
             .await?;
-            next_version
-        } else {
-            appending_version
-        };
+        }
         let (next_version, _notifier) = append(
             &tx,
             execution_id,
@@ -5334,7 +5340,7 @@ impl DbExternalApi for PostgresConnection {
                 created_at: paused_at,
                 event: ExecutionRequest::Paused,
             },
-            next_version,
+            appending_version,
         )
         .await?;
         tx.commit().await?;
@@ -5366,20 +5372,6 @@ impl DbExternalApi for PostgresConnection {
 
         tx.commit().await?;
         Ok(next_version)
-    }
-
-    #[instrument(skip(self))]
-    async fn cancel_workflow(
-        &self,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
-        let tx = client_guard.transaction().await?;
-
-        let combined_state = get_combined_state(&tx, execution_id).await?;
-        let plan = combined_state.plan_cancel_workflow()?;
-        apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan).await
     }
 
     #[instrument(skip(self))]

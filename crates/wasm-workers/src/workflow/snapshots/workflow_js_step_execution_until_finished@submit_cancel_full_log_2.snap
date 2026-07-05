@@ -100,13 +100,13 @@ expression: "ExecutionLogSanitized::from(log)"
   ],
   "responses": [
     {
-      "created_at": "1970-01-01T00:00:00.200Z",
+      "created_at": "1970-01-01T00:00:00.300Z",
       "event": {
         "join_set_id": "g:1",
         "event": {
           "type": "child_execution_finished",
           "child_execution_id": "E_0000000000000000000000000A.g:1_1",
-          "finished_version": 1,
+          "finished_version": 2,
           "result": {
             "execution_failure": {
               "kind": "cancelled"

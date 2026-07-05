@@ -404,12 +404,12 @@ impl WorkflowDbConnection for CachingDbConnection {
                     }
                 }
             }
-            // Signal cancellable children (already classified, so guard-free); the
-            // driver drives their close and the `Cancelled` response wakes our await.
+            // Signal cancellable children; the driver drives their close and the
+            // `Cancelled` response wakes our await.
             for child_id in cancellations.cancellable_child_ids() {
                 let res = self
                     .db_connection
-                    .request_cancellation_with_retries(
+                    .cancel_workflow_with_retries(
                         &ExecutionId::Derived(child_id.clone()),
                         cancellations.cancelled_at,
                     )

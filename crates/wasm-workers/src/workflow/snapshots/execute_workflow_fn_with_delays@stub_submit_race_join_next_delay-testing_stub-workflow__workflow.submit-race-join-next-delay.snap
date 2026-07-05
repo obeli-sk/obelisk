@@ -220,7 +220,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
         "event": {
           "type": "child_execution_finished",
           "child_execution_id": "E_00000000000000000000000000.g:1_1",
-          "finished_version": 1,
+          "finished_version": 2,
           "result": {
             "execution_failure": {
               "kind": "cancelled"

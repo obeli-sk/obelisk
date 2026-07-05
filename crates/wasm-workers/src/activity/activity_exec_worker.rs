@@ -19,8 +19,8 @@ use executor::worker::{
 };
 use indexmap::IndexMap;
 use secrecy::{ExposeSecret, SecretString};
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::{io::ErrorKind, path::PathBuf};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
@@ -370,13 +370,23 @@ impl Worker for ActivityExecWorker {
         let result = tokio::select! {
             biased;
             _signal = cancel_token => {
-                // Fired only by `CancelRegistry::cancel_activity`, which has already written the
-                // terminal cancellation state to the DB. Pausing a running activity is rejected,
-                // so pause never interrupts here.
-                debug!("Activity run interrupted, DB must have been updated");
-                // Kill the child once the DB state has already been updated elsewhere.
-                let _ = child.kill().await;
-                return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+                // The token fires only on cancellation (CancelRegistry::cancel_activity is its
+                // sole trigger). Kill and reap the child before finalizing; the executor appends
+                // the terminal only if still `cancelling`.
+                debug!("Activity run interrupted, killing child before finalizing cancellation");
+                kill_process_group(&child);
+                match child.kill().await {
+                    Ok(()) => {
+                        return Err(WorkerError::FatalError(FatalError::Cancelled, version));
+                    }
+                    Err(err) if err.kind() == ErrorKind::InvalidInput => {
+                        return Err(WorkerError::FatalError(FatalError::Cancelled, version));
+                    }
+                    Err(err) => {
+                        warn!(%err, "Could not confirm child process termination after cancellation");
+                        return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+                    }
+                }
             }
             result = async {
                 // Read stdout/stderr concurrently, streaming to log forwarder as chunks arrive.
@@ -471,6 +481,25 @@ impl Worker for ActivityExecWorker {
             http_client_traces: None,
         }))
     }
+}
+
+fn kill_process_group(child: &tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        // `process_group(0)` at spawn makes the child its own group leader, so its
+        // PGID equals its PID. A real PID always fits in `pid_t`.
+        let Ok(pgid) = libc::pid_t::try_from(pid) else {
+            return;
+        };
+        // SAFETY: `kill` has no memory-safety preconditions; a negative PGID signals
+        // the whole process group. Best effort for descendants, reaping the direct
+        // child below is the authoritative cancellation gate.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = child;
 }
 
 fn forward_output(config: &StdOutputConfigWithSender, output: &[u8], ctx: &WorkerContext) {

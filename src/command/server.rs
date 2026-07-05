@@ -4850,7 +4850,12 @@ mod tests {
             ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?;
         let config = config_holder.load_config().await?;
 
-        let deployment = load_deployment_canonical(&workspace.join(deployment_toml)).await?;
+        let fixture = crate::command::test_support::target_aware_deployment_fixture(
+            &workspace,
+            deployment_toml,
+        )
+        .await?;
+        let deployment = load_deployment_canonical(fixture.path()).await?;
 
         let prepared_dirs = prepare_dirs(
             &config,
@@ -4912,8 +4917,12 @@ mod tests {
         )?;
         let config = config_holder.load_config().await?;
 
-        let mut deployment =
-            load_deployment_canonical(&workspace.join("obelisk-testing-wasm-local.toml")).await?;
+        let fixture = crate::command::test_support::target_aware_deployment_fixture(
+            &workspace,
+            "obelisk-testing-wasm-local.toml",
+        )
+        .await?;
+        let mut deployment = load_deployment_canonical(fixture.path()).await?;
         let shared_digest: ComponentDigest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 .parse()

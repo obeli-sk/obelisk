@@ -2,8 +2,8 @@ use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
-    JoinSetId, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionFailureKind,
+    ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
@@ -24,16 +24,16 @@ use concepts::{
         ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
         LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
-        RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
-        VersionType,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
+        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Unlocked, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
 use db_common::{
-    AppendNotifier, CancelWorkflowPlan, CombinedState, CombinedStateDTO, NotifierExecutionFinished,
-    NotifierPendingAt, PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
+    AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
+    PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use hashbrown::HashMap;
 use rusqlite::{
@@ -280,6 +280,12 @@ mod conversions {
 enum TxType {
     MultipleWrites, // PhyTx must be rolled back, other LTX restarted
     Other,          // Read only or a single write LTX. Continue the PhyTx if LTX returns error.
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CancellationFfqnCheck {
+    Required,
+    Skipped,
 }
 
 #[derive(Clone)]
@@ -2352,19 +2358,6 @@ impl SqlitePool {
                     PendingState::Finished { .. } => {
                         unreachable!("handled above");
                     }
-                    // Locked and Paused must first be released (`Unlocked` / `Unpaused`)
-                    // by `cancel_workflow` so `cancelling` never coexists with a lock or pause.
-                    PendingState::Locked(..) | PendingState::Paused(..) => {
-                        return Err(DbErrorWriteNonRetriable::IllegalState {
-                            reason:
-                                "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
-                                    .into(),
-                            context: SpanTrace::capture(),
-                            source: None,
-                            loc: Location::caller(),
-                        }
-                        .into());
-                    }
                     PendingState::Cancelling(..) => {
                         return Err(DbErrorWriteNonRetriable::IllegalState {
                             reason: "cannot append CancellationRequested event, execution is already cancelling".into(),
@@ -2374,7 +2367,13 @@ impl SqlitePool {
                         }
                         .into());
                     }
-                    PendingState::PendingAt(..) | PendingState::BlockedByJoinSet(..) => {}
+                    // Paused executions are never running; a locked activity keeps its lock
+                    // until teardown or lease expiry; a locked workflow's run is fenced by
+                    // this event's version bump.
+                    PendingState::PendingAt(..)
+                    | PendingState::BlockedByJoinSet(..)
+                    | PendingState::Paused(..)
+                    | PendingState::Locked(..) => {}
                 }
                 let next_version =
                     Self::update_state_cancelling(tx, execution_id, &appending_version)?;
@@ -2549,6 +2548,8 @@ impl SqlitePool {
         // if the execution is going to be unblocked by this response...
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         debug!("previous_pending_state: {combined_state:?}");
+        // A cancelling execution is finished by the cancellation driver; it is never
+        // picked up by executors again, so do not unblock or notify it.
         let mut notifier = if let PendingStateMerged::BlockedByJoinSet {
             state:
                 PendingStateBlockedByJoinSet {
@@ -2556,7 +2557,7 @@ impl SqlitePool {
                     lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
                     closing: _,
                 },
-            lifecycle: _,
+            lifecycle: Lifecycle::Active | Lifecycle::Paused,
         } =
             PendingStateMerged::from(combined_state.execution_with_state.pending_state)
             && *join_set_id == found_join_set_id
@@ -3931,33 +3932,10 @@ impl SqlitePool {
         paused_at: DateTime<Utc>,
     ) -> Result<Version, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
-        // A running (Locked) activity cannot be paused: pausing would unlock without confirming
-        // the in-flight WASM/exec invocation has stopped, so `Paused` would not mean quiescent and
-        // an unpause could start a second run in parallel. Cancel it instead. Workflows and
-        // not-yet-running activities remain pausable.
-        if matches!(
-            combined_state.execution_with_state.pending_state,
-            PendingState::Locked(_)
-        ) && combined_state
-            .execution_with_state
-            .component_type
-            .is_activity()
-        {
-            return Err(DbErrorWriteNonRetriable::IllegalState {
-                reason: "cannot pause a running activity; cancel it instead".into(),
-                context: SpanTrace::capture(),
-                source: None,
-                loc: Location::caller(),
-            }
-            .into());
-        }
-        let next_version = if matches!(
-            combined_state.execution_with_state.pending_state,
-            PendingState::Locked(_)
-        ) {
-            let (next_version, _notifier) = Self::append(
+        if combined_state.reject_locked_activities()? {
+            (appending_version, _) = Self::append(
                 tx,
                 execution_id,
                 AppendRequest {
@@ -3969,10 +3947,7 @@ impl SqlitePool {
                 },
                 appending_version,
             )?;
-            next_version
-        } else {
-            appending_version
-        };
+        }
         let (next_version, _notifier) = Self::append(
             tx,
             execution_id,
@@ -3980,7 +3955,7 @@ impl SqlitePool {
                 created_at: paused_at,
                 event: ExecutionRequest::Paused,
             },
-            next_version,
+            appending_version,
         )?;
         Ok(next_version)
     }
@@ -4011,56 +3986,27 @@ impl SqlitePool {
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let plan = combined_state.plan_cancel_workflow()?;
-        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
+        if let Some(outcome) = combined_state.cancel_short_circuit() {
+            return Ok(outcome);
+        }
+        Self::append_cancellation_requested(
+            tx,
+            execution_id,
+            cancelled_at,
+            &combined_state,
+            CancellationFfqnCheck::Required,
+        )
     }
 
-    fn request_cancellation(
-        tx: &Transaction,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let plan = combined_state.plan_request_cancellation();
-        Self::apply_cancellation_plan(tx, execution_id, cancelled_at, &combined_state, plan)
-    }
-
-    fn apply_cancellation_plan(
+    fn append_cancellation_requested(
         tx: &Transaction,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
         combined_state: &CombinedState,
-        plan: CancelWorkflowPlan,
+        ffqn_check: CancellationFfqnCheck,
     ) -> Result<CancelOutcome, DbErrorWrite> {
-        let (unlock, unpause) = match plan {
-            CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
-            CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
-            CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
-        };
-        let mut version = combined_state.get_next_version_assert_not_finished();
-        if unlock {
-            (version, _) = Self::append(
-                tx,
-                execution_id,
-                AppendRequest {
-                    created_at: cancelled_at,
-                    event: ExecutionRequest::Unlocked(Unlocked {
-                        unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
-                        reason: "cancelling".into(),
-                    }),
-                },
-                version,
-            )?;
-        } else if unpause {
-            (version, _) = Self::append(
-                tx,
-                execution_id,
-                AppendRequest {
-                    created_at: cancelled_at,
-                    event: ExecutionRequest::Unpaused,
-                },
-                version,
-            )?;
+        if matches!(ffqn_check, CancellationFfqnCheck::Required) {
+            combined_state.assert_cancellable_workflow_ffqn()?;
         }
         Self::append(
             tx,
@@ -4069,9 +4015,40 @@ impl SqlitePool {
                 created_at: cancelled_at,
                 event: ExecutionRequest::CancellationRequested,
             },
-            version,
+            combined_state.get_next_version_assert_not_finished(),
         )?;
         Ok(CancelOutcome::Cancelled)
+    }
+
+    fn append_activity_cancellation_requested_tx(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+        combined_state: &CombinedState,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        match &combined_state.execution_with_state.pending_state {
+            PendingState::Finished(finished) => {
+                if finished.result_kind
+                    == PendingStateFinishedResultKind::Err(
+                        PendingStateFinishedError::ExecutionFailure(
+                            ExecutionFailureKind::Cancelled,
+                        ),
+                    )
+                {
+                    return Ok(CancelOutcome::Cancelled);
+                }
+                return Ok(CancelOutcome::AlreadyFinished);
+            }
+            PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
+            _ => {}
+        }
+        Self::append_cancellation_requested(
+            tx,
+            execution_id,
+            cancelled_at,
+            combined_state,
+            CancellationFfqnCheck::Skipped,
+        )
     }
 }
 
@@ -4553,16 +4530,39 @@ impl DbExecutor for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn request_cancellation(
+    async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| SqlitePool::request_cancellation(tx, &execution_id, cancelled_at),
+            move |tx| {
+                let combined_state = Self::get_combined_state(tx, &execution_id)?;
+                SqlitePool::append_activity_cancellation_requested_tx(
+                    tx,
+                    &execution_id,
+                    cancelled_at,
+                    &combined_state,
+                )
+            },
             TxType::MultipleWrites,
-            "request_cancellation",
+            "append_activity_cancellation_requested",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn cancel_workflow(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at),
+            TxType::MultipleWrites,
+            "cancel_workflow",
         )
         .await
     }
@@ -5155,21 +5155,6 @@ impl DbExternalApi for SqlitePool {
             move |tx| SqlitePool::unpause_execution(tx, &execution_id, unpaused_at),
             TxType::MultipleWrites,
             "unpause_execution",
-        )
-        .await
-    }
-
-    #[instrument(skip(self))]
-    async fn cancel_workflow(
-        &self,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        let execution_id = execution_id.clone();
-        self.transaction(
-            move |tx| SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at),
-            TxType::MultipleWrites,
-            "cancel_workflow",
         )
         .await
     }

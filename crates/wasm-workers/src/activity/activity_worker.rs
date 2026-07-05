@@ -252,12 +252,12 @@ impl Worker for ActivityWorker {
                 });
             }
             _ = interrupt_token => {
-                // Fired only by `CancelRegistry::cancel_activity`, which has already written the
-                // terminal cancellation state to the DB. Pausing a running activity is rejected,
-                // so pause never interrupts here.
+                // The token fires only on cancellation (CancelRegistry::cancel_activity is its
+                // sole trigger). Return Cancelled; dropping the store here tears down the
+                // invocation, and the executor appends the terminal only if still `cancelling`.
                 // TODO: Add http traces
-                debug!("Activity run interrupted, DB must have been updated");
-                return WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
+                debug!("Activity run interrupted, finalizing cancellation after dropping store");
+                return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, version));
             }
             _ = executor_close_watcher.changed() => {
                 debug!("Executor is closing");

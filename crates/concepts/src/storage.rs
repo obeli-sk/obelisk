@@ -5,7 +5,6 @@ use crate::ContentDigest;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
-use crate::FinishedExecutionFailure;
 use crate::FunctionExtension;
 use crate::FunctionFqn;
 use crate::FunctionMetadata;
@@ -32,7 +31,6 @@ use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::debug;
 use tracing::instrument;
 use tracing_error::SpanTrace;
 
@@ -453,16 +451,15 @@ pub enum ExecutionRequest {
     Paused,
     #[display("Unpaused")]
     Unpaused,
-    /// Requests cancellation of a cancellable workflow. Sets `lifecycle` to
-    /// `cancelling` without changing the underlying state; the cancellation driver
-    /// then closes the subtree and appends `Finished(Cancelled)`.
+    /// Requests cancellation. Sets `lifecycle` to `cancelling` without changing
+    /// the underlying state; the cancellation driver or activity owner then
+    /// appends `Finished(Cancelled)`.
     ///
     /// State transition semantics (mirrors [`ExecutionRequest::Paused`]):
-    /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set
-    ///   `lifecycle = cancelling`, underlying state unchanged.
-    /// - [`PendingState::Locked`] and [`PendingState::Paused`] are rejected on the
-    ///   raw append path; they must first be released (`Unlocked` / `Unpaused`) by
-    ///   `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+    /// - Every non-terminal state sets `lifecycle = cancelling`, underlying state
+    ///   unchanged. A paused execution is never running; a locked activity keeps
+    ///   its lock until teardown or lease expiry; a locked workflow's run is
+    ///   fenced by this event's version bump.
     /// - [`PendingState::Finished`] is rejected (already terminal).
     #[display("CancellationRequested")]
     CancellationRequested,
@@ -1274,36 +1271,38 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
-            let res = self.cancel_activity(execution_id, cancelled_at).await;
-            if res.is_ok() || retries == 0 {
-                return res;
+            match self
+                .append_activity_cancellation_requested(execution_id, cancelled_at)
+                .await
+            {
+                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
+                    ..
+                })) if retries > 0 => retries -= 1,
+                res => return res,
             }
-            retries -= 1;
         }
     }
 
-    /// Request cancellation of an already-known-cancellable workflow, from the worker
-    /// join-set close or the cancellation driver. Unlike `cancel_workflow`, skips the
-    /// `is_cancellable` guard: the caller has already classified the target. In one
-    /// version-guarded transaction, releases any lock/pause (`Unlocked`/`Unpaused`)
-    /// then appends `CancellationRequested`; returns `AlreadyFinished`/
-    /// `AlreadyCancelling` without appending.
-    async fn request_cancellation(
+    /// Request cancellation of a cancellable workflow. In one version-guarded
+    /// transaction, appends `CancellationRequested`; rejects a non-cancellable
+    /// target and returns `AlreadyFinished`/`AlreadyCancelling` without appending.
+    /// The `Finished(Cancelled)` outcome is driven later by the cancellation driver.
+    async fn cancel_workflow(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite>;
 
-    /// Request cancellation, retrying the version-guarded transaction on the
-    /// live-worker race.
-    async fn request_cancellation_with_retries(
+    /// Request cancellation of a cancellable workflow, retrying the version-guarded
+    /// transaction on the live-worker race.
+    async fn cancel_workflow_with_retries(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
-            match self.request_cancellation(execution_id, cancelled_at).await {
+            match self.cancel_workflow(execution_id, cancelled_at).await {
                 Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
                     ..
                 })) if retries > 0 => retries -= 1,
@@ -1318,73 +1317,11 @@ pub trait DbExecutor: Send + Sync {
         execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead>;
 
-    async fn cancel_activity(
+    async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        debug!("Determining cancellation state of {execution_id}");
-
-        let last_event = self
-            .get_last_execution_event(execution_id)
-            .await
-            .map_err(DbErrorWrite::from)?;
-        if let ExecutionRequest::Finished {
-            retval:
-                SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
-                    kind: ExecutionFailureKind::Cancelled,
-                    ..
-                }),
-            ..
-        } = last_event.event
-        {
-            return Ok(CancelOutcome::Cancelled);
-        } else if matches!(last_event.event, ExecutionRequest::Finished { .. }) {
-            debug!("Not cancelling, {execution_id} is already finished");
-            return Ok(CancelOutcome::AlreadyFinished);
-        }
-        let finished_version = last_event.version.increment();
-        let child_result =
-            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
-                reason: None,
-                kind: ExecutionFailureKind::Cancelled,
-                detail: None,
-            });
-        let cancel_request = AppendRequest {
-            created_at: cancelled_at,
-            event: ExecutionRequest::Finished {
-                retval: child_result.clone(),
-                http_client_traces: None,
-            },
-        };
-        debug!("Cancelling activity {execution_id} at {finished_version}");
-        if let ExecutionId::Derived(execution_id) = execution_id {
-            let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
-            let child_execution_id = ExecutionId::Derived(execution_id.clone());
-            self.append_batch_respond_to_parent(
-                AppendEventsToExecution {
-                    execution_id: child_execution_id,
-                    version: finished_version.clone(),
-                    batch: vec![cancel_request],
-                },
-                AppendResponseToExecution {
-                    parent_execution_id,
-                    created_at: cancelled_at,
-                    join_set_id: join_set_id.clone(),
-                    child_execution_id: execution_id.clone(),
-                    finished_version,
-                    result: child_result,
-                },
-                cancelled_at,
-            )
-            .await?;
-        } else {
-            self.append(execution_id.clone(), finished_version, cancel_request)
-                .await?;
-        }
-        debug!("Cancelled {execution_id}");
-        Ok(CancelOutcome::Cancelled)
-    }
+    ) -> Result<CancelOutcome, DbErrorWrite>;
 }
 
 pub enum AppendDelayResponseOutcome {
@@ -1670,35 +1607,6 @@ pub trait DbExternalApi: DbConnection {
         execution_id: &ExecutionId,
         unpaused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite>;
-
-    /// Request cancellation of a cancellable workflow. In one transaction, releases
-    /// any lock/pause (`Unlocked`/`Unpaused`) so `cancelling` never coexists with
-    /// them, then appends `CancellationRequested`. Rejects a non-cancellable target;
-    /// returns `AlreadyFinished`/`AlreadyCancelling` without appending. The
-    /// `Finished(Cancelled)` outcome is driven later by the cancellation driver.
-    async fn cancel_workflow(
-        &self,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite>;
-
-    /// Request cancellation of a cancellable workflow, retrying the version-guarded
-    /// transaction on the live-worker race.
-    async fn cancel_workflow_with_retries(
-        &self,
-        execution_id: &ExecutionId,
-        cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        let mut retries = 5;
-        loop {
-            match self.cancel_workflow(execution_id, cancelled_at).await {
-                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
-                    ..
-                })) if retries > 0 => retries -= 1,
-                res => return res,
-            }
-        }
-    }
 
     /// Pause a delay, preventing it from being picked up by the expired timers watcher.
     /// No-op if the delay is already paused.
@@ -2582,11 +2490,20 @@ pub enum PendingState {
     #[display("BlockedByJoinSet({_0})")]
     BlockedByJoinSet(PendingStateBlockedByJoinSet),
 
+    /// Started by appending [`ExecutionRequest::Paused`] and
+    /// ended with [`ExecutionRequest::Unpaused`] or [`ExecutionRequest::CancellationRequested`].
+    ///
+    /// Activity must not be in-flight, cancelling or finished when pausing.
+    /// Workflow must not be cancelling or finished.
+    /// Pausing a locked workflow must first append `Unlocked`.
+    /// The previous pending state is stored for workflow unpause.
     #[display("Paused({_0})")]
-    Paused(PendingStateSuspended),
+    Paused(PendingStatePaused),
 
+    /// Started by appending [`ExecutionRequest::CancellationRequested`] and
+    /// ended with [`ExecutionRequest::Finished`].
     #[display("Cancelling({_0})")]
-    Cancelling(PendingStateSuspended),
+    Cancelling(PendingStateCancelling),
 
     #[display("Finished: {_0}")]
     Finished(PendingStateFinished),
@@ -2627,25 +2544,35 @@ impl From<PendingState> for PendingStateMerged {
                 lifecycle: Lifecycle::Active,
             },
 
-            PendingState::Paused(inner) => Self::from_suspended(inner, Lifecycle::Paused),
+            PendingState::Paused(inner) => match inner {
+                PendingStatePaused::PendingAt(s) => PendingStateMerged::PendingAt {
+                    state: s,
+                    lifecycle: Lifecycle::Paused,
+                },
+                PendingStatePaused::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
+                    state: s,
+                    lifecycle: Lifecycle::Paused,
+                },
+            },
 
-            PendingState::Cancelling(inner) => Self::from_suspended(inner, Lifecycle::Cancelling),
+            PendingState::Cancelling(inner) => match inner {
+                PendingStateCancelling::Locked(s) => PendingStateMerged::Locked {
+                    state: s,
+                    lifecycle: Lifecycle::Cancelling,
+                },
+                PendingStateCancelling::PendingAt(s) => PendingStateMerged::PendingAt {
+                    state: s,
+                    lifecycle: Lifecycle::Cancelling,
+                },
+                PendingStateCancelling::BlockedByJoinSet(s) => {
+                    PendingStateMerged::BlockedByJoinSet {
+                        state: s,
+                        lifecycle: Lifecycle::Cancelling,
+                    }
+                }
+            },
 
             PendingState::Finished(s) => PendingStateMerged::Finished(s),
-        }
-    }
-}
-impl PendingStateMerged {
-    fn from_suspended(inner: PendingStateSuspended, lifecycle: Lifecycle) -> Self {
-        match inner {
-            PendingStateSuspended::PendingAt(s) => PendingStateMerged::PendingAt {
-                state: s,
-                lifecycle,
-            },
-            PendingStateSuspended::BlockedByJoinSet(s) => PendingStateMerged::BlockedByJoinSet {
-                state: s,
-                lifecycle,
-            },
         }
     }
 }
@@ -2675,13 +2602,28 @@ pub struct PendingStateBlockedByJoinSet {
     pub closing: bool,
 }
 
-/// Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or
-/// cancelling execution.
+/// State of execution before it was paused.
 ///
-/// Suspending a locked execution must first append `Unlocked`, so `Locked` is
-/// never wrapped here.
+/// A paused activity is always `PendingAt`. Pausing a locked workflow must first
+/// append `Unlocked`, so `Locked` is never wrapped here.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub enum PendingStateSuspended {
+pub enum PendingStatePaused {
+    #[display("PendingAt({_0})")]
+    PendingAt(PendingStatePendingAt),
+    #[display("BlockedByJoinSet({_0})")]
+    BlockedByJoinSet(PendingStateBlockedByJoinSet),
+}
+
+/// Underlying state of a cancelling execution.
+///
+/// Tracked for the cancellation driver: an activity whose worker fails to confirm
+/// teardown is pronounced finished once the `Locked` lease expires. The other
+/// variants are a frozen snapshot from when cancellation was requested (incoming
+/// responses do not unblock a cancelling execution), kept for observability.
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub enum PendingStateCancelling {
+    #[display("Locked({_0})")]
+    Locked(PendingStateLocked),
     #[display("PendingAt({_0})")]
     PendingAt(PendingStatePendingAt),
     #[display("BlockedByJoinSet({_0})")]

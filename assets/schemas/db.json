@@ -308,7 +308,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Requests cancellation of a cancellable workflow. Sets `lifecycle` to\n`cancelling` without changing the underlying state; the cancellation driver\nthen closes the subtree and appends `Finished(Cancelled)`.\n\nState transition semantics (mirrors [`ExecutionRequest::Paused`]):\n- [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set\n  `lifecycle = cancelling`, underlying state unchanged.\n- [`PendingState::Locked`] and [`PendingState::Paused`] are rejected on the\n  raw append path; they must first be released (`Unlocked` / `Unpaused`) by\n  `cancel_workflow` so `cancelling` never coexists with a lock or pause.\n- [`PendingState::Finished`] is rejected (already terminal).",
+          "description": "Requests cancellation. Sets `lifecycle` to `cancelling` without changing\nthe underlying state; the cancellation driver or activity owner then\nappends `Finished(Cancelled)`.\n\nState transition semantics (mirrors [`ExecutionRequest::Paused`]):\n- Every non-terminal state sets `lifecycle = cancelling`, underlying state\n  unchanged. A paused execution is never running; a locked activity keeps\n  its lock until teardown or lease expiry; a locked workflow's run is\n  fenced by this event's version bump.\n- [`PendingState::Finished`] is rejected (already terminal).",
           "type": "string",
           "const": "cancellation_requested"
         }
@@ -1628,7 +1628,7 @@
           ]
         },
         {
-          "description": "Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or\ncancelling execution.\n\nSuspending a locked execution must first append `Unlocked`, so `Locked` is\nnever wrapped here.",
+          "description": "Started by appending [`ExecutionRequest::Paused`] and\nended with [`ExecutionRequest::Unpaused`] or [`ExecutionRequest::CancellationRequested`].\n\nActivity must not be in-flight, cancelling or finished when pausing.\nWorkflow must not be cancelling or finished.\nPausing a locked workflow must first append `Unlocked`.\nThe previous pending state is stored for workflow unpause.",
           "type": "object",
           "properties": {
             "status": {
@@ -1665,7 +1665,7 @@
           ]
         },
         {
-          "description": "Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or\ncancelling execution.\n\nSuspending a locked execution must first append `Unlocked`, so `Locked` is\nnever wrapped here.",
+          "description": "Started by appending [`ExecutionRequest::CancellationRequested`] and\nended with [`ExecutionRequest::Finished`].",
           "type": "object",
           "properties": {
             "status": {
@@ -1674,6 +1674,17 @@
             }
           },
           "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "Locked": {
+                  "$ref": "#/$defs/PendingStateLocked"
+                }
+              },
+              "required": [
+                "Locked"
+              ]
+            },
             {
               "type": "object",
               "properties": {
