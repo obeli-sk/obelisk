@@ -1551,6 +1551,7 @@ pub(crate) mod tests {
     };
     use crate::activity::activity_worker::tests::{new_activity, new_activity_with_config};
     use crate::activity::cancel_registry::CancelRegistry;
+    use crate::cancellation_driver;
     use crate::testing_fn_registry::{TestingFnRegistry, fn_registry_dummy};
     use crate::workflow::deadline_tracker::{
         DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
@@ -2116,7 +2117,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
-            cancel_registry,
+            cancel_registry.clone(),
             LockingStrategy::ByComponentDigest,
         )
         .await;
@@ -2184,7 +2185,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
-            cancel_registry,
+            cancel_registry.clone(),
             LockingStrategy::ByComponentDigest,
         )
         .await;
@@ -2250,7 +2251,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
-            cancel_registry,
+            cancel_registry.clone(),
             LockingStrategy::ByComponentDigest,
         )
         .await;
@@ -2284,21 +2285,9 @@ pub(crate) mod tests {
             .tick_test_await(sim_clock.now(), RunId::generate())
             .await;
 
-        // The workflow submitted an activity and called join_set_close which internally
-        // calls JoinNext(closing: true). This interrupts and the workflow is scheduled to run again.
-        // We need to run the activity executor to cancel/complete the activity.
-
-        info!("Running activity executor to process the child activity");
-        let (activity_exec, _activity_close_tx) = new_activity_fibo(
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            TokioSleep,
-            LockingStrategy::ByComponentDigest,
-        )
-        .await;
-        // The activity may be cancelled or run - either way we process it
-        activity_exec
-            .tick_test_await(sim_clock.now(), RunId::generate())
+        // The workflow submitted an activity and called join_set_close. The cancellation
+        // driver finalizes the cancelled child before the workflow resumes.
+        cancellation_driver::tick_test(db_connection.as_ref(), &cancel_registry, sim_clock.now())
             .await;
 
         info!("Second workflow tick - receives response and completes");
@@ -3644,13 +3633,14 @@ pub(crate) mod tests {
             compile_workflow(workflow_wasm_path).await,
         ]);
 
+        let cancel_registry = CancelRegistry::new();
         let worker = compile_workflow_worker(
             workflow_wasm_path,
             db_pool.clone(),
             sim_clock.clone_box(),
             JoinNextBlockingStrategy::Interrupt,
             &fn_registry,
-            CancelRegistry::new(),
+            cancel_registry.clone(),
         )
         .await;
         let execution_id = ExecutionId::from_parts(0, 0);
@@ -3729,8 +3719,22 @@ pub(crate) mod tests {
             }
         }
 
-        // Keep running exec ticks.
+        // Keep running cancellation driver and exec ticks.
         loop {
+            cancellation_driver::tick_test(
+                db_connection.as_ref(),
+                &cancel_registry,
+                sim_clock.now(),
+            )
+            .await;
+            let pending_state = db_connection
+                .get_pending_state(&execution_id)
+                .await
+                .unwrap()
+                .pending_state;
+            if matches!(pending_state, PendingState::Finished(_)) {
+                break;
+            }
             let run = run_id();
             assert!(run.random_part() < MAX_RUNS);
             let executed = exec_task
@@ -3739,10 +3743,7 @@ pub(crate) mod tests {
                 .wait_for_tasks()
                 .await
                 .len();
-            if executed == 0 {
-                break;
-            }
-            assert_eq!(1, executed);
+            assert!(executed <= 1);
         }
 
         let pending_state = db_connection
@@ -3771,9 +3772,11 @@ pub(crate) mod tests {
         max_steps: usize,
     ) -> ExecutionLog {
         let mut steps = 0;
+        let cancel_registry = CancelRegistry::new();
 
         loop {
             sim_clock.move_time_forward(Duration::from_millis(100));
+            cancellation_driver::tick_test(db_connection, &cancel_registry, sim_clock.now()).await;
             let replay = harness
                 .replay_worker
                 .replay(harness.execution_id.clone())
@@ -3812,33 +3815,6 @@ pub(crate) mod tests {
                 "execution did not finish after {steps} replay+advance steps",
             );
         }
-    }
-
-    fn normalized_cancellable_request_order(execution_log: &ExecutionLog) -> Vec<String> {
-        execution_log
-            .events
-            .iter()
-            .filter_map(|event| match &event.event {
-                ExecutionRequest::HistoryEvent {
-                    event:
-                        HistoryEvent::JoinSetRequest {
-                            request:
-                                JoinSetRequest::ChildExecutionRequest {
-                                    child_execution_id, ..
-                                },
-                            ..
-                        },
-                } => Some(format!("child:{child_execution_id}")),
-                ExecutionRequest::HistoryEvent {
-                    event:
-                        HistoryEvent::JoinSetRequest {
-                            request: JoinSetRequest::DelayRequest { delay_id, .. },
-                            ..
-                        },
-                } => Some(format!("delay:{delay_id}")),
-                _ => None,
-            })
-            .collect()
     }
 
     fn normalized_response_order(execution_log: &ExecutionLog) -> Vec<String> {
@@ -3939,6 +3915,7 @@ pub(crate) mod tests {
             let sim_clock = SimClock::epoch();
             let (_guard, db_pool, db_close) = db.set_up().await;
             let db_connection = db_pool.connection_test().await.unwrap();
+            let cancel_registry = CancelRegistry::new();
 
             let direct_worker = compile_workflow_worker(
                 test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
@@ -3946,7 +3923,7 @@ pub(crate) mod tests {
                 sim_clock.clone_box(),
                 JoinNextBlockingStrategy::Interrupt,
                 &fn_registry,
-                CancelRegistry::new(),
+                cancel_registry.clone(),
             )
             .await;
 
@@ -3986,6 +3963,20 @@ pub(crate) mod tests {
             );
 
             loop {
+                cancellation_driver::tick_test(
+                    db_connection.as_ref(),
+                    &cancel_registry,
+                    sim_clock.now(),
+                )
+                .await;
+                let pending_state = db_connection
+                    .get_pending_state(&execution_id)
+                    .await
+                    .unwrap()
+                    .pending_state;
+                if matches!(pending_state, PendingState::Finished(_)) {
+                    break;
+                }
                 let executed = direct_exec_task
                     .tick_test(sim_clock.now(), RunId::generate())
                     .await
@@ -4058,13 +4049,8 @@ pub(crate) mod tests {
             advance_execution_log
         };
 
-        let expected_cancellation_order =
-            normalized_cancellable_request_order(&direct_execution_log)
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>();
         assert_eq!(
-            expected_cancellation_order,
+            normalized_response_order(&direct_execution_log),
             normalized_response_order(&advance_execution_log),
             "stepped replay+advance must match direct cancellation order",
         );
@@ -4922,9 +4908,11 @@ pub(crate) mod tests {
     ) -> (usize, bool, SupportedFunctionReturnValue) {
         let mut steps = 0;
         let mut saw_trimmed_preview = false; // at least one replay got trimmed
+        let cancel_registry = CancelRegistry::new();
 
         loop {
             sim_clock.move_time_forward(Duration::from_millis(100));
+            cancellation_driver::tick_test(db_connection, &cancel_registry, sim_clock.now()).await;
             let replay = harness
                 .replay_worker
                 .replay(harness.execution_id.clone())

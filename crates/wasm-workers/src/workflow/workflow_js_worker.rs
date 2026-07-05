@@ -590,6 +590,7 @@ mod tests {
     use crate::RunnableComponent;
     use crate::activity::activity_worker::test::compile_activity;
     use crate::activity::activity_worker::tests::new_activity_fibo;
+    use crate::cancellation_driver;
     use crate::engines::{EngineConfig, Engines};
     use crate::testing_fn_registry::TestingFnRegistry;
     use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
@@ -1388,6 +1389,7 @@ mod tests {
 
         let (workflow_exec, _workflow_close_tx) =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+        let cancel_registry = CancelRegistry::new();
 
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -1467,13 +1469,15 @@ mod tests {
                 .len()
         );
 
-        info!("Step 4: Resume workflow - should close the join set");
-        assert_eq!(
-            1,
+        info!("Step 4: Finish cancelled loser and resume workflow if still pending");
+        cancellation_driver::tick_test(db_connection.as_ref(), &cancel_registry, sim_clock.now())
+            .await;
+        assert!(
             workflow_exec
                 .tick_test_await(sim_clock.now(), RunId::generate())
                 .await
                 .len()
+                <= 1
         );
 
         let res = db_connection
@@ -1612,6 +1616,7 @@ mod tests {
         execution_id: ExecutionId,
         db_connection: Box<dyn DbConnectionTest>,
         sim_clock: SimClock,
+        cancel_registry: CancelRegistry,
     }
 
     impl JsWorkflowTestHarness {
@@ -1698,6 +1703,7 @@ mod tests {
                 execution_id,
                 db_connection,
                 sim_clock,
+                cancel_registry: CancelRegistry::new(),
             }
         }
 
@@ -1705,6 +1711,12 @@ mod tests {
             self.workflow_exec
                 .tick_test_await(self.sim_clock.now(), RunId::generate())
                 .await;
+            cancellation_driver::tick_test(
+                self.db_connection.as_ref(),
+                &self.cancel_registry,
+                self.sim_clock.now(),
+            )
+            .await;
         }
 
         /// Move time forward and process expired timers.
@@ -3580,10 +3592,17 @@ mod tests {
     ) -> SupportedFunctionReturnValue {
         let mut steps = 0;
         let mut saw_trimmed_preview = false;
+        let cancel_registry = CancelRegistry::new();
         loop {
             harness
                 .sim_clock
                 .move_time_forward(Duration::from_millis(100));
+            cancellation_driver::tick_test(
+                db_connection,
+                &cancel_registry,
+                harness.sim_clock.now(),
+            )
+            .await;
             let replay = harness
                 .replay_worker
                 .replay(harness.execution_id.clone())

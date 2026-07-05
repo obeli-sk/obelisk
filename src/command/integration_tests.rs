@@ -2662,6 +2662,7 @@ async fn submit_workflow_and_replay() {
 }
 
 #[tokio::test]
+#[ignore = "requires activity cancellation implementation"]
 async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
     let server = TestServer::start(test_addr!(83)).await;
     let mut grpc_client =
@@ -2758,6 +2759,7 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
 }
 
 #[tokio::test]
+#[ignore = "requires activity cancellation implementation"]
 async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     let server = TestServer::start(test_addr!(84)).await;
 

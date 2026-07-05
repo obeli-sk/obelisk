@@ -5,11 +5,12 @@
 //! digest-agnostic tick-poll task advances each one out of band, purely from the
 //! persisted log (it runs no WASM, so it also works on stuck executions).
 //!
-//! Per cancelling execution, one close-step: reconstruct the open join-set members
-//! from the log, cancel leaf activities/delays and signal cancellable children, and
-//! once every member has a response append `Finished(Cancelled)` (responding to the
-//! parent). A member finishing `Cancelled` is itself a response, so an ancestor's
-//! close wakes when its cancelled child reports back — the recursion.
+//! Per cancelling workflow, one close-step: reconstruct the open child executions
+//! and delays from the log, cancel leaf activities/delays and signal cancellable
+//! children, and once every child or delay has a response append
+//! `Finished(Cancelled)` (responding to the parent). Cancelling activities are
+//! finalized here only when not locked, or after their lock lease expires; the
+//! local activity worker owns the prompt path.
 
 use crate::activity::cancel_registry::CancelRegistry;
 use chrono::{DateTime, Utc};
@@ -20,7 +21,7 @@ use concepts::{
     storage::{
         self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbConnection,
         DbErrorRead, DbErrorWrite, DbPool, ExecutionLog, ExecutionRequest, HistoryEvent,
-        JoinSetRequest,
+        JoinSetRequest, PendingState, PendingStateCancelling,
     },
     time::{ClockFn, Sleep},
 };
@@ -55,10 +56,10 @@ impl CancellationDriver {
             tokio::spawn(
                 async move {
                     debug!("Spawned the cancellation driver");
-                    // Members already actioned (cancelled/signalled) this process, so a
-                    // member is signalled at most once instead of every tick until it
-                    // responds. Pruned as responses land; empty on restart (re-signal is
-                    // idempotent), so no durable state is needed.
+                    // Child executions and delays already actioned (cancelled/signalled)
+                    // this process, so each is signalled at most once instead of every tick
+                    // until it responds. Pruned as responses land; empty on restart
+                    // (re-signal is idempotent), so no durable state is needed.
                     let mut handled: HashSet<JoinSetResponseId> = HashSet::new();
                     loop {
                         match db_pool.connection().await {
@@ -105,6 +106,16 @@ async fn tick(
     }
 }
 
+#[cfg(test)]
+pub(crate) async fn tick_test(
+    conn: &dyn DbConnection,
+    cancel_registry: &CancelRegistry,
+    now: DateTime<Utc>,
+) {
+    let mut handled = HashSet::new();
+    tick(conn, cancel_registry, now, 10, &mut handled).await;
+}
+
 /// Advance one cancelling execution by a single close-step.
 async fn close_step(
     conn: &dyn DbConnection,
@@ -114,8 +125,17 @@ async fn close_step(
     handled: &mut HashSet<JoinSetResponseId>,
 ) -> Result<(), CloseStepError> {
     let log = conn.get(execution_id).await?;
+    if log.component_type.is_activity() {
+        if let PendingState::Cancelling(PendingStateCancelling::Locked(locked)) = &log.pending_state
+            && locked.lock_expires_at > now
+        {
+            return Ok(());
+        }
+        finish_cancelled(conn, &log, now).await?;
+        return Ok(());
+    }
 
-    // Responses in cursor order, plus the set of members that have one.
+    // Responses in cursor order, plus the set of children/delays that have one.
     let mut responses = Vec::with_capacity(log.responses.len());
     let mut responded: HashSet<JoinSetResponseId> = HashSet::with_capacity(log.responses.len());
     for response in &log.responses {
@@ -141,14 +161,14 @@ async fn close_step(
         },
     )?;
 
-    // Cancel/signal every still-running member; the execution is ready to finish only
-    // once each member has landed a response.
+    // Cancel/signal every still-running child or delay; the execution is ready to
+    // finish only once each child/delay has landed a response.
     let mut all_responded = true;
     for members in fold.open_join_sets().values() {
         for (response_id, member) in members {
             if responded.contains(response_id) {
-                // Response landed: this member is done, drop it from the handled set to
-                // keep the set bounded to in-flight members.
+                // Response landed: this child/delay is done, drop it from the handled
+                // set to keep it bounded to in-flight children/delays.
                 handled.remove(response_id);
                 continue;
             }
@@ -192,10 +212,10 @@ async fn resolve_child_component_types(
     Ok(types)
 }
 
-/// Best-effort teardown of one running member: cancel activities/delays, signal
-/// cancellable children (recursion). An uncancellable child is merely awaited. Each
-/// member is actioned at most once (tracked in `handled`); the action is idempotent,
-/// so re-doing it after a restart (empty set) is harmless.
+/// Best-effort teardown of one running child or delay: cancel activities/delays,
+/// signal cancellable children (recursion). An uncancellable child is merely
+/// awaited. Each child/delay is actioned at most once (tracked in `handled`); the
+/// action is idempotent, so re-doing it after a restart (empty set) is harmless.
 async fn signal_member(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
@@ -292,9 +312,9 @@ async fn finish_cancelled(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
-    use concepts::storage::{CreateRequest, DbPoolCloseable, JoinSetRequest, PendingState};
-    use concepts::{ComponentId, JoinSetId, JoinSetKind, Params, StrVariant};
+    use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
+    use concepts::storage::{CreateRequest, DbPoolCloseable, JoinSetRequest, Locked, PendingState};
+    use concepts::{ComponentId, ComponentRetryConfig, JoinSetId, JoinSetKind, Params, StrVariant};
     use db_tests::{CANCELLABLE_FFQN, Database};
     use test_utils::sim_clock::SimClock;
 
@@ -412,6 +432,93 @@ mod tests {
             );
         }
         assert!(conn.get_cancelling(10).await.unwrap().is_empty());
+        drop(conn);
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn driver_finalizes_locked_activity_only_after_lease_expiry() {
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let conn = db_pool.connection().await.unwrap();
+        let cancel_registry = CancelRegistry::new();
+        let now = sim_clock.now();
+        let execution_id = ExecutionId::generate();
+        let component_id = ComponentId::dummy_activity();
+        let version = conn
+            .create(CreateRequest {
+                created_at: now,
+                execution_id: execution_id.clone(),
+                ffqn: CANCELLABLE_FFQN,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: now,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+        let lock_expires_at = now + Duration::from_secs(30);
+        let version = conn
+            .append(
+                execution_id.clone(),
+                version,
+                AppendRequest {
+                    created_at: now,
+                    event: ExecutionRequest::Locked(Locked {
+                        component_id,
+                        executor_id: ExecutorId::generate(),
+                        deployment_id: DEPLOYMENT_ID_DUMMY,
+                        run_id: RunId::generate(),
+                        lock_expires_at,
+                        retry_config: ComponentRetryConfig::ZERO,
+                    }),
+                },
+            )
+            .await
+            .unwrap();
+        conn.append(
+            execution_id.clone(),
+            version,
+            AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::CancellationRequested,
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut handled = HashSet::new();
+        tick(conn.as_ref(), &cancel_registry, now, 10, &mut handled).await;
+        let log = conn.get(&execution_id).await.unwrap();
+        assert_matches::assert_matches!(
+            log.pending_state,
+            PendingState::Cancelling(PendingStateCancelling::Locked(_))
+        );
+
+        tick(
+            conn.as_ref(),
+            &cancel_registry,
+            lock_expires_at + Duration::from_millis(1),
+            10,
+            &mut handled,
+        )
+        .await;
+        let log = conn.get(&execution_id).await.unwrap();
+        assert_matches::assert_matches!(log.pending_state, PendingState::Finished(_));
+        assert_matches::assert_matches!(
+            log.as_finished_result(),
+            Some(SupportedFunctionReturnValue::ExecutionFailure(
+                FinishedExecutionFailure {
+                    kind: ExecutionFailureKind::Cancelled,
+                    ..
+                }
+            ))
+        );
+
         drop(conn);
         db_close.close().await;
     }

@@ -2805,6 +2805,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::activity::cancel_registry::CancelRegistry;
+    use crate::cancellation_driver;
     use crate::testing_fn_registry::fn_registry_dummy;
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::deadline_tracker::{
@@ -3556,6 +3557,7 @@ pub(crate) mod tests {
                     executor_close_watcher: tokio::sync::watch::channel(false).1,
                 })
                 .await;
+            let cancel_registry = CancelRegistry::new();
             // Run it SUBMITS times to close all join sets.
             for run in 0..SUBMITS {
                 info!("Run {run}");
@@ -3563,6 +3565,12 @@ pub(crate) mod tests {
                     worker_result,
                     WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
                 );
+                cancellation_driver::tick_test(
+                    db_connection.as_ref(),
+                    &cancel_registry,
+                    sim_clock.now(),
+                )
+                .await;
                 let execution_log = db_connection.get(&execution_id).await.unwrap();
                 let closing_join_nexts: hashbrown::HashSet<_> = execution_log
                     .event_history()
@@ -3828,6 +3836,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let mut processed = Vec::new();
+        let cancel_registry = CancelRegistry::new();
         loop {
             workflow_exec
                 .tick_test(
@@ -3840,6 +3849,12 @@ pub(crate) mod tests {
                 .await
                 .wait_for_tasks()
                 .await;
+            cancellation_driver::tick_test(
+                db_connection.as_ref(),
+                &cancel_registry,
+                sim_clock.now(),
+            )
+            .await;
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
