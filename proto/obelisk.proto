@@ -21,7 +21,8 @@ service ExecutionRepository {
     rpc Stub(StubRequest) returns (StubResponse);
     // Cancel an activity or a cancellable workflow. Cancellation is best effort.
     rpc CancelExecution(CancelExecutionRequest) returns (CancelExecutionResponse);
-    // Deprecated: use CancelExecution, which also covers cancellable workflows.
+    // backcompat: Deprecated since 0.39.4 and will be removed; use
+    // CancelExecution, which also covers cancellable workflows.
     rpc CancelActivity(CancelActivityRequest) returns (CancelActivityResponse) {
         option deprecated = true;
     }
