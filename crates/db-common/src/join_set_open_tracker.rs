@@ -103,7 +103,7 @@ impl JoinSetOpenTracker {
         for event in history {
             match event {
                 HistoryEvent::JoinSetCreate { join_set_id } => {
-                    tracker.create_join_set(join_set_id)?
+                    tracker.create_join_set(join_set_id)?;
                 }
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
