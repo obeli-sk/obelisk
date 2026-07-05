@@ -3368,6 +3368,7 @@ dependencies = [
  "indexmap 2.14.0",
  "insta",
  "itertools",
+ "libc",
  "obeli-db-tests",
  "obeli-sk-boa-engine",
  "obeli-sk-concepts",

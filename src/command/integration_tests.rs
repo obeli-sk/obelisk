@@ -2662,7 +2662,6 @@ async fn submit_workflow_and_replay() {
 }
 
 #[tokio::test]
-#[ignore = "requires activity cancellation implementation"]
 async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
     let server = TestServer::start(test_addr!(83)).await;
     let mut grpc_client =
@@ -2691,14 +2690,24 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
         resp.outcome(),
         CancelExecutionOutcome::CancellationRequested
     );
-    let summary = server.get_status_summary_grpc(&activity_id).await;
-    assert!(matches!(
-        summary
-            .current_status
-            .as_ref()
-            .and_then(|status| status.status.as_ref()),
-        Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-    ));
+    // Cancelling a paused activity is async: the driver finalizes it to
+    // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
+    let mut activity_finished = false;
+    for _ in 0..100 {
+        let summary = server.get_status_summary_grpc(&activity_id).await;
+        if matches!(
+            summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+        ) {
+            activity_finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(activity_finished, "cancelled paused activity must finish");
 
     let cancellable_workflow_id = server
         .seed_cancellable_parent_blocked_on_uncancellable_child()
@@ -2763,7 +2772,6 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
 }
 
 #[tokio::test]
-#[ignore = "requires activity cancellation implementation"]
 async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     let server = TestServer::start(test_addr!(84)).await;
 
@@ -2790,14 +2798,24 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
         resp.json::<Value>().await.unwrap(),
         json!({ "ok": "cancellation requested" })
     );
-    let summary = server.get_status_summary_grpc(&activity_id).await;
-    assert!(matches!(
-        summary
-            .current_status
-            .as_ref()
-            .and_then(|status| status.status.as_ref()),
-        Some(grpc::grpc_gen::execution_status::Status::Finished(_))
-    ));
+    // Cancelling a paused activity is async: the driver finalizes it to
+    // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
+    let mut activity_finished = false;
+    for _ in 0..100 {
+        let summary = server.get_status_summary_grpc(&activity_id).await;
+        if matches!(
+            summary
+                .current_status
+                .as_ref()
+                .and_then(|status| status.status.as_ref()),
+            Some(grpc::grpc_gen::execution_status::Status::Finished(_))
+        ) {
+            activity_finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(activity_finished, "cancelled paused activity must finish");
 
     let cancellable_workflow_id = server
         .seed_cancellable_parent_blocked_on_uncancellable_child()
