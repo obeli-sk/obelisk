@@ -2352,17 +2352,18 @@ impl SqlitePool {
                     PendingState::Finished { .. } => {
                         unreachable!("handled above");
                     }
-                    PendingState::Locked(..)
+                    // Paused activities are guaranteed not to be running.
+                    PendingState::Locked(..) | PendingState::Paused(..)
                         if combined_state
                             .execution_with_state
                             .component_type
                             .is_activity() => {}
-                    // Locked workflows and paused executions must first be released
-                    // (`Unlocked` / `Unpaused`) by their dedicated cancellation path.
+                    // Locked and paused workflows must first be released
+                    // (`Unlocked` / `Unpaused`) by `cancel_workflow`.
                     PendingState::Locked(..) | PendingState::Paused(..) => {
                         return Err(DbErrorWriteNonRetriable::IllegalState {
                             reason:
-                                "cannot append CancellationRequested event unless execution is pending, blocked, or a locked activity; use cancel_workflow for workflows"
+                                "cannot append CancellationRequested event on a locked or paused workflow; use cancel_workflow"
                                     .into(),
                             context: SpanTrace::capture(),
                             source: None,

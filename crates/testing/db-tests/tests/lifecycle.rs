@@ -2664,7 +2664,7 @@ async fn cannot_cancel_locked_workflow_directly(database: Database) {
         .unwrap_err();
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!(
-        "cannot append CancellationRequested event unless execution is pending, blocked, or a locked activity; use cancel_workflow for workflows",
+        "cannot append CancellationRequested event on a locked or paused workflow; use cancel_workflow",
         reason.as_ref()
     );
 
@@ -2724,7 +2724,7 @@ async fn cancel_activity_on_locked_execution_requests_cancellation(database: Dat
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn cannot_cancel_paused_execution_directly(database: Database) {
+async fn cancel_activity_on_paused_execution_requests_cancellation(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2738,6 +2738,64 @@ async fn cannot_cancel_paused_execution_directly(database: Database) {
         sim_clock.now(),
     )
     .await;
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Paused,
+            },
+        )
+        .await
+        .unwrap();
+
+    let outcome = db_connection
+        .append_activity_cancellation_requested(&execution_id, sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(CancelOutcome::Cancelled, outcome);
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+    );
+    assert_matches!(
+        log.last_event().event,
+        ExecutionRequest::CancellationRequested
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cannot_cancel_paused_workflow_directly(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_workflow(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
     let version = db_connection
         .append(
             execution_id.clone(),
@@ -2763,7 +2821,7 @@ async fn cannot_cancel_paused_execution_directly(database: Database) {
         .unwrap_err();
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!(
-        "cannot append CancellationRequested event unless execution is pending, blocked, or a locked activity; use cancel_workflow for workflows",
+        "cannot append CancellationRequested event on a locked or paused workflow; use cancel_workflow",
         reason.as_ref()
     );
 

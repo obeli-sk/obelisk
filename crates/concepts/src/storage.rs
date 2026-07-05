@@ -458,9 +458,9 @@ pub enum ExecutionRequest {
     /// State transition semantics (mirrors [`ExecutionRequest::Paused`]):
     /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set
     ///   `lifecycle = cancelling`, underlying state unchanged.
-    /// - [`PendingState::Locked`] is accepted for activities and rejected for
-    ///   workflows; workflows must first be released by `cancel_workflow`.
-    /// - [`PendingState::Paused`] is rejected on the raw append path.
+    /// - [`PendingState::Locked`] and [`PendingState::Paused`] are accepted for
+    ///   activities (a paused activity is guaranteed not to be running) and rejected
+    ///   for workflows; workflows must first be released by `cancel_workflow`.
     /// - [`PendingState::Finished`] is rejected (already terminal).
     #[display("CancellationRequested")]
     CancellationRequested,
