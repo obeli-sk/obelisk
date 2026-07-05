@@ -7,3 +7,5 @@ pub(crate) mod termination_notifier;
 
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+pub(crate) mod test_support;

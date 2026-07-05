@@ -216,12 +216,24 @@ fn compute_inputs_hash(
 }
 
 fn cleanup_old_hashed_files(dir: &Path, name_snake_case: &str) {
+    let prefix = format!("{name_snake_case}_");
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let file_name = entry.file_name();
             let file_name = file_name.to_string_lossy();
-            if file_name.starts_with(&format!("{name_snake_case}_")) && file_name.ends_with(".wasm")
-            {
+            let Some(rest) = file_name
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.strip_suffix(".wasm"))
+            else {
+                continue;
+            };
+            // Only this component's own hashed artifacts, named `<hash>` or
+            // `component_<hash>` with a hex `<hash>`. Without the hex check a component whose
+            // name extends this prefix (e.g. `..._fibo_workflow_outer` vs `..._fibo_workflow`)
+            // would have its cached wasm deleted here, making the shared cache build-order
+            // dependent.
+            let hash = rest.strip_prefix("component_").unwrap_or(rest);
+            if !hash.is_empty() && hash.bytes().all(|b| b.is_ascii_hexdigit()) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }

@@ -1149,8 +1149,13 @@ impl TestServer {
 async fn deploy_local_wasm_to_empty_server() {
     let server = TestServer::start_empty(test_addr!(78)).await;
 
-    let toml_path = get_workspace_dir().join("obelisk-testing-wasm-local.toml");
-    let deployment_id = server.grpc_upload_and_submit_manifest(&toml_path).await;
+    let fixture = crate::command::test_support::target_aware_deployment_fixture(
+        &get_workspace_dir(),
+        "obelisk-testing-wasm-local.toml",
+    )
+    .await
+    .unwrap();
+    let deployment_id = server.grpc_upload_and_submit_manifest(fixture.path()).await;
     server.grpc_switch_hot_redeploy(deployment_id).await;
 
     // The WASM components from the manifest are now live.
