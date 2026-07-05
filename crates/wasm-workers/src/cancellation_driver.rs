@@ -21,7 +21,7 @@ use concepts::{
     storage::{
         self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, DbConnection,
         DbErrorRead, DbErrorWrite, DbPool, ExecutionLog, ExecutionRequest, HistoryEvent,
-        JoinSetRequest, PendingState, PendingStateCancelling,
+        JoinSetRequest, PendingState, PendingStateCancelling, Version,
     },
     time::{ClockFn, Sleep},
 };
@@ -150,7 +150,7 @@ async fn activity_finish_if_expired(
     {
         return Ok(());
     }
-    append_finish_cancelled(conn, log, now).await?;
+    append_finish_cancelled(conn, log, Vec::new(), now).await?;
     Ok(())
 }
 
@@ -231,9 +231,37 @@ async fn close_workflow_step(
     }
 
     if all_responded {
-        append_finish_cancelled(conn, log, now).await?;
+        // Pair each response driven during cancellation with a synthetic closing
+        // `JoinNext` (one per still-open member), mirroring a worker-run close so the
+        // UI/API can zip responses to `JoinNext`s positionally. `reconstruct` already
+        // consumed responses matched by pre-existing awaits, so the members left open
+        // are exactly the unpaired ones.
+        let closing_join_nexts = build_closing_join_nexts(&fold, now);
+        append_finish_cancelled(conn, log, closing_join_nexts, now).await?;
     }
     Ok(())
+}
+
+/// One closing `JoinNext` per still-open join-set member, matching the per-member
+/// count a worker-run close appends so responses pair 1:1.
+fn build_closing_join_nexts(fold: &JoinSetFold, now: DateTime<Utc>) -> Vec<AppendRequest> {
+    let mut reqs = Vec::new();
+    for (join_set_id, members) in fold.open_join_sets() {
+        for _ in 0..members.len() {
+            reqs.push(AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id: join_set_id.clone(),
+                        run_expires_at: now,
+                        requested_ffqn: None,
+                        closing: true,
+                    },
+                },
+            });
+        }
+    }
+    reqs
 }
 
 async fn resolve_child_component_types(
@@ -318,10 +346,14 @@ async fn signal_cancellable_child_workflow(
     }
 }
 
-/// Append `Finished(Cancelled)`, responding to the parent if this is a child.
+/// Append the synthetic closing `JoinNext`s followed by `Finished(Cancelled)` in a
+/// single atomic batch, responding to the parent if this is a child. Batching keeps
+/// the terminal transition all-or-nothing: a partial write would leave the row still
+/// `Cancelling` and the next tick would append the `JoinNext`s again.
 async fn append_finish_cancelled(
     conn: &dyn DbConnection,
     log: &ExecutionLog,
+    closing_join_nexts: Vec<AppendRequest>,
     now: DateTime<Utc>,
 ) -> Result<(), DbErrorWrite> {
     let retval = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
@@ -329,21 +361,28 @@ async fn append_finish_cancelled(
         kind: ExecutionFailureKind::Cancelled,
         detail: None,
     });
-    let finished_version = log.next_version.clone();
-    let finished_req = AppendRequest {
+    let batch_start_version = log.next_version.clone();
+    // `Finished` is appended after the closing `JoinNext`s, so the parent response
+    // points at that later version.
+    let finished_version = Version(
+        batch_start_version.0
+            + u32::try_from(closing_join_nexts.len()).expect("open member count fits in u32"),
+    );
+    let mut batch = closing_join_nexts;
+    batch.push(AppendRequest {
         created_at: now,
         event: ExecutionRequest::Finished {
             retval: retval.clone(),
             http_client_traces: None,
         },
-    };
+    });
     if let ExecutionId::Derived(derived) = &log.execution_id {
         let (parent_execution_id, join_set_id) = derived.split_to_parts();
         conn.append_batch_respond_to_parent(
             AppendEventsToExecution {
                 execution_id: log.execution_id.clone(),
-                version: finished_version.clone(),
-                batch: vec![finished_req],
+                version: batch_start_version,
+                batch,
             },
             AppendResponseToExecution {
                 parent_execution_id,
@@ -357,7 +396,7 @@ async fn append_finish_cancelled(
         )
         .await?;
     } else {
-        conn.append(log.execution_id.clone(), finished_version, finished_req)
+        conn.append_batch(now, batch, log.execution_id.clone(), batch_start_version)
             .await?;
     }
     debug!(execution_id = %log.execution_id, "Cancellation finished");
@@ -493,6 +532,147 @@ mod tests {
                 "{id} should be cancelled"
             );
         }
+        assert!(conn.get_cancelling(10).await.unwrap().is_empty());
+        drop(conn);
+        db_close.close().await;
+    }
+
+    /// A cancelling workflow with an unawaited join-set member gets a synthetic
+    /// closing `JoinNext` appended alongside `Finished(Cancelled)`, so every response
+    /// driven during cancellation pairs 1:1 with a `JoinNext` (what the UI zips on).
+    #[tokio::test]
+    async fn driver_appends_closing_join_next_for_unawaited_member() {
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let conn = db_pool.connection().await.unwrap();
+        let cancel_registry = CancelRegistry::new();
+        let now = sim_clock.now();
+
+        let create = |execution_id: ExecutionId| CreateRequest {
+            created_at: now,
+            execution_id,
+            ffqn: CANCELLABLE_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: now,
+            component_id: ComponentId::dummy_workflow(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        };
+
+        // Parent with two cancellable children in one join set, awaiting only the
+        // first: the second is unawaited, so its Cancelled response has no `JoinNext`.
+        let parent_id = ExecutionId::generate();
+        let mut version = conn.create(create(parent_id.clone())).await.unwrap();
+        let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("js")).unwrap();
+        version = conn
+            .append(
+                parent_id.clone(),
+                version,
+                AppendRequest {
+                    created_at: now,
+                    event: ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::JoinSetCreate {
+                            join_set_id: join_set_id.clone(),
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let child_ids = [
+            parent_id.next_level(&join_set_id),
+            parent_id.next_level(&join_set_id).get_incremented(),
+        ];
+        for child_id in &child_ids {
+            version = conn
+                .append(
+                    parent_id.clone(),
+                    version,
+                    AppendRequest {
+                        created_at: now,
+                        event: ExecutionRequest::HistoryEvent {
+                            event: HistoryEvent::JoinSetRequest {
+                                join_set_id: join_set_id.clone(),
+                                request: JoinSetRequest::ChildExecutionRequest {
+                                    child_execution_id: child_id.clone(),
+                                    target_ffqn: CANCELLABLE_FFQN,
+                                    params: Params::empty(),
+                                    result: Ok(()),
+                                },
+                            },
+                        },
+                    },
+                )
+                .await
+                .unwrap();
+            conn.create(create(ExecutionId::Derived(child_id.clone())))
+                .await
+                .unwrap();
+        }
+        // Await only the first child.
+        conn.append(
+            parent_id.clone(),
+            version,
+            AppendRequest {
+                created_at: now,
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id: join_set_id.clone(),
+                        run_expires_at: now,
+                        closing: false,
+                        requested_ffqn: Some(CANCELLABLE_FFQN),
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+        conn.cancel_workflow(&parent_id, now).await.unwrap();
+
+        let mut cancellation_requested = HashSet::new();
+        for _ in 0..10 {
+            tick(
+                conn.as_ref(),
+                &cancel_registry,
+                now,
+                10,
+                &mut cancellation_requested,
+            )
+            .await;
+        }
+
+        let log = conn.get(&parent_id).await.unwrap();
+        assert_matches::assert_matches!(log.pending_state, PendingState::Finished(_));
+        assert_matches::assert_matches!(
+            log.as_finished_result(),
+            Some(SupportedFunctionReturnValue::ExecutionFailure(
+                FinishedExecutionFailure {
+                    kind: ExecutionFailureKind::Cancelled,
+                    ..
+                }
+            ))
+        );
+
+        // Both children responded, and each response pairs with a `JoinNext`: the
+        // pre-existing `closing:false` await plus one synthetic `closing:true`.
+        let join_next_count = log
+            .event_history()
+            .filter(|(event, _)| matches!(event, HistoryEvent::JoinNext { .. }))
+            .count();
+        let closing_join_next_count = log
+            .event_history()
+            .filter(|(event, _)| matches!(event, HistoryEvent::JoinNext { closing: true, .. }))
+            .count();
+        assert_eq!(2, log.responses.len(), "both children responded");
+        assert_eq!(
+            2, join_next_count,
+            "one JoinNext per response for UI pairing"
+        );
+        assert_eq!(1, closing_join_next_count, "one synthetic closing JoinNext");
+
         assert!(conn.get_cancelling(10).await.unwrap().is_empty());
         drop(conn);
         db_close.close().await;
