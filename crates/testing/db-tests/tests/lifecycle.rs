@@ -2664,7 +2664,7 @@ async fn cannot_cancel_locked_workflow_directly(database: Database) {
         .unwrap_err();
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
     assert_eq!(
-        "cannot append CancellationRequested event on a locked or paused workflow; use cancel_workflow",
+        "cannot append CancellationRequested event on a locked workflow; use cancel_workflow",
         reason.as_ref()
     );
 
@@ -2773,7 +2773,9 @@ async fn cancel_activity_on_paused_execution_requests_cancellation(database: Dat
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn cannot_cancel_paused_workflow_directly(database: Database) {
+async fn cancellation_requested_on_paused_workflow_should_keep_underlying_state(
+    database: Database,
+) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2808,7 +2810,7 @@ async fn cannot_cancel_paused_workflow_directly(database: Database) {
         .await
         .unwrap();
 
-    let err = db_connection
+    db_connection
         .append(
             execution_id.clone(),
             version,
@@ -2818,11 +2820,13 @@ async fn cannot_cancel_paused_workflow_directly(database: Database) {
             },
         )
         .await
-        .unwrap_err();
-    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
-    assert_eq!(
-        "cannot append CancellationRequested event on a locked or paused workflow; use cancel_workflow",
-        reason.as_ref()
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    // Cancel supersedes pause: cancelling, not paused.
+    assert_matches!(
+        log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
     );
 
     drop(db_connection);
@@ -3012,7 +3016,7 @@ async fn cancel_workflow_from_locked_appends_unlocked_first(database: Database) 
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn cancel_workflow_from_paused_appends_unpaused_first(database: Database) {
+async fn cancel_workflow_from_paused_should_keep_underlying_state(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -3043,14 +3047,14 @@ async fn cancel_workflow_from_paused_appends_unpaused_first(database: Database) 
         log.pending_state,
         PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
     );
-    // ..., Unpaused, CancellationRequested
+    // ..., Paused, CancellationRequested (no Unpaused: paused executions are never running)
     assert_matches!(
         log.last_event().event,
         ExecutionRequest::CancellationRequested
     );
     assert_matches!(
         log.events[log.events.len() - 2].event,
-        ExecutionRequest::Unpaused
+        ExecutionRequest::Paused
     );
 
     drop(db_connection);

@@ -1310,7 +1310,7 @@ async fn get_combined_state(
     CombinedState::new(dto, corresponding_version).map_err(DbErrorRead::from)
 }
 
-/// Shared body of `cancel_workflow` / `request_cancellation`: release any lock/pause
+/// Shared body of `cancel_workflow` / `request_cancellation`: release any lock
 /// then append `CancellationRequested`, and commit.
 async fn apply_cancellation_plan(
     tx: deadpool_postgres::Transaction<'_>,
@@ -1319,10 +1319,10 @@ async fn apply_cancellation_plan(
     combined_state: &CombinedState,
     plan: CancelWorkflowPlan,
 ) -> Result<CancelOutcome, DbErrorWrite> {
-    let (unlock, unpause) = match plan {
+    let unlock = match plan {
         CancelWorkflowPlan::AlreadyFinished => return Ok(CancelOutcome::AlreadyFinished),
         CancelWorkflowPlan::AlreadyCancelling => return Ok(CancelOutcome::AlreadyCancelling),
-        CancelWorkflowPlan::Proceed { unlock, unpause } => (unlock, unpause),
+        CancelWorkflowPlan::Proceed { unlock } => unlock,
     };
     let mut version = combined_state.get_next_version_assert_not_finished();
     if unlock {
@@ -1335,17 +1335,6 @@ async fn apply_cancellation_plan(
                     unlocked_at: cancelled_at, // does not matter, about to append `CancellationRequested` in same tx.
                     reason: "cancelling".into(),
                 }),
-            },
-            version,
-        )
-        .await?;
-    } else if unpause {
-        (version, _) = append(
-            &tx,
-            execution_id,
-            AppendRequest {
-                created_at: cancelled_at,
-                event: ExecutionRequest::Unpaused,
             },
             version,
         )
@@ -2624,18 +2613,16 @@ async fn append(
                 PendingState::Finished { .. } => {
                     unreachable!("handled above");
                 }
-                // Paused activities are guaranteed not to be running.
-                PendingState::Locked(..) | PendingState::Paused(..)
+                PendingState::Locked(..)
                     if combined_state
                         .execution_with_state
                         .component_type
                         .is_activity() => {}
-                // Locked and paused workflows must first be released
-                // (`Unlocked` / `Unpaused`) by `cancel_workflow`.
-                PendingState::Locked(..) | PendingState::Paused(..) => {
+                // Locked workflows must first be released (`Unlocked`) by `cancel_workflow`.
+                PendingState::Locked(..) => {
                     return Err(DbErrorWriteNonRetriable::IllegalState {
                         reason:
-                            "cannot append CancellationRequested event on a locked or paused workflow; use cancel_workflow"
+                            "cannot append CancellationRequested event on a locked workflow; use cancel_workflow"
                                 .into(),
                         context: SpanTrace::capture(),
                         source: None,
@@ -2652,7 +2639,10 @@ async fn append(
                     }
                     .into());
                 }
-                PendingState::PendingAt(..) | PendingState::BlockedByJoinSet(..) => {}
+                // Paused executions are guaranteed not to be running.
+                PendingState::PendingAt(..)
+                | PendingState::BlockedByJoinSet(..)
+                | PendingState::Paused(..) => {}
             }
             let next_version =
                 update_state_cancelling(tx, execution_id, &appending_version).await?;

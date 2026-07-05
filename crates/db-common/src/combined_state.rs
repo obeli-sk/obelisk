@@ -53,12 +53,8 @@ pub struct CombinedState {
 pub enum CancelWorkflowPlan {
     AlreadyFinished,
     AlreadyCancelling,
-    /// Release the current lock/pause (`unlock`/`unpause` are mutually exclusive)
-    /// before appending `CancellationRequested`.
-    Proceed {
-        unlock: bool,
-        unpause: bool,
-    },
+    /// Release the current lock before appending `CancellationRequested`.
+    Proceed { unlock: bool },
 }
 
 impl CombinedState {
@@ -81,8 +77,9 @@ impl CombinedState {
     /// Decide how a cancellation should reach the cancelling state, without the
     /// `is_cancellable` guard. Used by the worker join-set close and the
     /// cancellation driver, which have already classified the target as cancellable.
-    /// A [`PendingState::Locked`]/[`PendingState::Paused`] execution must first be
-    /// released so `cancelling` never coexists with a lock or pause.
+    /// A [`PendingState::Locked`] workflow must first be released so `cancelling`
+    /// never coexists with a lock; paused executions are never running, so pause
+    /// needs no release.
     #[must_use]
     pub fn plan_request_cancellation(&self) -> CancelWorkflowPlan {
         match &self.execution_with_state.pending_state {
@@ -90,7 +87,6 @@ impl CombinedState {
             PendingState::Cancelling(_) => CancelWorkflowPlan::AlreadyCancelling,
             pending_state => CancelWorkflowPlan::Proceed {
                 unlock: matches!(pending_state, PendingState::Locked(_)),
-                unpause: matches!(pending_state, PendingState::Paused(_)),
             },
         }
     }

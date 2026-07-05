@@ -456,11 +456,11 @@ pub enum ExecutionRequest {
     /// appends `Finished(Cancelled)`.
     ///
     /// State transition semantics (mirrors [`ExecutionRequest::Paused`]):
-    /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set
-    ///   `lifecycle = cancelling`, underlying state unchanged.
-    /// - [`PendingState::Locked`] and [`PendingState::Paused`] are accepted for
-    ///   activities (a paused activity is guaranteed not to be running) and rejected
-    ///   for workflows; workflows must first be released by `cancel_workflow`.
+    /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] /
+    ///   [`PendingState::Paused`] set `lifecycle = cancelling`, underlying state
+    ///   unchanged (a paused execution is guaranteed not to be running).
+    /// - [`PendingState::Locked`] is accepted for activities and rejected for
+    ///   workflows; workflows must first be released by `cancel_workflow`.
     /// - [`PendingState::Finished`] is rejected (already terminal).
     #[display("CancellationRequested")]
     CancellationRequested,
