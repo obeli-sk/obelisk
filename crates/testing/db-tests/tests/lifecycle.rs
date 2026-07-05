@@ -2618,7 +2618,9 @@ async fn cancellation_requested_from_pending_at_should_keep_underlying_state(dat
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn cannot_cancel_locked_workflow_directly(database: Database) {
+async fn cancellation_requested_on_locked_workflow_should_keep_underlying_state(
+    database: Database,
+) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2641,17 +2643,18 @@ async fn cannot_cancel_locked_workflow_directly(database: Database) {
         })
         .await
         .unwrap();
+    let lock_expires_at = sim_clock.now() + Duration::from_secs(30);
     lock(
         db_connection.as_ref(),
         &execution_id,
         &sim_clock,
         ExecutorId::generate(),
-        sim_clock.now() + Duration::from_secs(30),
+        lock_expires_at,
         RunId::generate(),
     )
     .await;
 
-    let err = db_connection
+    db_connection
         .append(
             execution_id.clone(),
             Version::new(2),
@@ -2661,12 +2664,14 @@ async fn cannot_cancel_locked_workflow_directly(database: Database) {
             },
         )
         .await
-        .unwrap_err();
-    let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
-    assert_eq!(
-        "cannot append CancellationRequested event on a locked workflow; use cancel_workflow",
-        reason.as_ref()
+        .unwrap();
+
+    let log = db_connection.get(&execution_id).await.unwrap();
+    let locked = assert_matches!(
+        &log.pending_state,
+        PendingState::Cancelling(PendingStateSuspended::Locked(locked)) => locked
     );
+    assert_eq!(lock_expires_at, locked.lock_expires_at);
 
     drop(db_connection);
     db_close.close().await;
@@ -2959,7 +2964,7 @@ async fn cancel_workflow_from_pending_at(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn cancel_workflow_from_locked_appends_unlocked_first(database: Database) {
+async fn cancel_workflow_from_locked_should_keep_underlying_state(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
@@ -2995,18 +3000,19 @@ async fn cancel_workflow_from_locked_appends_unlocked_first(database: Database) 
     assert_eq!(CancelOutcome::Cancelled, outcome);
 
     let log = db_connection.get(&execution_id).await.unwrap();
+    // The lock is kept; the running workflow is fenced by the version bump.
     assert_matches!(
         log.pending_state,
-        PendingState::Cancelling(PendingStateSuspended::PendingAt(_))
+        PendingState::Cancelling(PendingStateSuspended::Locked(_))
     );
-    // ..., Unlocked, CancellationRequested
+    // ..., Locked, CancellationRequested
     assert_matches!(
         log.last_event().event,
         ExecutionRequest::CancellationRequested
     );
     assert_matches!(
         log.events[log.events.len() - 2].event,
-        ExecutionRequest::Unlocked(Unlocked { ref reason, .. }) if reason.as_ref() == "cancelling"
+        ExecutionRequest::Locked(_)
     );
 
     drop(db_connection);

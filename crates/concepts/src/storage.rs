@@ -456,11 +456,10 @@ pub enum ExecutionRequest {
     /// appends `Finished(Cancelled)`.
     ///
     /// State transition semantics (mirrors [`ExecutionRequest::Paused`]):
-    /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] /
-    ///   [`PendingState::Paused`] set `lifecycle = cancelling`, underlying state
-    ///   unchanged (a paused execution is guaranteed not to be running).
-    /// - [`PendingState::Locked`] is accepted for activities and rejected for
-    ///   workflows; workflows must first be released by `cancel_workflow`.
+    /// - Every non-terminal state sets `lifecycle = cancelling`, underlying state
+    ///   unchanged. A paused execution is never running; a locked activity keeps
+    ///   its lock until teardown or lease expiry; a locked workflow's run is
+    ///   fenced by this event's version bump.
     /// - [`PendingState::Finished`] is rejected (already terminal).
     #[display("CancellationRequested")]
     CancellationRequested,
@@ -2621,8 +2620,9 @@ pub struct PendingStateBlockedByJoinSet {
 
 /// Underlying runnable state of a paused or cancelling execution.
 ///
-/// Pausing a locked execution must first append `Unlocked`; cancelling a running
-/// activity keeps the lock until the owner confirms teardown or the lease expires.
+/// Pausing a locked execution must first append `Unlocked`. Cancelling keeps any
+/// lock: a running activity holds it until the owner confirms teardown or the lease
+/// expires, a running workflow is fenced by the cancellation's version bump.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub enum PendingStateSuspended {
     #[display("Locked({_0})")]
