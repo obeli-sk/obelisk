@@ -25,7 +25,7 @@ use concepts::{
     },
     time::{ClockFn, Sleep},
 };
-use db_common::{JoinSetFold, JoinSetFoldError, JoinSetResponseId};
+use db_common::{JoinSetOpenTracker, JoinSetOpenTrackerError, JoinSetResponseId};
 use executor::AbortOnDropHandle;
 use std::{collections::HashMap, collections::HashSet, sync::Arc, time::Duration};
 use tracing::{Instrument, debug, info_span, warn};
@@ -36,8 +36,8 @@ enum CloseStepError {
     Read(#[from] DbErrorRead),
     #[error(transparent)]
     Write(#[from] DbErrorWrite),
-    #[error("fold reconstruction failed: {0}")]
-    Fold(#[from] JoinSetFoldError),
+    #[error("open join-set reconstruction failed: {0}")]
+    OpenTracker(#[from] JoinSetOpenTrackerError),
 }
 
 pub struct CancellationDriver;
@@ -177,7 +177,7 @@ async fn close_workflow_step(
     // strand it as a permanent await barrier.
     let child_component_types = resolve_child_component_types(conn, log).await?;
 
-    let fold = JoinSetFold::reconstruct(
+    let tracker = JoinSetOpenTracker::reconstruct(
         log.event_history().map(|(event, _version)| event),
         responses,
         |child_id| {
@@ -194,7 +194,7 @@ async fn close_workflow_step(
     let mut all_responded = true;
     let mut activity_and_delay_ids = Vec::new();
     let mut cancellable_child_ids = Vec::new();
-    for members in fold.open_join_sets().values() {
+    for members in tracker.open_join_sets().values() {
         for (response_id, member) in members {
             if responded.contains(response_id) {
                 // Response landed: this child/delay is done, drop it from the
@@ -236,7 +236,7 @@ async fn close_workflow_step(
         // UI/API can zip responses to `JoinNext`s positionally. `reconstruct` already
         // consumed responses matched by pre-existing awaits, so the members left open
         // are exactly the unpaired ones.
-        let closing_join_nexts = build_closing_join_nexts(&fold, now);
+        let closing_join_nexts = build_closing_join_nexts(&tracker, now);
         append_finish_cancelled(conn, log, closing_join_nexts, now).await?;
     }
     Ok(())
@@ -244,9 +244,12 @@ async fn close_workflow_step(
 
 /// One closing `JoinNext` per still-open join-set member, matching the per-member
 /// count a worker-run close appends so responses pair 1:1.
-fn build_closing_join_nexts(fold: &JoinSetFold, now: DateTime<Utc>) -> Vec<AppendRequest> {
+fn build_closing_join_nexts(
+    tracker: &JoinSetOpenTracker,
+    now: DateTime<Utc>,
+) -> Vec<AppendRequest> {
     let mut reqs = Vec::new();
-    for (join_set_id, members) in fold.open_join_sets() {
+    for (join_set_id, members) in tracker.open_join_sets() {
         for _ in 0..members.len() {
             reqs.push(AppendRequest {
                 created_at: now,

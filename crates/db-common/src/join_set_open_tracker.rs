@@ -56,12 +56,12 @@ impl JoinSetMember {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct JoinSetFold {
+pub struct JoinSetOpenTracker {
     open_join_sets: IndexMap<JoinSetId, IndexMap<JoinSetResponseId, JoinSetMember>>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum JoinSetFoldError {
+pub enum JoinSetOpenTrackerError {
     #[error("join set already exists: `{0}`")]
     JoinSetAlreadyExists(JoinSetId),
     #[error("join set is not open: `{0}`")]
@@ -73,14 +73,14 @@ pub enum JoinSetFoldError {
     },
 }
 
-impl JoinSetFold {
+impl JoinSetOpenTracker {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Reconstruct the open join sets from a persisted execution log, for the
-    /// cancellation driver (which cannot replay WASM). Folds the history events,
+    /// cancellation driver (which cannot replay WASM). Walks the history events,
     /// pairing each consuming `JoinNext` with the next response of its join set in
     /// cursor order. `child_component_type` classifies each child request
     /// (activity vs workflow) from the log. Members left in the result are the
@@ -89,7 +89,7 @@ impl JoinSetFold {
         history: impl IntoIterator<Item = HistoryEvent>,
         responses: impl IntoIterator<Item = (JoinSetId, JoinSetResponseId)>,
         mut child_component_type: impl FnMut(&ExecutionIdDerived) -> ComponentType,
-    ) -> Result<JoinSetFold, JoinSetFoldError> {
+    ) -> Result<JoinSetOpenTracker, JoinSetOpenTrackerError> {
         // Responses per join set in cursor order, plus how many were consumed.
         let mut per_join_set: HashMap<JoinSetId, (Vec<JoinSetResponseId>, usize)> = HashMap::new();
         for (join_set_id, response_id) in responses {
@@ -99,10 +99,12 @@ impl JoinSetFold {
                 .0
                 .push(response_id);
         }
-        let mut fold = JoinSetFold::new();
+        let mut tracker = JoinSetOpenTracker::new();
         for event in history {
             match event {
-                HistoryEvent::JoinSetCreate { join_set_id } => fold.create_join_set(join_set_id)?,
+                HistoryEvent::JoinSetCreate { join_set_id } => {
+                    tracker.create_join_set(join_set_id)?
+                }
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request:
@@ -114,7 +116,7 @@ impl JoinSetFold {
                         },
                 } => {
                     let component_type = child_component_type(&child_execution_id);
-                    fold.insert_child(
+                    tracker.insert_child(
                         &join_set_id,
                         child_execution_id,
                         component_type,
@@ -124,7 +126,7 @@ impl JoinSetFold {
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::DelayRequest { delay_id, .. },
-                } => fold.insert_delay(&join_set_id, delay_id)?,
+                } => tracker.insert_delay(&join_set_id, delay_id)?,
                 // A worker close appends one closing `JoinNext` per member; the first
                 // drops the whole set, the rest are no-ops.
                 HistoryEvent::JoinNext {
@@ -132,7 +134,7 @@ impl JoinSetFold {
                     closing: true,
                     ..
                 } => {
-                    let _ = fold.close_join_set(&join_set_id);
+                    let _ = tracker.close_join_set(&join_set_id);
                 }
                 HistoryEvent::JoinNext {
                     join_set_id,
@@ -146,14 +148,14 @@ impl JoinSetFold {
                     if let Some((responses, cursor)) = per_join_set.get_mut(&join_set_id)
                         && let Some(response_id) = responses.get(*cursor)
                     {
-                        fold.remove_response(&join_set_id, response_id)?;
+                        tracker.remove_response(&join_set_id, response_id)?;
                         *cursor += 1;
                     }
                 }
                 _ => {}
             }
         }
-        Ok(fold)
+        Ok(tracker)
     }
 
     #[must_use]
@@ -163,12 +165,15 @@ impl JoinSetFold {
         &self.open_join_sets
     }
 
-    pub fn create_join_set(&mut self, join_set_id: JoinSetId) -> Result<(), JoinSetFoldError> {
+    pub fn create_join_set(
+        &mut self,
+        join_set_id: JoinSetId,
+    ) -> Result<(), JoinSetOpenTrackerError> {
         let prev = self
             .open_join_sets
             .insert(join_set_id.clone(), IndexMap::new());
         if prev.is_some() {
-            Err(JoinSetFoldError::JoinSetAlreadyExists(join_set_id))
+            Err(JoinSetOpenTrackerError::JoinSetAlreadyExists(join_set_id))
         } else {
             Ok(())
         }
@@ -177,10 +182,10 @@ impl JoinSetFold {
     pub fn close_join_set(
         &mut self,
         join_set_id: &JoinSetId,
-    ) -> Result<IndexMap<JoinSetResponseId, JoinSetMember>, JoinSetFoldError> {
+    ) -> Result<IndexMap<JoinSetResponseId, JoinSetMember>, JoinSetOpenTrackerError> {
         self.open_join_sets
             .shift_remove(join_set_id)
-            .ok_or_else(|| JoinSetFoldError::JoinSetNotOpen(join_set_id.clone()))
+            .ok_or_else(|| JoinSetOpenTrackerError::JoinSetNotOpen(join_set_id.clone()))
     }
 
     pub fn insert_child(
@@ -189,7 +194,7 @@ impl JoinSetFold {
         child_execution_id: ExecutionIdDerived,
         component_type: ComponentType,
         target_ffqn: FunctionFqn,
-    ) -> Result<(), JoinSetFoldError> {
+    ) -> Result<(), JoinSetOpenTrackerError> {
         self.insert_member(
             join_set_id,
             JoinSetResponseId::ChildExecutionId(child_execution_id),
@@ -204,7 +209,7 @@ impl JoinSetFold {
         &mut self,
         join_set_id: &JoinSetId,
         delay_id: DelayId,
-    ) -> Result<(), JoinSetFoldError> {
+    ) -> Result<(), JoinSetOpenTrackerError> {
         self.insert_member(
             join_set_id,
             JoinSetResponseId::DelayId(delay_id),
@@ -216,12 +221,12 @@ impl JoinSetFold {
         &mut self,
         join_set_id: &JoinSetId,
         response_id: &JoinSetResponseId,
-    ) -> Result<JoinSetMember, JoinSetFoldError> {
+    ) -> Result<JoinSetMember, JoinSetOpenTrackerError> {
         self.open_join_sets
             .get_mut(join_set_id)
-            .ok_or_else(|| JoinSetFoldError::JoinSetNotOpen(join_set_id.clone()))?
+            .ok_or_else(|| JoinSetOpenTrackerError::JoinSetNotOpen(join_set_id.clone()))?
             .shift_remove(response_id)
-            .ok_or_else(|| JoinSetFoldError::ResponseNotPresent {
+            .ok_or_else(|| JoinSetOpenTrackerError::ResponseNotPresent {
                 join_set_id: join_set_id.clone(),
                 response_id: response_id.clone(),
             })
@@ -233,7 +238,7 @@ impl JoinSetFold {
         event: &concepts::storage::HistoryEvent,
         child_component_type: Option<ComponentType>,
         consumed_response: Option<&JoinSetResponse>,
-    ) -> Result<(), JoinSetFoldError> {
+    ) -> Result<(), JoinSetOpenTrackerError> {
         use concepts::storage::{HistoryEvent, JoinSetRequest};
         match event {
             HistoryEvent::JoinSetCreate { join_set_id } => {
@@ -292,10 +297,10 @@ impl JoinSetFold {
         join_set_id: &JoinSetId,
         response_id: JoinSetResponseId,
         member: JoinSetMember,
-    ) -> Result<(), JoinSetFoldError> {
+    ) -> Result<(), JoinSetOpenTrackerError> {
         self.open_join_sets
             .get_mut(join_set_id)
-            .ok_or_else(|| JoinSetFoldError::JoinSetNotOpen(join_set_id.clone()))?
+            .ok_or_else(|| JoinSetOpenTrackerError::JoinSetNotOpen(join_set_id.clone()))?
             .insert(response_id, member);
         Ok(())
     }
@@ -321,51 +326,54 @@ mod tests {
     }
 
     #[test]
-    fn fold_tracks_open_join_set_members() {
+    fn tracker_tracks_open_join_set_members() {
         let join_set_id = join_set_id();
         let child_id = child_id(&join_set_id, 1);
         let delay_id = delay_id(&join_set_id, 2);
         let ffqn = FunctionFqn::new_static("testing:integration/workflow-add", "add-workflow");
-        let mut fold = JoinSetFold::new();
+        let mut tracker = JoinSetOpenTracker::new();
 
-        fold.apply_history_event(
-            &HistoryEvent::JoinSetCreate {
-                join_set_id: join_set_id.clone(),
-            },
-            None,
-            None,
-        )
-        .unwrap();
-        fold.apply_history_event(
-            &HistoryEvent::JoinSetRequest {
-                join_set_id: join_set_id.clone(),
-                request: JoinSetRequest::ChildExecutionRequest {
-                    child_execution_id: child_id.clone(),
-                    target_ffqn: ffqn.clone(),
-                    params: Params::empty(),
-                    result: Ok(()),
+        tracker
+            .apply_history_event(
+                &HistoryEvent::JoinSetCreate {
+                    join_set_id: join_set_id.clone(),
                 },
-            },
-            Some(ComponentType::Workflow),
-            None,
-        )
-        .unwrap();
-        fold.apply_history_event(
-            &HistoryEvent::JoinSetRequest {
-                join_set_id: join_set_id.clone(),
-                request: JoinSetRequest::DelayRequest {
-                    delay_id: delay_id.clone(),
-                    expires_at: chrono::DateTime::UNIX_EPOCH,
-                    schedule_at: concepts::storage::HistoryEventScheduleAt::Now,
-                    paused: false,
+                None,
+                None,
+            )
+            .unwrap();
+        tracker
+            .apply_history_event(
+                &HistoryEvent::JoinSetRequest {
+                    join_set_id: join_set_id.clone(),
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: child_id.clone(),
+                        target_ffqn: ffqn.clone(),
+                        params: Params::empty(),
+                        result: Ok(()),
+                    },
                 },
-            },
-            None,
-            None,
-        )
-        .unwrap();
+                Some(ComponentType::Workflow),
+                None,
+            )
+            .unwrap();
+        tracker
+            .apply_history_event(
+                &HistoryEvent::JoinSetRequest {
+                    join_set_id: join_set_id.clone(),
+                    request: JoinSetRequest::DelayRequest {
+                        delay_id: delay_id.clone(),
+                        expires_at: chrono::DateTime::UNIX_EPOCH,
+                        schedule_at: concepts::storage::HistoryEventScheduleAt::Now,
+                        paused: false,
+                    },
+                },
+                None,
+                None,
+            )
+            .unwrap();
 
-        let members = fold.open_join_sets().get(&join_set_id).unwrap();
+        let members = tracker.open_join_sets().get(&join_set_id).unwrap();
         assert_eq!(members.len(), 2);
         assert_eq!(
             members.get(&JoinSetResponseId::ChildExecutionId(child_id)),
@@ -381,39 +389,47 @@ mod tests {
     }
 
     #[test]
-    fn fold_removes_consumed_response_id() {
+    fn tracker_removes_consumed_response_id() {
         let join_set_id = join_set_id();
         let child_id = child_id(&join_set_id, 3);
-        let mut fold = JoinSetFold::new();
-        fold.create_join_set(join_set_id.clone()).unwrap();
-        fold.insert_child(
-            &join_set_id,
-            child_id.clone(),
-            ComponentType::Activity,
-            FunctionFqn::new_static("testing:integration/sleep", "sleep"),
-        )
-        .unwrap();
+        let mut tracker = JoinSetOpenTracker::new();
+        tracker.create_join_set(join_set_id.clone()).unwrap();
+        tracker
+            .insert_child(
+                &join_set_id,
+                child_id.clone(),
+                ComponentType::Activity,
+                FunctionFqn::new_static("testing:integration/sleep", "sleep"),
+            )
+            .unwrap();
 
-        fold.apply_history_event(
-            &HistoryEvent::JoinNext {
-                join_set_id: join_set_id.clone(),
-                run_expires_at: chrono::DateTime::UNIX_EPOCH,
-                requested_ffqn: Some(FunctionFqn::new_static(
-                    "testing:integration/other",
-                    "other",
-                )),
-                closing: false,
-            },
-            None,
-            Some(&JoinSetResponse::ChildExecutionFinished {
-                child_execution_id: child_id.clone(),
-                finished_version: concepts::storage::Version::new(2),
-                result: concepts::SUPPORTED_RETURN_VALUE_OK_EMPTY,
-            }),
-        )
-        .unwrap();
+        tracker
+            .apply_history_event(
+                &HistoryEvent::JoinNext {
+                    join_set_id: join_set_id.clone(),
+                    run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                    requested_ffqn: Some(FunctionFqn::new_static(
+                        "testing:integration/other",
+                        "other",
+                    )),
+                    closing: false,
+                },
+                None,
+                Some(&JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id: child_id.clone(),
+                    finished_version: concepts::storage::Version::new(2),
+                    result: concepts::SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                }),
+            )
+            .unwrap();
 
-        assert!(fold.open_join_sets().get(&join_set_id).unwrap().is_empty());
+        assert!(
+            tracker
+                .open_join_sets()
+                .get(&join_set_id)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -457,10 +473,11 @@ mod tests {
             JoinSetResponseId::ChildExecutionId(awaited),
         )];
 
-        let fold =
-            JoinSetFold::reconstruct(history, responses, |_| ComponentType::Workflow).unwrap();
+        let tracker =
+            JoinSetOpenTracker::reconstruct(history, responses, |_| ComponentType::Workflow)
+                .unwrap();
 
-        let members = fold.open_join_sets().get(&join_set_id).unwrap();
+        let members = tracker.open_join_sets().get(&join_set_id).unwrap();
         assert_eq!(
             members.len(),
             1,
@@ -472,35 +489,37 @@ mod tests {
     #[test]
     fn closing_join_next_removes_the_join_set() {
         let join_set_id = join_set_id();
-        let mut fold = JoinSetFold::new();
-        fold.create_join_set(join_set_id.clone()).unwrap();
-        fold.insert_delay(&join_set_id, delay_id(&join_set_id, 4))
+        let mut tracker = JoinSetOpenTracker::new();
+        tracker.create_join_set(join_set_id.clone()).unwrap();
+        tracker
+            .insert_delay(&join_set_id, delay_id(&join_set_id, 4))
             .unwrap();
 
-        fold.apply_history_event(
-            &HistoryEvent::JoinNext {
-                join_set_id: join_set_id.clone(),
-                run_expires_at: chrono::DateTime::UNIX_EPOCH,
-                requested_ffqn: None,
-                closing: true,
-            },
-            None,
-            None,
-        )
-        .unwrap();
+        tracker
+            .apply_history_event(
+                &HistoryEvent::JoinNext {
+                    join_set_id: join_set_id.clone(),
+                    run_expires_at: chrono::DateTime::UNIX_EPOCH,
+                    requested_ffqn: None,
+                    closing: true,
+                },
+                None,
+                None,
+            )
+            .unwrap();
 
-        assert!(!fold.open_join_sets().contains_key(&join_set_id));
+        assert!(!tracker.open_join_sets().contains_key(&join_set_id));
     }
 
-    /// Differential property test: `reconstruct` (the driver's log fold) must agree
-    /// with the worker's incremental `JoinSetFold` maintenance for every valid
+    /// Differential property test: `reconstruct` (the driver's log reconstruction) must agree
+    /// with the worker's incremental `JoinSetOpenTracker` maintenance for every valid
     /// execution log. The worker consumes each join set's responses in arrival
     /// (cursor) order — a plain `JoinNext` removes the returned response, an
     /// await-next `FunctionMismatch` removes the *arriving* id, both of which are
     /// the next unconsumed arrival — and a close drops the whole set. This test
     /// generates randomized-but-valid scripts, computes the expected open set with a
     /// worker-faithful FIFO model, and asserts `reconstruct` matches, guarding the
-    /// two folds against drift (the P8 "fiddly part": `JoinNext`<->response pairing,
+    /// two trackers against drift (the P8 "fiddly part": `JoinNext`<->response pairing,
     /// closing `JoinNext`s, per-join-set isolation).
     #[test]
     fn reconstruct_matches_worker_fifo_model() {
@@ -629,7 +648,7 @@ mod tests {
                 // Worker-faithful expected open set for this join set.
                 if will_close {
                     // Close drops the whole set (emit one closing JoinNext; the driver
-                    // fold treats the first as the drop and any extra as no-ops).
+                    // tracker treats the first as the drop and any extra as no-ops).
                     history.push(HistoryEvent::JoinNext {
                         join_set_id: js.clone(),
                         run_expires_at: chrono::DateTime::UNIX_EPOCH,
@@ -652,7 +671,7 @@ mod tests {
                 }
             }
 
-            let fold = JoinSetFold::reconstruct(history, responses, |cid| {
+            let tracker = JoinSetOpenTracker::reconstruct(history, responses, |cid| {
                 child_types
                     .get(cid)
                     .copied()
@@ -661,7 +680,7 @@ mod tests {
             .unwrap_or_else(|err| panic!("seed {seed}: reconstruct failed: {err}"));
 
             assert_eq!(
-                fold.open_join_sets(),
+                tracker.open_join_sets(),
                 &expected,
                 "seed {seed}: reconstruct diverged from the worker FIFO model"
             );
