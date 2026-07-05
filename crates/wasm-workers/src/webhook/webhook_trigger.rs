@@ -1099,7 +1099,8 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             | PendingState::Cancelling(PendingStateSuspended::PendingAt(state)) => {
                 ExecutionStatus::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
             }
-            PendingState::Locked(_) => ExecutionStatus::Locked,
+            PendingState::Locked(_)
+            | PendingState::Cancelling(PendingStateSuspended::Locked(_)) => ExecutionStatus::Locked,
             PendingState::BlockedByJoinSet(_)
             | PendingState::Cancelling(PendingStateSuspended::BlockedByJoinSet(_)) => {
                 ExecutionStatus::BlockedByJoinSet

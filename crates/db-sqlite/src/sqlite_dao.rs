@@ -2,8 +2,8 @@ use crate::{histograms::Histograms, sqlite_dao::conversions::to_generic_error};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionId, FunctionFqn,
-    JoinSetId, StrVariant, SupportedFunctionReturnValue,
+    ComponentId, ComponentRetryConfig, ComponentType, ContentDigest, ExecutionFailureKind,
+    ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
@@ -24,10 +24,10 @@ use concepts::{
         ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
         LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
-        RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome, Unlocked, Version,
-        VersionType,
+        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
+        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor,
+        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
+        Unlocked, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -2352,12 +2352,17 @@ impl SqlitePool {
                     PendingState::Finished { .. } => {
                         unreachable!("handled above");
                     }
-                    // Locked and Paused must first be released (`Unlocked` / `Unpaused`)
-                    // by `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+                    PendingState::Locked(..)
+                        if combined_state
+                            .execution_with_state
+                            .component_type
+                            .is_activity() => {}
+                    // Locked workflows and paused executions must first be released
+                    // (`Unlocked` / `Unpaused`) by their dedicated cancellation path.
                     PendingState::Locked(..) | PendingState::Paused(..) => {
                         return Err(DbErrorWriteNonRetriable::IllegalState {
                             reason:
-                                "cannot append CancellationRequested event unless execution is pending or blocked; use cancel_workflow"
+                                "cannot append CancellationRequested event unless execution is pending, blocked, or a locked activity; use cancel_workflow for workflows"
                                     .into(),
                             context: SpanTrace::capture(),
                             source: None,
@@ -4073,6 +4078,40 @@ impl SqlitePool {
         )?;
         Ok(CancelOutcome::Cancelled)
     }
+
+    fn apply_activity_cancellation(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+        combined_state: &CombinedState,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        match &combined_state.execution_with_state.pending_state {
+            PendingState::Finished(finished) => {
+                if finished.result_kind
+                    == PendingStateFinishedResultKind::Err(
+                        PendingStateFinishedError::ExecutionFailure(
+                            ExecutionFailureKind::Cancelled,
+                        ),
+                    )
+                {
+                    return Ok(CancelOutcome::Cancelled);
+                }
+                return Ok(CancelOutcome::AlreadyFinished);
+            }
+            PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
+            _ => {}
+        }
+        Self::append(
+            tx,
+            execution_id,
+            AppendRequest {
+                created_at: cancelled_at,
+                event: ExecutionRequest::CancellationRequested,
+            },
+            combined_state.get_next_version_assert_not_finished(),
+        )?;
+        Ok(CancelOutcome::Cancelled)
+    }
 }
 
 #[async_trait]
@@ -4548,6 +4587,29 @@ impl DbExecutor for SqlitePool {
             move |tx| Self::get_last_execution_event(tx, &execution_id),
             TxType::Other, // read only
             "get_last_execution_event",
+        )
+        .await
+    }
+
+    #[instrument(skip(self))]
+    async fn cancel_activity(
+        &self,
+        execution_id: &ExecutionId,
+        cancelled_at: DateTime<Utc>,
+    ) -> Result<CancelOutcome, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| {
+                let combined_state = Self::get_combined_state(tx, &execution_id)?;
+                SqlitePool::apply_activity_cancellation(
+                    tx,
+                    &execution_id,
+                    cancelled_at,
+                    &combined_state,
+                )
+            },
+            TxType::MultipleWrites,
+            "cancel_activity",
         )
         .await
     }

@@ -15,7 +15,7 @@ use tracing::{Instrument, debug, info, info_span};
 /// All currently running activities in this process.
 /// Activity worker tasks register themselves and listen on interruption token.
 /// Cancel RPCs and workflow workers call `cancel_activity`
-/// which writes the new state to db (no matter whether registered or not)
+/// which writes durable cancellation intent to db (no matter whether registered or not)
 /// and triggers the interruption token.
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
@@ -72,7 +72,7 @@ impl CancelRegistry {
     }
 
     /// Best-effort local interrupt for an activity currently running in this process.
-    /// Unlike `cancel_activity`, this does not write terminal cancellation state to the DB.
+    /// Unlike `cancel_activity`, this does not write cancellation intent to the DB.
     /// Noop if the execution is not an activity tracked by this registry.
     fn interrupt_running_activity(&self, execution_id: &ExecutionId) {
         let info = {

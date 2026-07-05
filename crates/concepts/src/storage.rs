@@ -5,7 +5,6 @@ use crate::ContentDigest;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
-use crate::FinishedExecutionFailure;
 use crate::FunctionExtension;
 use crate::FunctionFqn;
 use crate::FunctionMetadata;
@@ -32,7 +31,6 @@ use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::debug;
 use tracing::instrument;
 use tracing_error::SpanTrace;
 
@@ -453,16 +451,16 @@ pub enum ExecutionRequest {
     Paused,
     #[display("Unpaused")]
     Unpaused,
-    /// Requests cancellation of a cancellable workflow. Sets `lifecycle` to
-    /// `cancelling` without changing the underlying state; the cancellation driver
-    /// then closes the subtree and appends `Finished(Cancelled)`.
+    /// Requests cancellation. Sets `lifecycle` to `cancelling` without changing
+    /// the underlying state; the cancellation driver or activity owner then
+    /// appends `Finished(Cancelled)`.
     ///
     /// State transition semantics (mirrors [`ExecutionRequest::Paused`]):
     /// - [`PendingState::PendingAt`] / [`PendingState::BlockedByJoinSet`] set
     ///   `lifecycle = cancelling`, underlying state unchanged.
-    /// - [`PendingState::Locked`] and [`PendingState::Paused`] are rejected on the
-    ///   raw append path; they must first be released (`Unlocked` / `Unpaused`) by
-    ///   `cancel_workflow` so `cancelling` never coexists with a lock or pause.
+    /// - [`PendingState::Locked`] is accepted for activities and rejected for
+    ///   workflows; workflows must first be released by `cancel_workflow`.
+    /// - [`PendingState::Paused`] is rejected on the raw append path.
     /// - [`PendingState::Finished`] is rejected (already terminal).
     #[display("CancellationRequested")]
     CancellationRequested,
@@ -1274,11 +1272,12 @@ pub trait DbExecutor: Send + Sync {
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
-            let res = self.cancel_activity(execution_id, cancelled_at).await;
-            if res.is_ok() || retries == 0 {
-                return res;
+            match self.cancel_activity(execution_id, cancelled_at).await {
+                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
+                    ..
+                })) if retries > 0 => retries -= 1,
+                res => return res,
             }
-            retries -= 1;
         }
     }
 
@@ -1322,69 +1321,7 @@ pub trait DbExecutor: Send + Sync {
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
-    ) -> Result<CancelOutcome, DbErrorWrite> {
-        debug!("Determining cancellation state of {execution_id}");
-
-        let last_event = self
-            .get_last_execution_event(execution_id)
-            .await
-            .map_err(DbErrorWrite::from)?;
-        if let ExecutionRequest::Finished {
-            retval:
-                SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
-                    kind: ExecutionFailureKind::Cancelled,
-                    ..
-                }),
-            ..
-        } = last_event.event
-        {
-            return Ok(CancelOutcome::Cancelled);
-        } else if matches!(last_event.event, ExecutionRequest::Finished { .. }) {
-            debug!("Not cancelling, {execution_id} is already finished");
-            return Ok(CancelOutcome::AlreadyFinished);
-        }
-        let finished_version = last_event.version.increment();
-        let child_result =
-            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
-                reason: None,
-                kind: ExecutionFailureKind::Cancelled,
-                detail: None,
-            });
-        let cancel_request = AppendRequest {
-            created_at: cancelled_at,
-            event: ExecutionRequest::Finished {
-                retval: child_result.clone(),
-                http_client_traces: None,
-            },
-        };
-        debug!("Cancelling activity {execution_id} at {finished_version}");
-        if let ExecutionId::Derived(execution_id) = execution_id {
-            let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
-            let child_execution_id = ExecutionId::Derived(execution_id.clone());
-            self.append_batch_respond_to_parent(
-                AppendEventsToExecution {
-                    execution_id: child_execution_id,
-                    version: finished_version.clone(),
-                    batch: vec![cancel_request],
-                },
-                AppendResponseToExecution {
-                    parent_execution_id,
-                    created_at: cancelled_at,
-                    join_set_id: join_set_id.clone(),
-                    child_execution_id: execution_id.clone(),
-                    finished_version,
-                    result: child_result,
-                },
-                cancelled_at,
-            )
-            .await?;
-        } else {
-            self.append(execution_id.clone(), finished_version, cancel_request)
-                .await?;
-        }
-        debug!("Cancelled {execution_id}");
-        Ok(CancelOutcome::Cancelled)
-    }
+    ) -> Result<CancelOutcome, DbErrorWrite>;
 }
 
 pub enum AppendDelayResponseOutcome {
@@ -2638,6 +2575,10 @@ impl From<PendingState> for PendingStateMerged {
 impl PendingStateMerged {
     fn from_suspended(inner: PendingStateSuspended, lifecycle: Lifecycle) -> Self {
         match inner {
+            PendingStateSuspended::Locked(s) => PendingStateMerged::Locked {
+                state: s,
+                lifecycle,
+            },
             PendingStateSuspended::PendingAt(s) => PendingStateMerged::PendingAt {
                 state: s,
                 lifecycle,
@@ -2675,13 +2616,14 @@ pub struct PendingStateBlockedByJoinSet {
     pub closing: bool,
 }
 
-/// Underlying runnable state (`PendingAt` or `BlockedByJoinSet`) of a paused or
-/// cancelling execution.
+/// Underlying runnable state of a paused or cancelling execution.
 ///
-/// Suspending a locked execution must first append `Unlocked`, so `Locked` is
-/// never wrapped here.
+/// Pausing a locked execution must first append `Unlocked`; cancelling a running
+/// activity keeps the lock until the owner confirms teardown or the lease expires.
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub enum PendingStateSuspended {
+    #[display("Locked({_0})")]
+    Locked(PendingStateLocked),
     #[display("PendingAt({_0})")]
     PendingAt(PendingStatePendingAt),
     #[display("BlockedByJoinSet({_0})")]
