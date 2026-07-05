@@ -64,8 +64,7 @@ interface webhook-support {
         paused,
         /// Execution is waiting for child executions to complete (workflows only).
         blocked-by-join-set,
-        /// Cancellation has been requested; the execution is being torn down
-        /// (cancellable workflows only).
+        /// Cancellation has been requested; the execution is being torn down.
         cancelling,
         /// Execution has finished.
         finished(execution-status-finished),
