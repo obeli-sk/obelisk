@@ -175,7 +175,7 @@ async fn close_workflow_step(
     // A resolution failure fails the whole step (retried next tick) rather than guessing
     // a type: mis-classifying an activity as an uncancellable workflow would silently
     // strand it as a permanent await barrier.
-    let child_component_types = resolve_child_component_types(conn, &log).await?;
+    let child_component_types = resolve_child_component_types(conn, log).await?;
 
     let fold = JoinSetFold::reconstruct(
         log.event_history().map(|(event, _version)| event),

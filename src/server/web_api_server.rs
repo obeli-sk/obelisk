@@ -4172,12 +4172,8 @@ impl From<ErrorWrapper<DbErrorWriteNonRetriable>> for HttpResponse {
         let err = value.0;
         let accept = value.1;
         match err {
-            DbErrorWriteNonRetriable::ValidationFailed(reason) => HttpResponse {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                message: reason.to_string(),
-                accept,
-            },
-            DbErrorWriteNonRetriable::IllegalState { reason, .. } => HttpResponse {
+            DbErrorWriteNonRetriable::ValidationFailed(reason)
+            | DbErrorWriteNonRetriable::IllegalState { reason, .. } => HttpResponse {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 message: reason.to_string(),
                 accept,
