@@ -3924,33 +3924,10 @@ impl SqlitePool {
         paused_at: DateTime<Utc>,
     ) -> Result<Version, DbErrorWrite> {
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let appending_version = combined_state.get_next_version_fail_if_finished()?;
+        let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Pausing with {appending_version}");
-        // A running (Locked) activity cannot be paused: pausing would unlock without confirming
-        // the in-flight WASM/exec invocation has stopped, so `Paused` would not mean quiescent and
-        // an unpause could start a second run in parallel. Cancel it instead. Workflows and
-        // not-yet-running activities remain pausable.
-        if matches!(
-            combined_state.execution_with_state.pending_state,
-            PendingState::Locked(_)
-        ) && combined_state
-            .execution_with_state
-            .component_type
-            .is_activity()
-        {
-            return Err(DbErrorWriteNonRetriable::IllegalState {
-                reason: "cannot pause a running activity; cancel it instead".into(),
-                context: SpanTrace::capture(),
-                source: None,
-                loc: Location::caller(),
-            }
-            .into());
-        }
-        let next_version = if matches!(
-            combined_state.execution_with_state.pending_state,
-            PendingState::Locked(_)
-        ) {
-            let (next_version, _notifier) = Self::append(
+        if combined_state.reject_locked_activities()? {
+            (appending_version, _) = Self::append(
                 tx,
                 execution_id,
                 AppendRequest {
@@ -3962,10 +3939,7 @@ impl SqlitePool {
                 },
                 appending_version,
             )?;
-            next_version
-        } else {
-            appending_version
-        };
+        }
         let (next_version, _notifier) = Self::append(
             tx,
             execution_id,
@@ -3973,7 +3947,7 @@ impl SqlitePool {
                 created_at: paused_at,
                 event: ExecutionRequest::Paused,
             },
-            next_version,
+            appending_version,
         )?;
         Ok(next_version)
     }

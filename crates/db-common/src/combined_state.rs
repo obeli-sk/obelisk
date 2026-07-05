@@ -78,6 +78,26 @@ impl CombinedState {
         }
     }
 
+    /// `pause_execution` guard: disallow transitioning to `Paused`
+    /// if an activity can still be in-flight.
+    pub fn reject_locked_activities(&self) -> Result<bool, DbErrorWrite> {
+        let locked = matches!(
+            self.execution_with_state.pending_state,
+            PendingState::Locked(_)
+        );
+        if locked && self.execution_with_state.component_type.is_activity() {
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::IllegalState {
+                    reason: "cannot pause a running activity; cancel it instead".into(),
+                    context: SpanTrace::capture(),
+                    source: None,
+                    loc: Location::caller(),
+                },
+            ));
+        }
+        Ok(locked)
+    }
+
     /// `cancel_workflow` guard rejecting a non-cancellable target. Control-plane
     /// entrypoint only; the worker/driver paths skip it, having already classified
     /// the target as cancellable.
