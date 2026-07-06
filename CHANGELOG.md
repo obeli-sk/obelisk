@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.5](https://github.com/obeli-sk/obelisk/compare/v0.39.4...v0.39.5)
+
+This release introduces execution cancellation, enforcing the structured-concurrency guarantee that a
+child does not outlive its parent. Activities are killed mid-run (best effort). Workflows are only
+cancellable when their FFQN carries the `-cancellable` suffix. A cancelled workflow is never advanced
+again; instead, all its join sets are closed. Closing a join set cancels every activity and
+cancellable workflow it holds, awaiting any non-cancellable workflows that remain. The state is
+exposed through a `CancelExecution` gRPC call, a `CancellationRequested` log event, the `Cancelling`
+pending state, the `get-status-v2` webhook WIT, and the CLI and observability views.
+
+### Added
+
+- *(cancellation)* Execution cancellation via a first-class `Cancelling` pending state and driver:
+  `-cancellable` workflows stop being advanced, and each workflow's join sets are closed, cancelling
+  the activities and cancellable workflows they hold while awaiting any non-cancellable workflows
+  before the cancellation completes; surfaced in observability - ([2baeec2](https://github.com/obeli-sk/obelisk/commit/2baeec2cbbc3173c6f7cb41a62c9fbef56a1a816)), ([8f53bb6](https://github.com/obeli-sk/obelisk/commit/8f53bb666e532a9c8746df20e59e2c1228f917db)), ([c5e10e0](https://github.com/obeli-sk/obelisk/commit/c5e10e003ac5088e6e723f2937a9cc02d80b304b)), ([07dbda8](https://github.com/obeli-sk/obelisk/commit/07dbda807313f5a99b731174e67a861efc3c48eb))
+- *(cancellation)* `CancelExecution` gRPC surface and `cancel_workflow` control-plane entrypoint - ([2a9a8fc](https://github.com/obeli-sk/obelisk/commit/2a9a8fcea9705742fd27e169e9362b3eca4b3b8b)), ([8f58687](https://github.com/obeli-sk/obelisk/commit/8f586878f3b9c65eeafde2523c70f09733bf6592))
+- *(cancellation)* `CancellationRequested` log event, with `list_executions` state filters rendered against the execution lifecycle - ([0f47e6e](https://github.com/obeli-sk/obelisk/commit/0f47e6e29aa4a81170ea717208df8b02a0b7614a)), ([daf5906](https://github.com/obeli-sk/obelisk/commit/daf5906e6b010d1d62f2ff111dea11ad81a2cb0c))
+
+### Fixed
+
+- *(activity)* Kill a running activity before reporting its cancellation finished, so it cannot outlive its parent - ([a101faa](https://github.com/obeli-sk/obelisk/commit/a101faaa706fb4e82eaf4329b99f21bb275721e6))
+- *(activity)* Reject pausing a running activity - ([9b84024](https://github.com/obeli-sk/obelisk/commit/9b840243360f6f196debbf96b9c9f0471c0a4aea))
+- *(db)* Update deployment id only after successful auto-upgrade - ([cad7e2c](https://github.com/obeli-sk/obelisk/commit/cad7e2c867264c3834fdb3665a168861464f75d1))
+- Emit synthesized component WIT with world in root:component package - ([b951c57](https://github.com/obeli-sk/obelisk/commit/b951c57edab70888799faef6bfb58636c2ec53cd))
+
+### Changed
+
+- *(wit)* Bump obelisk_webhook to 5.3.0, adding `get-status-v2` that reports the `cancelling` state - ([3ea6afb](https://github.com/obeli-sk/obelisk/commit/3ea6afb10033c02eb31e5f5f3265bf85a0705479))
+- *(db)* Add a `seq` column to responses and use it for per-execution response cursors; replace the
+  `t_state.is_paused` boolean with a single `lifecycle` flag - ([0007f4d](https://github.com/obeli-sk/obelisk/commit/0007f4d7045eee18e16925d8a108b1900860c7e0)), ([c5109ef](https://github.com/obeli-sk/obelisk/commit/c5109ef1b68c2727ff1804ad56dc84aa8d77498e))
+- *(cli)* Without an explicit cursor, show the newest events or responses - ([68fb984](https://github.com/obeli-sk/obelisk/commit/68fb984459962eedd77bc17b825664319a548af0))
+
+
 ## [0.39.4](https://github.com/obeli-sk/obelisk/compare/v0.39.3...v0.39.4)
 
 This release hardens deployment submission and switching against cancellation, stores backtrace
