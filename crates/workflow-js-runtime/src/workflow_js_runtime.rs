@@ -67,9 +67,13 @@
 //!
 //! ## Stubbing (Mock Responses)
 //! ```js
-//! // Stub a child execution with a predetermined result
+//! // A workflow submits a stub activity execution, obtaining its execution id.
 //! const js = obelisk.createJoinSet();
 //! const execId = js.submit("ns:pkg/activity.stub_fn", [args]);
+//! // The same or another workflow can provide the result using an import:
+//! import { fooStub } from "ns:pkg-obelisk-stub/activity.stub_fn";
+//! fooStub(execId, result)
+//! // or dynamically:
 //! obelisk.stub(execId, { ok: "mocked-value" }); // or { err: "error" }
 //! ```
 //!
