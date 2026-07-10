@@ -102,10 +102,10 @@
 
 use crate::generated::obelisk::log::log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
-use crate::generated::obelisk::types::execution::{ExecutionId, Function, SubmitConfig};
+use crate::generated::obelisk::types::execution::{ExecutionId, Function};
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::webhook::webhook_support::{
-    self, ExecutionStatusFinished, ExecutionStatusV2,
+    self, ExecutionStatus, ExecutionStatusFinished,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
@@ -237,7 +237,7 @@ fn create_direct_call_proxy(
             let params_json = json_stringify(&array.into(), ctx)?;
 
             let backtrace = capture_backtrace(ctx);
-            match webhook_support::call_json(&function, &params_json, None, Some(&backtrace)) {
+            match webhook_support::call_json(&function, &params_json, Some(&backtrace)) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
                 Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
@@ -289,7 +289,6 @@ fn create_schedule_proxy(
                 schedule,
                 &function,
                 &params_json,
-                None,
                 Some(&backtrace),
             ) {
                 Ok(()) => Ok(JsValue::from(js_string!(exec_id.id))),
@@ -508,7 +507,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.schedule(executionId, ffqn, params, scheduleAt?, config?)
+    // obelisk.schedule(executionId, ffqn, params, scheduleAt?)
     let schedule_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let exec_id_str = args
             .get_or_undefined(0)
@@ -538,19 +537,12 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             ScheduleAt::Now
         };
 
-        let config = if let Some(cfg_val) = args.get(4) {
-            parse_submit_config(cfg_val, ctx)?
-        } else {
-            None
-        };
-
         let backtrace = capture_backtrace(ctx);
         match webhook_support::schedule_json(
             &exec_id,
             schedule,
             &function,
             &params_json,
-            config,
             Some(&backtrace),
         ) {
             Ok(()) => Ok(JsValue::undefined()),
@@ -577,11 +569,11 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let exec_id = ExecutionId { id: exec_id_str };
 
         let backtrace = capture_backtrace(ctx);
-        match webhook_support::get_status_v2(&exec_id, Some(&backtrace)) {
+        match webhook_support::get_status(&exec_id, Some(&backtrace)) {
             Ok(status) => {
                 let result_obj = new_object(ctx);
                 match status {
-                    ExecutionStatusV2::PendingAt(dt) => {
+                    ExecutionStatus::PendingAt(dt) => {
                         result_obj.set(
                             js_string!("status"),
                             js_string!("pendingAt"),
@@ -598,13 +590,13 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                         )?;
                         result_obj.set(js_string!("pendingAt"), dt_obj, false, ctx)?;
                     }
-                    ExecutionStatusV2::Locked => {
+                    ExecutionStatus::Locked => {
                         result_obj.set(js_string!("status"), js_string!("locked"), false, ctx)?;
                     }
-                    ExecutionStatusV2::Paused => {
+                    ExecutionStatus::Paused => {
                         result_obj.set(js_string!("status"), js_string!("paused"), false, ctx)?;
                     }
-                    ExecutionStatusV2::BlockedByJoinSet => {
+                    ExecutionStatus::BlockedByJoinSet => {
                         result_obj.set(
                             js_string!("status"),
                             js_string!("blockedByJoinSet"),
@@ -612,7 +604,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                             ctx,
                         )?;
                     }
-                    ExecutionStatusV2::Cancelling => {
+                    ExecutionStatus::Cancelling => {
                         result_obj.set(
                             js_string!("status"),
                             js_string!("cancelling"),
@@ -620,12 +612,12 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                             ctx,
                         )?;
                     }
-                    ExecutionStatusV2::Finished(finished) => {
+                    ExecutionStatus::Finished(finished) => {
                         result_obj.set(js_string!("status"), js_string!("finished"), false, ctx)?;
                         let finished_status = match finished {
                             ExecutionStatusFinished::Ok => "ok",
                             ExecutionStatusFinished::Err => "err",
-                            ExecutionStatusFinished::ExecutionFailure => "executionFailure",
+                            ExecutionStatusFinished::ExecutionFailure(_) => "executionFailure",
                         };
                         result_obj.set(
                             js_string!("finishedStatus"),
@@ -701,7 +693,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.call(ffqn, params, config?) - call child execution and wait for result
+    // obelisk.call(ffqn, params) - call child execution and wait for result
     let call_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let backtrace = capture_backtrace(ctx);
 
@@ -720,14 +712,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let params_val = args.get_or_undefined(1);
         let params_json = json_stringify(params_val, ctx)?;
 
-        let config = if let Some(cfg_val) = args.get(2) {
-            parse_submit_config(cfg_val, ctx)?
-        } else {
-            None
-        };
-
         // Call child execution and wait for result
-        match webhook_support::call_json(&function, &params_json, config, Some(&backtrace)) {
+        match webhook_support::call_json(&function, &params_json, Some(&backtrace)) {
             Ok(Ok(Some(json_str))) => {
                 let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
                 Ok(parsed)
@@ -817,68 +803,4 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
     }
 
     Ok(ScheduleAt::Now)
-}
-
-/// Parse submit config from JS value.
-fn parse_submit_config(value: &JsValue, ctx: &mut Context) -> JsResult<Option<SubmitConfig>> {
-    if value.is_undefined() || value.is_null() {
-        return Ok(None);
-    }
-
-    let obj = value
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message("config must be an object"))?;
-
-    let timeout = if let Ok(timeout_val) = obj.get(js_string!("timeout"), ctx) {
-        if !timeout_val.is_undefined() {
-            Some(parse_duration(&timeout_val, ctx)?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    Ok(Some(SubmitConfig { timeout }))
-}
-
-/// Parse duration from JS value.
-fn parse_duration(value: &JsValue, ctx: &mut Context) -> JsResult<Duration> {
-    let obj = value
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message("duration must be an object"))?;
-
-    if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx)
-        && !ms.is_undefined()
-    {
-        return Ok(Duration::Milliseconds(ms.to_u32(ctx)? as u64));
-    }
-
-    if let Ok(secs) = obj.get(js_string!("seconds"), ctx)
-        && !secs.is_undefined()
-    {
-        return Ok(Duration::Seconds(secs.to_u32(ctx)? as u64));
-    }
-
-    if let Ok(mins) = obj.get(js_string!("minutes"), ctx)
-        && !mins.is_undefined()
-    {
-        return Ok(Duration::Minutes(mins.to_u32(ctx)?));
-    }
-
-    if let Ok(hours) = obj.get(js_string!("hours"), ctx)
-        && !hours.is_undefined()
-    {
-        return Ok(Duration::Hours(hours.to_u32(ctx)?));
-    }
-
-    if let Ok(days) = obj.get(js_string!("days"), ctx)
-        && !days.is_undefined()
-    {
-        return Ok(Duration::Days(days.to_u32(ctx)?));
-    }
-
-    Err(JsNativeError::typ()
-        .with_message("duration must have milliseconds, seconds, minutes, hours, or days")
-        .into())
 }

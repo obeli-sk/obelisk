@@ -1,5 +1,6 @@
 ---
 source: crates/utils/src/wasm_tools.rs
+assertion_line: 1131
 expression: exports
 ---
 {
@@ -14,8 +15,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        "type_wrapper": "result<result<u64>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<u64>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -32,8 +33,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        "type_wrapper": "result<result<u64>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<u64>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -142,8 +143,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        "type_wrapper": "result<result<u64>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<u64>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -201,8 +202,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        "type_wrapper": "result<result<u64>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<u64>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -265,8 +266,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
+        "type_wrapper": "result<result<_, string>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<_, string>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -319,8 +320,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
+        "type_wrapper": "result<result<_, string>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<_, string>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -373,8 +374,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<record { id: string }, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<execution-id, string>>, await-next-extension-error>"
+        "type_wrapper": "result<result<record { id: string }, string>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<execution-id, string>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -427,8 +428,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
+        "type_wrapper": "result<result<_, string>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<_, string>, await-next-extension-error>"
       }
     },
     "extension": "await_next",
@@ -481,8 +482,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<_, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<_, string>>, await-next-extension-error>"
+        "type_wrapper": "result<result<_, string>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<_, string>, await-next-extension-error>"
       }
     },
     "extension": "await_next",

@@ -3,7 +3,6 @@ use crate::envvar::EnvVar;
 use crate::http_hooks::{HttpClientTracesContainer, HttpHooks};
 use crate::std_output_stream::{LogStream, StdOutput, StdOutputConfig, StdOutputConfigWithSender};
 use crate::webhook::webhook_registry::WebhookStateWatcher;
-use crate::webhook::webhook_trigger::types::obelisk::types::join_set::JoinNextError;
 use crate::webhook::webhook_trigger::types::{
     GetErrorTrappable, GetStatusErrorTrappable, ScheduleJsonErrorTrappable, TryGetErrorTrappable,
 };
@@ -17,8 +16,8 @@ use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent,
     HistoryEventScheduleAt, JoinSetRequest, LogInfoAppendRow, LogLevel, LogStreamType,
-    PendingState, PendingStateCancelling, PendingStateFinishedError,
-    PendingStateFinishedResultKind, TimeoutOutcome, Version, http_client_trace::HttpClientTrace,
+    PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome,
+    Version, http_client_trace::HttpClientTrace,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -69,11 +68,11 @@ pub(crate) mod types {
         path: "host-wit-webhook/",
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@4.2.0;
-                    import obelisk:types/execution@4.2.0;
-                    import obelisk:types/backtrace@4.2.0;
-                    import obelisk:types/join-set@4.2.0;
-                    import obelisk:webhook/webhook-support@5.3.0;
+                    import obelisk:types/time@5.0.0;
+                    import obelisk:types/execution@5.0.0;
+                    import obelisk:types/backtrace@5.0.0;
+                    import obelisk:types/join-set@5.0.0;
+                    import obelisk:webhook/webhook-support@6.0.0;
                 }",
         world: "any:any/bindings",
         imports: {
@@ -141,8 +140,22 @@ fn datetime_from_scheduled_at(
     }
 }
 
-/// Map a finished execution's `result_kind` to the WIT `execution-status-finished`
-/// (shared by `get-status` and `get-status-v2`).
+/// Map a `concepts::ExecutionFailureKind` to the webhook WIT enum.
+fn execution_failure_kind_to_wit(
+    kind: concepts::ExecutionFailureKind,
+) -> types::obelisk::types::execution::ExecutionFailureKind {
+    use concepts::ExecutionFailureKind as K;
+    use types::obelisk::types::execution::ExecutionFailureKind as Wit;
+    match kind {
+        K::TimedOut => Wit::TimedOut,
+        K::NondeterminismDetected => Wit::NondeterminismDetected,
+        K::OutOfFuel => Wit::OutOfFuel,
+        K::Cancelled => Wit::Cancelled,
+        K::Uncategorized => Wit::Uncategorized,
+    }
+}
+
+/// Map a finished execution's `result_kind` to the WIT `execution-status-finished`.
 fn finished_status_to_wit(
     result_kind: &PendingStateFinishedResultKind,
 ) -> types::obelisk::webhook::webhook_support::ExecutionStatusFinished {
@@ -152,8 +165,8 @@ fn finished_status_to_wit(
         PendingStateFinishedResultKind::Err(PendingStateFinishedError::Error) => {
             ExecutionStatusFinished::Err
         }
-        PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(_)) => {
-            ExecutionStatusFinished::ExecutionFailure
+        PendingStateFinishedResultKind::Err(PendingStateFinishedError::ExecutionFailure(kind)) => {
+            ExecutionStatusFinished::ExecutionFailure(execution_failure_kind_to_wit(*kind))
         }
     }
 }
@@ -623,6 +636,8 @@ struct WebhookEndpointCtx {
     connection_drop_watcher: watch::Receiver<()>,
     server_termination_watcher: watch::Receiver<()>,
     http_hooks: HttpHooks,
+    // Execution id of the last `call-json`, for `last-direct-call-id`.
+    last_direct_call_id: Option<ExecutionIdDerived>,
 }
 
 impl HostJoinSet for WebhookEndpointCtx {
@@ -630,18 +645,10 @@ impl HostJoinSet for WebhookEndpointCtx {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 
-    fn submit_delay(
+    fn last_id(
         &mut self,
         _self_: wasmtime::component::Resource<JoinSetId>,
-        _timeout: types::obelisk::types::time::ScheduleAt,
-    ) -> types::obelisk::types::execution::DelayId {
-        unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
-    }
-
-    fn join_next(
-        &mut self,
-        _self_: wasmtime::component::Resource<JoinSetId>,
-    ) -> Result<(types::obelisk::types::execution::ResponseId, Result<(), ()>), JoinNextError> {
+    ) -> Option<types::obelisk::types::execution::ResponseId> {
         unreachable!("webhook endpoint instances cannot obtain `join-set-id` resource")
     }
 
@@ -700,13 +707,6 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         })
     }
 
-    /// Deprecated, use `execution_id_current`.
-    async fn current_execution_id(
-        &mut self,
-    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId> {
-        self.execution_id_current().await
-    }
-
     async fn execution_id_current(
         &mut self,
     ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId> {
@@ -751,7 +751,6 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
-        _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<(), ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;
@@ -902,7 +901,6 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         &mut self,
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
-        _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;
@@ -967,6 +965,7 @@ impl WebhookSupportHost for WebhookEndpointCtx {
 
         // Create a OneOff join set and child execution ID
         let (join_set_id, child_execution_id) = self.create_oneoff_join_set();
+        self.last_direct_call_id = Some(child_execution_id.clone());
 
         let created_at = self.clock_fn.now();
 
@@ -1082,9 +1081,6 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         }
     }
 
-    /// Deprecated, use `get_status_v2`. Reports a `cancelling` execution as the
-    /// underlying state it is suspended from, since `execution-status` has no
-    /// `cancelling` case.
     async fn get_status(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
@@ -1095,18 +1091,12 @@ impl WebhookSupportHost for WebhookEndpointCtx {
 
         let pending_state = self.get_status_pending_state(&execution_id).await?;
         let status = match pending_state {
-            PendingState::PendingAt(state)
-            | PendingState::Cancelling(PendingStateCancelling::PendingAt(state)) => {
+            PendingState::PendingAt(state) => {
                 ExecutionStatus::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
             }
-            PendingState::Locked(_)
-            | PendingState::Cancelling(PendingStateCancelling::Locked(_)) => {
-                ExecutionStatus::Locked
-            }
-            PendingState::BlockedByJoinSet(_)
-            | PendingState::Cancelling(PendingStateCancelling::BlockedByJoinSet(_)) => {
-                ExecutionStatus::BlockedByJoinSet
-            }
+            PendingState::Locked(_) => ExecutionStatus::Locked,
+            PendingState::BlockedByJoinSet(_) => ExecutionStatus::BlockedByJoinSet,
+            PendingState::Cancelling(_) => ExecutionStatus::Cancelling,
             PendingState::Paused(_) => ExecutionStatus::Paused,
             PendingState::Finished(finished) => {
                 ExecutionStatus::Finished(finished_status_to_wit(&finished.result_kind))
@@ -1116,29 +1106,68 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         Ok(status)
     }
 
-    async fn get_status_v2(
+    /// Failure kind of a finished child execution (additive to the err value).
+    /// Blocks until finished, like `get`; errors the same way for unknown ids.
+    async fn get_execution_failure_kind(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
         _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
-    ) -> Result<types::obelisk::webhook::webhook_support::ExecutionStatusV2, GetStatusErrorTrappable>
+    ) -> Result<Option<types::obelisk::types::execution::ExecutionFailureKind>, GetErrorTrappable>
     {
-        use types::obelisk::webhook::webhook_support::ExecutionStatusV2;
+        use types::obelisk::webhook::webhook_support::GetError;
 
-        let pending_state = self.get_status_pending_state(&execution_id).await?;
-        let status = match pending_state {
-            PendingState::PendingAt(state) => {
-                ExecutionStatusV2::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
-            }
-            PendingState::Locked(_) => ExecutionStatusV2::Locked,
-            PendingState::BlockedByJoinSet(_) => ExecutionStatusV2::BlockedByJoinSet,
-            PendingState::Cancelling(_) => ExecutionStatusV2::Cancelling,
-            PendingState::Paused(_) => ExecutionStatusV2::Paused,
-            PendingState::Finished(finished) => {
-                ExecutionStatusV2::Finished(finished_status_to_wit(&finished.result_kind))
+        let parsed_execution_id: concepts::ExecutionId =
+            match concepts::ExecutionId::from_str(&execution_id.id) {
+                Ok(id) => id,
+                Err(err) => {
+                    let msg =
+                        format!("get-execution-failure-kind: cannot parse execution ID: {err}");
+                    self.error(msg.clone()).await;
+                    return Err(GetError::ExecutionIdParsingError(msg).into());
+                }
+            };
+
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
             }
         };
 
-        Ok(status)
+        let subscription_interruption = self.subscription_interruption;
+        let sleep = self.sleep.clone();
+        let connection_drop_watcher = self.connection_drop_watcher.clone();
+        let server_termination_watcher = self.server_termination_watcher.clone();
+
+        let result = Self::wait_for_finished_result(
+            subscription_interruption,
+            &sleep,
+            db_connection.as_ref(),
+            &parsed_execution_id,
+            &connection_drop_watcher,
+            &server_termination_watcher,
+        )
+        .await;
+
+        match result {
+            Ok(SupportedFunctionReturnValue::ExecutionFailure(failure)) => {
+                Ok(Some(execution_failure_kind_to_wit(failure.kind)))
+            }
+            Ok(_) => Ok(None),
+            Err(err) => Err(wasmtime::Error::msg(format!("execution error: {err:?}")).into()),
+        }
+    }
+
+    /// The execution ID of the last `call-json`, or `none`.
+    async fn last_direct_call_id(
+        &mut self,
+    ) -> wasmtime::Result<Option<types::obelisk::webhook::webhook_support::ExecutionId>> {
+        Ok(self
+            .last_direct_call_id
+            .as_ref()
+            .map(|id| types::obelisk::webhook::webhook_support::ExecutionId { id: id.to_string() }))
     }
 
     async fn get(
@@ -1745,6 +1774,7 @@ impl WebhookEndpointCtx {
                 component_logger,
                 config_section_hint: config.config_section_hint,
             },
+            last_direct_call_id: None,
         };
         let mut store = Store::new(engine, ctx);
 

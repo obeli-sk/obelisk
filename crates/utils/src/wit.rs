@@ -17,8 +17,8 @@ use wit_parser::{
     WorldItem, WorldKey,
 };
 
-const OBELISK_TYPES_VERSION_MAJOR: u64 = 4;
-const OBELISK_TYPES_VERSION_MINOR: u64 = 2;
+const OBELISK_TYPES_VERSION_MAJOR: u64 = 5;
+const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
     "{OBELISK_TYPES_VERSION_MAJOR}.{OBELISK_TYPES_VERSION_MINOR}.{OBELISK_TYPES_VERSION_PATCH}"
@@ -35,28 +35,28 @@ pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@4.2.0/obelisk_types@4.2.0.wit"
+    "/wit/obelisk_types@5.0.0/obelisk_types@5.0.0.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
-    "obelisk_types@4.2.0",
-    "obelisk_types@4.2.0.wit",
+    "obelisk_types@5.0.0",
+    "obelisk_types@5.0.0.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
-    "obelisk_workflow@5.1.0",
-    "obelisk_workflow@5.1.0.wit",
+    "obelisk_workflow@6.0.0",
+    "obelisk_workflow@6.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@5.1.0/obelisk_workflow@5.1.0.wit"
+        "/wit/obelisk_workflow@6.0.0/obelisk_workflow@6.0.0.wit"
     )),
 ];
 
 pub const WIT_OBELISK_WEBHOOK_PACKAGE: [&str; 3] = [
-    "obelisk_webhook@5.3.0",
-    "obelisk_webhook@5.3.0.wit",
+    "obelisk_webhook@6.0.0",
+    "obelisk_webhook@6.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_webhook@5.3.0/obelisk_webhook@5.3.0.wit"
+        "/wit/obelisk_webhook@6.0.0/obelisk_webhook@6.0.0.wit"
     )),
 ];
 
@@ -362,7 +362,9 @@ fn add_extended_interfaces(
                     }
                     FunctionExtension::AwaitNext => {
                         // -await-next: func(join-set: borrow<join-set>) ->
-                        //  result<tuple<execution-id, return-type>, await-next-extension-error>;
+                        //  result<return-type, await-next-extension-error>;
+                        // The response id is no longer in the tuple; read it via
+                        // `join-set.last-id`. Structurally identical to `-get`.
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let params = vec![Param {
                             name: "join-set".to_string(),
@@ -370,25 +372,10 @@ fn add_extended_interfaces(
                             span: Span::default(),
                         }];
                         let result = {
-                            let actual_return_type_id = &original_fn.result.expect(
-                                "all ExImLite exported functions must have their return type validated");
-                            let type_id_await_next_ok_part_tuple = resolve.types.alloc(TypeDef {
-                                name: None,
-                                kind: TypeDefKind::Tuple(wit_parser::Tuple {
-                                    types: vec![
-                                        Type::Id(type_id_execution_id),
-                                        *actual_return_type_id,
-                                    ],
-                                }),
-                                owner: TypeOwner::None,
-                                docs: wit_parser::Docs::default(),
-                                stability: wit_parser::Stability::default(),
-                                span: Span::default(),
-                            });
                             let type_id_result = resolve.types.alloc(TypeDef {
                                 name: None,
                                 kind: TypeDefKind::Result(wit_parser::Result_ {
-                                    ok: Some(Type::Id(type_id_await_next_ok_part_tuple)),
+                                    ok: original_fn.result,
                                     err: Some(Type::Id(type_id_await_next_err_part)),
                                 }),
                                 owner: TypeOwner::None,

@@ -23,12 +23,15 @@ export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn submit_stub_await(arg: String) -> Result<String, ()> {
-        let join_set = join_set_create();
+        let join_set = join_set_create(None);
         let execution_id = activity_ext::foo_submit(&join_set, &arg);
         activity_stub::foo_stub(&execution_id, Ok(&format!("stubbing {arg}")))
             .expect("stubbed activity must accept returned value once");
-        let (actual_execution_id, ret_val) =
+        let ret_val =
             activity_ext::foo_await_next(&join_set).expect("stubbed execution result above");
+        let Some(ResponseId::ExecutionId(actual_execution_id)) = join_set.last_id() else {
+            unreachable!("await-next processed a child execution")
+        };
         assert_eq!(execution_id.id, actual_execution_id.id);
         ret_val
     }
@@ -59,7 +62,7 @@ impl Guest for Component {
     }
 
     fn await_next_produces_all_processed_error() -> Result<(), ()> {
-        let join_set = join_set_create();
+        let join_set = join_set_create(None);
         let AwaitNextExtensionError::AllProcessed =
             activity_ext::foo_await_next(&join_set).unwrap_err()
         else {
@@ -71,39 +74,39 @@ impl Guest for Component {
     // Used for testing Join Set Closing
     fn join_next_in_scope() -> Result<(), ()> {
         {
-            let join_set_a = join_set_create_named("a").expect("name is valid");
+            let join_set_a = join_set_create_named("a", None).expect("name is valid");
             activity_ext::foo_submit(&join_set_a, "a");
-            workflow_support::submit_delay(&join_set_a, ScheduleAt::In(Duration::Days(1)));
+            workflow_support::submit_delay(&join_set_a, ScheduleAt::In(Duration::Days(1)), None);
 
-            let join_set_b = join_set_create_named("b").expect("name is valid");
+            let join_set_b = join_set_create_named("b", None).expect("name is valid");
             let exe_b = activity_ext::foo_submit(&join_set_b, "b");
             activity_stub::foo_stub(&exe_b, Err(())).unwrap();
-            let (response_b, b_result) = workflow_support::join_next(&join_set_b).unwrap();
+            let b_result = workflow_support::join_next(&join_set_b, None).unwrap();
             b_result.unwrap_err();
-            let ResponseId::ExecutionId(found) = response_b else {
+            let Some(ResponseId::ExecutionId(found)) = join_set_b.last_id() else {
                 unreachable!()
             };
             assert_eq!(exe_b.id, found.id);
 
-            let join_set_f = join_set_create_named("f").expect("name is valid");
+            let join_set_f = join_set_create_named("f", None).expect("name is valid");
             activity_ext::foo_submit(&join_set_f, "f");
-            workflow_support::submit_delay(&join_set_f, ScheduleAt::In(Duration::Days(1)));
+            workflow_support::submit_delay(&join_set_f, ScheduleAt::In(Duration::Days(1)), None);
             std::mem::forget(join_set_f);
             // a and b are dropped here, b is already processed.
         }
         log::info("after scope closed");
-        let join_set_c = join_set_create_named("c").expect("name is valid");
+        let join_set_c = join_set_create_named("c", None).expect("name is valid");
         activity_ext::foo_submit(&join_set_c, "c");
         Ok(())
         // f and c are dropped here
     }
 
     fn join_set_close_cancellation_order() -> Result<(), ()> {
-        let join_set = join_set_create_named("close-order").expect("name is valid");
+        let join_set = join_set_create_named("close-order", None).expect("name is valid");
         activity_ext::foo_submit(&join_set, "first");
-        workflow_support::submit_delay(&join_set, ScheduleAt::In(Duration::Days(1)));
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(Duration::Days(1)), None);
         activity_ext::foo_submit(&join_set, "second");
-        workflow_support::submit_delay(&join_set, ScheduleAt::In(Duration::Days(2)));
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(Duration::Days(2)), None);
         Ok(())
     }
 
@@ -132,11 +135,12 @@ enum RaceConfig {
 
 fn submit_race_join_next(config: RaceConfig) {
     const OK_STUB_RESP: &str = "ok";
-    let join_set = join_set_create();
+    let join_set = join_set_create(None);
     let execution_id = activity_ext::foo_submit(&join_set, "some param");
     let delay_id = workflow_support::submit_delay(
         &join_set,
         obelisk::types::time::ScheduleAt::In(obelisk::types::time::Duration::Milliseconds(10)),
+        None,
     );
     match config {
         RaceConfig::Stub => {
@@ -151,20 +155,20 @@ fn submit_race_join_next(config: RaceConfig) {
             // wait for timeout
         }
     }
-    match workflow_support::join_next(&join_set)
-        .expect("two submissions and no response was processed yet")
-    {
-        (ResponseId::ExecutionId(reported_id), res) => {
+    let race_result = workflow_support::join_next(&join_set, None)
+        .expect("two submissions and no response was processed yet");
+    match join_set.last_id().expect("a response was processed") {
+        ResponseId::ExecutionId(reported_id) => {
             assert_eq!(reported_id.id, execution_id.id);
             match activity_ext::foo_get(&execution_id) {
                 Ok(Ok(ok)) => {
                     assert_eq!(RaceConfig::Stub, config);
                     assert_eq!(OK_STUB_RESP, ok);
-                    res.expect("stub is ok");
+                    race_result.expect("stub is ok");
                 }
                 Ok(Err(())) => {
                     assert_eq!(RaceConfig::StubError, config);
-                    res.expect_err("stub is err");
+                    race_result.expect_err("stub is err");
                 }
                 Err(GetExtensionError::FunctionMismatch(_)) => {
                     unreachable!("no other functions were submitted")
@@ -174,12 +178,12 @@ fn submit_race_join_next(config: RaceConfig) {
                 }
             }
         }
-        (ResponseId::DelayId(reported_id), delay_res) => {
+        ResponseId::DelayId(reported_id) => {
             assert_eq!(RaceConfig::Delay, config);
             assert_eq!(delay_id.id, reported_id.id);
-            delay_res.expect("not cancelled");
+            race_result.expect("not cancelled");
             // activity should be cancelled on close
-            workflow_support::join_set_close(join_set);
+            workflow_support::join_set_close(join_set, None);
             match activity_ext::foo_get(&execution_id) {
                 Ok(Ok(_)) => {
                     unreachable!("was not stubbed, should have been cancelled")
