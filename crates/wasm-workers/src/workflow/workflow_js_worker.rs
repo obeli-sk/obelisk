@@ -1337,21 +1337,13 @@ mod tests {
             const tryPending = js1.joinNextTry();
             console.log('joinNextTry pending:', JSON.stringify(tryPending));
 
-            /* Join next - should get fibo result first (activity completes before delay) */
+            /* Join next - should get fibo result first if the activity wins */
             const response1 = js1.joinNext();
-            console.log('joinNext response 1:', JSON.stringify(response1));
+            console.log('joinNext response 1:', JSON.stringify(response1), 'lastId:', js1.lastId);
 
-            /* Get the fibo result */
-            let fiboResult = null;
-            let loser = null;
-            if (response1.type === 'execution') {
-                const result = obelisk.getResult(response1.id);
-                console.log('Got fibo result:', JSON.stringify(result));
-                fiboResult = result;
-                loser = delayId;
-            } else {
-                loser = execId;
-            }
+            let fiboResult = response1;
+            const response1WasExecution = js1.lastId === execId;
+            const loser = response1WasExecution ? delayId : execId;
             if (explicit_close) {
                 js1.close();
                 js2.close();
@@ -1362,7 +1354,7 @@ mod tests {
                 rand2InRange: rand2 >= 1n && rand2 <= 10n,
                 randStrLenOk: randStr.length >= 5 && randStr.length < 10,
                 fiboResult: fiboResult,
-                response1Type: response1.type,
+                response1WasExecution,
                 loser,
                 joinNextTryEmptyErrorCode: tryEmptyErrorCode,
                 joinNextTryPendingIsUndefined: tryPending === undefined
@@ -1518,8 +1510,8 @@ mod tests {
         );
         if activity_should_win {
             assert_eq!(
-                json!("execution"),
-                result["response1Type"],
+                json!(true),
+                result["response1WasExecution"],
                 "first response should be execution"
             );
             assert_eq!(
@@ -1529,8 +1521,8 @@ mod tests {
             );
         } else {
             assert_eq!(
-                json!("delay"),
-                result["response1Type"],
+                json!(false),
+                result["response1WasExecution"],
                 "first response should be delay"
             );
         }
@@ -1754,11 +1746,9 @@ mod tests {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'stubbed-result-42'});
-            const response = js.joinNext();
-            const result = obelisk.getResult(execId);
+            const result = js.joinNext();
             return JSON.stringify({
-                responseType: response.type,
-                responseOk: response.ok,
+                lastId: js.lastId,
                 result: result
             });
         }";
@@ -1769,8 +1759,10 @@ mod tests {
         harness.tick().await; // resume, complete
 
         let result = harness.get_result_json().await;
-        assert_eq!(json!("execution"), result["responseType"]);
-        assert_eq!(json!(true), result["responseOk"]);
+        assert!(
+            result["lastId"].as_str().unwrap().starts_with("E_"),
+            "lastId should be a child execution id, got {result}"
+        );
         assert_eq!(json!("stubbed-result-42"), result["result"]);
         drop(harness);
         db_close.close().await;
@@ -1789,14 +1781,13 @@ mod tests {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'err': null}); // result<string> has no error type
-            const response = js.joinNext();
             let caughtErr = 'none';
             try {
-                obelisk.getResult(execId);
+                js.joinNext();
             } catch (e) {
                 caughtErr = e.message;
             }
-            return JSON.stringify({ responseOk: response.ok, caughtErr: caughtErr });
+            return JSON.stringify({ lastId: js.lastId, caughtErr: caughtErr });
         }";
 
         let harness =
@@ -1805,7 +1796,10 @@ mod tests {
         harness.tick().await;
 
         let result = harness.get_result_json().await;
-        assert_eq!(json!(false), result["responseOk"]);
+        assert!(
+            result["lastId"].as_str().unwrap().starts_with("E_"),
+            "lastId should be set before throwing child err, got {result}"
+        );
         assert_eq!(json!("child execution failed"), result["caughtErr"]);
         drop(harness);
         db_close.close().await;
@@ -1859,9 +1853,8 @@ mod tests {
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'ok': 'same-value'});
             obelisk.stub(execId, {'ok': 'same-value'}); // same value - should succeed
-            const response = js.joinNext();
-            const result = obelisk.getResult(execId);
-            return JSON.stringify({ responseOk: response.ok, result: result });
+            const result = js.joinNext();
+            return JSON.stringify({ lastId: js.lastId, result: result });
         }";
 
         let harness =
@@ -1870,7 +1863,10 @@ mod tests {
         harness.tick().await;
 
         let result = harness.get_result_json().await;
-        assert_eq!(json!(true), result["responseOk"]);
+        assert!(
+            result["lastId"].as_str().unwrap().starts_with("E_"),
+            "lastId should be a child execution id, got {result}"
+        );
         assert_eq!(json!("same-value"), result["result"]);
         drop(harness);
         db_close.close().await;
@@ -1889,9 +1885,8 @@ mod tests {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.noret', []);
             obelisk.stub(execId, {'ok': null}); // result has no payload
-            const response = js.joinNext();
-            const result = obelisk.getResult(execId);
-            return JSON.stringify({ responseOk: response.ok, result: result });
+            const result = js.joinNext();
+            return JSON.stringify({ lastId: js.lastId, result: result });
         }";
 
         let harness =
@@ -1900,7 +1895,10 @@ mod tests {
         harness.tick().await;
 
         let result = harness.get_result_json().await;
-        assert_eq!(json!(true), result["responseOk"]);
+        assert!(
+            result["lastId"].as_str().unwrap().starts_with("E_"),
+            "lastId should be a child execution id, got {result}"
+        );
         assert_eq!(json!(null), result["result"]);
         drop(harness);
         db_close.close().await;
@@ -1923,12 +1921,11 @@ mod tests {
                 obelisk.stub(execId, {'ok': 'different-value'}); // must fail
                 return JSON.stringify({ error: 'expected-conflict-but-stub-succeeded' });
             } catch (e) {
-                const response = js.joinNext();
-                const result = obelisk.getResult(execId);
+                const result = js.joinNext();
                 return JSON.stringify({
                     conflictDetected: true,
                     errorMessage: e.message,
-                    responseOk: response.ok,
+                    lastId: js.lastId,
                     result: result
                 });
             }
@@ -1951,7 +1948,10 @@ mod tests {
             error_msg.contains("Conflict"),
             "Expected 'Conflict' in error, got: {error_msg}"
         );
-        assert_eq!(json!(true), result["responseOk"]);
+        assert!(
+            result["lastId"].as_str().unwrap().starts_with("E_"),
+            "lastId should be a child execution id, got {result}"
+        );
         assert_eq!(json!("first-value"), result["result"]);
         drop(harness);
         db_close.close().await;
@@ -2767,9 +2767,7 @@ mod tests {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
             obelisk.stub(execId, { 'ok': 'stubbed-by-upgrade' });
-            const response = js.joinNext();
-            if (!response.ok) throw 'stub failed';
-            return obelisk.getResult(execId);
+            return js.joinNext();
         }";
 
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
@@ -3072,9 +3070,7 @@ mod tests {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
             obelisk.stub(execId, { 'ok': 'hello' });
-            const response = js.joinNext();
-            if (!response.ok) throw 'stub failed';
-            return obelisk.getResult(execId);
+            return js.joinNext();
         }";
 
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");
@@ -3193,9 +3189,7 @@ mod tests {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
             obelisk.stub(execId, { 'ok': 'hello' });
-            const response = js.joinNext();
-            if (!response.ok) throw 'stub failed';
-            return obelisk.getResult(execId);
+            return js.joinNext();
         }";
 
         let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");

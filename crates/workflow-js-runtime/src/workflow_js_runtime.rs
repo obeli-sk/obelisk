@@ -33,10 +33,10 @@
 //! // Submit a child execution
 //! const execId = js.submit("ns:pkg/ifc.func", [arg1, arg2]);
 //!
-//! // Wait for next result (blocks until a child completes)
-//! const response = js.joinNext();
-//! // response = { type: "execution"|"delay", id: string, ok: boolean }
-//! // js.lastId is also set to the id of the completed child
+//! // Wait for next result (blocks until a child or delay completes)
+//! const result = js.joinNext();
+//! // returns the child ok value, null for a completed delay, or throws on err
+//! // js.lastId is also set to the completed child or delay id
 //!
 //! // Non-blocking variant:
 //! const tryResponse = js.joinNextTry();
@@ -107,8 +107,8 @@
 //! const execId = js.submit("ns:pkg/ifc.slow_task", []);
 //! const delayId = js.submitDelay({ seconds: 30 }); // timeout
 //!
-//! const response = js.joinNext();
-//! if (response.type === "delay") {
+//! const result = js.joinNext();
+//! if (result === null && js.lastId === delayId) {
 //!     // Timeout fired before task completed
 //! } else {
 //!     // Task completed
@@ -281,7 +281,7 @@ fn create_direct_call_proxy(
             match call_json(&function, &params_json, Some(&backtrace)) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
-                Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
+                Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
                 Ok(Err(None)) => Err(JsNativeError::error()
                     .with_message("child execution failed")
                     .into()),
@@ -475,11 +475,16 @@ fn unwrap_result(
     match inner_result {
         Ok(Some(json_str)) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
         Ok(None) => Ok(JsValue::null()),
-        Err(Some(err_str)) => Err(JsNativeError::error().with_message(err_str).into()),
+        Err(Some(err_str)) => throw_json_value(&err_str, ctx),
         Err(None) => Err(JsNativeError::error()
             .with_message("child execution failed")
             .into()),
     }
+}
+
+fn throw_json_value(json_str: &str, ctx: &mut Context) -> JsResult<JsValue> {
+    let value = ctx.eval(Source::from_bytes(&format!("({json_str})")))?;
+    Err(JsError::from_opaque(value))
 }
 
 fn new_join_set_exhausted_error(ctx: &mut Context) -> JsError {
@@ -962,7 +967,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 Ok(parsed)
             }
             Ok(Ok(None)) => Ok(JsValue::null()),
-            Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
+            Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
             Ok(Err(None)) => Err(JsNativeError::error()
                 .with_message("child execution failed")
                 .into()),
@@ -1273,44 +1278,28 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
         })?;
 
         match join_result {
-            Ok(inner_result) => {
-                let result_obj = new_object(ctx);
-                let is_ok = inner_result.is_ok();
-                match last_id {
-                    Some(ResponseId::ExecutionId(exec_id)) => {
-                        result_obj.set(js_string!("type"), js_string!("execution"), false, ctx)?;
-                        result_obj.set(
-                            js_string!("id"),
-                            js_string!(exec_id.id.clone()),
-                            false,
-                            ctx,
-                        )?;
-                        result_obj.set(js_string!("ok"), is_ok, false, ctx)?;
-                        this_obj.set(js_string!("lastId"), js_string!(exec_id.id), false, ctx)?;
-                    }
-                    Some(ResponseId::DelayId(delay_id)) => {
-                        result_obj.set(js_string!("type"), js_string!("delay"), false, ctx)?;
-                        result_obj.set(
-                            js_string!("id"),
-                            js_string!(delay_id.id.clone()),
-                            false,
-                            ctx,
-                        )?;
-                        result_obj.set(js_string!("ok"), is_ok, false, ctx)?;
-                        this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
-                    }
-                    None => {
-                        return Err(JsNativeError::error()
-                            .with_message("missing last-id after join-next")
-                            .into());
+            Ok(inner_result) => match last_id {
+                Some(ResponseId::ExecutionId(exec_id)) => {
+                    this_obj.set(
+                        js_string!("lastId"),
+                        js_string!(exec_id.id.as_str()),
+                        false,
+                        ctx,
+                    )?;
+                    unwrap_result(inner_result, ctx)
+                }
+                Some(ResponseId::DelayId(delay_id)) => {
+                    this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
+                    match inner_result {
+                        Ok(_) => Ok(JsValue::null()),
+                        Err(_) => Err(JsNativeError::error().with_message("cancelled").into()),
                     }
                 }
-
-                Ok(result_obj.into())
-            }
-            Err(_) => Err(JsNativeError::error()
-                .with_message("JoinSetEmpty: all responses processed")
-                .into()),
+                None => Err(JsNativeError::error()
+                    .with_message("missing last-id after join-next")
+                    .into()),
+            },
+            Err(_) => Err(new_join_set_exhausted_error(ctx)),
         }
     });
     obj.set(

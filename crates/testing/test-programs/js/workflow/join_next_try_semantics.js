@@ -55,8 +55,21 @@ export default function join_next_try_semantics(id) {
         errJs.joinNextTry();
         throw 'expected stub error';
     } catch (e) {
-        if (!String(e).includes('stub-err')) {
+        if (e !== 'stub-err') {
             throw `unexpected thrown err value: ${e}`;
+        }
+    }
+
+    const blockingErrJs = obelisk.createJoinSet();
+    const blockingErrExecId = myStubSubmit(blockingErrJs, id + 2);
+    myStubStub(blockingErrExecId, { err: 'stub-err-blocking' });
+    obelisk.sleep({ milliseconds: 1 });
+    try {
+        blockingErrJs.joinNext();
+        throw 'expected blocking stub error';
+    } catch (e) {
+        if (e !== 'stub-err-blocking') {
+            throw `unexpected blocking thrown err value: ${e}`;
         }
     }
 

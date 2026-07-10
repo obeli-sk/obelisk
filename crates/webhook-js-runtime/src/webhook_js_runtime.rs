@@ -117,8 +117,8 @@ use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::class::Class;
 use boa_engine::module::MapModuleLoader;
 use boa_engine::{
-    Context, JsArgs, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source, js_string,
-    property::Attribute,
+    Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
+    js_string, property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
@@ -240,7 +240,7 @@ fn create_direct_call_proxy(
             match webhook_support::call_json(&function, &params_json, Some(&backtrace)) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
-                Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
+                Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
                 Ok(Err(None)) => Err(JsNativeError::error()
                     .with_message("child execution failed")
                     .into()),
@@ -472,11 +472,16 @@ fn unwrap_result(
     match inner_result {
         Ok(Some(json_str)) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
         Ok(None) => Ok(JsValue::null()),
-        Err(Some(err_str)) => Err(JsNativeError::error().with_message(err_str).into()),
+        Err(Some(err_str)) => throw_json_value(&err_str, ctx),
         Err(None) => Err(JsNativeError::error()
             .with_message("child execution failed")
             .into()),
     }
+}
+
+fn throw_json_value(json_str: &str, ctx: &mut Context) -> JsResult<JsValue> {
+    let value = ctx.eval(Source::from_bytes(&format!("({json_str})")))?;
+    Err(JsError::from_opaque(value))
 }
 
 /// Set up the global `obelisk` object with webhook support functions.
@@ -719,7 +724,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 Ok(parsed)
             }
             Ok(Ok(None)) => Ok(JsValue::null()),
-            Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
+            Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
             Ok(Err(None)) => Err(JsNativeError::error()
                 .with_message("child execution failed")
                 .into()),
