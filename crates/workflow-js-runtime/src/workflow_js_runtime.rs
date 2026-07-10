@@ -133,10 +133,10 @@ use crate::generated::obelisk::types::execution::{ExecutionId, Function, Respons
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    self, JoinNextTryError, SubmitConfig, call_json, execution_id_generate, get_result_json_bt,
-    join_next_bt, join_next_try_bt, join_set_close_bt, join_set_create_bt,
-    join_set_create_named_bt, random_string_bt, random_u64_bt, random_u64_inclusive_bt,
-    schedule_json, sleep_named_bt, stub_json, submit_delay_bt, submit_json_bt,
+    self, JoinNextTryError, SubmitConfig, call_json, execution_id_generate, get_result_json,
+    join_next, join_next_try, join_set_close, join_set_create, join_set_create_named,
+    random_string, random_u64, random_u64_inclusive, schedule_json, sleep, stub_json, submit_delay,
+    submit_json,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
@@ -380,7 +380,7 @@ fn create_ext_submit_proxy(
 
             let backtrace = capture_backtrace(ctx);
             let result = with_join_set(idx, |js| {
-                submit_json_bt(js, &function, &params_json, None, Some(&backtrace))
+                submit_json(js, &function, &params_json, None, Some(&backtrace))
             })?;
 
             match result {
@@ -410,29 +410,31 @@ fn create_ext_await_next_proxy(context: &mut Context) -> JsValue {
         let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
 
         let backtrace = capture_backtrace(ctx);
-        let join_result = with_join_set(idx, |js| join_next_bt(js, Some(&backtrace)))?;
+        // `join-next` now returns the value directly; the id is read via `last-id`.
+        let (join_result, last_id) = with_join_set(idx, |js| {
+            let result = join_next(js, Some(&backtrace));
+            (result, js.last_id())
+        })?;
 
         match join_result {
-            Ok((ResponseId::ExecutionId(exec_id), _ok_status)) => {
-                // Store the execution ID on the join set object for later retrieval
-                js_obj.set(
-                    js_string!("lastId"),
-                    js_string!(exec_id.id.as_str()),
-                    false,
-                    ctx,
-                )?;
-
-                let get_result = get_result_json_bt(&exec_id, Some(&backtrace));
-                match get_result {
-                    Ok(inner_result) => unwrap_result(inner_result, ctx),
-                    Err(e) => Err(JsNativeError::error()
-                        .with_message(format!("get result failed: {:?}", e))
-                        .into()),
+            Ok(inner_result) => match last_id {
+                Some(ResponseId::ExecutionId(exec_id)) => {
+                    // Store the execution ID on the join set object for later retrieval
+                    js_obj.set(
+                        js_string!("lastId"),
+                        js_string!(exec_id.id.as_str()),
+                        false,
+                        ctx,
+                    )?;
+                    unwrap_result(inner_result, ctx)
                 }
-            }
-            Ok((ResponseId::DelayId(_), _)) => Err(JsNativeError::error()
-                .with_message("unexpected delay response in awaitNext")
-                .into()),
+                Some(ResponseId::DelayId(_)) => Err(JsNativeError::error()
+                    .with_message("unexpected delay response in awaitNext")
+                    .into()),
+                None => Err(JsNativeError::error()
+                    .with_message("missing last-id after join-next")
+                    .into()),
+            },
             Err(_) => Err(JsNativeError::error()
                 .with_message("JoinSetEmpty: all responses processed")
                 .into()),
@@ -455,7 +457,7 @@ fn create_ext_get_proxy(context: &mut Context) -> JsValue {
         let exec_id = ExecutionId { id: exec_id_str };
         let backtrace = capture_backtrace(ctx);
 
-        match get_result_json_bt(&exec_id, Some(&backtrace)) {
+        match get_result_json(&exec_id, Some(&backtrace)) {
             Ok(inner_result) => unwrap_result(inner_result, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("get result failed: {:?}", e))
@@ -837,7 +839,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         {
             let name_str = name.to_std_string_escaped();
             let backtrace = capture_backtrace(ctx);
-            return match join_set_create_named_bt(&name_str, Some(&backtrace)) {
+            return match join_set_create_named(&name_str, Some(&backtrace)) {
                 Ok(js) => Ok(create_join_set_object(js, ctx)?),
                 Err(e) => Err(JsNativeError::error()
                     .with_message(format!("Failed to create named join set: {:?}", e))
@@ -846,7 +848,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         }
 
         let backtrace = capture_backtrace(ctx);
-        let js = join_set_create_bt(Some(&backtrace));
+        let js = join_set_create(Some(&backtrace));
         create_join_set_object(js, ctx)
     });
     obelisk.set(
@@ -870,7 +872,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             _ => None,
         };
         let backtrace = capture_backtrace(ctx);
-        match sleep_named_bt(schedule, name.as_deref(), Some(&backtrace)) {
+        match sleep(schedule, name.as_deref(), Some(&backtrace)) {
             Ok(dt) => {
                 let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
                 let date = JsDate::new(ctx);
@@ -896,7 +898,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let min = args.get_or_undefined(0).to_number(ctx)? as u64;
         let max = args.get_or_undefined(1).to_number(ctx)? as u64;
         let backtrace = capture_backtrace(ctx);
-        let result = random_u64_bt(min, max, Some(&backtrace));
+        let result = random_u64(min, max, Some(&backtrace));
         Ok(JsValue::from(result))
     });
     obelisk.set(
@@ -912,7 +914,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let min = args.get_or_undefined(0).to_number(ctx)? as u64;
         let max = args.get_or_undefined(1).to_number(ctx)? as u64;
         let backtrace = capture_backtrace(ctx);
-        let result = random_u64_inclusive_bt(min, max, Some(&backtrace));
+        let result = random_u64_inclusive(min, max, Some(&backtrace));
         Ok(JsValue::from(result))
     });
     obelisk.set(
@@ -927,7 +929,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let min_len = args.get_or_undefined(0).to_u32(ctx)? as u16;
         let max_len = args.get_or_undefined(1).to_u32(ctx)? as u16;
         let backtrace = capture_backtrace(ctx);
-        let result = random_string_bt(min_len, max_len, Some(&backtrace));
+        let result = random_string(min_len, max_len, Some(&backtrace));
         Ok(JsValue::from(js_string!(result)))
     });
     obelisk.set(
@@ -995,7 +997,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let exec_id = ExecutionId { id: exec_id_str };
         let backtrace = capture_backtrace(ctx);
 
-        match get_result_json_bt(&exec_id, Some(&backtrace)) {
+        match get_result_json(&exec_id, Some(&backtrace)) {
             Ok(inner_result) => unwrap_result(inner_result, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("Failed to get result: {:?}", e))
@@ -1115,7 +1117,7 @@ fn setup_math_random(context: &mut Context) -> JsResult<()> {
         // Generate a random value in [0, 2^53) and divide to get [0, 1).
         // 2^53 = 9007199254740992
         let max = 9007199254740992u64;
-        let val = random_u64_bt(0, max, Some(&backtrace));
+        let val = random_u64(0, max, Some(&backtrace));
         // f64 is precise for all integers up to 2^53.
         let result = val as f64 / max as f64;
         Ok(JsValue::from(result))
@@ -1136,13 +1138,13 @@ fn setup_math_random(context: &mut Context) -> JsResult<()> {
 }
 
 /// Override `Date.now()` to return the current Obelisk clock time via
-/// `sleep_named_bt(0, None)`.
+/// `sleep(0, None)`.
 ///
 /// Returns milliseconds since Unix epoch as f64 (matching the JS spec).
 fn setup_date_now(context: &mut Context) -> JsResult<()> {
     let date_now_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
         let backtrace = capture_backtrace(ctx);
-        let dt = sleep_named_bt(ScheduleAt::Now, None, Some(&backtrace))
+        let dt = sleep(ScheduleAt::Now, None, Some(&backtrace))
             .map_err(|()| JsNativeError::error().with_message("sleep failed"))?;
         let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
         Ok(JsValue::from(ms))
@@ -1236,7 +1238,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
 
         let backtrace = capture_backtrace(ctx);
         let result = with_join_set(idx, |js| {
-            submit_json_bt(js, &function, &params_json, config, Some(&backtrace))
+            submit_json(js, &function, &params_json, config, Some(&backtrace))
         })?;
 
         match result {
@@ -1265,7 +1267,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
         let schedule = parse_schedule_at(args.get_or_undefined(0), ctx)?;
         let backtrace = capture_backtrace(ctx);
 
-        let delay_id = with_join_set(idx, |js| submit_delay_bt(js, schedule, Some(&backtrace)))?;
+        let delay_id = with_join_set(idx, |js| submit_delay(js, schedule, Some(&backtrace)))?;
 
         Ok(JsValue::from(js_string!(delay_id.id)))
     });
@@ -1286,14 +1288,18 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .to_u32(ctx)? as usize;
 
         let backtrace = capture_backtrace(ctx);
-        let join_result = with_join_set(idx, |js| join_next_bt(js, Some(&backtrace)))?;
+        // `join-next` returns the value directly; id/kind come from `last-id`.
+        let (join_result, last_id) = with_join_set(idx, |js| {
+            let result = join_next(js, Some(&backtrace));
+            (result, js.last_id())
+        })?;
 
         match join_result {
-            Ok((response_id, result)) => {
+            Ok(inner_result) => {
                 let result_obj = new_object(ctx);
-
-                match response_id {
-                    ResponseId::ExecutionId(exec_id) => {
+                let is_ok = inner_result.is_ok();
+                match last_id {
+                    Some(ResponseId::ExecutionId(exec_id)) => {
                         result_obj.set(js_string!("type"), js_string!("execution"), false, ctx)?;
                         result_obj.set(
                             js_string!("id"),
@@ -1301,10 +1307,10 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
                             false,
                             ctx,
                         )?;
-                        result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
+                        result_obj.set(js_string!("ok"), is_ok, false, ctx)?;
                         this_obj.set(js_string!("lastId"), js_string!(exec_id.id), false, ctx)?;
                     }
-                    ResponseId::DelayId(delay_id) => {
+                    Some(ResponseId::DelayId(delay_id)) => {
                         result_obj.set(js_string!("type"), js_string!("delay"), false, ctx)?;
                         result_obj.set(
                             js_string!("id"),
@@ -1312,8 +1318,13 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
                             false,
                             ctx,
                         )?;
-                        result_obj.set(js_string!("ok"), result.is_ok(), false, ctx)?;
+                        result_obj.set(js_string!("ok"), is_ok, false, ctx)?;
                         this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
+                    }
+                    None => {
+                        return Err(JsNativeError::error()
+                            .with_message("missing last-id after join-next")
+                            .into());
                     }
                 }
 
@@ -1341,31 +1352,33 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
             .to_u32(ctx)? as usize;
 
         let backtrace = capture_backtrace(ctx);
-        let join_result = with_join_set(idx, |js| join_next_try_bt(js, Some(&backtrace)))?;
+        let (join_result, last_id) = with_join_set(idx, |js| {
+            let result = join_next_try(js, Some(&backtrace));
+            (result, js.last_id())
+        })?;
 
         match join_result {
-            Ok((ResponseId::ExecutionId(exec_id), _)) => {
-                this_obj.set(
-                    js_string!("lastId"),
-                    js_string!(exec_id.id.as_str()),
-                    false,
-                    ctx,
-                )?;
-                let get_result = get_result_json_bt(&exec_id, Some(&backtrace));
-                match get_result {
-                    Ok(inner_result) => unwrap_result(inner_result, ctx),
-                    Err(e) => Err(JsNativeError::error()
-                        .with_message(format!("get result failed: {:?}", e))
-                        .into()),
+            Ok(inner_result) => match last_id {
+                Some(ResponseId::ExecutionId(exec_id)) => {
+                    this_obj.set(
+                        js_string!("lastId"),
+                        js_string!(exec_id.id.as_str()),
+                        false,
+                        ctx,
+                    )?;
+                    unwrap_result(inner_result, ctx)
                 }
-            }
-            Ok((ResponseId::DelayId(delay_id), result)) => {
-                this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
-                match result {
-                    Ok(()) => Ok(JsValue::null()),
-                    Err(()) => Err(JsNativeError::error().with_message("cancelled").into()),
+                Some(ResponseId::DelayId(delay_id)) => {
+                    this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
+                    match inner_result {
+                        Ok(_) => Ok(JsValue::null()),
+                        Err(_) => Err(JsNativeError::error().with_message("cancelled").into()),
+                    }
                 }
-            }
+                None => Err(JsNativeError::error()
+                    .with_message("missing last-id after join-next-try")
+                    .into()),
+            },
             Err(JoinNextTryError::AllProcessed) => Err(new_join_set_exhausted_error(ctx)),
             Err(JoinNextTryError::Pending) => Ok(JsValue::undefined()),
         }
@@ -1388,7 +1401,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
 
         if let Some(js) = take_join_set(idx) {
             let backtrace = capture_backtrace(ctx);
-            join_set_close_bt(js, Some(&backtrace));
+            join_set_close(js, Some(&backtrace));
         }
         Ok(JsValue::undefined())
     });

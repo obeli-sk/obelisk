@@ -1,15 +1,16 @@
 ---
 source: crates/utils/src/wit.rs
+assertion_line: 1077
 expression: wit
 ---
 package root:component;
 
 world root {
-    import obelisk:types/time@4.2.0;
-    import obelisk:types/execution@4.2.0;
-    import obelisk:types/backtrace@4.2.0;
-    import obelisk:types/join-set@4.2.0;
-    import obelisk:workflow/workflow-support@5.1.0;
+    import obelisk:types/time@5.0.0;
+    import obelisk:types/execution@5.0.0;
+    import obelisk:types/backtrace@5.0.0;
+    import obelisk:types/join-set@5.0.0;
+    import obelisk:workflow/workflow-support@6.0.0;
     import testing:fibo/fibo;
     import testing:fibo-obelisk-ext/fibo;
 
@@ -17,7 +18,7 @@ world root {
     export testing:fibo-workflow-obelisk-ext/workflow;
     export testing:fibo-workflow-obelisk-schedule/workflow;
 }
-package obelisk:types@4.2.0 {
+package obelisk:types@5.0.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -81,6 +82,18 @@ package obelisk:types@4.2.0 {
             actual-id: response-id,
         }
 
+        /// The kind of a platform-level execution failure, as opposed to a business
+        /// `err` result. Surfaced additively via `get-execution-failure-kind`; the
+        /// err value itself keeps carrying the `execution-failed` sentinel.
+        @since(version = 5.0.0)
+        enum execution-failure-kind {
+            timed-out,
+            nondeterminism-detected,
+            out-of-fuel,
+            cancelled,
+            uncategorized,
+        }
+
         /// Error that is thrown by `-await-next` extension functions.
         @since(version = 3.0.0)
         variant await-next-extension-error {
@@ -100,12 +113,6 @@ package obelisk:types@4.2.0 {
             /// Processed responses do not contain the specified execution ID.
             /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
             not-found-in-processed-responses,
-        }
-
-        /// Error variants that may occur when calling `-invoke` extension functions.
-        @since(version = 3.0.0)
-        variant invoke-extension-error {
-            invalid-name(string),
         }
 
         /// Error variants that may occur when calling `-stub` extension functions.
@@ -159,8 +166,7 @@ package obelisk:types@4.2.0 {
     }
     @since(version = 4.0.0)
     interface join-set {
-        use time.{schedule-at};
-        use execution.{delay-id, response-id};
+        use execution.{response-id};
 
         /// Join set resouce.
         @since(version = 4.0.0)
@@ -171,40 +177,26 @@ package obelisk:types@4.2.0 {
             /// * `n:NAME` in case of a named join set
             @since(version = 4.0.0)
             id: func() -> string;
-            /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            submit-delay: func(timeout: schedule-at) -> delay-id;
-            /// Block the workflow execution until next response associated with the join set arrives.
-            /// The response is marked as processed.
-            /// Child execution result can be obtained using `-get` extension function using the
-            /// returned execution ID.
-            /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            join-next: func() -> result<tuple<response-id, result>, join-next-error>;
-        }
-
-        /// Error variants that may occur when calling `join-next` function.
-        @since(version = 4.0.0)
-        @deprecated(version = 4.1.0)
-        variant join-next-error {
-            /// All submitted requests and their responses were already processed.
-            all-processed,
+            /// The `response-id` of the last processed response of this join set
+            /// (the one returned by the most recent `join-next` / `-await-next`),
+            /// or `none` if no response has been processed yet.
+            /// Must be read immediately after `join-next`, before the next one.
+            /// An `execution-id` marks a child response; a `delay-id` marks a delay.
+            @since(version = 5.0.0)
+            last-id: func() -> option<response-id>;
         }
     }
 }
 
 
-package obelisk:workflow@5.1.0 {
+package obelisk:workflow@6.0.0 {
     interface workflow-support {
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/execution@4.2.0.{function, submit-config, execution-id};
-        use obelisk:types/time@4.2.0.{schedule-at};
-        use obelisk:types/backtrace@4.2.0.{wasm-backtrace};
-        use obelisk:types/execution@4.2.0.{schedule-json-error, response-id};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/execution@5.0.0.{function, submit-config};
+        use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
+        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/execution@5.0.0.{schedule-json-error};
 
         variant submit-json-error {
             ffqn-parsing-error(string),
@@ -221,13 +213,13 @@ package obelisk:workflow@5.1.0 {
             all-processed,
         }
 
-        join-set-create: func() -> join-set;
+        join-set-create: func(backtrace: option<wasm-backtrace>) -> join-set;
 
-        submit-json: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>) -> result<execution-id, submit-json-error>;
+        submit-json: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<execution-id, submit-json-error>;
 
-        get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
+        get-result-json: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, get-result-json-error>;
 
-        join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
+        join-next: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-error>;
 
         execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
 
@@ -245,19 +237,19 @@ package testing:fibo {
 
 package testing:fibo-obelisk-ext {
     interface fibo {
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/execution@4.2.0.{execution-id, await-next-extension-error};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/execution@5.0.0.{await-next-extension-error, execution-id};
 
         fibo-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
 
-        fibo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+        fibo-await-next: func(join-set: borrow<join-set>) -> result<result<u64>, await-next-extension-error>;
     }
 }
 
 
 package testing:fibo-workflow {
     interface workflow {
-        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/execution@5.0.0.{execution-id};
 
         fibow: func(n: u8, iterations: u32) -> result<u64>;
 
@@ -282,61 +274,61 @@ package testing:fibo-workflow {
 
 package testing:fibo-workflow-obelisk-ext {
     interface workflow {
-        use obelisk:types/execution@4.2.0.{execution-id};
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
 
         fibow-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
-        fibow-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+        fibow-await-next: func(join-set: borrow<join-set>) -> result<result<u64>, await-next-extension-error>;
 
         fibow-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
         fiboa-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
-        fiboa-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+        fiboa-await-next: func(join-set: borrow<join-set>) -> result<result<u64>, await-next-extension-error>;
 
         fiboa-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
         fiboa-concurrent-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> execution-id;
 
-        fiboa-concurrent-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+        fiboa-concurrent-await-next: func(join-set: borrow<join-set>) -> result<result<u64>, await-next-extension-error>;
 
         fiboa-concurrent-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
         fiboa-submit-json-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
 
-        fiboa-submit-json-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<u64>>, await-next-extension-error>;
+        fiboa-submit-json-await-next: func(join-set: borrow<join-set>) -> result<result<u64>, await-next-extension-error>;
 
         fiboa-submit-json-get: func(execution-id: execution-id) -> result<result<u64>, get-extension-error>;
 
         test-submit-json-unknown-ffqn-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        test-submit-json-unknown-ffqn-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+        test-submit-json-unknown-ffqn-await-next: func(join-set: borrow<join-set>) -> result<result<_, string>, await-next-extension-error>;
 
         test-submit-json-unknown-ffqn-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
 
         test-submit-json-malformed-params-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        test-submit-json-malformed-params-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+        test-submit-json-malformed-params-await-next: func(join-set: borrow<join-set>) -> result<result<_, string>, await-next-extension-error>;
 
         test-submit-json-malformed-params-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
 
         test-get-result-json-before-await-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        test-get-result-json-before-await-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+        test-get-result-json-before-await-await-next: func(join-set: borrow<join-set>) -> result<result<_, string>, await-next-extension-error>;
 
         test-get-result-json-before-await-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
 
         test-get-result-json-err-variant-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        test-get-result-json-err-variant-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<_, string>>, await-next-extension-error>;
+        test-get-result-json-err-variant-await-next: func(join-set: borrow<join-set>) -> result<result<_, string>, await-next-extension-error>;
 
         test-get-result-json-err-variant-get: func(execution-id: execution-id) -> result<result<_, string>, get-extension-error>;
 
         test-schedule-json-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        test-schedule-json-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<execution-id, string>>, await-next-extension-error>;
+        test-schedule-json-await-next: func(join-set: borrow<join-set>) -> result<result<execution-id, string>, await-next-extension-error>;
 
         test-schedule-json-get: func(execution-id: execution-id) -> result<result<execution-id, string>, get-extension-error>;
     }
@@ -345,8 +337,8 @@ package testing:fibo-workflow-obelisk-ext {
 
 package testing:fibo-workflow-obelisk-schedule {
     interface workflow {
-        use obelisk:types/execution@4.2.0.{execution-id};
-        use obelisk:types/time@4.2.0.{schedule-at};
+        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/time@5.0.0.{schedule-at};
 
         fibow-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
 

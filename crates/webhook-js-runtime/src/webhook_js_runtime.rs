@@ -105,7 +105,7 @@ use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBa
 use crate::generated::obelisk::types::execution::{ExecutionId, Function, SubmitConfig};
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::webhook::webhook_support::{
-    self, ExecutionStatusFinished, ExecutionStatusV2,
+    self, ExecutionStatus, ExecutionStatusFinished,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
@@ -577,11 +577,11 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let exec_id = ExecutionId { id: exec_id_str };
 
         let backtrace = capture_backtrace(ctx);
-        match webhook_support::get_status_v2(&exec_id, Some(&backtrace)) {
+        match webhook_support::get_status(&exec_id, Some(&backtrace)) {
             Ok(status) => {
                 let result_obj = new_object(ctx);
                 match status {
-                    ExecutionStatusV2::PendingAt(dt) => {
+                    ExecutionStatus::PendingAt(dt) => {
                         result_obj.set(
                             js_string!("status"),
                             js_string!("pendingAt"),
@@ -598,13 +598,13 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                         )?;
                         result_obj.set(js_string!("pendingAt"), dt_obj, false, ctx)?;
                     }
-                    ExecutionStatusV2::Locked => {
+                    ExecutionStatus::Locked => {
                         result_obj.set(js_string!("status"), js_string!("locked"), false, ctx)?;
                     }
-                    ExecutionStatusV2::Paused => {
+                    ExecutionStatus::Paused => {
                         result_obj.set(js_string!("status"), js_string!("paused"), false, ctx)?;
                     }
-                    ExecutionStatusV2::BlockedByJoinSet => {
+                    ExecutionStatus::BlockedByJoinSet => {
                         result_obj.set(
                             js_string!("status"),
                             js_string!("blockedByJoinSet"),
@@ -612,7 +612,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                             ctx,
                         )?;
                     }
-                    ExecutionStatusV2::Cancelling => {
+                    ExecutionStatus::Cancelling => {
                         result_obj.set(
                             js_string!("status"),
                             js_string!("cancelling"),
@@ -620,12 +620,12 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                             ctx,
                         )?;
                     }
-                    ExecutionStatusV2::Finished(finished) => {
+                    ExecutionStatus::Finished(finished) => {
                         result_obj.set(js_string!("status"), js_string!("finished"), false, ctx)?;
                         let finished_status = match finished {
                             ExecutionStatusFinished::Ok => "ok",
                             ExecutionStatusFinished::Err => "err",
-                            ExecutionStatusFinished::ExecutionFailure => "executionFailure",
+                            ExecutionStatusFinished::ExecutionFailure(_) => "executionFailure",
                         };
                         result_obj.set(
                             js_string!("finishedStatus"),

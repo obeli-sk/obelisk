@@ -1,5 +1,6 @@
 ---
 source: crates/utils/src/wit.rs
+assertion_line: 1077
 expression: wit
 ---
 package root:component;
@@ -23,7 +24,7 @@ world root {
     export testing:stub-activity-obelisk-ext/activity;
     export testing:stub-activity-obelisk-stub/activity;
 }
-package obelisk:types@4.2.0 {
+package obelisk:types@5.0.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -87,6 +88,18 @@ package obelisk:types@4.2.0 {
             actual-id: response-id,
         }
 
+        /// The kind of a platform-level execution failure, as opposed to a business
+        /// `err` result. Surfaced additively via `get-execution-failure-kind`; the
+        /// err value itself keeps carrying the `execution-failed` sentinel.
+        @since(version = 5.0.0)
+        enum execution-failure-kind {
+            timed-out,
+            nondeterminism-detected,
+            out-of-fuel,
+            cancelled,
+            uncategorized,
+        }
+
         /// Error that is thrown by `-await-next` extension functions.
         @since(version = 3.0.0)
         variant await-next-extension-error {
@@ -106,12 +119,6 @@ package obelisk:types@4.2.0 {
             /// Processed responses do not contain the specified execution ID.
             /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
             not-found-in-processed-responses,
-        }
-
-        /// Error variants that may occur when calling `-invoke` extension functions.
-        @since(version = 3.0.0)
-        variant invoke-extension-error {
-            invalid-name(string),
         }
 
         /// Error variants that may occur when calling `-stub` extension functions.
@@ -165,8 +172,7 @@ package obelisk:types@4.2.0 {
     }
     @since(version = 4.0.0)
     interface join-set {
-        use time.{schedule-at};
-        use execution.{delay-id, response-id};
+        use execution.{response-id};
 
         /// Join set resouce.
         @since(version = 4.0.0)
@@ -177,28 +183,13 @@ package obelisk:types@4.2.0 {
             /// * `n:NAME` in case of a named join set
             @since(version = 4.0.0)
             id: func() -> string;
-            /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            submit-delay: func(timeout: schedule-at) -> delay-id;
-            /// Block the workflow execution until next response associated with the join set arrives.
-            /// The response is marked as processed.
-            /// Child execution result can be obtained using `-get` extension function using the
-            /// returned execution ID.
-            /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            join-next: func() -> result<tuple<response-id, result>, join-next-error>;
-        }
-
-        /// Error variants that may occur when calling `join-next` function.
-        @since(version = 4.0.0)
-        @deprecated(version = 4.1.0)
-        variant join-next-error {
-            /// All submitted requests and their responses were already processed.
-            all-processed,
+            /// The `response-id` of the last processed response of this join set
+            /// (the one returned by the most recent `join-next` / `-await-next`),
+            /// or `none` if no response has been processed yet.
+            /// Must be read immediately after `join-next`, before the next one.
+            /// An `execution-id` marks a child response; a `delay-id` marks a delay.
+            @since(version = 5.0.0)
+            last-id: func() -> option<response-id>;
         }
     }
 }
@@ -291,19 +282,19 @@ package testing:stub-activity {
 
 package testing:stub-activity-obelisk-ext {
     interface activity {
-        use obelisk:types/execution@4.2.0.{execution-id};
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
 
         foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
-        foo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
+        foo-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
 
         foo-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
         noret-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        noret-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        noret-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         noret-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
     }
@@ -312,7 +303,7 @@ package testing:stub-activity-obelisk-ext {
 
 package testing:stub-activity-obelisk-stub {
     interface activity {
-        use obelisk:types/execution@4.2.0.{execution-id, stub-error};
+        use obelisk:types/execution@5.0.0.{execution-id, stub-error};
 
         foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
 

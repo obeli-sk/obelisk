@@ -3,7 +3,6 @@ use super::caching_db_connection::WorkflowDbConnection;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
-use super::host_exports::execution_id_derived_into_wast_val;
 use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
@@ -158,6 +157,14 @@ pub(crate) struct EventHistory {
 
     // Tracks join set contents for closing. One-offs are ignored, response id is removed when the response is processed.
     join_set_open_tracker: JoinSetOpenTracker,
+
+    // Id of the last processed response per (non-one-off) join set, for `join-set.last-id`.
+    // Rebuilt deterministically on replay as `join-next` / `-await-next` are re-applied.
+    last_response_by_join_set: HashMap<JoinSetId, JoinSetResponseId>,
+    // Last one-off response of any kind (incl. sleep delay), for `last-oneoff-id`.
+    last_oneoff_id: Option<JoinSetResponseId>,
+    // Last one-off child execution (call-json / direct call), for `last-direct-call-id`.
+    last_direct_call_id: Option<ExecutionIdDerived>,
 }
 
 #[derive(Debug)]
@@ -209,7 +216,41 @@ impl EventHistory {
             lock_extension: lock_extension.unwrap_or_default(),
             subscription_interruption,
             join_set_open_tracker: JoinSetOpenTracker::new(),
+            last_response_by_join_set: HashMap::default(),
+            last_oneoff_id: None,
+            last_direct_call_id: None,
         }
+    }
+
+    /// Record the last processed response id of a (non-one-off) join set for `join-set.last-id`.
+    pub(crate) fn record_last_response_id(
+        &mut self,
+        join_set_id: &JoinSetId,
+        response_id: JoinSetResponseId,
+    ) {
+        self.last_response_by_join_set
+            .insert(join_set_id.clone(), response_id);
+    }
+
+    /// Record the last one-off response (sleep / call-json / direct call) for
+    /// `last-oneoff-id` and, for a child execution, `last-direct-call-id`.
+    pub(crate) fn record_last_oneoff_id(&mut self, response_id: JoinSetResponseId) {
+        if let JoinSetResponseId::ChildExecutionId(child_id) = &response_id {
+            self.last_direct_call_id = Some(child_id.clone());
+        }
+        self.last_oneoff_id = Some(response_id);
+    }
+
+    pub(crate) fn last_response_id(&self, join_set_id: &JoinSetId) -> Option<&JoinSetResponseId> {
+        self.last_response_by_join_set.get(join_set_id)
+    }
+
+    pub(crate) fn last_oneoff_id(&self) -> Option<&JoinSetResponseId> {
+        self.last_oneoff_id.as_ref()
+    }
+
+    pub(crate) fn last_direct_call_id(&self) -> Option<&ExecutionIdDerived> {
+        self.last_direct_call_id.as_ref()
     }
 
     /// Unprocessed requests imply replaying
@@ -1954,6 +1995,45 @@ impl EventHistory {
         }
     }
 
+    /// Platform-level failure kind of a *processed* child response, or `None` for
+    /// an ok / business-err result. Same precondition and error channel as
+    /// `get_processed_response_json`.
+    pub(crate) fn get_processed_response_failure_kind(
+        &self,
+        child_execution_id: &ExecutionIdDerived,
+    ) -> Result<
+        Option<concepts::ExecutionFailureKind>,
+        latest::obelisk::workflow::workflow_support::GetResultJsonError,
+    > {
+        use latest::obelisk::workflow::workflow_support::GetResultJsonError;
+
+        let response_idx = self
+            .index_child_exe_to_processed_response_idx
+            .get(child_execution_id)
+            .ok_or(GetResultJsonError::NotFoundInProcessedResponses)?;
+
+        match &self
+            .responses
+            .get(*response_idx)
+            .as_ref()
+            .expect("`index_child_exe_to_processed_response_idx` must point to a response")
+            .0
+            .event
+            .event
+            .event
+        {
+            JoinSetResponse::ChildExecutionFinished { result, .. } => match result {
+                SupportedFunctionReturnValue::ExecutionFailure(failure) => Ok(Some(failure.kind)),
+                SupportedFunctionReturnValue::Ok(_) | SupportedFunctionReturnValue::Err(_) => {
+                    Ok(None)
+                }
+            },
+            JoinSetResponse::DelayFinished { .. } => unreachable!(
+                "`index_child_exe_to_processed_response_idx` must point to a ChildExecutionFinished"
+            ),
+        }
+    }
+
     pub(crate) fn next_join_set_name_generated(&self) -> String {
         self.next_join_set_name_index(JoinSetKind::Generated)
     }
@@ -2172,7 +2252,7 @@ pub(crate) enum EventCall {
 
 #[derive(derive_more::Debug, Clone)]
 pub(crate) enum EventCallBlocking {
-    /// foo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, ?>, await-next-extension-error>;
+    /// foo-await-next: func(join-set: borrow<join-set>) -> result<?, await-next-extension-error>; id read via join-set.last-id
     JoinNextRequestingFfqn(JoinNextRequestingFfqn),
     JoinNext(JoinNext),
     JoinSetClose(JoinSetClose),
@@ -2473,10 +2553,13 @@ impl JoinNextRequestingFfqn {
             assert_matches!(value, ChildReturnValue::JoinNextRequestingFfqn(result) => result);
         let value = match value {
             Ok((child_execution_id, wast_val_result)) => {
-                let wast_val_res = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-                    execution_id_derived_into_wast_val(&child_execution_id),
-                    wast_val_result,
-                ])))));
+                // `-await-next` now returns `result<T, err>` directly (no id tuple);
+                // read the id via `join-set.last-id`. Mirrors `-get`.
+                let wast_val_res = WastVal::Result(Ok(Some(Box::new(wast_val_result))));
+                event_history.record_last_response_id(
+                    &join_set_id,
+                    JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
+                );
                 event_history
                     .join_set_open_tracker
                     .remove_response(
@@ -2541,6 +2624,7 @@ impl JoinNext {
             .await?;
         let value = assert_matches!(value,ChildReturnValue::JoinNext(value) => value);
         if let Ok((response_id, _)) = &value {
+            event_history.record_last_response_id(&join_set_id, response_id.clone());
             event_history
                 .join_set_open_tracker
                 .remove_response(&join_set_id, response_id)
@@ -2594,6 +2678,7 @@ impl JoinNextTry {
             .await?;
         let value = assert_matches!(value, ChildReturnValue::JoinNextTry(value) => value);
         if let Ok((response_id, _)) = &value {
+            event_history.record_last_response_id(&join_set_id, response_id.clone());
             event_history
                 .join_set_open_tracker
                 .remove_response(&join_set_id, response_id)
@@ -2639,13 +2724,15 @@ impl OneOffChildExecutionRequest {
                 ffqn,
                 fn_component_id,
                 join_set_id,
-                child_execution_id,
+                child_execution_id: child_execution_id.clone(),
                 params,
                 wasm_backtrace,
             },
         ));
 
         let value = event_history.apply(event, db_connection, called_at).await?;
+        event_history
+            .record_last_oneoff_id(JoinSetResponseId::ChildExecutionId(child_execution_id));
         let value = assert_matches!(value,
             ChildReturnValue::WastVal(wast_val) => wast_val.as_val());
         Ok(value)
@@ -2677,8 +2764,8 @@ impl OneOffDelayRequest {
             .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {
                 // Only `sleep-named-bt` passes the name
                 ffqn: FunctionFqn::new_static(
-                    "obelisk:workflow/workflow-support@5.1.0",
-                    "sleep-named-bt",
+                    "obelisk:workflow/workflow-support@6.0.0",
+                    "sleep",
                 ),
                 reason: "invalid sleep join set name".into(),
                 detail: Some(err.to_string()),
@@ -2692,7 +2779,7 @@ impl OneOffDelayRequest {
             .apply(
                 EventCall::Blocking(EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest {
                     join_set_id,
-                    delay_id,
+                    delay_id: delay_id.clone(),
                     schedule_at,
                     expires_at_if_new,
                     wasm_backtrace,
@@ -2704,6 +2791,7 @@ impl OneOffDelayRequest {
         else {
             unreachable!()
         };
+        event_history.record_last_oneoff_id(JoinSetResponseId::DelayId(delay_id));
         Ok(result.map(|()| scheduled_at))
     }
 }

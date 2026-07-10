@@ -1,10 +1,11 @@
 ---
 source: crates/utils/src/wasm_tools.rs
+assertion_line: 1139
 expression: imports
 ---
 {
-  "obelisk:types/join-set@4.2.0.[method]join-set.id": {
-    "ffqn": "obelisk:types/join-set@4.2.0.[method]join-set.id",
+  "obelisk:types/join-set@5.0.0.[method]join-set.id": {
+    "ffqn": "obelisk:types/join-set@5.0.0.[method]join-set.id",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -21,9 +22,15 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.1.0.join-set-create": {
-    "ffqn": "obelisk:workflow/workflow-support@5.1.0.join-set-create",
-    "parameter_types": [],
+  "obelisk:workflow/workflow-support@6.0.0.join-set-create": {
+    "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-set-create",
+    "parameter_types": [
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
+      }
+    ],
     "return_type": {
       "non_extendable": {
         "type_wrapper": "own",
@@ -44,8 +51,8 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<string, string>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<string, string>>, await-next-extension-error>"
+        "type_wrapper": "result<result<string, string>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<string, string>, await-next-extension-error>"
       }
     },
     "extension": "await_next",

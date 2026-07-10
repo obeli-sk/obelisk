@@ -711,7 +711,9 @@ impl ExIm {
                 };
                 insert_ext(fn_submit);
 
-                // -await-next(join-set: join-set) ->  result<(execution_id, original_return_type), await-next-extension-error>
+                // -await-next(join-set: join-set) -> result<original_return_type, await-next-extension-error>
+                // The response id is dropped from the tuple; read it via join-set.last-id.
+                // Structurally identical to -get.
                 let fn_await_next = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_ext_ifc.clone(),
@@ -722,24 +724,18 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
                     return_type: {
-                        let ok_part = format!(
-                            "tuple<execution-id, {original_ret}>",
-                            original_ret = exported_fn_metadata.return_type
-                        );
-                        // (execution-id, original_ret)
-                        let ok_type_wrapper = TypeWrapper::Tuple(Box::new([
-                            execution_id_type_wrapper.clone(),
-                            TypeWrapper::from(return_type.type_wrapper_tl.clone()),
-                        ]));
                         ReturnType::detect(
                             TypeWrapper::Result {
-                                ok: Some(Box::new(ok_type_wrapper)),
+                                ok: Some(Box::new(TypeWrapper::from(
+                                    return_type.type_wrapper_tl.clone(),
+                                ))),
                                 err: Some(Box::new(
                                     await_next_extension_error_type_wrapper.clone(),
                                 )),
                             },
                             StrVariant::from(format!(
-                                "result<{ok_part}, await-next-extension-error>"
+                                "result<{original_ret}, await-next-extension-error>",
+                                original_ret = exported_fn_metadata.return_type
                             )),
                         )
                     },

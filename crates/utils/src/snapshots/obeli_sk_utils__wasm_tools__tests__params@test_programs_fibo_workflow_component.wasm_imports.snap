@@ -1,10 +1,29 @@
 ---
 source: crates/utils/src/wasm_tools.rs
+assertion_line: 1179
 expression: imports
 ---
 {
-  "obelisk:workflow/workflow-support@5.1.0.execution-id-generate": {
-    "ffqn": "obelisk:workflow/workflow-support@5.1.0.execution-id-generate",
+  "obelisk:types/join-set@5.0.0.[method]join-set.last-id": {
+    "ffqn": "obelisk:types/join-set@5.0.0.[method]join-set.last-id",
+    "parameter_types": [
+      {
+        "type_wrapper": "borrow",
+        "name": "self",
+        "wit_type": "borrow<join-set>"
+      }
+    ],
+    "return_type": {
+      "non_extendable": {
+        "type_wrapper": "option<variant { execution-id(record { id: string }), delay-id(record { id: string }) }>",
+        "wit_type": "option<response-id>"
+      }
+    },
+    "extension": null,
+    "submittable": false
+  },
+  "obelisk:workflow/workflow-support@6.0.0.execution-id-generate": {
+    "ffqn": "obelisk:workflow/workflow-support@6.0.0.execution-id-generate",
     "parameter_types": [
       {
         "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
@@ -21,13 +40,18 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.1.0.get-result-json": {
-    "ffqn": "obelisk:workflow/workflow-support@5.1.0.get-result-json",
+  "obelisk:workflow/workflow-support@6.0.0.get-result-json": {
+    "ffqn": "obelisk:workflow/workflow-support@6.0.0.get-result-json",
     "parameter_types": [
       {
         "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
+      },
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
@@ -39,27 +63,38 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.1.0.join-next": {
-    "ffqn": "obelisk:workflow/workflow-support@5.1.0.join-next",
+  "obelisk:workflow/workflow-support@6.0.0.join-next": {
+    "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
         "name": "join-set",
         "wit_type": "borrow<join-set>"
+      },
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<variant { execution-id(record { id: string }), delay-id(record { id: string }) }, result>, variant { all-processed }>",
-        "wit_type": "result<tuple<response-id, result>, join-next-error>"
+        "type_wrapper": "result<result<option<string>, option<string>>, variant { all-processed }>",
+        "wit_type": "result<result<option<string>, option<string>>, join-next-error>"
       }
     },
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.1.0.join-set-create": {
-    "ffqn": "obelisk:workflow/workflow-support@5.1.0.join-set-create",
-    "parameter_types": [],
+  "obelisk:workflow/workflow-support@6.0.0.join-set-create": {
+    "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-set-create",
+    "parameter_types": [
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
+      }
+    ],
     "return_type": {
       "non_extendable": {
         "type_wrapper": "own",
@@ -69,8 +104,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.1.0.schedule-json": {
-    "ffqn": "obelisk:workflow/workflow-support@5.1.0.schedule-json",
+  "obelisk:workflow/workflow-support@6.0.0.schedule-json": {
+    "ffqn": "obelisk:workflow/workflow-support@6.0.0.schedule-json",
     "parameter_types": [
       {
         "type_wrapper": "record { id: string }",
@@ -112,8 +147,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@5.1.0.submit-json": {
-    "ffqn": "obelisk:workflow/workflow-support@5.1.0.submit-json",
+  "obelisk:workflow/workflow-support@6.0.0.submit-json": {
+    "ffqn": "obelisk:workflow/workflow-support@6.0.0.submit-json",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -134,6 +169,11 @@ expression: imports
         "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
         "name": "config",
         "wit_type": "option<submit-config>"
+      },
+      {
+        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
+        "name": "backtrace",
+        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
@@ -156,8 +196,8 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<tuple<record { id: string }, result<u64>>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
-        "wit_type": "result<tuple<execution-id, result<u64>>, await-next-extension-error>"
+        "type_wrapper": "result<result<u64>, variant { all-processed, function-mismatch(record { specified-function: record { interface-name: string, function-name: string }, actual-function: option<record { interface-name: string, function-name: string }>, actual-id: variant { execution-id(record { id: string }), delay-id(record { id: string }) } }) }>",
+        "wit_type": "result<result<u64>, await-next-extension-error>"
       }
     },
     "extension": "await_next",

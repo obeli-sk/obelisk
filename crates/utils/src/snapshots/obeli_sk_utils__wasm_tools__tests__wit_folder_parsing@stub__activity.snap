@@ -1,24 +1,25 @@
 ---
 source: crates/utils/src/wasm_tools.rs
+assertion_line: 1220
 expression: snapshot
 ---
 testing:stub-activity-obelisk-ext
 package testing:stub-activity-obelisk-ext;
 
 interface activity {
-  use obelisk:types/execution@4.2.0.{execution-id};
-  use obelisk:types/join-set@4.2.0.{join-set};
-  use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+  use obelisk:types/execution@5.0.0.{execution-id};
+  use obelisk:types/join-set@5.0.0.{join-set};
+  use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
 
   foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
 
-  foo-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result<string>>, await-next-extension-error>;
+  foo-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
 
   foo-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
   noret-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-  noret-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+  noret-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
   noret-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 }
@@ -29,7 +30,7 @@ testing:stub-activity-obelisk-stub
 package testing:stub-activity-obelisk-stub;
 
 interface activity {
-  use obelisk:types/execution@4.2.0.{execution-id, stub-error};
+  use obelisk:types/execution@5.0.0.{execution-id, stub-error};
 
   foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
 

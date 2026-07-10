@@ -71,7 +71,7 @@ expression: redact_replay(&replay)
               "frames": [
                 {
                   "module": "<unknown>",
-                  "func_name": "<wasm function 6>",
+                  "func_name": "<wasm function 8>",
                   "symbols": []
                 },
                 {
@@ -81,7 +81,7 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "fibo_submit",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4455,
+                      "line": 3845,
                       "col": 47
                     },
                     {
@@ -93,13 +93,13 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4809,
+                      "line": 4193,
                       "col": 43
                     },
                     {
                       "func_name": "export_fiboa_concurrent",
                       "file": "<REDACTED>/any.rs",
-                      "line": 5067,
+                      "line": 4451,
                       "col": 109
                     }
                   ]
@@ -142,7 +142,7 @@ expression: redact_replay(&replay)
               "frames": [
                 {
                   "module": "<unknown>",
-                  "func_name": "<wasm function 5>",
+                  "func_name": "<wasm function 7>",
                   "symbols": []
                 },
                 {
@@ -152,7 +152,7 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "fibo_await_next",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4484,
+                      "line": 3874,
                       "col": 47
                     }
                   ]
@@ -170,13 +170,13 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4809,
+                      "line": 4193,
                       "col": 43
                     },
                     {
                       "func_name": "export_fiboa_concurrent",
                       "file": "<REDACTED>/any.rs",
-                      "line": 5067,
+                      "line": 4451,
                       "col": 109
                     }
                   ]

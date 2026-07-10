@@ -1,11 +1,12 @@
 ---
 source: crates/utils/src/wit.rs
+assertion_line: 1077
 expression: wit
 ---
 package root:component;
 
 world root {
-    import obelisk:types/time@4.2.0;
+    import obelisk:types/time@5.0.0;
     import wasi:io/poll@0.2.6;
     import wasi:clocks/monotonic-clock@0.2.6;
     import wasi:io/error@0.2.6;
@@ -25,7 +26,7 @@ world root {
     export testing:sleep-obelisk-ext/sleep;
     export testing:sleep-obelisk-schedule/sleep;
 }
-package obelisk:types@4.2.0 {
+package obelisk:types@5.0.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -89,6 +90,18 @@ package obelisk:types@4.2.0 {
             actual-id: response-id,
         }
 
+        /// The kind of a platform-level execution failure, as opposed to a business
+        /// `err` result. Surfaced additively via `get-execution-failure-kind`; the
+        /// err value itself keeps carrying the `execution-failed` sentinel.
+        @since(version = 5.0.0)
+        enum execution-failure-kind {
+            timed-out,
+            nondeterminism-detected,
+            out-of-fuel,
+            cancelled,
+            uncategorized,
+        }
+
         /// Error that is thrown by `-await-next` extension functions.
         @since(version = 3.0.0)
         variant await-next-extension-error {
@@ -108,12 +121,6 @@ package obelisk:types@4.2.0 {
             /// Processed responses do not contain the specified execution ID.
             /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
             not-found-in-processed-responses,
-        }
-
-        /// Error variants that may occur when calling `-invoke` extension functions.
-        @since(version = 3.0.0)
-        variant invoke-extension-error {
-            invalid-name(string),
         }
 
         /// Error variants that may occur when calling `-stub` extension functions.
@@ -167,8 +174,7 @@ package obelisk:types@4.2.0 {
     }
     @since(version = 4.0.0)
     interface join-set {
-        use time.{schedule-at};
-        use execution.{delay-id, response-id};
+        use execution.{response-id};
 
         /// Join set resouce.
         @since(version = 4.0.0)
@@ -179,28 +185,13 @@ package obelisk:types@4.2.0 {
             /// * `n:NAME` in case of a named join set
             @since(version = 4.0.0)
             id: func() -> string;
-            /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            submit-delay: func(timeout: schedule-at) -> delay-id;
-            /// Block the workflow execution until next response associated with the join set arrives.
-            /// The response is marked as processed.
-            /// Child execution result can be obtained using `-get` extension function using the
-            /// returned execution ID.
-            /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            join-next: func() -> result<tuple<response-id, result>, join-next-error>;
-        }
-
-        /// Error variants that may occur when calling `join-next` function.
-        @since(version = 4.0.0)
-        @deprecated(version = 4.1.0)
-        variant join-next-error {
-            /// All submitted requests and their responses were already processed.
-            all-processed,
+            /// The `response-id` of the last processed response of this join set
+            /// (the one returned by the most recent `join-next` / `-await-next`),
+            /// or `none` if no response has been processed yet.
+            /// Must be read immediately after `join-next`, before the next one.
+            /// An `execution-id` marks a child response; a `delay-id` marks a delay.
+            @since(version = 5.0.0)
+            last-id: func() -> option<response-id>;
         }
     }
 }
@@ -299,7 +290,7 @@ package wasi:cli@0.2.6 {
 
 package testing:sleep {
     interface sleep {
-        use obelisk:types/time@4.2.0.{duration};
+        use obelisk:types/time@5.0.0.{duration};
 
         sleep: func(duration: duration) -> result;
 
@@ -312,26 +303,26 @@ package testing:sleep {
 
 package testing:sleep-obelisk-ext {
     interface sleep {
-        use obelisk:types/time@4.2.0.{duration};
-        use obelisk:types/execution@4.2.0.{execution-id};
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/time@5.0.0.{duration};
+        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
 
         sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
-        sleep-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-loop-submit: func(join-set: borrow<join-set>, duration: duration, iterations: u32) -> execution-id;
 
-        sleep-loop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-loop-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         noop-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        noop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        noop-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
     }
@@ -340,9 +331,9 @@ package testing:sleep-obelisk-ext {
 
 package testing:sleep-obelisk-schedule {
     interface sleep {
-        use obelisk:types/time@4.2.0.{duration};
-        use obelisk:types/execution@4.2.0.{execution-id};
-        use obelisk:types/time@4.2.0.{schedule-at};
+        use obelisk:types/time@5.0.0.{duration};
+        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/time@5.0.0.{schedule-at};
 
         sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 

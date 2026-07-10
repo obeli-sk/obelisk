@@ -1,5 +1,6 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_worker.rs
+assertion_line: 4950
 expression: redact_replay(&replay)
 ---
 {
@@ -32,14 +33,19 @@ expression: redact_replay(&replay)
             "wasm_backtrace": {
               "frames": [
                 {
+                  "module": "<unknown>",
+                  "func_name": "<wasm function 5>",
+                  "symbols": []
+                },
+                {
                   "module": "test_programs_fibo_workflow.wasm",
                   "func_name": "testing:fibo-workflow/workflow#fiboa-concurrent",
                   "symbols": [
                     {
                       "func_name": "join_set_create",
                       "file": "<REDACTED>/any.rs",
-                      "line": 1052,
-                      "col": 21
+                      "line": 1462,
+                      "col": 31
                     },
                     {
                       "func_name": "fiboa_concurrent",
@@ -50,13 +56,13 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4809,
+                      "line": 4193,
                       "col": 43
                     },
                     {
                       "func_name": "export_fiboa_concurrent",
                       "file": "<REDACTED>/any.rs",
-                      "line": 5067,
+                      "line": 4451,
                       "col": 109
                     }
                   ]
@@ -134,7 +140,7 @@ expression: redact_replay(&replay)
               "frames": [
                 {
                   "module": "<unknown>",
-                  "func_name": "<wasm function 6>",
+                  "func_name": "<wasm function 8>",
                   "symbols": []
                 },
                 {
@@ -144,7 +150,7 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "fibo_submit",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4455,
+                      "line": 3845,
                       "col": 47
                     },
                     {
@@ -156,13 +162,13 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4809,
+                      "line": 4193,
                       "col": 43
                     },
                     {
                       "func_name": "export_fiboa_concurrent",
                       "file": "<REDACTED>/any.rs",
-                      "line": 5067,
+                      "line": 4451,
                       "col": 109
                     }
                   ]
@@ -205,7 +211,7 @@ expression: redact_replay(&replay)
               "frames": [
                 {
                   "module": "<unknown>",
-                  "func_name": "<wasm function 5>",
+                  "func_name": "<wasm function 7>",
                   "symbols": []
                 },
                 {
@@ -215,7 +221,7 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "fibo_await_next",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4484,
+                      "line": 3874,
                       "col": 47
                     }
                   ]
@@ -233,13 +239,13 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4809,
+                      "line": 4193,
                       "col": 43
                     },
                     {
                       "func_name": "export_fiboa_concurrent",
                       "file": "<REDACTED>/any.rs",
-                      "line": 5067,
+                      "line": 4451,
                       "col": 109
                     }
                   ]

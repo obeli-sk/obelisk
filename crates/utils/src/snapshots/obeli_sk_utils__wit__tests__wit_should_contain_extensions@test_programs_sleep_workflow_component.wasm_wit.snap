@@ -1,15 +1,16 @@
 ---
 source: crates/utils/src/wit.rs
+assertion_line: 1077
 expression: wit
 ---
 package root:component;
 
 world root {
-    import obelisk:types/time@4.2.0;
-    import obelisk:types/execution@4.2.0;
-    import obelisk:types/backtrace@4.2.0;
-    import obelisk:types/join-set@4.2.0;
-    import obelisk:workflow/workflow-support@5.1.0;
+    import obelisk:types/time@5.0.0;
+    import obelisk:types/execution@5.0.0;
+    import obelisk:types/backtrace@5.0.0;
+    import obelisk:types/join-set@5.0.0;
+    import obelisk:workflow/workflow-support@6.0.0;
     import testing:sleep/sleep;
     import testing:sleep-obelisk-ext/sleep;
     import testing:sleep-obelisk-schedule/sleep;
@@ -26,7 +27,7 @@ package obelisk:log@1.0.0 {
 }
 
 
-package obelisk:types@4.2.0 {
+package obelisk:types@5.0.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -90,6 +91,18 @@ package obelisk:types@4.2.0 {
             actual-id: response-id,
         }
 
+        /// The kind of a platform-level execution failure, as opposed to a business
+        /// `err` result. Surfaced additively via `get-execution-failure-kind`; the
+        /// err value itself keeps carrying the `execution-failed` sentinel.
+        @since(version = 5.0.0)
+        enum execution-failure-kind {
+            timed-out,
+            nondeterminism-detected,
+            out-of-fuel,
+            cancelled,
+            uncategorized,
+        }
+
         /// Error that is thrown by `-await-next` extension functions.
         @since(version = 3.0.0)
         variant await-next-extension-error {
@@ -109,12 +122,6 @@ package obelisk:types@4.2.0 {
             /// Processed responses do not contain the specified execution ID.
             /// Execution was not awaited using `-await-next` extension or `join-set.join-next`.
             not-found-in-processed-responses,
-        }
-
-        /// Error variants that may occur when calling `-invoke` extension functions.
-        @since(version = 3.0.0)
-        variant invoke-extension-error {
-            invalid-name(string),
         }
 
         /// Error variants that may occur when calling `-stub` extension functions.
@@ -168,8 +175,7 @@ package obelisk:types@4.2.0 {
     }
     @since(version = 4.0.0)
     interface join-set {
-        use time.{schedule-at};
-        use execution.{delay-id, response-id};
+        use execution.{response-id};
 
         /// Join set resouce.
         @since(version = 4.0.0)
@@ -180,41 +186,26 @@ package obelisk:types@4.2.0 {
             /// * `n:NAME` in case of a named join set
             @since(version = 4.0.0)
             id: func() -> string;
-            /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            submit-delay: func(timeout: schedule-at) -> delay-id;
-            /// Block the workflow execution until next response associated with the join set arrives.
-            /// The response is marked as processed.
-            /// Child execution result can be obtained using `-get` extension function using the
-            /// returned execution ID.
-            /// Return `join-next-error::all-processed` if the join set has all requests matched with responses.
-            /// This function has been moved to `workflow-support`.
-            @since(version = 4.0.0)
-            @deprecated(version = 4.1.0)
-            join-next: func() -> result<tuple<response-id, result>, join-next-error>;
-        }
-
-        /// Error variants that may occur when calling `join-next` function.
-        @since(version = 4.0.0)
-        @deprecated(version = 4.1.0)
-        variant join-next-error {
-            /// All submitted requests and their responses were already processed.
-            all-processed,
+            /// The `response-id` of the last processed response of this join set
+            /// (the one returned by the most recent `join-next` / `-await-next`),
+            /// or `none` if no response has been processed yet.
+            /// Must be read immediately after `join-next`, before the next one.
+            /// An `execution-id` marks a child response; a `delay-id` marks a delay.
+            @since(version = 5.0.0)
+            last-id: func() -> option<response-id>;
         }
     }
 }
 
 
-package obelisk:workflow@5.1.0 {
+package obelisk:workflow@6.0.0 {
     interface workflow-support {
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/time@4.2.0.{schedule-at};
-        use obelisk:types/execution@4.2.0.{delay-id, response-id};
-        use obelisk:types/time@4.2.0.{datetime};
-        use obelisk:types/backtrace@4.2.0.{wasm-backtrace};
-        use obelisk:types/execution@4.2.0.{execution-id, function, submit-config, schedule-json-error};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
+        use obelisk:types/execution@5.0.0.{delay-id};
+        use obelisk:types/time@5.0.0.{datetime};
+        use obelisk:types/execution@5.0.0.{execution-id, function, submit-config, schedule-json-error};
 
         variant join-next-try-error {
             all-processed,
@@ -225,17 +216,17 @@ package obelisk:workflow@5.1.0 {
             all-processed,
         }
 
-        random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
+        random-u64-inclusive: func(min: u64, max-inclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
 
-        sleep: func(schedule-at: schedule-at) -> result<datetime>;
+        sleep: func(schedule-at: schedule-at, name: option<string>, backtrace: option<wasm-backtrace>) -> result<datetime>;
 
-        join-set-create: func() -> join-set;
+        join-set-create: func(backtrace: option<wasm-backtrace>) -> join-set;
 
-        submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
+        submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at, backtrace: option<wasm-backtrace>) -> delay-id;
 
-        join-next: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-error>;
+        join-next: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-error>;
 
-        join-next-try: func(join-set: borrow<join-set>) -> result<tuple<response-id, result>, join-next-try-error>;
+        join-next-try: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-try-error>;
 
         execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
 
@@ -246,7 +237,7 @@ package obelisk:workflow@5.1.0 {
 
 package testing:sleep {
     interface sleep {
-        use obelisk:types/time@4.2.0.{duration};
+        use obelisk:types/time@5.0.0.{duration};
 
         sleep: func(duration: duration) -> result;
     }
@@ -255,9 +246,9 @@ package testing:sleep {
 
 package testing:sleep-obelisk-ext {
     interface sleep {
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/time@4.2.0.{duration};
-        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/time@5.0.0.{duration};
+        use obelisk:types/execution@5.0.0.{execution-id};
 
         sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
     }
@@ -266,8 +257,8 @@ package testing:sleep-obelisk-ext {
 
 package testing:sleep-obelisk-schedule {
     interface sleep {
-        use obelisk:types/time@4.2.0.{schedule-at};
-        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/execution@5.0.0.{execution-id};
 
         noop-schedule: func(schedule-at: schedule-at) -> execution-id;
     }
@@ -276,8 +267,8 @@ package testing:sleep-obelisk-schedule {
 
 package testing:sleep-workflow {
     interface workflow {
-        use obelisk:types/time@4.2.0.{duration, schedule-at};
-        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/time@5.0.0.{duration, schedule-at};
+        use obelisk:types/execution@5.0.0.{execution-id};
 
         sleep-host-activity: func(duration: duration) -> result;
 
@@ -310,86 +301,86 @@ package testing:sleep-workflow {
 
 package testing:sleep-workflow-obelisk-ext {
     interface workflow {
-        use obelisk:types/time@4.2.0.{duration, schedule-at};
-        use obelisk:types/execution@4.2.0.{execution-id};
-        use obelisk:types/join-set@4.2.0.{join-set};
-        use obelisk:types/execution@4.2.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/time@5.0.0.{duration, schedule-at};
+        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/join-set@5.0.0.{join-set};
+        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
 
         sleep-host-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
-        sleep-host-activity-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-host-activity-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-host-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-host-activity-schedule-many-submit: func(join-set: borrow<join-set>, n: u64, schedule-at: schedule-at, duration-secs: u64) -> execution-id;
 
-        sleep-host-activity-schedule-many-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-host-activity-schedule-many-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-host-activity-schedule-many-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-schedule-at-submit: func(join-set: borrow<join-set>, schedule-at: schedule-at) -> execution-id;
 
-        sleep-schedule-at-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-schedule-at-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-schedule-at-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-activity-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
-        sleep-activity-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-activity-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-activity-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-random-submit: func(join-set: borrow<join-set>, min-millis: u64, max-millis-inclusive: u64) -> execution-id;
 
-        sleep-random-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-random-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-random-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         schedule-noop-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
 
-        schedule-noop-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        schedule-noop-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         schedule-noop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         two-delays-in-same-join-set-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        two-delays-in-same-join-set-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        two-delays-in-same-join-set-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         two-delays-in-same-join-set-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         join-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        join-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         join-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         join-next-try-pending-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        join-next-try-pending-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-try-pending-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         join-next-try-pending-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         join-next-try-all-processed-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        join-next-try-all-processed-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-try-all-processed-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         join-next-try-all-processed-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         join-next-try-found-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        join-next-try-found-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        join-next-try-found-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         join-next-try-found-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-activity-submit-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        sleep-activity-submit-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-activity-submit-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-activity-submit-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
         sleep-activity-submit-then-trap-submit: func(join-set: borrow<join-set>) -> execution-id;
 
-        sleep-activity-submit-then-trap-await-next: func(join-set: borrow<join-set>) -> result<tuple<execution-id, result>, await-next-extension-error>;
+        sleep-activity-submit-then-trap-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-activity-submit-then-trap-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
     }
@@ -398,8 +389,8 @@ package testing:sleep-workflow-obelisk-ext {
 
 package testing:sleep-workflow-obelisk-schedule {
     interface workflow {
-        use obelisk:types/time@4.2.0.{duration, schedule-at};
-        use obelisk:types/execution@4.2.0.{execution-id};
+        use obelisk:types/time@5.0.0.{duration, schedule-at};
+        use obelisk:types/execution@5.0.0.{execution-id};
 
         sleep-host-activity-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
 
