@@ -1781,13 +1781,15 @@ mod tests {
             const js = obelisk.createJoinSet();
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'err': null}); // result<string> has no error type
-            let caughtErr = 'none';
+            let threw = false;
+            let caughtErr = 'unset';
             try {
                 js.joinNext();
             } catch (e) {
-                caughtErr = e.message;
+                threw = true;
+                caughtErr = e;
             }
-            return JSON.stringify({ lastId: js.lastId, caughtErr: caughtErr });
+            return JSON.stringify({ lastId: js.lastId, threw: threw, caughtErr: caughtErr });
         }";
 
         let harness =
@@ -1800,7 +1802,9 @@ mod tests {
             result["lastId"].as_str().unwrap().starts_with("E_"),
             "lastId should be set before throwing child err, got {result}"
         );
-        assert_eq!(json!("child execution failed"), result["caughtErr"]);
+        assert_eq!(json!(true), result["threw"]);
+        // result<string> has no err type: unit err throws null, mirroring Ok(None).
+        assert_eq!(json!(null), result["caughtErr"]);
         drop(harness);
         db_close.close().await;
     }

@@ -282,9 +282,8 @@ fn create_direct_call_proxy(
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
                 Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
-                Ok(Err(None)) => Err(JsNativeError::error()
-                    .with_message("child execution failed")
-                    .into()),
+                // Unit err (result<T> or execution failure with no err type): throw null, mirroring Ok(None).
+                Ok(Err(None)) => Err(JsError::from_opaque(JsValue::null())),
                 Err(e) => Err(JsNativeError::error()
                     .with_message(format!("call failed: {:?}", e))
                     .into()),
@@ -476,9 +475,8 @@ fn unwrap_result(
         Ok(Some(json_str)) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
         Ok(None) => Ok(JsValue::null()),
         Err(Some(err_str)) => throw_json_value(&err_str, ctx),
-        Err(None) => Err(JsNativeError::error()
-            .with_message("child execution failed")
-            .into()),
+        // Unit err (result<T> or execution failure with no err type): throw null, mirroring Ok(None).
+        Err(None) => Err(JsError::from_opaque(JsValue::null())),
     }
 }
 
@@ -968,9 +966,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             }
             Ok(Ok(None)) => Ok(JsValue::null()),
             Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
-            Ok(Err(None)) => Err(JsNativeError::error()
-                .with_message("child execution failed")
-                .into()),
+            // Unit err (result<T> or execution failure with no err type): throw null, mirroring Ok(None).
+            Ok(Err(None)) => Err(JsError::from_opaque(JsValue::null())),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("call failed: {:?}", e))
                 .into()),
