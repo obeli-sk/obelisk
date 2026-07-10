@@ -751,7 +751,6 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
-        _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<(), ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;
@@ -902,7 +901,6 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         &mut self,
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
-        _config: Option<types::obelisk::webhook::webhook_support::SubmitConfig>,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;

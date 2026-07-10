@@ -43,7 +43,6 @@ impl Guest for Component {
                 },
                 &params,
                 None,
-                None,
             )
             .unwrap();
         }

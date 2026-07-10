@@ -70,7 +70,7 @@ impl Guest for Component {
             function_name: "fibo".to_string(),
         };
 
-        let execution_id = submit_json(&join_set, &function, &params_json, None, None)
+        let execution_id = submit_json(&join_set, &function, &params_json, None)
             .expect("submit_json should succeed");
 
         // Await the result; the value is returned directly, the id via `last_id`.
@@ -107,7 +107,7 @@ impl Guest for Component {
             interface_name: "testing:nonexistent/ifc".to_string(),
             function_name: "unknown-fn".to_string(),
         };
-        match submit_json(&join_set, &function, "[]", None, None) {
+        match submit_json(&join_set, &function, "[]", None) {
             Err(SubmitJsonError::FunctionNotFound) => Ok(()),
             Err(other) => Err(format!("expected FunctionNotFound, got {other:?}")),
             Ok(_) => Err("expected error, got Ok".to_string()),
@@ -123,7 +123,7 @@ impl Guest for Component {
         };
 
         // Test 1: Invalid JSON syntax
-        match submit_json(&join_set, &function, "not valid json", None, None) {
+        match submit_json(&join_set, &function, "not valid json", None) {
             Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("cannot parse params as JSON array") {
                     return Err(format!("unexpected error message: {msg}"));
@@ -134,7 +134,7 @@ impl Guest for Component {
         }
 
         // Test 2: Valid JSON but not an array
-        match submit_json(&join_set, &function, "42", None, None) {
+        match submit_json(&join_set, &function, "42", None) {
             Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("params must be a json array") {
                     return Err(format!("unexpected error message: {msg}"));
@@ -145,7 +145,7 @@ impl Guest for Component {
         }
 
         // Test 3: Valid JSON array but wrong type
-        match submit_json(&join_set, &function, r#"["not a number"]"#, None, None) {
+        match submit_json(&join_set, &function, r#"["not a number"]"#, None) {
             Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("type checking failed") {
                     return Err(format!("unexpected error message: {msg}"));
@@ -167,7 +167,7 @@ impl Guest for Component {
         };
 
         // Submit an execution
-        let execution_id = submit_json(&join_set, &function, "[10]", None, None)
+        let execution_id = submit_json(&join_set, &function, "[10]", None)
             .map_err(|e| format!("submit_json failed: {e:?}"))?;
 
         // Try to get result before awaiting - should fail
@@ -189,7 +189,7 @@ impl Guest for Component {
         };
 
         // Submit with n=50 which causes fibo activity to return Err(())
-        let execution_id = submit_json(&join_set, &function, "[50]", None, None)
+        let execution_id = submit_json(&join_set, &function, "[50]", None)
             .map_err(|e| format!("submit_json failed: {e:?}"))?;
 
         // Await the result using the typed extension function (value only; id via last_id).
@@ -240,7 +240,6 @@ impl Guest for Component {
             &function,
             "[10]",
             None,
-            None,
         )
         .map_err(|e| format!("schedule_json failed: {e:?}"))?;
 
@@ -256,7 +255,6 @@ impl Guest for Component {
             &unknown_function,
             "[]",
             None,
-            None,
         ) {
             Err(ScheduleJsonError::FunctionNotFound) => {}
             Err(other) => return Err(format!("2: expected FunctionNotFound, got {other:?}")),
@@ -271,7 +269,6 @@ impl Guest for Component {
             &function,
             "not valid json",
             None,
-            None,
         ) {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("cannot parse params as JSON array") {
@@ -284,7 +281,7 @@ impl Guest for Component {
 
         // Test 4: Schedule with valid JSON but not an array
         let exec_id_4 = execution_id_generate(None);
-        match schedule_json(&exec_id_4, ScheduleAt::Now, &function, "42", None, None) {
+        match schedule_json(&exec_id_4, ScheduleAt::Now, &function, "42", None) {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if msg.contains("4: params must be a json array") {
                     return Err(format!("4: unexpected error message: {msg}"));
@@ -296,7 +293,7 @@ impl Guest for Component {
 
         // Test 5: Schedule with valid JSON but not the expected types
         let exec_id_5 = execution_id_generate(None);
-        match schedule_json(&exec_id_5, ScheduleAt::Now, &function, r#"["42"]"#, None, None) {
+        match schedule_json(&exec_id_5, ScheduleAt::Now, &function, r#"["42"]"#, None) {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.starts_with(
                     "params type checking failed: parameters cannot be deserialized: cannot parse 1-th parameter - \

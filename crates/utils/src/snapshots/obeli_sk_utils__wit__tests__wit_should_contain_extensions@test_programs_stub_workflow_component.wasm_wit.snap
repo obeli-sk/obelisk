@@ -1,17 +1,16 @@
 ---
 source: crates/utils/src/wit.rs
-assertion_line: 1077
 expression: wit
 ---
 package root:component;
 
 world root {
-    import obelisk:types/time@5.0.0;
     import obelisk:types/execution@5.0.0;
     import obelisk:types/join-set@5.0.0;
     import testing:stub-activity-obelisk-ext/activity;
     import testing:stub-activity-obelisk-stub/activity;
     import testing:stub-activity/activity;
+    import obelisk:types/time@5.0.0;
     import obelisk:types/backtrace@5.0.0;
     import obelisk:workflow/workflow-support@6.0.0;
     import obelisk:log/log@1.0.0;
@@ -56,8 +55,6 @@ package obelisk:types@5.0.0 {
     }
     @since(version = 4.0.0)
     interface execution {
-        use time.{duration};
-
         @since(version = 3.0.0)
         record execution-id {
             id: string,
@@ -134,13 +131,6 @@ package obelisk:types@5.0.0 {
             /// Conflict can happen when a second writer attempts to stub a value, while the
             /// value is not equal to the already stubbed value.
             conflict,
-        }
-
-        @since(version = 4.1.0)
-        record submit-config {
-            /// Override max duration of a execution run (single attempt).
-            /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
-            timeout: option<duration>,
         }
 
         @since(version = 4.2.0)

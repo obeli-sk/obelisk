@@ -81,8 +81,8 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "fibo_submit",
                       "file": "<REDACTED>/any.rs",
-                      "line": 3845,
-                      "col": 47
+                      "line": 3713,
+                      "col": 45
                     },
                     {
                       "func_name": "fiboa_concurrent",
@@ -93,14 +93,14 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4193,
-                      "col": 43
+                      "line": 4061,
+                      "col": 41
                     },
                     {
                       "func_name": "export_fiboa_concurrent",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4451,
-                      "col": 109
+                      "line": 4319,
+                      "col": 107
                     }
                   ]
                 }
@@ -152,8 +152,8 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "fibo_await_next",
                       "file": "<REDACTED>/any.rs",
-                      "line": 3874,
-                      "col": 47
+                      "line": 3742,
+                      "col": 45
                     }
                   ]
                 },
@@ -170,14 +170,14 @@ expression: redact_replay(&replay)
                     {
                       "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4193,
-                      "col": 43
+                      "line": 4061,
+                      "col": 41
                     },
                     {
                       "func_name": "export_fiboa_concurrent",
                       "file": "<REDACTED>/any.rs",
-                      "line": 4451,
-                      "col": 109
+                      "line": 4319,
+                      "col": 107
                     }
                   ]
                 }

@@ -45,8 +45,6 @@ package obelisk:types@5.0.0 {
     }
     @since(version = 4.0.0)
     interface execution {
-        use time.{duration};
-
         @since(version = 3.0.0)
         record execution-id {
             id: string,
@@ -123,13 +121,6 @@ package obelisk:types@5.0.0 {
             /// Conflict can happen when a second writer attempts to stub a value, while the
             /// value is not equal to the already stubbed value.
             conflict,
-        }
-
-        @since(version = 4.1.0)
-        record submit-config {
-            /// Override max duration of a execution run (single attempt).
-            /// Applies to activities only as workflows automatically extend their locks using `lock_extension` setting.
-            timeout: option<duration>,
         }
 
         @since(version = 4.2.0)

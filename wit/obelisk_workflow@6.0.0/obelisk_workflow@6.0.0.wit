@@ -3,7 +3,7 @@ package obelisk:workflow@6.0.0;
 @since(version = 4.0.0)
 interface workflow-support {
     use obelisk:types/time@5.0.0.{schedule-at, datetime};
-    use obelisk:types/execution@5.0.0.{delay-id, execution-id, response-id, function, submit-config, schedule-json-error, execution-failure-kind};
+    use obelisk:types/execution@5.0.0.{delay-id, execution-id, response-id, function, schedule-json-error, execution-failure-kind};
     use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
     use obelisk:types/join-set@5.0.0.{join-set};
 
@@ -106,7 +106,7 @@ interface workflow-support {
 
     /// Submit a child execution request with its parameters serialized as JSON array to a join set.
     @since(version = 6.0.0)
-    submit-json: func(join-set: borrow<join-set>, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<execution-id, submit-json-error>;
+    submit-json: func(join-set: borrow<join-set>, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<execution-id, submit-json-error>;
 
     /// Obtain child execution result after it has been awaited using `-await-next` extension or `join-set.join-next`.
     @since(version = 6.0.0)
@@ -159,7 +159,7 @@ interface workflow-support {
     /// Schedule a new top-level execution with its parameters serialized as JSON array.
     /// Use the execution ID returned by `execution-id-generate`.
     @since(version = 5.0.0)
-    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
 
     /// Call a function and block until the result is available. Equivalent to
     /// join-set-create + submit-json + join-next + join-set-close, but uses a single backtrace entry.
@@ -168,7 +168,7 @@ interface workflow-support {
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
     @since(version = 5.0.0)
-    call-json: func(function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
+    call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
 
     /// Write a stub response with a JSON-serialized result for an activity_stub or activity_external execution.
     /// The `execution-id` must be a derived (child) execution ID.

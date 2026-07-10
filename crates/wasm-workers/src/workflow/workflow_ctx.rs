@@ -1284,16 +1284,15 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function join-set-close", err))?;
 
-        // submit-json: func(join-set, function, params, config, backtrace) -> result<execution-id, submit-json-error>
+        // submit-json: func(join-set, function, params, backtrace) -> result<execution-id, submit-json-error>
         inst_workflow_support
             .func_wrap_async(
                 "submit-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (join_set_resource, function, params, _config, wit_backtrace): (
+                      (join_set_resource, function, params, wit_backtrace): (
                     Resource<JoinSetId>,
                     typesTypes::execution::Function,
                     String,
-                    Option<typesTypes::execution::SubmitConfig>, // TODO: Implement SubmitConfig
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
@@ -1429,17 +1428,16 @@ impl WorkflowCtx {
                 WasmFileError::linking_error("linking function execution-id-generate", err)
             })?;
 
-        // schedule-json: func(execution-id, schedule-at, function, params, config, backtrace) -> result<_, schedule-json-error>
+        // schedule-json: func(execution-id, schedule-at, function, params, backtrace) -> result<_, schedule-json-error>
         inst_workflow_support
             .func_wrap_async(
                 "schedule-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (execution_id, schedule_at, function, params, _config, wit_backtrace): (
+                      (execution_id, schedule_at, function, params, wit_backtrace): (
                     typesTypes::execution::ExecutionId,
                     ScheduleAtTypes,
                     typesTypes::execution::Function,
                     String,
-                    Option<typesTypes::execution::SubmitConfig>, // TODO: Implement SubmitConfig
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
@@ -1475,15 +1473,14 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function schedule-json", err))?;
 
-        // call-json: func(function, params, config, backtrace) -> result<result<option<string>, option<string>>, schedule-json-error>
+        // call-json: func(function, params, backtrace) -> result<result<option<string>, option<string>>, schedule-json-error>
         inst_workflow_support
             .func_wrap_async(
                 "call-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (function, params, _config, wit_backtrace): (
+                      (function, params, wit_backtrace): (
                     typesTypes::execution::Function,
                     String,
-                    Option<typesTypes::execution::SubmitConfig>, // TODO: Implement SubmitConfig
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {

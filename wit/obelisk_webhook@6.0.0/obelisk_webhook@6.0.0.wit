@@ -3,7 +3,7 @@ package obelisk:webhook@6.0.0;
 @since(version = 5.0.0)
 interface webhook-support {
     use obelisk:types/time@5.0.0.{schedule-at, datetime};
-    use obelisk:types/execution@5.0.0.{execution-id, function, submit-config, schedule-json-error, execution-failure-kind};
+    use obelisk:types/execution@5.0.0.{execution-id, function, schedule-json-error, execution-failure-kind};
     use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
 
     /// Error variants that may occur when calling `get-status`.
@@ -81,12 +81,12 @@ interface webhook-support {
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
     @since(version = 5.0.0)
-    call-json: func(function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
+    call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
 
     /// Schedule a new top-level execution with its parameters serialized as JSON array.
     /// Use the execution ID returned by `execution-id-generate`.
     @since(version = 5.0.0)
-    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, config: option<submit-config>, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
 
     /// Get the current status of an execution.
     /// Reports the `cancelling` state for cancellable workflows.

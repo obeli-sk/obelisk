@@ -133,10 +133,9 @@ use crate::generated::obelisk::types::execution::{ExecutionId, Function, Respons
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    self, JoinNextTryError, SubmitConfig, call_json, execution_id_generate, get_result_json,
-    join_next, join_next_try, join_set_close, join_set_create, join_set_create_named,
-    random_string, random_u64, random_u64_inclusive, schedule_json, sleep, stub_json, submit_delay,
-    submit_json,
+    self, JoinNextTryError, call_json, execution_id_generate, get_result_json, join_next,
+    join_next_try, join_set_close, join_set_create, join_set_create_named, random_string,
+    random_u64, random_u64_inclusive, schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
@@ -279,7 +278,7 @@ fn create_direct_call_proxy(
             let params_json = json_stringify(&array.into(), ctx)?;
 
             let backtrace = capture_backtrace(ctx);
-            match call_json(&function, &params_json, None, Some(&backtrace)) {
+            match call_json(&function, &params_json, Some(&backtrace)) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
                 Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
@@ -333,7 +332,6 @@ fn create_schedule_proxy(
                 schedule,
                 &function,
                 &params_json,
-                None,
                 Some(&backtrace),
             ) {
                 Ok(()) => Ok(JsValue::from(js_string!(exec_id.id))),
@@ -380,7 +378,7 @@ fn create_ext_submit_proxy(
 
             let backtrace = capture_backtrace(ctx);
             let result = with_join_set(idx, |js| {
-                submit_json(js, &function, &params_json, None, Some(&backtrace))
+                submit_json(js, &function, &params_json, Some(&backtrace))
             })?;
 
             match result {
@@ -939,7 +937,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.call(ffqn, params, [config])
+    // obelisk.call(ffqn, params)
     // Convenience: createJoinSet → submit → joinNext → getResult → close, return ok value, throw err value
     let call_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let ffqn = args
@@ -957,14 +955,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let params_val = args.get_or_undefined(1);
         let params_json = json_stringify(params_val, ctx)?;
 
-        let config = if let Some(cfg_val) = args.get(2) {
-            parse_submit_config(cfg_val, ctx)?
-        } else {
-            None
-        };
-
         let backtrace = capture_backtrace(ctx);
-        match call_json(&function, &params_json, config, Some(&backtrace)) {
+        match call_json(&function, &params_json, Some(&backtrace)) {
             Ok(Ok(Some(json_str))) => {
                 let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
                 Ok(parsed)
@@ -1011,7 +1003,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // obelisk.schedule(executionId, ffqn, params, scheduleAt?, config?)
+    // obelisk.schedule(executionId, ffqn, params, scheduleAt?)
     let schedule_fn = NativeFunction::from_fn_ptr(|_this, args, ctx| {
         let exec_id_str = args
             .get_or_undefined(0)
@@ -1037,19 +1029,12 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
         let schedule = parse_schedule_at(args.get_or_undefined(3), ctx)?;
 
-        let config = if let Some(cfg_val) = args.get(4) {
-            parse_submit_config(cfg_val, ctx)?
-        } else {
-            None
-        };
-
         let backtrace = capture_backtrace(ctx);
         match schedule_json(
             &exec_id,
             schedule,
             &function,
             &params_json,
-            config,
             Some(&backtrace),
         ) {
             Ok(()) => Ok(JsValue::undefined()),
@@ -1203,7 +1188,7 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
         ctx,
     )?;
 
-    // joinSet.submit(ffqn, params, [config])
+    // joinSet.submit(ffqn, params)
     let submit_fn = NativeFunction::from_fn_ptr(|this, args, ctx| {
         let this_obj = this
             .as_object()
@@ -1229,16 +1214,9 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
         let params_val = args.get_or_undefined(1);
         let params_json = json_stringify(params_val, ctx)?;
 
-        // Parse optional config
-        let config = if let Some(cfg_val) = args.get(2) {
-            parse_submit_config(cfg_val, ctx)?
-        } else {
-            None
-        };
-
         let backtrace = capture_backtrace(ctx);
         let result = with_join_set(idx, |js| {
-            submit_json(js, &function, &params_json, config, Some(&backtrace))
+            submit_json(js, &function, &params_json, Some(&backtrace))
         })?;
 
         match result {
@@ -1477,68 +1455,4 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
     }
 
     Ok(ScheduleAt::Now)
-}
-
-/// Parse submit config from JS value.
-fn parse_submit_config(value: &JsValue, ctx: &mut Context) -> JsResult<Option<SubmitConfig>> {
-    if value.is_undefined() || value.is_null() {
-        return Ok(None);
-    }
-
-    let obj = value
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message("config must be an object"))?;
-
-    let timeout = if let Ok(timeout_val) = obj.get(js_string!("timeout"), ctx) {
-        if !timeout_val.is_undefined() {
-            Some(parse_duration(&timeout_val, ctx)?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    Ok(Some(SubmitConfig { timeout }))
-}
-
-/// Parse duration from JS value.
-fn parse_duration(value: &JsValue, ctx: &mut Context) -> JsResult<Duration> {
-    let obj = value
-        .as_object()
-        .ok_or_else(|| JsNativeError::typ().with_message("duration must be an object"))?;
-
-    if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx)
-        && !ms.is_undefined()
-    {
-        return Ok(Duration::Milliseconds(ms.to_u32(ctx)? as u64));
-    }
-
-    if let Ok(secs) = obj.get(js_string!("seconds"), ctx)
-        && !secs.is_undefined()
-    {
-        return Ok(Duration::Seconds(secs.to_u32(ctx)? as u64));
-    }
-
-    if let Ok(mins) = obj.get(js_string!("minutes"), ctx)
-        && !mins.is_undefined()
-    {
-        return Ok(Duration::Minutes(mins.to_u32(ctx)?));
-    }
-
-    if let Ok(hours) = obj.get(js_string!("hours"), ctx)
-        && !hours.is_undefined()
-    {
-        return Ok(Duration::Hours(hours.to_u32(ctx)?));
-    }
-
-    if let Ok(days) = obj.get(js_string!("days"), ctx)
-        && !days.is_undefined()
-    {
-        return Ok(Duration::Days(days.to_u32(ctx)?));
-    }
-
-    Err(JsNativeError::typ()
-        .with_message("duration must have milliseconds, seconds, minutes, hours, or days")
-        .into())
 }

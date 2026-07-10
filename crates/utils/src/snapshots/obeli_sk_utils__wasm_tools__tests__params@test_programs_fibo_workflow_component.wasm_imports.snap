@@ -1,6 +1,5 @@
 ---
 source: crates/utils/src/wasm_tools.rs
-assertion_line: 1179
 expression: imports
 ---
 {
@@ -128,11 +127,6 @@ expression: imports
         "wit_type": "string"
       },
       {
-        "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
-        "name": "config",
-        "wit_type": "option<submit-config>"
-      },
-      {
         "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
         "name": "backtrace",
         "wit_type": "option<wasm-backtrace>"
@@ -164,11 +158,6 @@ expression: imports
         "type_wrapper": "string",
         "name": "params",
         "wit_type": "string"
-      },
-      {
-        "type_wrapper": "option<record { timeout: option<variant { milliseconds(u64), seconds(u64), minutes(u32), hours(u32), days(u32) }> }>",
-        "name": "config",
-        "wit_type": "option<submit-config>"
       },
       {
         "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
