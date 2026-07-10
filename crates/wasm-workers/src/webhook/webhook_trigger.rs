@@ -16,8 +16,8 @@ use concepts::storage::{
     AppendRequest, BacktraceInfo, CreateRequest, DbConnection, DbErrorGeneric, DbErrorRead,
     DbErrorReadWithTimeout, DbErrorWrite, DbPool, ExecutionRequest, HistoryEvent,
     HistoryEventScheduleAt, JoinSetRequest, LogInfoAppendRow, LogLevel, LogStreamType,
-    PendingState, PendingStateFinishedError,
-    PendingStateFinishedResultKind, TimeoutOutcome, Version, http_client_trace::HttpClientTrace,
+    PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, TimeoutOutcome,
+    Version, http_client_trace::HttpClientTrace,
 };
 use concepts::time::{ClockFn, Sleep};
 use concepts::{
@@ -1112,17 +1112,16 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
         _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
-    ) -> Result<
-        Option<types::obelisk::types::execution::ExecutionFailureKind>,
-        GetErrorTrappable,
-    > {
+    ) -> Result<Option<types::obelisk::types::execution::ExecutionFailureKind>, GetErrorTrappable>
+    {
         use types::obelisk::webhook::webhook_support::GetError;
 
         let parsed_execution_id: concepts::ExecutionId =
             match concepts::ExecutionId::from_str(&execution_id.id) {
                 Ok(id) => id,
                 Err(err) => {
-                    let msg = format!("get-execution-failure-kind: cannot parse execution ID: {err}");
+                    let msg =
+                        format!("get-execution-failure-kind: cannot parse execution ID: {err}");
                     self.error(msg.clone()).await;
                     return Err(GetError::ExecutionIdParsingError(msg).into());
                 }
@@ -1165,9 +1164,10 @@ impl WebhookSupportHost for WebhookEndpointCtx {
     async fn last_direct_call_id(
         &mut self,
     ) -> wasmtime::Result<Option<types::obelisk::webhook::webhook_support::ExecutionId>> {
-        Ok(self.last_direct_call_id.as_ref().map(|id| {
-            types::obelisk::webhook::webhook_support::ExecutionId { id: id.to_string() }
-        }))
+        Ok(self
+            .last_direct_call_id
+            .as_ref()
+            .map(|id| types::obelisk::webhook::webhook_support::ExecutionId { id: id.to_string() }))
     }
 
     async fn get(

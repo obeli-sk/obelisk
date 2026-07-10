@@ -77,7 +77,8 @@ impl Guest for Component {
         let random_millis =
             workflow_support::random_u64_inclusive(min_millis, max_millis_inclusive, None);
         let random_duration = DurationEnum::Milliseconds(random_millis);
-        workflow_support::sleep(ScheduleAt::In(random_duration), None, None).expect("not cancelled");
+        workflow_support::sleep(ScheduleAt::In(random_duration), None, None)
+            .expect("not cancelled");
         Ok(())
     }
 
@@ -88,8 +89,11 @@ impl Guest for Component {
 
     fn two_delays_in_same_join_set() -> Result<(), ()> {
         let join_set = workflow_support::join_set_create(None);
-        let _long =
-            workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Seconds(10)), None);
+        let _long = workflow_support::submit_delay(
+            &join_set,
+            ScheduleAt::In(DurationEnum::Seconds(10)),
+            None,
+        );
         let short = workflow_support::submit_delay(
             &join_set,
             ScheduleAt::In(DurationEnum::Milliseconds(10)),
@@ -109,7 +113,11 @@ impl Guest for Component {
 
     fn join_next_produces_all_processed_error() -> Result<(), ()> {
         let join_set = workflow_support::join_set_create(None);
-        workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Milliseconds(10)), None);
+        workflow_support::submit_delay(
+            &join_set,
+            ScheduleAt::In(DurationEnum::Milliseconds(10)),
+            None,
+        );
         let res = workflow_support::join_next(&join_set, None).expect("join set contains 1 delay");
         res.expect("not cancelled");
         let JoinNextError::AllProcessed = workflow_support::join_next(&join_set, None).unwrap_err();

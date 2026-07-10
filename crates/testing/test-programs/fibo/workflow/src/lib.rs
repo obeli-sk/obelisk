@@ -85,7 +85,8 @@ impl Guest for Component {
         assert!(join_value.is_ok());
 
         // Now get the result using get_result_json
-        let json_result = get_result_json(&execution_id, None).expect("get_result_json should succeed");
+        let json_result =
+            get_result_json(&execution_id, None).expect("get_result_json should succeed");
 
         // json_result is Result<Option<String>, Option<String>>
         // For fibo, we expect Ok(Some(json_string)) containing the u64 value
@@ -214,8 +215,8 @@ impl Guest for Component {
         }
 
         // Now get the result using get_result_json
-        let json_result =
-            get_result_json(&execution_id, None).map_err(|e| format!("get_result_json failed: {e:?}"))?;
+        let json_result = get_result_json(&execution_id, None)
+            .map_err(|e| format!("get_result_json failed: {e:?}"))?;
 
         // json_result should be Err(None) since fibo returns result<u64> (error type is unit)
         match json_result {
@@ -234,14 +235,8 @@ impl Guest for Component {
 
         // Test 1: Schedule with ScheduleAt::Now
         let execution_id = execution_id_generate(None);
-        schedule_json(
-            &execution_id,
-            ScheduleAt::Now,
-            &function,
-            "[10]",
-            None,
-        )
-        .map_err(|e| format!("schedule_json failed: {e:?}"))?;
+        schedule_json(&execution_id, ScheduleAt::Now, &function, "[10]", None)
+            .map_err(|e| format!("schedule_json failed: {e:?}"))?;
 
         // Test 2: Schedule with unknown FFQN -> FunctionNotFound
         let unknown_function = Function {
@@ -249,13 +244,7 @@ impl Guest for Component {
             function_name: "unknown-fn".to_string(),
         };
         let exec_id_2 = execution_id_generate(None);
-        match schedule_json(
-            &exec_id_2,
-            ScheduleAt::Now,
-            &unknown_function,
-            "[]",
-            None,
-        ) {
+        match schedule_json(&exec_id_2, ScheduleAt::Now, &unknown_function, "[]", None) {
             Err(ScheduleJsonError::FunctionNotFound) => {}
             Err(other) => return Err(format!("2: expected FunctionNotFound, got {other:?}")),
             Ok(()) => return Err("2: expected error, got Ok".to_string()),

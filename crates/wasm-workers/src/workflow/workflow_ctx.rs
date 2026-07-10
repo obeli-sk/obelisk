@@ -1955,11 +1955,9 @@ pub(crate) mod workflow_support {
         ) -> Result<Option<String>, Option<String>> {
             match response_id {
                 typesTypes::execution::ResponseId::ExecutionId(exec_id) => {
-                    let derived = match ExecutionId::try_from(exec_id.clone()) {
-                        Ok(ExecutionId::Derived(derived)) => derived,
-                        _ => unreachable!(
-                            "join-next child response id is always a derived execution id"
-                        ),
+                    let Ok(ExecutionId::Derived(derived)) = ExecutionId::try_from(exec_id.clone())
+                    else {
+                        unreachable!("join-next child response id is always a derived execution id")
                     };
                     self.get_result_json(&derived)
                         .expect("response processed by join-next must be retrievable")
@@ -2037,9 +2035,7 @@ pub(crate) mod workflow_support {
                 .map(execution_failure_kind_to_wit))
         }
 
-        pub(crate) fn last_direct_call_id_wit(
-            &self,
-        ) -> Option<typesTypes::execution::ExecutionId> {
+        pub(crate) fn last_direct_call_id_wit(&self) -> Option<typesTypes::execution::ExecutionId> {
             self.event_history
                 .last_direct_call_id()
                 .map(typesTypes::execution::ExecutionId::from)
