@@ -3591,14 +3591,23 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn webhook_js_call_with_error() {
             test_utils::set_up();
-            // fibo(50) returns Err(()) in the test activity (n > 40 returns error)
+            // fibo(50) returns err in the test activity (n > 40 returns error).
+            // fibo returns result<u64> (no err type), so the child fails with a unit
+            // err: a ChildExecutionError whose `.value` is undefined.
             let js_source = r#"
                 export default function handle(request) {
                     try {
                         obelisk.call("testing:fibo/fibo.fibo", [50]);
-                        return Response.json({ result: "unexpected success" });
+                        return Response.json({ threw: false });
                     } catch (e) {
-                        return Response.json({ error: e.message });
+                        return Response.json({
+                            threw: true,
+                            isChildErr: e instanceof obelisk.ChildExecutionError,
+                            isError: e instanceof Error,
+                            valueIsUndefined: e.value === undefined,
+                            cancelled: e.cancelled,
+                            hasChildId: typeof e.childId === "string",
+                        });
                     }
                 }
             "#;
@@ -3620,8 +3629,14 @@ pub(crate) mod tests {
             let resp = fetch_task.await.unwrap();
             assert_eq!(resp.status().as_u16(), 200);
             let body: serde_json::Value = resp.json().await.unwrap();
-            // Should have caught the error
-            assert!(body["error"].is_string());
+            // Should have caught a ChildExecutionError with an undefined value
+            // (unit err), which is a business err (not cancelled), and a child id.
+            assert_eq!(body["threw"], serde_json::json!(true));
+            assert_eq!(body["isChildErr"], serde_json::json!(true));
+            assert_eq!(body["isError"], serde_json::json!(true));
+            assert_eq!(body["valueIsUndefined"], serde_json::json!(true));
+            assert_eq!(body["cancelled"], serde_json::json!(false));
+            assert_eq!(body["hasChildId"], serde_json::json!(true));
         }
     }
 

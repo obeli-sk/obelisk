@@ -102,11 +102,12 @@
 
 use crate::generated::obelisk::log::log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
-use crate::generated::obelisk::types::execution::{ExecutionId, Function};
+use crate::generated::obelisk::types::execution::{ExecutionFailureKind, ExecutionId, Function};
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::webhook::webhook_support::{
     self, ExecutionStatus, ExecutionStatusFinished,
 };
+use boa_common::child_execution_error::{ChildExecutionErrorParts, make_child_execution_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
@@ -117,8 +118,8 @@ use boa_common::wasi_job_executor::WasiJobExecutor;
 use boa_engine::class::Class;
 use boa_engine::module::MapModuleLoader;
 use boa_engine::{
-    Context, JsArgs, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source, js_string,
-    property::Attribute,
+    Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
+    js_string, property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
@@ -240,10 +241,14 @@ fn create_direct_call_proxy(
             match webhook_support::call_json(&function, &params_json, Some(&backtrace)) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
-                Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
-                Ok(Err(None)) => Err(JsNativeError::error()
-                    .with_message("child execution failed")
-                    .into()),
+                Ok(Err(payload)) => {
+                    let child = webhook_support::last_direct_call_id();
+                    Err(call_child_error(
+                        child.as_ref().map(|e| e.id.as_str()),
+                        payload,
+                        ctx,
+                    )?)
+                }
                 Err(e) => Err(JsNativeError::error()
                     .with_message(format!("call failed: {:?}", e))
                     .into()),
@@ -462,20 +467,89 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
     WasmBacktrace { frames }
 }
 
-/// Unwrap a `Result<Option<String>, Option<String>>` into a JS value:
-/// returns the ok value, throws the err value.
-/// Matches the semantics of direct call proxies.
+/// Unwrap a `Result<Option<String>, Option<String>>` from a child outcome into a
+/// JS value: returns the ok value, or throws an [`obelisk.ChildExecutionError`]
+/// built from the given child `exec_id`.
 fn unwrap_result(
     inner_result: Result<Option<String>, Option<String>>,
+    exec_id: &str,
     ctx: &mut Context,
 ) -> JsResult<JsValue> {
     match inner_result {
         Ok(Some(json_str)) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
         Ok(None) => Ok(JsValue::null()),
-        Err(Some(err_str)) => Err(JsNativeError::error().with_message(err_str).into()),
-        Err(None) => Err(JsNativeError::error()
-            .with_message("child execution failed")
+        Err(payload) => Err(child_error(exec_id, payload, ctx)?),
+    }
+}
+
+/// Kebab-case string for a WIT `execution-failure-kind`, used as
+/// `ChildExecutionError.failureKind`.
+fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
+    match kind {
+        ExecutionFailureKind::TimedOut => "timed-out",
+        ExecutionFailureKind::NondeterminismDetected => "nondeterminism-detected",
+        ExecutionFailureKind::OutOfFuel => "out-of-fuel",
+        ExecutionFailureKind::Cancelled => "cancelled",
+        ExecutionFailureKind::Uncategorized => "uncategorized",
+    }
+}
+
+/// Build a `ChildExecutionError` for a failed child execution, disambiguating a
+/// business `err` from a platform failure via `get-execution-failure-kind`.
+fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsResult<JsError> {
+    let backtrace = capture_backtrace(ctx);
+    let exec = ExecutionId {
+        id: exec_id.to_string(),
+    };
+    match webhook_support::get_execution_failure_kind(&exec, Some(&backtrace)) {
+        Ok(Some(kind)) => {
+            let cancelled = matches!(kind, ExecutionFailureKind::Cancelled);
+            make_child_execution_error(
+                &ChildExecutionErrorParts {
+                    child_id: Some(exec_id),
+                    delay_id: None,
+                    value_json: None,
+                    failure_kind: Some(exec_failure_kind_str(kind)),
+                    cancelled,
+                },
+                ctx,
+            )
+        }
+        Ok(None) => make_child_execution_error(
+            &ChildExecutionErrorParts {
+                child_id: Some(exec_id),
+                delay_id: None,
+                value_json: payload.as_deref(),
+                failure_kind: None,
+                cancelled: false,
+            },
+            ctx,
+        ),
+        Err(e) => Ok(JsNativeError::error()
+            .with_message(format!("failed to resolve child failure kind: {:?}", e))
             .into()),
+    }
+}
+
+/// Build a `ChildExecutionError` for a failed direct call (`obelisk.call` / an
+/// import proxy), whose child id comes from `last-direct-call-id`.
+fn call_child_error(
+    child_id: Option<&str>,
+    payload: Option<String>,
+    ctx: &mut Context,
+) -> JsResult<JsError> {
+    match child_id {
+        Some(id) => child_error(id, payload, ctx),
+        None => make_child_execution_error(
+            &ChildExecutionErrorParts {
+                child_id: None,
+                delay_id: None,
+                value_json: payload.as_deref(),
+                failure_kind: None,
+                cancelled: false,
+            },
+            ctx,
+        ),
     }
 }
 
@@ -649,11 +723,13 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
             .to_std_string_escaped();
 
-        let exec_id = ExecutionId { id: exec_id_str };
+        let exec_id = ExecutionId {
+            id: exec_id_str.clone(),
+        };
 
         let backtrace = capture_backtrace(ctx);
         match webhook_support::get(&exec_id, Some(&backtrace)) {
-            Ok(inner_result) => unwrap_result(inner_result, ctx),
+            Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("get failed: {:?}", e))
                 .into()),
@@ -675,11 +751,13 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
             .to_std_string_escaped();
 
-        let exec_id = ExecutionId { id: exec_id_str };
+        let exec_id = ExecutionId {
+            id: exec_id_str.clone(),
+        };
 
         let backtrace = capture_backtrace(ctx);
         match webhook_support::try_get(&exec_id, Some(&backtrace)) {
-            Ok(inner_result) => unwrap_result(inner_result, ctx),
+            Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(webhook_support::TryGetError::NotFinishedYet) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("tryGet failed: {:?}", e))
@@ -719,10 +797,14 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 Ok(parsed)
             }
             Ok(Ok(None)) => Ok(JsValue::null()),
-            Ok(Err(Some(err_str))) => Err(JsNativeError::error().with_message(err_str).into()),
-            Ok(Err(None)) => Err(JsNativeError::error()
-                .with_message("child execution failed")
-                .into()),
+            Ok(Err(payload)) => {
+                let child = webhook_support::last_direct_call_id();
+                Err(call_child_error(
+                    child.as_ref().map(|e| e.id.as_str()),
+                    payload,
+                    ctx,
+                )?)
+            }
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("call failed: {:?}", e))
                 .into()),
@@ -737,6 +819,10 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
     // Set obelisk as global
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
+
+    // obelisk.ChildExecutionError — native, brand-safe error thrown for a failed
+    // child execution awaited via obelisk.call / obelisk.get / obelisk.tryGet.
+    boa_common::child_execution_error::register(context)?;
 
     Ok(())
 }

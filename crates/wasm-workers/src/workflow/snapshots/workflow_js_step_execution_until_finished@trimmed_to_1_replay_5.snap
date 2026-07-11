@@ -41,8 +41,8 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
                     {
                       "func_name": null,
                       "file": null,
-                      "line": 6,
-                      "col": 41
+                      "line": 2,
+                      "col": 45
                     }
                   ]
                 }
