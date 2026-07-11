@@ -11,7 +11,6 @@ world root {
     import testing:stub-activity-obelisk-stub/activity;
     import testing:stub-activity/activity;
     import obelisk:types/time@5.0.0;
-    import obelisk:types/backtrace@5.0.0;
     import obelisk:workflow/workflow-support@6.0.0;
     import obelisk:log/log@1.0.0;
 
@@ -190,7 +189,6 @@ package obelisk:types@5.0.0 {
 
 package obelisk:workflow@6.0.0 {
     interface workflow-support {
-        use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
         use obelisk:types/join-set@5.0.0.{join-set};
         use obelisk:types/time@5.0.0.{schedule-at};
         use obelisk:types/execution@5.0.0.{delay-id};
@@ -204,15 +202,15 @@ package obelisk:workflow@6.0.0 {
             all-processed,
         }
 
-        join-set-create: func(backtrace: option<wasm-backtrace>) -> join-set;
+        join-set-create: func() -> join-set;
 
-        join-set-create-named: func(name: string, backtrace: option<wasm-backtrace>) -> result<join-set, join-set-create-error>;
+        join-set-create-named: func(name: string) -> result<join-set, join-set-create-error>;
 
-        join-set-close: func(self: join-set, backtrace: option<wasm-backtrace>);
+        join-set-close: func(self: join-set);
 
-        submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at, backtrace: option<wasm-backtrace>) -> delay-id;
+        submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
 
-        join-next: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-error>;
+        join-next: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-error>;
     }
 }
 

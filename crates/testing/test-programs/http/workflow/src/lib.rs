@@ -30,7 +30,7 @@ impl Guest for Component {
     }
 
     fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         let length = urls.len();
         for url in urls {
             let _execution_id = get_successful_submit(&join_set, &url);
@@ -48,7 +48,7 @@ impl Guest for Component {
         url: String,
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         let join_set_id = join_set.id();
         log::info(&format!("Created join set {join_set_id}"));
         assert_eq!("g:1", join_set_id);

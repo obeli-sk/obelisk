@@ -4,7 +4,6 @@ package obelisk:webhook@6.0.0;
 interface webhook-support {
     use obelisk:types/time@5.0.0.{schedule-at, datetime};
     use obelisk:types/execution@5.0.0.{execution-id, function, schedule-json-error, execution-failure-kind};
-    use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
 
     /// Error variants that may occur when calling `get-status`.
     @since(version = 5.0.0)
@@ -81,24 +80,24 @@ interface webhook-support {
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
     @since(version = 5.0.0)
-    call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
+    call-json: func(function: function, params: string) -> result<result<option<string>, option<string>>, schedule-json-error>;
 
     /// Schedule a new top-level execution with its parameters serialized as JSON array.
     /// Use the execution ID returned by `execution-id-generate`.
     @since(version = 5.0.0)
-    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string) -> result<_, schedule-json-error>;
 
     /// Get the current status of an execution.
     /// Reports the `cancelling` state for cancellable workflows.
     @since(version = 6.0.0)
-    get-status: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<execution-status, get-status-error>;
+    get-status: func(execution-id: execution-id) -> result<execution-status, get-status-error>;
 
     /// The kind of platform-level execution failure for a previously *processed*
     /// child response (via `call-json` / `get` / `try-get`), or `none` if it
     /// finished with an ok / business `err` result. Additive to the err value.
     /// Errors the same way as `get` for an unknown or unfinished execution.
     @since(version = 6.0.0)
-    get-execution-failure-kind: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<option<execution-failure-kind>, get-error>;
+    get-execution-failure-kind: func(execution-id: execution-id) -> result<option<execution-failure-kind>, get-error>;
 
     /// The execution ID of the last direct call (`call-json`), or `none` if there
     /// was none. Pair with `get-execution-failure-kind` to resolve its failure kind.
@@ -112,7 +111,7 @@ interface webhook-support {
     /// Err(None) for error result with no value.
     /// Outer result indicates lookup success/failure.
     @since(version = 5.0.0)
-    get: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, get-error>;
+    get: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-error>;
 
     /// Try to get the result of an execution without blocking.
     /// Returns immediately if the execution has finished, or `not-finished-yet` error otherwise.
@@ -122,5 +121,23 @@ interface webhook-support {
     /// Err(None) for error result with no value.
     /// Outer result indicates lookup success/failure.
     @since(version = 5.0.0)
-    try-get: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, try-get-error>;
+    try-get: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, try-get-error>;
+}
+
+/// Backtrace-carrying variants of the event-persisting `webhook-support` functions.
+/// Only interpreted runtimes (the JS runtime) supply a source-level `backtrace`;
+/// native components import the plain `webhook-support` interface instead.
+@since(version = 6.0.0)
+interface webhook-support-backtrace {
+    use obelisk:types/time@5.0.0.{schedule-at};
+    use obelisk:types/execution@5.0.0.{execution-id, function, schedule-json-error};
+    use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
+
+    /// See `webhook-support.call-json`.
+    @since(version = 6.0.0)
+    call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
+
+    /// See `webhook-support.schedule-json`.
+    @since(version = 6.0.0)
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
 }

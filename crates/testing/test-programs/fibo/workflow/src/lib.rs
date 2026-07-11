@@ -48,7 +48,7 @@ impl Guest for Component {
     }
 
     fn fiboa_concurrent(n: u8, iterations: u32) -> Result<u64, ()> {
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         for _ in 0..iterations {
             fibo_submit(&join_set, n);
         }
@@ -61,7 +61,7 @@ impl Guest for Component {
 
     fn fiboa_submit_json(n: u8) -> Result<u64, ()> {
         // Create a join set
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
 
         // Submit using JSON params - the fibo function takes a single u8 parameter
         let params_json = format!("[{n}]");
@@ -70,11 +70,11 @@ impl Guest for Component {
             function_name: "fibo".to_string(),
         };
 
-        let execution_id = submit_json(&join_set, &function, &params_json, None)
-            .expect("submit_json should succeed");
+        let execution_id =
+            submit_json(&join_set, &function, &params_json).expect("submit_json should succeed");
 
         // Await the result; the value is returned directly, the id via `last_id`.
-        let join_value = join_next(&join_set, None).expect("all-processed cannot happen");
+        let join_value = join_next(&join_set).expect("all-processed cannot happen");
         let result_exec_id =
             assert_matches!(join_set.last_id(), Some(ResponseId::ExecutionId(exe)) => exe);
         // Verify the execution IDs match
@@ -85,8 +85,7 @@ impl Guest for Component {
         assert!(join_value.is_ok());
 
         // Now get the result using get_result_json
-        let json_result =
-            get_result_json(&execution_id, None).expect("get_result_json should succeed");
+        let json_result = get_result_json(&execution_id).expect("get_result_json should succeed");
 
         // json_result is Result<Option<String>, Option<String>>
         // For fibo, we expect Ok(Some(json_string)) containing the u64 value
@@ -103,12 +102,12 @@ impl Guest for Component {
 
     /// Test submit-json with unknown FFQN → FunctionNotFound error.
     fn test_submit_json_unknown_ffqn() -> Result<(), String> {
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         let function = Function {
             interface_name: "testing:nonexistent/ifc".to_string(),
             function_name: "unknown-fn".to_string(),
         };
-        match submit_json(&join_set, &function, "[]", None) {
+        match submit_json(&join_set, &function, "[]") {
             Err(SubmitJsonError::FunctionNotFound) => Ok(()),
             Err(other) => Err(format!("expected FunctionNotFound, got {other:?}")),
             Ok(_) => Err("expected error, got Ok".to_string()),
@@ -117,14 +116,14 @@ impl Guest for Component {
 
     /// Test submit-json with malformed JSON params → ParamsParsingError.
     fn test_submit_json_malformed_params() -> Result<(), String> {
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         let function = Function {
             interface_name: "testing:fibo/fibo".to_string(),
             function_name: "fibo".to_string(),
         };
 
         // Test 1: Invalid JSON syntax
-        match submit_json(&join_set, &function, "not valid json", None) {
+        match submit_json(&join_set, &function, "not valid json") {
             Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("cannot parse params as JSON array") {
                     return Err(format!("unexpected error message: {msg}"));
@@ -135,7 +134,7 @@ impl Guest for Component {
         }
 
         // Test 2: Valid JSON but not an array
-        match submit_json(&join_set, &function, "42", None) {
+        match submit_json(&join_set, &function, "42") {
             Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("params must be a json array") {
                     return Err(format!("unexpected error message: {msg}"));
@@ -146,7 +145,7 @@ impl Guest for Component {
         }
 
         // Test 3: Valid JSON array but wrong type
-        match submit_json(&join_set, &function, r#"["not a number"]"#, None) {
+        match submit_json(&join_set, &function, r#"["not a number"]"#) {
             Err(SubmitJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("type checking failed") {
                     return Err(format!("unexpected error message: {msg}"));
@@ -161,18 +160,18 @@ impl Guest for Component {
 
     /// Test get-result-json before await → NotFoundInProcessedResponses.
     fn test_get_result_json_before_await() -> Result<(), String> {
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         let function = Function {
             interface_name: "testing:fibo/fibo".to_string(),
             function_name: "fibo".to_string(),
         };
 
         // Submit an execution
-        let execution_id = submit_json(&join_set, &function, "[10]", None)
+        let execution_id = submit_json(&join_set, &function, "[10]")
             .map_err(|e| format!("submit_json failed: {e:?}"))?;
 
         // Try to get result before awaiting - should fail
-        match get_result_json(&execution_id, None) {
+        match get_result_json(&execution_id) {
             Err(GetResultJsonError::NotFoundInProcessedResponses) => Ok(()),
             Err(other) => Err(format!(
                 "expected NotFoundInProcessedResponses, got {other:?}"
@@ -183,14 +182,14 @@ impl Guest for Component {
 
     /// Test get-result-json when activity returns error variant → Err(None) since fibo returns result<u64>.
     fn test_get_result_json_err_variant() -> Result<(), String> {
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         let function = Function {
             interface_name: "testing:fibo/fibo".to_string(),
             function_name: "fibo".to_string(),
         };
 
         // Submit with n=50 which causes fibo activity to return Err(())
-        let execution_id = submit_json(&join_set, &function, "[50]", None)
+        let execution_id = submit_json(&join_set, &function, "[50]")
             .map_err(|e| format!("submit_json failed: {e:?}"))?;
 
         // Await the result using the typed extension function (value only; id via last_id).
@@ -215,8 +214,8 @@ impl Guest for Component {
         }
 
         // Now get the result using get_result_json
-        let json_result = get_result_json(&execution_id, None)
-            .map_err(|e| format!("get_result_json failed: {e:?}"))?;
+        let json_result =
+            get_result_json(&execution_id).map_err(|e| format!("get_result_json failed: {e:?}"))?;
 
         // json_result should be Err(None) since fibo returns result<u64> (error type is unit)
         match json_result {
@@ -234,8 +233,8 @@ impl Guest for Component {
         };
 
         // Test 1: Schedule with ScheduleAt::Now
-        let execution_id = execution_id_generate(None);
-        schedule_json(&execution_id, ScheduleAt::Now, &function, "[10]", None)
+        let execution_id = execution_id_generate();
+        schedule_json(&execution_id, ScheduleAt::Now, &function, "[10]")
             .map_err(|e| format!("schedule_json failed: {e:?}"))?;
 
         // Test 2: Schedule with unknown FFQN -> FunctionNotFound
@@ -243,22 +242,16 @@ impl Guest for Component {
             interface_name: "testing:nonexistent/ifc".to_string(),
             function_name: "unknown-fn".to_string(),
         };
-        let exec_id_2 = execution_id_generate(None);
-        match schedule_json(&exec_id_2, ScheduleAt::Now, &unknown_function, "[]", None) {
+        let exec_id_2 = execution_id_generate();
+        match schedule_json(&exec_id_2, ScheduleAt::Now, &unknown_function, "[]") {
             Err(ScheduleJsonError::FunctionNotFound) => {}
             Err(other) => return Err(format!("2: expected FunctionNotFound, got {other:?}")),
             Ok(()) => return Err("2: expected error, got Ok".to_string()),
         }
 
         // Test 3: Schedule with malformed JSON params -> ParamsParsingError
-        let exec_id_3 = execution_id_generate(None);
-        match schedule_json(
-            &exec_id_3,
-            ScheduleAt::Now,
-            &function,
-            "not valid json",
-            None,
-        ) {
+        let exec_id_3 = execution_id_generate();
+        match schedule_json(&exec_id_3, ScheduleAt::Now, &function, "not valid json") {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.contains("cannot parse params as JSON array") {
                     return Err(format!("3: unexpected error message: {msg}"));
@@ -269,8 +262,8 @@ impl Guest for Component {
         }
 
         // Test 4: Schedule with valid JSON but not an array
-        let exec_id_4 = execution_id_generate(None);
-        match schedule_json(&exec_id_4, ScheduleAt::Now, &function, "42", None) {
+        let exec_id_4 = execution_id_generate();
+        match schedule_json(&exec_id_4, ScheduleAt::Now, &function, "42") {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if msg.contains("4: params must be a json array") {
                     return Err(format!("4: unexpected error message: {msg}"));
@@ -281,8 +274,8 @@ impl Guest for Component {
         }
 
         // Test 5: Schedule with valid JSON but not the expected types
-        let exec_id_5 = execution_id_generate(None);
-        match schedule_json(&exec_id_5, ScheduleAt::Now, &function, r#"["42"]"#, None) {
+        let exec_id_5 = execution_id_generate();
+        match schedule_json(&exec_id_5, ScheduleAt::Now, &function, r#"["42"]"#) {
             Err(ScheduleJsonError::TypeCheckError(msg)) => {
                 if !msg.starts_with(
                     "params type checking failed: parameters cannot be deserialized: cannot parse 1-th parameter - \

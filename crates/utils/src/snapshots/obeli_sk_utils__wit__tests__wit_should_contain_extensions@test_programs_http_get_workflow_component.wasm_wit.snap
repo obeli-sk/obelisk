@@ -9,7 +9,6 @@ world root {
     import obelisk:types/execution@5.0.0;
     import obelisk:types/join-set@5.0.0;
     import testing:http-obelisk-ext/http-get;
-    import obelisk:types/backtrace@5.0.0;
     import obelisk:workflow/workflow-support@6.0.0;
     import obelisk:log/log@1.0.0;
 
@@ -188,10 +187,9 @@ package obelisk:types@5.0.0 {
 
 package obelisk:workflow@6.0.0 {
     interface workflow-support {
-        use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
         use obelisk:types/join-set@5.0.0.{join-set};
 
-        join-set-create: func(backtrace: option<wasm-backtrace>) -> join-set;
+        join-set-create: func() -> join-set;
     }
 }
 

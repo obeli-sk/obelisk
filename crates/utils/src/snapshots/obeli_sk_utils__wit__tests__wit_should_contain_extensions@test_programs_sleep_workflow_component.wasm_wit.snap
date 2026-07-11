@@ -7,7 +7,6 @@ package root:component;
 world root {
     import obelisk:types/time@5.0.0;
     import obelisk:types/execution@5.0.0;
-    import obelisk:types/backtrace@5.0.0;
     import obelisk:types/join-set@5.0.0;
     import obelisk:workflow/workflow-support@6.0.0;
     import testing:sleep/sleep;
@@ -192,7 +191,6 @@ package obelisk:workflow@6.0.0 {
     interface workflow-support {
         use obelisk:types/join-set@5.0.0.{join-set};
         use obelisk:types/time@5.0.0.{schedule-at};
-        use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
         use obelisk:types/execution@5.0.0.{delay-id};
         use obelisk:types/time@5.0.0.{datetime};
         use obelisk:types/execution@5.0.0.{execution-id, function, schedule-json-error};
@@ -206,21 +204,21 @@ package obelisk:workflow@6.0.0 {
             all-processed,
         }
 
-        random-u64-inclusive: func(min: u64, max-inclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
+        random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
 
-        sleep: func(schedule-at: schedule-at, name: option<string>, backtrace: option<wasm-backtrace>) -> result<datetime>;
+        sleep: func(schedule-at: schedule-at, name: option<string>) -> result<datetime>;
 
-        join-set-create: func(backtrace: option<wasm-backtrace>) -> join-set;
+        join-set-create: func() -> join-set;
 
-        submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at, backtrace: option<wasm-backtrace>) -> delay-id;
+        submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
 
-        join-next: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-error>;
+        join-next: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-error>;
 
-        join-next-try: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-try-error>;
+        join-next-try: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-try-error>;
 
-        execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
+        execution-id-generate: func() -> execution-id;
 
-        schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
+        schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string) -> result<_, schedule-json-error>;
     }
 }
 

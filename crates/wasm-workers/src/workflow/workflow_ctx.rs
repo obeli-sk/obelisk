@@ -843,6 +843,8 @@ impl WasiView for WorkflowCtx {
 }
 
 const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@6.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT_BACKTRACE: &str =
+    "obelisk:workflow/workflow-support-backtrace@6.0.0";
 
 #[derive(Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum ReplayKind {
@@ -1027,8 +1029,11 @@ impl WorkflowCtx {
                 WasmFileError::linking_error("cannot link obelisk:types/execution@4.2.0", err)
             })?;
 
-        // link obelisk:workflow/workflow-support interface
+        // link obelisk:workflow/workflow-support interface (native, no backtrace)
         Self::add_to_linker_workflow_support(linker, IFC_FQN_WORKFLOW_SUPPORT)?;
+
+        // link obelisk:workflow/workflow-support-backtrace interface (JS runtime)
+        Self::add_to_linker_workflow_support_backtrace(linker, IFC_FQN_WORKFLOW_SUPPORT_BACKTRACE)?;
 
         // link obelisk:types/join-set interface
         Self::add_to_linker_join_set(linker)?;
@@ -1116,9 +1121,11 @@ impl WorkflowCtx {
         }
     }
 
-    /// Register workflow-support functions for 6.0.0.
-    /// Each former plain / `-bt` pair is now a single function carrying
-    /// `backtrace: option<wasm-backtrace>`.
+    /// Register the plain `workflow-support` functions for 6.0.0. Native components
+    /// import these; they carry no `backtrace` param. Any host-side backtrace is still
+    /// captured when `backtrace_persist` is enabled (`get_host_maybe_capture_backtrace`
+    /// with `None`). The backtrace-carrying variants live on
+    /// `workflow-support-backtrace` for interpreted (JS) runtimes.
     fn add_to_linker_workflow_support(
         linker: &mut Linker<Self>,
         ifc_fqn: &'static str,
@@ -1144,6 +1151,428 @@ impl WorkflowCtx {
             .map_err(|err| {
                 WasmFileError::linking_error("cannot link function execution-id-current", err)
             })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "random-u64",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (min, max_exclusive): (u64, u64)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let random_u64 = host
+                            .random_u64_exclusive(min, max_exclusive, backtrace)
+                            .await?;
+                        Ok((random_u64,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("cannot link function random-u64", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "random-u64-inclusive",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (min, max_inclusive): (u64, u64)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let random_u64 = host
+                            .random_u64_inclusive(min, max_inclusive, backtrace)
+                            .await?;
+                        Ok((random_u64,))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function random-u64-inclusive", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "random-string",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (min_length, max_length_exclusive): (u16, u16)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let random_string = host
+                            .random_string(min_length, max_length_exclusive, backtrace)
+                            .await?;
+                        Ok((random_string,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function random-string", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "sleep",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (schedule_at, name): (ScheduleAtTypes, Option<String>)| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let expires_at = host.sleep_named(schedule_at, name, backtrace).await?;
+                        Ok((expires_at,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function sleep", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-set-create",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let resource_js = host.join_set_create_generated(backtrace).await?;
+                        Ok((resource_js,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-set-create", err))?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-set-create-named",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (name,): (String,)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let resource_js = host.join_set_create_named(name, backtrace).await?;
+                        Ok((resource_js,))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function join-set-create-named", err)
+            })?;
+
+        inst_workflow_support
+            .func_wrap_async(
+                "join-set-close",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource,): (Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        host.join_set_close_resource(join_set_resource, backtrace)
+                            .await?;
+                        Ok(())
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-set-close", err))?;
+
+        // submit-json: func(join-set, function, params) -> result<execution-id, submit-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "submit-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, function, params): (
+                    Resource<JoinSetId>,
+                    typesTypes::execution::Function,
+                    String,
+                )| {
+                    Box::new(async move {
+                        use latest::obelisk::workflow::workflow_support::SubmitJsonError;
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let ffqn = match FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        ) {
+                            Ok(ffqn) => ffqn,
+                            Err(err) => {
+                                let wit_result =
+                                    Err(SubmitJsonError::FfqnParsingError(err.to_string()));
+                                return Ok((wit_result,));
+                            }
+                        };
+                        let wit_result = host
+                            .submit_json(join_set_id, ffqn, params, backtrace)
+                            .await?;
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function submit-json", err))?;
+
+        // get-result-json: func(execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>
+        inst_workflow_support
+            .func_wrap(
+                "get-result-json",
+                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (execution_id,): (ExecutionIdTypes,)| {
+                    use concepts::ExecutionId;
+                    use latest::obelisk::workflow::workflow_support::GetResultJsonError;
+                    let host = caller.data();
+                    let execution_id = match ExecutionId::try_from(execution_id) {
+                        Ok(ExecutionId::Derived(derived)) => derived,
+                        Ok(ExecutionId::TopLevel(_)) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                "must not be a top-level execution id".to_string(),
+                            )),));
+                        }
+                        Err(err) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                err.to_string(),
+                            )),));
+                        }
+                    };
+                    let wit_result = host.get_result_json(&execution_id);
+                    Ok((wit_result,))
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function get-result-json", err))?;
+
+        // get-execution-failure-kind: func(execution-id) -> result<option<execution-failure-kind>, get-result-json-error>
+        inst_workflow_support
+            .func_wrap(
+                "get-execution-failure-kind",
+                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (execution_id,): (ExecutionIdTypes,)| {
+                    use concepts::ExecutionId;
+                    use latest::obelisk::workflow::workflow_support::GetResultJsonError;
+                    let host = caller.data();
+                    let execution_id = match ExecutionId::try_from(execution_id) {
+                        Ok(ExecutionId::Derived(derived)) => derived,
+                        Ok(ExecutionId::TopLevel(_)) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                "must not be a top-level execution id".to_string(),
+                            )),));
+                        }
+                        Err(err) => {
+                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
+                                err.to_string(),
+                            )),));
+                        }
+                    };
+                    let wit_result = host.get_execution_failure_kind(&execution_id);
+                    Ok((wit_result,))
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function get-execution-failure-kind", err)
+            })?;
+
+        // last-direct-call-id: func() -> option<execution-id>
+        inst_workflow_support
+            .func_wrap(
+                "last-direct-call-id",
+                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
+                    let host = caller.data();
+                    Ok((host.last_direct_call_id_wit(),))
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function last-direct-call-id", err)
+            })?;
+
+        // last-oneoff-id: func() -> option<response-id>
+        inst_workflow_support
+            .func_wrap(
+                "last-oneoff-id",
+                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
+                    let host = caller.data();
+                    Ok((host.last_oneoff_id_wit(),))
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function last-oneoff-id", err))?;
+
+        // execution-id-generate: func() -> execution-id
+        inst_workflow_support
+            .func_wrap_async(
+                "execution-id-generate",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
+                    Box::new(async move {
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let execution_id = host.execution_id_generate(wasm_backtrace).await?;
+                        Ok((typesTypes::execution::ExecutionId {
+                            id: execution_id.to_string(),
+                        },))
+                    })
+                },
+            )
+            .map_err(|err| {
+                WasmFileError::linking_error("linking function execution-id-generate", err)
+            })?;
+
+        // schedule-json: func(execution-id, schedule-at, function, params) -> result<_, schedule-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "schedule-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (execution_id, schedule_at, function, params): (
+                    typesTypes::execution::ExecutionId,
+                    ScheduleAtTypes,
+                    typesTypes::execution::Function,
+                    String,
+                )| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
+                        let (host, wasm_backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let execution_id = match ExecutionId::try_from(execution_id) {
+                            Ok(id) => id,
+                            Err(err) => {
+                                let msg = format!("schedule-json: invalid execution ID: {err}");
+                                host.error(msg.clone()).await;
+                                return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
+                            }
+                        };
+                        let ffqn = match FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        ) {
+                            Ok(ffqn) => ffqn,
+                            Err(err) => {
+                                let msg = format!("schedule-json: invalid function name: {err}");
+                                host.error(msg.clone()).await;
+                                return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
+                            }
+                        };
+                        let wit_result = host
+                            .schedule_json(execution_id, ffqn, params, schedule_at, wasm_backtrace)
+                            .await?;
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function schedule-json", err))?;
+
+        // call-json: func(function, params) -> result<result<option<string>, option<string>>, schedule-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "call-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (function, params): (typesTypes::execution::Function, String)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let ffqn = match FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        ) {
+                            Ok(ffqn) => ffqn,
+                            Err(err) => {
+                                use latest::obelisk::workflow::workflow_support::ScheduleJsonError;
+                                let msg = format!("call-json: invalid function name: {err}");
+                                host.error(msg.clone()).await;
+                                return Ok((Err(ScheduleJsonError::FfqnParsingError(msg)),));
+                            }
+                        };
+                        let wit_result = host.call_json(ffqn, params, backtrace).await?;
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function call-json", err))?;
+
+        // stub-json: func(execution-id, result-json) -> result<_, stub-json-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "stub-json",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (execution_id, result_json): (
+                    typesTypes::execution::ExecutionId,
+                    String,
+                )| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let wit_result = host
+                            .stub_json(execution_id, result_json, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
+                        Ok((wit_result,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function stub-json", err))?;
+
+        // submit-delay: func(join-set, timeout) -> delay-id
+        inst_workflow_support
+            .func_wrap_async(
+                "submit-delay",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, schedule_at): (Resource<JoinSetId>, ScheduleAtTypes)| {
+                    let schedule_at = HistoryEventScheduleAt::from(schedule_at);
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let delay_id: DelayIdTypes = host
+                            .submit_delay(join_set_id, schedule_at, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((delay_id,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function submit-delay", err))?;
+
+        // join-next: func(join-set) -> result<result<option<string>, option<string>>, join-next-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource,): (Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let res = host
+                            .join_next(join_set_id, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-next", err))?;
+
+        // join-next-try: func(join-set) -> result<result<option<string>, option<string>>, join-next-try-error>
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next-try",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource,): (Resource<JoinSetId>,)| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let res = host
+                            .join_next_try(join_set_id, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-next-try", err))?;
+
+        Ok(())
+    }
+
+    /// Register the backtrace-carrying `workflow-support-backtrace` functions for
+    /// 6.0.0. Only interpreted runtimes (the JS runtime) import these; they supply a
+    /// source-level `backtrace`. The event-persisting subset only (getters and id
+    /// accessors live solely on the plain `workflow-support` interface).
+    fn add_to_linker_workflow_support_backtrace(
+        linker: &mut Linker<Self>,
+        ifc_fqn: &'static str,
+    ) -> Result<(), WasmFileError> {
+        let mut inst_workflow_support = linker
+            .instance(ifc_fqn)
+            .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
 
         inst_workflow_support
             .func_wrap_async(
@@ -1319,94 +1748,6 @@ impl WorkflowCtx {
                 },
             )
             .map_err(|err| WasmFileError::linking_error("linking function submit-json", err))?;
-
-        // get-result-json: func(execution-id, backtrace) -> result<result<option<string>, option<string>>, get-result-json-error>
-        inst_workflow_support
-            .func_wrap(
-                "get-result-json",
-                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (execution_id, _wit_backtrace): (
-                    ExecutionIdTypes,
-                    Option<typesTypes::backtrace::WasmBacktrace>,
-                )| {
-                    use concepts::ExecutionId;
-                    use latest::obelisk::workflow::workflow_support::GetResultJsonError;
-                    let host = caller.data();
-                    let execution_id = match ExecutionId::try_from(execution_id) {
-                        Ok(ExecutionId::Derived(derived)) => derived,
-                        Ok(ExecutionId::TopLevel(_)) => {
-                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
-                                "must not be a top-level execution id".to_string(),
-                            )),));
-                        }
-                        Err(err) => {
-                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
-                                err.to_string(),
-                            )),));
-                        }
-                    };
-                    let wit_result = host.get_result_json(&execution_id);
-                    Ok((wit_result,))
-                },
-            )
-            .map_err(|err| WasmFileError::linking_error("linking function get-result-json", err))?;
-
-        // get-execution-failure-kind: func(execution-id, backtrace) -> result<option<execution-failure-kind>, get-result-json-error>
-        inst_workflow_support
-            .func_wrap(
-                "get-execution-failure-kind",
-                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (execution_id, _wit_backtrace): (
-                    ExecutionIdTypes,
-                    Option<typesTypes::backtrace::WasmBacktrace>,
-                )| {
-                    use concepts::ExecutionId;
-                    use latest::obelisk::workflow::workflow_support::GetResultJsonError;
-                    let host = caller.data();
-                    let execution_id = match ExecutionId::try_from(execution_id) {
-                        Ok(ExecutionId::Derived(derived)) => derived,
-                        Ok(ExecutionId::TopLevel(_)) => {
-                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
-                                "must not be a top-level execution id".to_string(),
-                            )),));
-                        }
-                        Err(err) => {
-                            return Ok((Err(GetResultJsonError::ExecutionIdParsingError(
-                                err.to_string(),
-                            )),));
-                        }
-                    };
-                    let wit_result = host.get_execution_failure_kind(&execution_id);
-                    Ok((wit_result,))
-                },
-            )
-            .map_err(|err| {
-                WasmFileError::linking_error("linking function get-execution-failure-kind", err)
-            })?;
-
-        // last-direct-call-id: func() -> option<execution-id>
-        inst_workflow_support
-            .func_wrap(
-                "last-direct-call-id",
-                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
-                    let host = caller.data();
-                    Ok((host.last_direct_call_id_wit(),))
-                },
-            )
-            .map_err(|err| {
-                WasmFileError::linking_error("linking function last-direct-call-id", err)
-            })?;
-
-        // last-oneoff-id: func() -> option<response-id>
-        inst_workflow_support
-            .func_wrap(
-                "last-oneoff-id",
-                move |caller: wasmtime::StoreContextMut<'_, WorkflowCtx>, (): ()| {
-                    let host = caller.data();
-                    Ok((host.last_oneoff_id_wit(),))
-                },
-            )
-            .map_err(|err| WasmFileError::linking_error("linking function last-oneoff-id", err))?;
 
         // execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id
         inst_workflow_support

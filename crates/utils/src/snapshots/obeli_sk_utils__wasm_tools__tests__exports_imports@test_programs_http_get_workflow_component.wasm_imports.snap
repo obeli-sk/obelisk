@@ -1,6 +1,5 @@
 ---
 source: crates/utils/src/wasm_tools.rs
-assertion_line: 1139
 expression: imports
 ---
 {
@@ -24,13 +23,7 @@ expression: imports
   },
   "obelisk:workflow/workflow-support@6.0.0.join-set-create": {
     "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-set-create",
-    "parameter_types": [
-      {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
-      }
-    ],
+    "parameter_types": [],
     "return_type": {
       "non_extendable": {
         "type_wrapper": "own",

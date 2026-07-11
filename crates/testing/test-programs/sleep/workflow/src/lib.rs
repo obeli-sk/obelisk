@@ -22,7 +22,7 @@ impl Guest for Component {
     fn sleep_host_activity(duration: DurationEnum) -> Result<(), ()> {
         // Required by `advance_forwards_captured_application_logs`.
         log::info("changed");
-        workflow_support::sleep(ScheduleAt::In(duration), None, None).expect("not cancelled");
+        workflow_support::sleep(ScheduleAt::In(duration), None).expect("not cancelled");
         Ok(())
     }
 
@@ -33,7 +33,7 @@ impl Guest for Component {
     ) -> Result<(), ()> {
         let params = format!(r#"[{{"seconds":{}}}]"#, duration_secs);
         for _ in 0..n {
-            let exe = workflow_support::execution_id_generate(None);
+            let exe = workflow_support::execution_id_generate();
             workflow_support::schedule_json(
                 &exe,
                 schedule_at,
@@ -42,7 +42,6 @@ impl Guest for Component {
                     function_name: "sleep-host-activity".to_string(),
                 },
                 &params,
-                None,
             )
             .unwrap();
         }
@@ -50,7 +49,7 @@ impl Guest for Component {
     }
 
     fn sleep_schedule_at(schedule_at: ScheduleAt) -> Result<(), ()> {
-        workflow_support::sleep(schedule_at, None, None).expect("not cancelled");
+        workflow_support::sleep(schedule_at, None).expect("not cancelled");
         Ok(())
     }
 
@@ -60,14 +59,14 @@ impl Guest for Component {
     }
 
     fn sleep_activity_submit() -> Result<(), ()> {
-        let join_set = workflow_support::join_set_create(None);
+        let join_set = workflow_support::join_set_create();
         sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1));
         // Should be cancelled in join set close
         Ok(())
     }
 
     fn sleep_activity_submit_then_trap() -> Result<(), ()> {
-        let join_set = workflow_support::join_set_create(None);
+        let join_set = workflow_support::join_set_create();
         sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1));
         // Should be cancelled in join set close
         panic!()
@@ -75,10 +74,9 @@ impl Guest for Component {
 
     fn sleep_random(min_millis: u64, max_millis_inclusive: u64) -> Result<(), ()> {
         let random_millis =
-            workflow_support::random_u64_inclusive(min_millis, max_millis_inclusive, None);
+            workflow_support::random_u64_inclusive(min_millis, max_millis_inclusive);
         let random_duration = DurationEnum::Milliseconds(random_millis);
-        workflow_support::sleep(ScheduleAt::In(random_duration), None, None)
-            .expect("not cancelled");
+        workflow_support::sleep(ScheduleAt::In(random_duration), None).expect("not cancelled");
         Ok(())
     }
 
@@ -88,20 +86,16 @@ impl Guest for Component {
     }
 
     fn two_delays_in_same_join_set() -> Result<(), ()> {
-        let join_set = workflow_support::join_set_create(None);
-        let _long = workflow_support::submit_delay(
-            &join_set,
-            ScheduleAt::In(DurationEnum::Seconds(10)),
-            None,
-        );
+        let join_set = workflow_support::join_set_create();
+        let _long =
+            workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Seconds(10)));
         let short = workflow_support::submit_delay(
             &join_set,
             ScheduleAt::In(DurationEnum::Milliseconds(10)),
-            None,
         );
         // join-next returns the value; the delay id comes from `last-id`.
-        let res = workflow_support::join_next(&join_set, None)
-            .expect("submitted two delays, joining first");
+        let res =
+            workflow_support::join_next(&join_set).expect("submitted two delays, joining first");
         let Some(ResponseId::DelayId(first)) = join_set.last_id() else {
             unreachable!("only delays have been submitted");
         };
@@ -112,54 +106,49 @@ impl Guest for Component {
     }
 
     fn join_next_produces_all_processed_error() -> Result<(), ()> {
-        let join_set = workflow_support::join_set_create(None);
-        workflow_support::submit_delay(
-            &join_set,
-            ScheduleAt::In(DurationEnum::Milliseconds(10)),
-            None,
-        );
-        let res = workflow_support::join_next(&join_set, None).expect("join set contains 1 delay");
+        let join_set = workflow_support::join_set_create();
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Milliseconds(10)));
+        let res = workflow_support::join_next(&join_set).expect("join set contains 1 delay");
         res.expect("not cancelled");
-        let JoinNextError::AllProcessed = workflow_support::join_next(&join_set, None).unwrap_err();
+        let JoinNextError::AllProcessed = workflow_support::join_next(&join_set).unwrap_err();
         Ok(())
     }
 
     fn join_next_try_pending() -> Result<(), ()> {
-        let join_set = workflow_support::join_set_create(None);
+        let join_set = workflow_support::join_set_create();
         // Submit a long delay
-        workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Seconds(10)), None);
+        workflow_support::submit_delay(&join_set, ScheduleAt::In(DurationEnum::Seconds(10)));
         // Try to join immediately - should return Pending since delay hasn't expired yet
         assert_matches!(
-            workflow_support::join_next_try(&join_set, None),
+            workflow_support::join_next_try(&join_set),
             Err(JoinNextTryError::Pending)
         );
         Ok(())
     }
 
     fn join_next_try_all_processed() -> Result<(), ()> {
-        let join_set = workflow_support::join_set_create(None);
+        let join_set = workflow_support::join_set_create();
         // No requests submitted - should return AllProcessed
         assert!(matches!(
-            workflow_support::join_next_try(&join_set, None),
+            workflow_support::join_next_try(&join_set),
             Err(JoinNextTryError::AllProcessed)
         ));
         Ok(())
     }
 
     fn join_next_try_found() -> Result<(), ()> {
-        let join_set = workflow_support::join_set_create(None);
+        let join_set = workflow_support::join_set_create();
         // Submit a very short delay (should complete almost immediately)
         let delay_id = workflow_support::submit_delay(
             &join_set,
             ScheduleAt::In(DurationEnum::Milliseconds(1)),
-            None,
         );
         // Wait a bit for the delay to expire using `sleep`
-        workflow_support::sleep(ScheduleAt::In(DurationEnum::Milliseconds(10)), None, None)
+        workflow_support::sleep(ScheduleAt::In(DurationEnum::Milliseconds(10)), None)
             .expect("should not been cancelled");
         // join-next-try should find the response; the delay id comes from `last-id`.
-        let res = workflow_support::join_next_try(&join_set, None)
-            .expect("should get the delay response");
+        let res =
+            workflow_support::join_next_try(&join_set).expect("should get the delay response");
         let Some(ResponseId::DelayId(first)) = join_set.last_id() else {
             unreachable!("only delays have been submitted");
         };
@@ -167,7 +156,7 @@ impl Guest for Component {
         assert_eq!(delay_id.id, first.id);
         // Now join_next_try should return AllProcessed since we already processed it
         assert_matches!(
-            workflow_support::join_next_try(&join_set, None),
+            workflow_support::join_next_try(&join_set),
             Err(JoinNextTryError::AllProcessed)
         );
         Ok(())
