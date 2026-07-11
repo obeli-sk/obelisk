@@ -39,7 +39,7 @@ impl GuestNesting for Component {
         use generated::testing::fibo_workflow_obelisk_ext::workflow::{
             fiboa_concurrent_await_next, fiboa_concurrent_submit,
         };
-        let join_set = join_set_create(None);
+        let join_set = join_set_create();
         for _ in 0..fiboas {
             fiboa_concurrent_submit(&join_set, n, iterations_per_fiboa);
         }

@@ -73,11 +73,13 @@ pub(crate) mod types {
                     import obelisk:types/backtrace@5.0.0;
                     import obelisk:types/join-set@5.0.0;
                     import obelisk:webhook/webhook-support@6.0.0;
+                    import obelisk:webhook/webhook-support-backtrace@6.0.0;
                 }",
         world: "any:any/bindings",
         imports: {
             // Make webhook-support functions async and trappable for infrastructure errors
             "obelisk:webhook/webhook-support": async | trappable,
+            "obelisk:webhook/webhook-support-backtrace": async | trappable,
         },
         with: {
             "obelisk:types/join-set.join-set": concepts::JoinSetId,
@@ -751,7 +753,159 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
+    ) -> Result<(), ScheduleJsonErrorTrappable> {
+        self.schedule_json_inner(execution_id, schedule_at, function, params, None)
+            .await
+    }
+
+    async fn call_json(
+        &mut self,
+        function: types::obelisk::webhook::webhook_support::Function,
+        params: String,
+    ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
+        self.call_json_inner(function, params, None).await
+    }
+
+    async fn get_status(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<types::obelisk::webhook::webhook_support::ExecutionStatus, GetStatusErrorTrappable>
+    {
+        use types::obelisk::webhook::webhook_support::ExecutionStatus;
+
+        let pending_state = self.get_status_pending_state(&execution_id).await?;
+        let status = match pending_state {
+            PendingState::PendingAt(state) => {
+                ExecutionStatus::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
+            }
+            PendingState::Locked(_) => ExecutionStatus::Locked,
+            PendingState::BlockedByJoinSet(_) => ExecutionStatus::BlockedByJoinSet,
+            PendingState::Cancelling(_) => ExecutionStatus::Cancelling,
+            PendingState::Paused(_) => ExecutionStatus::Paused,
+            PendingState::Finished(finished) => {
+                ExecutionStatus::Finished(finished_status_to_wit(&finished.result_kind))
+            }
+        };
+
+        Ok(status)
+    }
+
+    /// Failure kind of a finished child execution (additive to the err value).
+    /// Blocks until finished, like `get`; errors the same way for unknown ids.
+    async fn get_execution_failure_kind(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<Option<types::obelisk::types::execution::ExecutionFailureKind>, GetErrorTrappable>
+    {
+        use types::obelisk::webhook::webhook_support::GetError;
+
+        let parsed_execution_id: concepts::ExecutionId =
+            match concepts::ExecutionId::from_str(&execution_id.id) {
+                Ok(id) => id,
+                Err(err) => {
+                    let msg =
+                        format!("get-execution-failure-kind: cannot parse execution ID: {err}");
+                    self.error(msg.clone()).await;
+                    return Err(GetError::ExecutionIdParsingError(msg).into());
+                }
+            };
+
+        let db_connection = match self.db_pool.connection().await {
+            Ok(conn) => conn,
+            Err(err) => {
+                return Err(
+                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
+                );
+            }
+        };
+
+        let subscription_interruption = self.subscription_interruption;
+        let sleep = self.sleep.clone();
+        let connection_drop_watcher = self.connection_drop_watcher.clone();
+        let server_termination_watcher = self.server_termination_watcher.clone();
+
+        let result = Self::wait_for_finished_result(
+            subscription_interruption,
+            &sleep,
+            db_connection.as_ref(),
+            &parsed_execution_id,
+            &connection_drop_watcher,
+            &server_termination_watcher,
+        )
+        .await;
+
+        match result {
+            Ok(SupportedFunctionReturnValue::ExecutionFailure(failure)) => {
+                Ok(Some(execution_failure_kind_to_wit(failure.kind)))
+            }
+            Ok(_) => Ok(None),
+            Err(err) => Err(wasmtime::Error::msg(format!("execution error: {err:?}")).into()),
+        }
+    }
+
+    /// The execution ID of the last `call-json`, or `none`.
+    async fn last_direct_call_id(
+        &mut self,
+    ) -> wasmtime::Result<Option<types::obelisk::webhook::webhook_support::ExecutionId>> {
+        Ok(self
+            .last_direct_call_id
+            .as_ref()
+            .map(|id| types::obelisk::webhook::webhook_support::ExecutionId { id: id.to_string() }))
+    }
+
+    async fn get(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<Result<Option<String>, Option<String>>, GetErrorTrappable> {
+        self.get_inner(execution_id).await
+    }
+
+    async fn try_get(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+    ) -> Result<Result<Option<String>, Option<String>>, TryGetErrorTrappable> {
+        self.try_get_inner(execution_id).await
+    }
+}
+
+impl types::obelisk::webhook::webhook_support_backtrace::Host for WebhookEndpointCtx {
+    async fn schedule_json(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support_backtrace::ExecutionId,
+        schedule_at: types::obelisk::webhook::webhook_support_backtrace::ScheduleAt,
+        function: types::obelisk::webhook::webhook_support_backtrace::Function,
+        params: String,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
+    ) -> Result<(), ScheduleJsonErrorTrappable> {
+        self.schedule_json_inner(
+            execution_id,
+            schedule_at,
+            function,
+            params,
+            backtrace.map(wit_backtrace_to_storage),
+        )
+        .await
+    }
+
+    async fn call_json(
+        &mut self,
+        function: types::obelisk::webhook::webhook_support_backtrace::Function,
+        params: String,
+        backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
+    ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
+        self.call_json_inner(function, params, backtrace.map(wit_backtrace_to_storage))
+            .await
+    }
+}
+
+impl WebhookEndpointCtx {
+    async fn schedule_json_inner(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
+        schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
+        function: types::obelisk::webhook::webhook_support::Function,
+        params: String,
+        wasm_backtrace: Option<concepts::storage::WasmBacktrace>,
     ) -> Result<(), ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;
 
@@ -867,13 +1021,13 @@ impl WebhookSupportHost for WebhookEndpointCtx {
             }
         };
 
-        let backtrace_infos: Vec<BacktraceInfo> = backtrace
-            .map(|bt| BacktraceInfo {
+        let backtrace_infos: Vec<BacktraceInfo> = wasm_backtrace
+            .map(|wasm_backtrace| BacktraceInfo {
                 execution_id: ExecutionId::TopLevel(self.execution_id),
                 component_id: self.component_id.clone(),
                 version_min_including: version.clone(),
                 version_max_excluding: Version(version.0 + 1),
-                wasm_backtrace: wit_backtrace_to_storage(bt),
+                wasm_backtrace,
             })
             .into_iter()
             .collect();
@@ -897,11 +1051,11 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         }
     }
 
-    async fn call_json(
+    async fn call_json_inner(
         &mut self,
         function: types::obelisk::webhook::webhook_support::Function,
         params: String,
-        backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
+        wasm_backtrace: Option<concepts::storage::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
         use types::obelisk::types::execution::ScheduleJsonError;
 
@@ -1034,13 +1188,13 @@ impl WebhookSupportHost for WebhookEndpointCtx {
 
         let appended = vec![req_join_set_created, req_child_exec, req_join_next];
 
-        let backtrace_infos: Vec<BacktraceInfo> = backtrace
-            .map(|bt| BacktraceInfo {
+        let backtrace_infos: Vec<BacktraceInfo> = wasm_backtrace
+            .map(|wasm_backtrace| BacktraceInfo {
                 execution_id: ExecutionId::TopLevel(self.execution_id),
                 component_id: self.component_id.clone(),
                 version_min_including: version.clone(),
                 version_max_excluding: Version(version.0 + 3),
-                wasm_backtrace: wit_backtrace_to_storage(bt),
+                wasm_backtrace,
             })
             .into_iter()
             .collect();
@@ -1081,99 +1235,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         }
     }
 
-    async fn get_status(
+    async fn get_inner(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
-        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
-    ) -> Result<types::obelisk::webhook::webhook_support::ExecutionStatus, GetStatusErrorTrappable>
-    {
-        use types::obelisk::webhook::webhook_support::ExecutionStatus;
-
-        let pending_state = self.get_status_pending_state(&execution_id).await?;
-        let status = match pending_state {
-            PendingState::PendingAt(state) => {
-                ExecutionStatus::PendingAt(datetime_from_scheduled_at(&state.scheduled_at))
-            }
-            PendingState::Locked(_) => ExecutionStatus::Locked,
-            PendingState::BlockedByJoinSet(_) => ExecutionStatus::BlockedByJoinSet,
-            PendingState::Cancelling(_) => ExecutionStatus::Cancelling,
-            PendingState::Paused(_) => ExecutionStatus::Paused,
-            PendingState::Finished(finished) => {
-                ExecutionStatus::Finished(finished_status_to_wit(&finished.result_kind))
-            }
-        };
-
-        Ok(status)
-    }
-
-    /// Failure kind of a finished child execution (additive to the err value).
-    /// Blocks until finished, like `get`; errors the same way for unknown ids.
-    async fn get_execution_failure_kind(
-        &mut self,
-        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
-        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
-    ) -> Result<Option<types::obelisk::types::execution::ExecutionFailureKind>, GetErrorTrappable>
-    {
-        use types::obelisk::webhook::webhook_support::GetError;
-
-        let parsed_execution_id: concepts::ExecutionId =
-            match concepts::ExecutionId::from_str(&execution_id.id) {
-                Ok(id) => id,
-                Err(err) => {
-                    let msg =
-                        format!("get-execution-failure-kind: cannot parse execution ID: {err}");
-                    self.error(msg.clone()).await;
-                    return Err(GetError::ExecutionIdParsingError(msg).into());
-                }
-            };
-
-        let db_connection = match self.db_pool.connection().await {
-            Ok(conn) => conn,
-            Err(err) => {
-                return Err(
-                    wasmtime::Error::msg(format!("database connection error: {err:?}")).into(),
-                );
-            }
-        };
-
-        let subscription_interruption = self.subscription_interruption;
-        let sleep = self.sleep.clone();
-        let connection_drop_watcher = self.connection_drop_watcher.clone();
-        let server_termination_watcher = self.server_termination_watcher.clone();
-
-        let result = Self::wait_for_finished_result(
-            subscription_interruption,
-            &sleep,
-            db_connection.as_ref(),
-            &parsed_execution_id,
-            &connection_drop_watcher,
-            &server_termination_watcher,
-        )
-        .await;
-
-        match result {
-            Ok(SupportedFunctionReturnValue::ExecutionFailure(failure)) => {
-                Ok(Some(execution_failure_kind_to_wit(failure.kind)))
-            }
-            Ok(_) => Ok(None),
-            Err(err) => Err(wasmtime::Error::msg(format!("execution error: {err:?}")).into()),
-        }
-    }
-
-    /// The execution ID of the last `call-json`, or `none`.
-    async fn last_direct_call_id(
-        &mut self,
-    ) -> wasmtime::Result<Option<types::obelisk::webhook::webhook_support::ExecutionId>> {
-        Ok(self
-            .last_direct_call_id
-            .as_ref()
-            .map(|id| types::obelisk::webhook::webhook_support::ExecutionId { id: id.to_string() }))
-    }
-
-    async fn get(
-        &mut self,
-        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
-        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, GetErrorTrappable> {
         use types::obelisk::webhook::webhook_support::GetError;
 
@@ -1221,10 +1285,9 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         }
     }
 
-    async fn try_get(
+    async fn try_get_inner(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
-        _backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, TryGetErrorTrappable> {
         use types::obelisk::webhook::webhook_support::TryGetError;
 
@@ -1673,12 +1736,23 @@ impl WebhookEndpointCtx {
         // link obelisk:types
         types::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
             .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types", err))?;
-        // link obelisk:webhook/webhook-support
+        // link obelisk:webhook/webhook-support (native, no backtrace)
         types::obelisk::webhook::webhook_support::add_to_linker::<_, WebhookEndpointCtx>(
             linker,
             |x| x,
         )
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk:webhook", err))?;
+        // link obelisk:webhook/webhook-support-backtrace (JS runtime)
+        types::obelisk::webhook::webhook_support_backtrace::add_to_linker::<_, WebhookEndpointCtx>(
+            linker,
+            |x| x,
+        )
+        .map_err(|err| {
+            WasmFileError::linking_error(
+                "cannot link obelisk:webhook/webhook-support-backtrace",
+                err,
+            )
+        })?;
         Ok(())
     }
 

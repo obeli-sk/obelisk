@@ -135,10 +135,12 @@ use crate::generated::obelisk::types::execution::{
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    self, JoinNextTryError, call_json, execution_id_generate, get_execution_failure_kind,
-    get_result_json, join_next, join_next_try, join_set_close, join_set_create,
-    join_set_create_named, last_direct_call_id, random_string, random_u64, random_u64_inclusive,
-    schedule_json, sleep, stub_json, submit_delay, submit_json,
+    self, JoinNextTryError, get_execution_failure_kind, get_result_json, last_direct_call_id,
+};
+use crate::generated::obelisk::workflow::workflow_support_backtrace::{
+    call_json, execution_id_generate, join_next, join_next_try, join_set_close, join_set_create,
+    join_set_create_named, random_string, random_u64, random_u64_inclusive, schedule_json, sleep,
+    stub_json, submit_delay, submit_json,
 };
 use boa_common::child_execution_error::{
     ChildExecutionError, ChildExecutionErrorParts, make_child_execution_error,
@@ -459,9 +461,8 @@ fn create_ext_get_proxy(context: &mut Context) -> JsValue {
         let exec_id = ExecutionId {
             id: exec_id_str.clone(),
         };
-        let backtrace = capture_backtrace(ctx);
 
-        match get_result_json(&exec_id, Some(&backtrace)) {
+        match get_result_json(&exec_id) {
             Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("get result failed: {:?}", e))
@@ -501,11 +502,10 @@ fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
 /// Build a `ChildExecutionError` for a failed child execution, disambiguating a
 /// business `err` from a platform failure via `get-execution-failure-kind`.
 fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsResult<JsError> {
-    let backtrace = capture_backtrace(ctx);
     let exec = ExecutionId {
         id: exec_id.to_string(),
     };
-    match get_execution_failure_kind(&exec, Some(&backtrace)) {
+    match get_execution_failure_kind(&exec) {
         Ok(Some(kind)) => {
             let cancelled = matches!(kind, ExecutionFailureKind::Cancelled);
             make_child_execution_error(
@@ -1111,9 +1111,8 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let exec_id = ExecutionId {
             id: exec_id_str.clone(),
         };
-        let backtrace = capture_backtrace(ctx);
 
-        match get_result_json(&exec_id, Some(&backtrace)) {
+        match get_result_json(&exec_id) {
             Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("Failed to get result: {:?}", e))

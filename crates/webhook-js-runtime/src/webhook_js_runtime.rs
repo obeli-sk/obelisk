@@ -107,6 +107,7 @@ use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::webhook::webhook_support::{
     self, ExecutionStatus, ExecutionStatusFinished,
 };
+use crate::generated::obelisk::webhook::webhook_support_backtrace;
 use boa_common::child_execution_error::{ChildExecutionErrorParts, make_child_execution_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
@@ -238,7 +239,7 @@ fn create_direct_call_proxy(
             let params_json = json_stringify(&array.into(), ctx)?;
 
             let backtrace = capture_backtrace(ctx);
-            match webhook_support::call_json(&function, &params_json, Some(&backtrace)) {
+            match webhook_support_backtrace::call_json(&function, &params_json, Some(&backtrace)) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
                 Ok(Err(payload)) => {
@@ -289,7 +290,7 @@ fn create_schedule_proxy(
             let backtrace = capture_backtrace(ctx);
             let exec_id = webhook_support::execution_id_generate();
 
-            match webhook_support::schedule_json(
+            match webhook_support_backtrace::schedule_json(
                 &exec_id,
                 schedule,
                 &function,
@@ -497,11 +498,10 @@ fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
 /// Build a `ChildExecutionError` for a failed child execution, disambiguating a
 /// business `err` from a platform failure via `get-execution-failure-kind`.
 fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsResult<JsError> {
-    let backtrace = capture_backtrace(ctx);
     let exec = ExecutionId {
         id: exec_id.to_string(),
     };
-    match webhook_support::get_execution_failure_kind(&exec, Some(&backtrace)) {
+    match webhook_support::get_execution_failure_kind(&exec) {
         Ok(Some(kind)) => {
             let cancelled = matches!(kind, ExecutionFailureKind::Cancelled);
             make_child_execution_error(
@@ -612,7 +612,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         };
 
         let backtrace = capture_backtrace(ctx);
-        match webhook_support::schedule_json(
+        match webhook_support_backtrace::schedule_json(
             &exec_id,
             schedule,
             &function,
@@ -642,8 +642,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
 
         let exec_id = ExecutionId { id: exec_id_str };
 
-        let backtrace = capture_backtrace(ctx);
-        match webhook_support::get_status(&exec_id, Some(&backtrace)) {
+        match webhook_support::get_status(&exec_id) {
             Ok(status) => {
                 let result_obj = new_object(ctx);
                 match status {
@@ -727,8 +726,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             id: exec_id_str.clone(),
         };
 
-        let backtrace = capture_backtrace(ctx);
-        match webhook_support::get(&exec_id, Some(&backtrace)) {
+        match webhook_support::get(&exec_id) {
             Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("get failed: {:?}", e))
@@ -755,8 +753,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             id: exec_id_str.clone(),
         };
 
-        let backtrace = capture_backtrace(ctx);
-        match webhook_support::try_get(&exec_id, Some(&backtrace)) {
+        match webhook_support::try_get(&exec_id) {
             Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(webhook_support::TryGetError::NotFinishedYet) => Ok(JsValue::undefined()),
             Err(e) => Err(JsNativeError::error()
@@ -791,7 +788,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         let params_json = json_stringify(params_val, ctx)?;
 
         // Call child execution and wait for result
-        match webhook_support::call_json(&function, &params_json, Some(&backtrace)) {
+        match webhook_support_backtrace::call_json(&function, &params_json, Some(&backtrace)) {
             Ok(Ok(Some(json_str))) => {
                 let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
                 Ok(parsed)

@@ -23,13 +23,7 @@ expression: imports
   },
   "obelisk:workflow/workflow-support@6.0.0.execution-id-generate": {
     "ffqn": "obelisk:workflow/workflow-support@6.0.0.execution-id-generate",
-    "parameter_types": [
-      {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
-      }
-    ],
+    "parameter_types": [],
     "return_type": {
       "non_extendable": {
         "type_wrapper": "record { id: string }",
@@ -46,11 +40,6 @@ expression: imports
         "type_wrapper": "record { id: string }",
         "name": "execution-id",
         "wit_type": "execution-id"
-      },
-      {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
@@ -69,11 +58,6 @@ expression: imports
         "type_wrapper": "borrow",
         "name": "join-set",
         "wit_type": "borrow<join-set>"
-      },
-      {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
@@ -87,13 +71,7 @@ expression: imports
   },
   "obelisk:workflow/workflow-support@6.0.0.join-set-create": {
     "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-set-create",
-    "parameter_types": [
-      {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
-      }
-    ],
+    "parameter_types": [],
     "return_type": {
       "non_extendable": {
         "type_wrapper": "own",
@@ -125,11 +103,6 @@ expression: imports
         "type_wrapper": "string",
         "name": "params",
         "wit_type": "string"
-      },
-      {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {
@@ -158,11 +131,6 @@ expression: imports
         "type_wrapper": "string",
         "name": "params",
         "wit_type": "string"
-      },
-      {
-        "type_wrapper": "option<record { frames: list<record { module: string, func-name: string, symbols: list<record { func-name: option<string>, file: option<string>, line: option<u32>, col: option<u32> }> }> }>",
-        "name": "backtrace",
-        "wit_type": "option<wasm-backtrace>"
       }
     ],
     "return_type": {

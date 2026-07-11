@@ -4,7 +4,6 @@ package obelisk:workflow@6.0.0;
 interface workflow-support {
     use obelisk:types/time@5.0.0.{schedule-at, datetime};
     use obelisk:types/execution@5.0.0.{delay-id, execution-id, response-id, function, schedule-json-error, execution-failure-kind};
-    use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
     use obelisk:types/join-set@5.0.0.{join-set};
 
     /// Error variants that may occur on named join set creation.
@@ -69,32 +68,32 @@ interface workflow-support {
 
     /// Returns a random u64 in the range [min, max).
     @since(version = 6.0.0)
-    random-u64: func(min: u64, max-exclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
+    random-u64: func(min: u64, max-exclusive: u64) -> u64;
     /// Returns a random u64 in the range [min, max].
     @since(version = 6.0.0)
-    random-u64-inclusive: func(min: u64, max-inclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
+    random-u64-inclusive: func(min: u64, max-inclusive: u64) -> u64;
 
     /// Returns a random string with a length in the range [min_length, max_length).
     /// The string consists only of alphanumeric characters (lowercase and uppercase letters, digits).
     @since(version = 6.0.0)
-    random-string: func(min-length: u16, max-length-exclusive: u16, backtrace: option<wasm-backtrace>) -> string;
+    random-string: func(min-length: u16, max-length-exclusive: u16) -> string;
 
     /// Block execution for given time, return the time when the durable sleep expires.
     /// Returns error if the delay is cancelled.
     /// `name` optionally names the one-off join set.
     @since(version = 6.0.0)
-    sleep: func(schedule-at: schedule-at, name: option<string>, backtrace: option<wasm-backtrace>) -> result<datetime>;
+    sleep: func(schedule-at: schedule-at, name: option<string>) -> result<datetime>;
 
     /// Create a new join set with a generated name.
     @since(version = 6.0.0)
-    join-set-create: func(backtrace: option<wasm-backtrace>) -> join-set;
+    join-set-create: func() -> join-set;
 
     /// Create a new join set with the specified name.
     /// The name may only contain alphanumeric characters and the following extra characters:
     /// * dash `-`
     /// * forward slash `/`
     @since(version = 6.0.0)
-    join-set-create-named: func(name: string, backtrace: option<wasm-backtrace>) -> result<join-set, join-set-create-error>;
+    join-set-create-named: func(name: string) -> result<join-set, join-set-create-error>;
 
     /// Explicitly close join set. Unawaited delay requests,
     /// activities and cancellable workflows are cancelled, unawaited non-cancellable workflows are awaited,
@@ -102,15 +101,15 @@ interface workflow-support {
     /// Function `get-result-json`, `get-execution-failure-kind` or `-get` extension
     /// can be later used to lookup the execution result of each submitted child execution.
     @since(version = 6.0.0)
-    join-set-close: func(self: join-set, backtrace: option<wasm-backtrace>);
+    join-set-close: func(self: join-set);
 
     /// Submit a child execution request with its parameters serialized as JSON array to a join set.
     @since(version = 6.0.0)
-    submit-json: func(join-set: borrow<join-set>, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<execution-id, submit-json-error>;
+    submit-json: func(join-set: borrow<join-set>, function: function, params: string) -> result<execution-id, submit-json-error>;
 
     /// Obtain child execution result after it has been awaited using `-await-next` extension or `join-set.join-next`.
     @since(version = 6.0.0)
-    get-result-json: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, get-result-json-error>;
+    get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
 
     /// The kind of platform-level execution failure for a previously *processed*
     /// child response, or `none` if it finished with an ok / business `err` result.
@@ -118,7 +117,7 @@ interface workflow-support {
     /// `-await-next` can be queried; unprocessed or unknown IDs error the same way.
     /// This is additive to the err value, which keeps carrying the failure sentinel.
     @since(version = 6.0.0)
-    get-execution-failure-kind: func(execution-id: execution-id, backtrace: option<wasm-backtrace>) -> result<option<execution-failure-kind>, get-result-json-error>;
+    get-execution-failure-kind: func(execution-id: execution-id) -> result<option<execution-failure-kind>, get-result-json-error>;
 
     /// The execution ID of the last direct call (`call-json`), or `none` if there
     /// was none. Unlike `last-oneoff-id`, it is never a delay and is not clobbered
@@ -134,7 +133,7 @@ interface workflow-support {
 
     /// Submit a delay request to the join set. The delay can be later polled using `join-next`.
     @since(version = 6.0.0)
-    submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at, backtrace: option<wasm-backtrace>) -> delay-id;
+    submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at) -> delay-id;
 
     /// Block the workflow execution until next response associated with the join set arrives.
     /// The response is marked as processed and its value is returned directly.
@@ -144,35 +143,93 @@ interface workflow-support {
     /// Err(Some(json)) / Err(None) for an err result (Err(None) also for a cancelled delay).
     /// Return `join-next-error::all-processed` if the join set has all requests matched with responses already processed.
     @since(version = 6.0.0)
-    join-next: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-error>;
+    join-next: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-error>;
 
     /// Attempt to process next response without blocking.
     /// Return `join-next-try-error::all-processed` if the join set has all requests matched with responses already processed.
     /// Return `join-next-try-error::pending` if no response is available yet, but there are pending requests.
     @since(version = 6.0.0)
-    join-next-try: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-try-error>;
+    join-next-try: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-try-error>;
 
     /// Generate a new top-level execution ID.
     @since(version = 5.0.0)
-    execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
+    execution-id-generate: func() -> execution-id;
 
     /// Schedule a new top-level execution with its parameters serialized as JSON array.
     /// Use the execution ID returned by `execution-id-generate`.
     @since(version = 5.0.0)
-    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string) -> result<_, schedule-json-error>;
 
     /// Call a function and block until the result is available. Equivalent to
-    /// join-set-create + submit-json + join-next + join-set-close, but uses a single backtrace entry.
+    /// join-set-create + submit-json + join-next + join-set-close.
     /// Returns Ok(Some(json)) for successful result with value,
     /// Ok(None) for successful result with no value,
     /// Err(Some(json)) for error result with value,
     /// Err(None) for error result with no value.
     @since(version = 5.0.0)
-    call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
+    call-json: func(function: function, params: string) -> result<result<option<string>, option<string>>, schedule-json-error>;
 
     /// Write a stub response with a JSON-serialized result for an activity_stub or activity_external execution.
     /// The `execution-id` must be a derived (child) execution ID.
     /// The `result-json` is the JSON-serialized return value.
     @since(version = 5.0.0)
+    stub-json: func(execution-id: execution-id, result-json: string) -> result<_, stub-json-error>;
+}
+
+/// Backtrace-carrying variants of the event-persisting `workflow-support` functions.
+/// Only interpreted runtimes (the JS runtime) supply a source-level `backtrace`;
+/// native components import the plain `workflow-support` interface instead.
+@since(version = 6.0.0)
+interface workflow-support-backtrace {
+    use obelisk:types/time@5.0.0.{schedule-at, datetime};
+    use obelisk:types/execution@5.0.0.{delay-id, execution-id, function, schedule-json-error};
+    use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
+    use obelisk:types/join-set@5.0.0.{join-set};
+    use workflow-support.{join-set-create-error, submit-json-error, join-next-error, join-next-try-error, stub-json-error};
+
+    /// See `workflow-support.random-u64`.
+    @since(version = 6.0.0)
+    random-u64: func(min: u64, max-exclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
+    /// See `workflow-support.random-u64-inclusive`.
+    @since(version = 6.0.0)
+    random-u64-inclusive: func(min: u64, max-inclusive: u64, backtrace: option<wasm-backtrace>) -> u64;
+    /// See `workflow-support.random-string`.
+    @since(version = 6.0.0)
+    random-string: func(min-length: u16, max-length-exclusive: u16, backtrace: option<wasm-backtrace>) -> string;
+    /// See `workflow-support.sleep`.
+    @since(version = 6.0.0)
+    sleep: func(schedule-at: schedule-at, name: option<string>, backtrace: option<wasm-backtrace>) -> result<datetime>;
+    /// See `workflow-support.join-set-create`.
+    @since(version = 6.0.0)
+    join-set-create: func(backtrace: option<wasm-backtrace>) -> join-set;
+    /// See `workflow-support.join-set-create-named`.
+    @since(version = 6.0.0)
+    join-set-create-named: func(name: string, backtrace: option<wasm-backtrace>) -> result<join-set, join-set-create-error>;
+    /// See `workflow-support.join-set-close`.
+    @since(version = 6.0.0)
+    join-set-close: func(self: join-set, backtrace: option<wasm-backtrace>);
+    /// See `workflow-support.submit-json`.
+    @since(version = 6.0.0)
+    submit-json: func(join-set: borrow<join-set>, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<execution-id, submit-json-error>;
+    /// See `workflow-support.submit-delay`.
+    @since(version = 6.0.0)
+    submit-delay: func(join-set: borrow<join-set>, timeout: schedule-at, backtrace: option<wasm-backtrace>) -> delay-id;
+    /// See `workflow-support.join-next`.
+    @since(version = 6.0.0)
+    join-next: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-error>;
+    /// See `workflow-support.join-next-try`.
+    @since(version = 6.0.0)
+    join-next-try: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-try-error>;
+    /// See `workflow-support.execution-id-generate`.
+    @since(version = 6.0.0)
+    execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id;
+    /// See `workflow-support.schedule-json`.
+    @since(version = 6.0.0)
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
+    /// See `workflow-support.call-json`.
+    @since(version = 6.0.0)
+    call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
+    /// See `workflow-support.stub-json`.
+    @since(version = 6.0.0)
     stub-json: func(execution-id: execution-id, result-json: string, backtrace: option<wasm-backtrace>) -> result<_, stub-json-error>;
 }
