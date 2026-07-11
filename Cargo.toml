@@ -244,7 +244,7 @@ axum = { version = "0.8.9", features = ["http2", "multipart"] }
 axum-accept = "0.0.5"
 axum-extra = { version = "0.12.6", features = ["query"] }
 base64 = "0.22.1"
-bytes = "1.12.0"
+bytes = "1.12.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.45", features = ["arbitrary", "serde"] }
@@ -298,7 +298,7 @@ prost = "0.14.4"
 prost-wkt-types = "0.7"
 quote = "1"
 rand = "0.9"
-regex = "1.12"
+regex = "1.13"
 refinery = { version = "0.9.2", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
