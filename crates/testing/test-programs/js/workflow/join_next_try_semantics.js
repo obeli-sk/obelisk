@@ -1,5 +1,5 @@
 // Exercise JS joinNextTry() semantics: pending -> undefined, success -> value,
-// failure -> throw err value, exhausted -> host error class.
+// failure -> throw ChildExecutionError, exhausted -> host error class.
 import { addSubmit } from 'testing:integration-obelisk-ext/activity';
 import { myStubSubmit } from 'testing:integration-obelisk-ext/stubs';
 import { myStubStub } from 'testing:integration-obelisk-stub/stubs';
@@ -55,8 +55,14 @@ export default function join_next_try_semantics(id) {
         errJs.joinNextTry();
         throw 'expected stub error';
     } catch (e) {
-        if (e !== 'stub-err') {
-            throw `unexpected thrown err value: ${e}`;
+        if (!(e instanceof obelisk.ChildExecutionError)) {
+            throw `expected ChildExecutionError, got: ${e}`;
+        }
+        if (e.value !== 'stub-err') {
+            throw `unexpected child err value: ${e.value}`;
+        }
+        if (e.childId !== errExecId) {
+            throw `unexpected childId: ${e.childId} !== ${errExecId}`;
         }
     }
 
@@ -68,8 +74,11 @@ export default function join_next_try_semantics(id) {
         blockingErrJs.joinNext();
         throw 'expected blocking stub error';
     } catch (e) {
-        if (e !== 'stub-err-blocking') {
-            throw `unexpected blocking thrown err value: ${e}`;
+        if (!(e instanceof obelisk.ChildExecutionError)) {
+            throw `expected ChildExecutionError, got: ${e}`;
+        }
+        if (e.value !== 'stub-err-blocking') {
+            throw `unexpected blocking child err value: ${e.value}`;
         }
     }
 

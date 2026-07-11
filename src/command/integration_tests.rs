@@ -393,6 +393,22 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
+name = "test_rethrow_child_error_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/rethrow_child_error.js"
+ffqn = "testing:integration/workflow-rethrow-child-error.rethrow-child-error"
+params = [
+  {{ name = "id", type = "u64" }},
+]
+return_type = "result<string, string>"
+
+[[workflow_js]]
+name = "test_cancel_child_error_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/cancel_child_error.js"
+ffqn = "testing:integration/workflow-cancel-child-error.cancel-child-error"
+params = []
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_math_random_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/math_random.js"
 ffqn = "testing:integration/workflow-math-random.math-random"
@@ -1599,6 +1615,30 @@ impl TestServer {
             .unwrap();
         pool.close().await;
         parent_id
+    }
+
+    /// Cancel an execution out-of-band via gRPC, retrying until it exists and the
+    /// request is accepted (a parent submits its child lazily while running).
+    async fn cancel_execution_with_retries(&self, execution_id: &str) {
+        let mut grpc_client =
+            ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+                .await
+                .unwrap();
+        for _ in 0..200 {
+            if let Ok(resp) = grpc_client
+                .cancel_execution(CancelExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: execution_id.to_string(),
+                    }),
+                })
+                .await
+                && resp.into_inner().outcome() == CancelExecutionOutcome::CancellationRequested
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("execution {execution_id} was never cancellable");
     }
 
     async fn step_execution_until_finished_grpc(
@@ -3310,6 +3350,62 @@ async fn submit_workflow_with_join_next_try_semantics() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": "stub-ok" }));
+
+    server.shutdown().await;
+}
+
+/// A caught `ChildExecutionError` re-thrown with `throw e` transparently
+/// reproduces the child's original err payload as the workflow's err.
+#[tokio::test]
+async fn submit_workflow_rethrows_child_execution_error() {
+    let server = TestServer::start(test_addr!(87)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/workflow-rethrow-child-error.rethrow-child-error",
+            vec![json!(7u64)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "err": "boom" }));
+
+    server.shutdown().await;
+}
+
+/// A child execution cancelled out-of-band surfaces to an awaiting JS parent as a
+/// `ChildExecutionError` with `.cancelled === true` and `.failureKind === "cancelled"`
+/// (a platform failure with no err payload), not as a business err value.
+#[tokio::test]
+async fn submit_workflow_child_cancelled_surfaces_child_execution_error() {
+    use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
+
+    let server = TestServer::start(test_addr!(88)).await;
+    let parent_id = server.generate_execution_id().await;
+
+    // The child id is deterministic either way, but the parent's named join set makes it
+    // a well-known string (first child of `n:cancel-set`) we can reconstruct here instead
+    // of replaying the parent's generated join-set id.
+    let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("cancel-set")).unwrap();
+    let child_id = ExecutionId::Derived(
+        parent_id
+            .parse::<ExecutionId>()
+            .unwrap()
+            .next_level(&join_set_id),
+    )
+    .to_string();
+
+    // Cancel concurrently with the follow so the parent is still blocked on joinNext.
+    let follow = server.submit_follow_with_id(
+        &parent_id,
+        "testing:integration/workflow-cancel-child-error.cancel-child-error",
+        vec![],
+    );
+    let cancel = server.cancel_execution_with_retries(&child_id);
+    let (resp, ()) = tokio::join!(follow, cancel);
+
+    assert_eq!(resp.status().as_u16(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body, json!({ "ok": "cancelled-child-observed" }));
 
     server.shutdown().await;
 }

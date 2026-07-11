@@ -1,5 +1,6 @@
 //! Common utilities for Boa JS engine-based Obelisk runtimes.
 
+pub mod child_execution_error;
 pub mod console;
 pub mod crypto;
 pub mod esm;

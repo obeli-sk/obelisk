@@ -115,6 +115,12 @@ expression: functions
     "ffqn": "testing:integration/workflow-join-next-try-semantics.join-next-try-semantics"
   },
   {
+    "ffqn": "testing:integration/workflow-rethrow-child-error.rethrow-child-error"
+  },
+  {
+    "ffqn": "testing:integration/workflow-cancel-child-error.cancel-child-error"
+  },
+  {
     "ffqn": "testing:integration/workflow-math-random.math-random"
   },
   {

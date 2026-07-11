@@ -1782,14 +1782,33 @@ mod tests {
             const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
             obelisk.stub(execId, {'err': null}); // result<string> has no error type
             let threw = false;
-            let caughtErr = 'unset';
+            let isChildErr = false;
+            let isError = false;
+            let valueIsUndefined = null;
+            let cancelled = null;
+            let failureKind = 'unset';
+            let childId = null;
             try {
                 js.joinNext();
             } catch (e) {
                 threw = true;
-                caughtErr = e;
+                isChildErr = e instanceof obelisk.ChildExecutionError;
+                isError = e instanceof Error;
+                valueIsUndefined = e.value === undefined;
+                cancelled = e.cancelled;
+                failureKind = e.failureKind ?? null;
+                childId = e.childId;
             }
-            return JSON.stringify({ lastId: js.lastId, threw: threw, caughtErr: caughtErr });
+            return JSON.stringify({
+                lastId: js.lastId,
+                threw,
+                isChildErr,
+                isError,
+                valueIsUndefined,
+                cancelled,
+                failureKind,
+                childId,
+            });
         }";
 
         let harness =
@@ -1803,8 +1822,15 @@ mod tests {
             "lastId should be set before throwing child err, got {result}"
         );
         assert_eq!(json!(true), result["threw"]);
-        // result<string> has no err type: unit err throws null, mirroring Ok(None).
-        assert_eq!(json!(null), result["caughtErr"]);
+        // A unit err (result<string> has no err type) throws a ChildExecutionError
+        // (also an Error) whose `.value` is undefined; it is a business err, not a
+        // platform failure, so `.cancelled` is false and `.failureKind` is absent.
+        assert_eq!(json!(true), result["isChildErr"]);
+        assert_eq!(json!(true), result["isError"]);
+        assert_eq!(json!(true), result["valueIsUndefined"]);
+        assert_eq!(json!(false), result["cancelled"]);
+        assert_eq!(json!(null), result["failureKind"]);
+        assert_eq!(result["lastId"], result["childId"]);
         drop(harness);
         db_close.close().await;
     }

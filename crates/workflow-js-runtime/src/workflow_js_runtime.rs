@@ -129,13 +129,19 @@ use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::{
 };
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
-use crate::generated::obelisk::types::execution::{ExecutionId, Function, ResponseId};
+use crate::generated::obelisk::types::execution::{
+    ExecutionFailureKind, ExecutionId, Function, ResponseId,
+};
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    self, JoinNextTryError, call_json, execution_id_generate, get_result_json, join_next,
-    join_next_try, join_set_close, join_set_create, join_set_create_named, random_string,
-    random_u64, random_u64_inclusive, schedule_json, sleep, stub_json, submit_delay, submit_json,
+    self, JoinNextTryError, call_json, execution_id_generate, get_execution_failure_kind,
+    get_result_json, join_next, join_next_try, join_set_close, join_set_create,
+    join_set_create_named, last_direct_call_id, random_string, random_u64, random_u64_inclusive,
+    schedule_json, sleep, stub_json, submit_delay, submit_json,
+};
+use boa_common::child_execution_error::{
+    ChildExecutionError, ChildExecutionErrorParts, make_child_execution_error,
 };
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
@@ -148,7 +154,7 @@ use boa_engine::{
     builtins::promise::PromiseState,
     js_string,
     object::builtins::{JsDate, JsFunction},
-    property::Attribute,
+    property::{Attribute, PropertyDescriptor},
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -281,9 +287,14 @@ fn create_direct_call_proxy(
             match call_json(&function, &params_json, Some(&backtrace)) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
-                Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
-                // Unit err (result<T> or execution failure with no err type): throw null, mirroring Ok(None).
-                Ok(Err(None)) => Err(JsError::from_opaque(JsValue::null())),
+                Ok(Err(payload)) => {
+                    let child = last_direct_call_id();
+                    Err(call_child_error(
+                        child.as_ref().map(|e| e.id.as_str()),
+                        payload,
+                        ctx,
+                    )?)
+                }
                 Err(e) => Err(JsNativeError::error()
                     .with_message(format!("call failed: {:?}", e))
                     .into()),
@@ -407,7 +418,8 @@ fn create_ext_await_next_proxy(context: &mut Context) -> JsValue {
         let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
 
         let backtrace = capture_backtrace(ctx);
-        // `join-next` now returns the value directly; the id is read via `last-id`.
+        // `join-next` now returns the value directly; the id is read via `last-id`
+        // (exposed to JS through the `lastId` accessor on the join set object).
         let (join_result, last_id) = with_join_set(idx, |js| {
             let result = join_next(js, Some(&backtrace));
             (result, js.last_id())
@@ -416,14 +428,7 @@ fn create_ext_await_next_proxy(context: &mut Context) -> JsValue {
         match join_result {
             Ok(inner_result) => match last_id {
                 Some(ResponseId::ExecutionId(exec_id)) => {
-                    // Store the execution ID on the join set object for later retrieval
-                    js_obj.set(
-                        js_string!("lastId"),
-                        js_string!(exec_id.id.as_str()),
-                        false,
-                        ctx,
-                    )?;
-                    unwrap_result(inner_result, ctx)
+                    unwrap_result(inner_result, exec_id.id.as_str(), ctx)
                 }
                 Some(ResponseId::DelayId(_)) => Err(JsNativeError::error()
                     .with_message("unexpected delay response in awaitNext")
@@ -451,11 +456,13 @@ fn create_ext_get_proxy(context: &mut Context) -> JsValue {
             .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
             .to_std_string_escaped();
 
-        let exec_id = ExecutionId { id: exec_id_str };
+        let exec_id = ExecutionId {
+            id: exec_id_str.clone(),
+        };
         let backtrace = capture_backtrace(ctx);
 
         match get_result_json(&exec_id, Some(&backtrace)) {
-            Ok(inner_result) => unwrap_result(inner_result, ctx),
+            Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("get result failed: {:?}", e))
                 .into()),
@@ -464,25 +471,118 @@ fn create_ext_get_proxy(context: &mut Context) -> JsValue {
     native.to_js_function(context.realm()).into()
 }
 
-/// Unwrap a `Result<Option<String>, Option<String>>` from `get-result-json-bt`
-/// into a JS value: returns the ok value, throws the err value.
-/// Matches the semantics of direct call proxies.
+/// Unwrap a `Result<Option<String>, Option<String>>` from a child outcome into a
+/// JS value: returns the ok value, or throws an [`obelisk.ChildExecutionError`]
+/// built from the given child `exec_id`.
 fn unwrap_result(
     inner_result: Result<Option<String>, Option<String>>,
+    exec_id: &str,
     ctx: &mut Context,
 ) -> JsResult<JsValue> {
     match inner_result {
         Ok(Some(json_str)) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
         Ok(None) => Ok(JsValue::null()),
-        Err(Some(err_str)) => throw_json_value(&err_str, ctx),
-        // Unit err (result<T> or execution failure with no err type): throw null, mirroring Ok(None).
-        Err(None) => Err(JsError::from_opaque(JsValue::null())),
+        Err(payload) => Err(child_error(exec_id, payload, ctx)?),
     }
 }
 
-fn throw_json_value(json_str: &str, ctx: &mut Context) -> JsResult<JsValue> {
-    let value = ctx.eval(Source::from_bytes(&format!("({json_str})")))?;
-    Err(JsError::from_opaque(value))
+/// Kebab-case string for a WIT `execution-failure-kind`, used as
+/// `ChildExecutionError.failureKind`.
+fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
+    match kind {
+        ExecutionFailureKind::TimedOut => "timed-out",
+        ExecutionFailureKind::NondeterminismDetected => "nondeterminism-detected",
+        ExecutionFailureKind::OutOfFuel => "out-of-fuel",
+        ExecutionFailureKind::Cancelled => "cancelled",
+        ExecutionFailureKind::Uncategorized => "uncategorized",
+    }
+}
+
+/// Build a `ChildExecutionError` for a failed child execution, disambiguating a
+/// business `err` from a platform failure via `get-execution-failure-kind`.
+fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsResult<JsError> {
+    let backtrace = capture_backtrace(ctx);
+    let exec = ExecutionId {
+        id: exec_id.to_string(),
+    };
+    match get_execution_failure_kind(&exec, Some(&backtrace)) {
+        Ok(Some(kind)) => {
+            let cancelled = matches!(kind, ExecutionFailureKind::Cancelled);
+            make_child_execution_error(
+                &ChildExecutionErrorParts {
+                    child_id: Some(exec_id),
+                    delay_id: None,
+                    value_json: None,
+                    failure_kind: Some(exec_failure_kind_str(kind)),
+                    cancelled,
+                },
+                ctx,
+            )
+        }
+        Ok(None) => make_child_execution_error(
+            &ChildExecutionErrorParts {
+                child_id: Some(exec_id),
+                delay_id: None,
+                value_json: payload.as_deref(),
+                failure_kind: None,
+                cancelled: false,
+            },
+            ctx,
+        ),
+        // Failure kind is unresolvable (e.g. not-yet-processed): surface as a
+        // plain host error rather than a ChildExecutionError.
+        Err(e) => Ok(JsNativeError::error()
+            .with_message(format!("failed to resolve child failure kind: {:?}", e))
+            .into()),
+    }
+}
+
+/// Build a `ChildExecutionError` for a failed direct call (`obelisk.call` / an
+/// import proxy), whose child id comes from `last-direct-call-id`.
+fn call_child_error(
+    child_id: Option<&str>,
+    payload: Option<String>,
+    ctx: &mut Context,
+) -> JsResult<JsError> {
+    match child_id {
+        Some(id) => child_error(id, payload, ctx),
+        None => make_child_execution_error(
+            &ChildExecutionErrorParts {
+                child_id: None,
+                delay_id: None,
+                value_json: payload.as_deref(),
+                failure_kind: None,
+                cancelled: false,
+            },
+            ctx,
+        ),
+    }
+}
+
+/// If `js_err` is a re-thrown [`obelisk.ChildExecutionError`], return its `.value`
+/// (the original business payload). Detection is brand-safe via `downcast_ref` on
+/// the native marker, not by sniffing `.name`/prototype.
+fn child_execution_error_rethrow_value(js_err: &JsError, ctx: &mut Context) -> Option<JsValue> {
+    let obj = js_err.as_opaque()?.as_object()?;
+    if obj.downcast_ref::<ChildExecutionError>().is_some() {
+        obj.get(js_string!("value"), ctx).ok()
+    } else {
+        None
+    }
+}
+
+/// Build a `ChildExecutionError` for a cancelled delay.
+fn delay_cancelled_error(delay_id: &str, ctx: &mut Context) -> JsResult<JsError> {
+    make_child_execution_error(
+        &ChildExecutionErrorParts {
+            child_id: None,
+            delay_id: Some(delay_id),
+            value_json: None,
+            failure_kind: None,
+            cancelled: true,
+        },
+        ctx,
+    )
 }
 
 fn new_join_set_exhausted_error(ctx: &mut Context) -> JsError {
@@ -678,9 +778,24 @@ pub fn execute(
         }
         Err(js_err) => {
             // JSON-encode the thrown value (consistent with ok branch).
+            // A re-thrown `ChildExecutionError` (`throw e`) is transparent: it
+            // re-serializes its `.value`, so it behaves like `throw e.value`.
             // `throw new Error("msg")` → JSON-encode the message string.
             // `throw expr` (null, string, number, object, …) → serialize via to_json.
-            let err_json = if let Ok(native_err) = js_err.try_native(&mut context) {
+            let err_json = if let Some(value) =
+                child_execution_error_rethrow_value(&js_err, &mut context)
+            {
+                match value.to_json(&mut context) {
+                    Ok(Some(json_val)) => serde_json::to_string(&json_val)
+                        .expect("serde_json::Value must be serializable"),
+                    Ok(None) => "null".to_string(), // undefined → null
+                    Err(e) => {
+                        return Err(JsRuntimeError::WrongThrownType(format!(
+                            "cannot serialize re-thrown ChildExecutionError value to JSON: {e:?}"
+                        )));
+                    }
+                }
+            } else if let Ok(native_err) = js_err.try_native(&mut context) {
                 serde_json::to_string(&native_err.message().to_string())
                     .expect("string serialization is infallible")
             } else {
@@ -965,9 +1080,14 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 Ok(parsed)
             }
             Ok(Ok(None)) => Ok(JsValue::null()),
-            Ok(Err(Some(err_str))) => throw_json_value(&err_str, ctx),
-            // Unit err (result<T> or execution failure with no err type): throw null, mirroring Ok(None).
-            Ok(Err(None)) => Err(JsError::from_opaque(JsValue::null())),
+            Ok(Err(payload)) => {
+                let child = last_direct_call_id();
+                Err(call_child_error(
+                    child.as_ref().map(|e| e.id.as_str()),
+                    payload,
+                    ctx,
+                )?)
+            }
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("call failed: {:?}", e))
                 .into()),
@@ -988,11 +1108,13 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
             .ok_or_else(|| JsNativeError::typ().with_message("executionId must be a string"))?
             .to_std_string_escaped();
 
-        let exec_id = ExecutionId { id: exec_id_str };
+        let exec_id = ExecutionId {
+            id: exec_id_str.clone(),
+        };
         let backtrace = capture_backtrace(ctx);
 
         match get_result_json(&exec_id, Some(&backtrace)) {
-            Ok(inner_result) => unwrap_result(inner_result, ctx),
+            Ok(inner_result) => unwrap_result(inner_result, &exec_id_str, ctx),
             Err(e) => Err(JsNativeError::error()
                 .with_message(format!("Failed to get result: {:?}", e))
                 .into()),
@@ -1091,6 +1213,10 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         };",
     ))?;
 
+    // obelisk.ChildExecutionError — native, brand-safe error thrown for a failed
+    // awaited child execution or a cancelled delay.
+    boa_common::child_execution_error::register(context)?;
+
     Ok(())
 }
 
@@ -1174,6 +1300,33 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
 
     // Store the ID as a string property
     obj.set(js_string!("__id__"), js_string!(js_id), false, ctx)?;
+
+    // joinSet.lastId — accessor over the WIT `join-set.last-id()`, the single
+    // source of truth for the id of the most recently processed response. Returns
+    // the execution/delay id string, or `undefined` if nothing has been processed
+    // yet or the join set has been closed. `last-id` is a non-logged deterministic
+    // in-memory read, so an accessor is replay-safe.
+    let last_id_getter = NativeFunction::from_fn_ptr(|this, _args, ctx| {
+        let this_obj = this
+            .as_object()
+            .ok_or_else(|| JsNativeError::typ().with_message("this is not an object"))?;
+        let idx = this_obj
+            .get(js_string!(JOIN_SET_IDX_KEY), ctx)?
+            .to_u32(ctx)? as usize;
+        match with_join_set(idx, |js| js.last_id()) {
+            Ok(Some(ResponseId::ExecutionId(exec_id))) => Ok(js_string!(exec_id.id).into()),
+            Ok(Some(ResponseId::DelayId(delay_id))) => Ok(js_string!(delay_id.id).into()),
+            Ok(None) | Err(_) => Ok(JsValue::undefined()),
+        }
+    });
+    obj.define_property_or_throw(
+        js_string!("lastId"),
+        PropertyDescriptor::builder()
+            .maybe_get(Some(last_id_getter.to_js_function(ctx.realm())))
+            .enumerable(true)
+            .configurable(true),
+        ctx,
+    )?;
 
     // joinSet.id()
     let id_fn = NativeFunction::from_fn_ptr(|this, _args, ctx| {
@@ -1277,21 +1430,12 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
         match join_result {
             Ok(inner_result) => match last_id {
                 Some(ResponseId::ExecutionId(exec_id)) => {
-                    this_obj.set(
-                        js_string!("lastId"),
-                        js_string!(exec_id.id.as_str()),
-                        false,
-                        ctx,
-                    )?;
-                    unwrap_result(inner_result, ctx)
+                    unwrap_result(inner_result, exec_id.id.as_str(), ctx)
                 }
-                Some(ResponseId::DelayId(delay_id)) => {
-                    this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
-                    match inner_result {
-                        Ok(_) => Ok(JsValue::null()),
-                        Err(_) => Err(JsNativeError::error().with_message("cancelled").into()),
-                    }
-                }
+                Some(ResponseId::DelayId(delay_id)) => match inner_result {
+                    Ok(_) => Ok(JsValue::null()),
+                    Err(_) => Err(delay_cancelled_error(delay_id.id.as_str(), ctx)?),
+                },
                 None => Err(JsNativeError::error()
                     .with_message("missing last-id after join-next")
                     .into()),
@@ -1324,21 +1468,12 @@ fn create_join_set_object(js: JoinSet, ctx: &mut Context) -> JsResult<JsValue> {
         match join_result {
             Ok(inner_result) => match last_id {
                 Some(ResponseId::ExecutionId(exec_id)) => {
-                    this_obj.set(
-                        js_string!("lastId"),
-                        js_string!(exec_id.id.as_str()),
-                        false,
-                        ctx,
-                    )?;
-                    unwrap_result(inner_result, ctx)
+                    unwrap_result(inner_result, exec_id.id.as_str(), ctx)
                 }
-                Some(ResponseId::DelayId(delay_id)) => {
-                    this_obj.set(js_string!("lastId"), js_string!(delay_id.id), false, ctx)?;
-                    match inner_result {
-                        Ok(_) => Ok(JsValue::null()),
-                        Err(_) => Err(JsNativeError::error().with_message("cancelled").into()),
-                    }
-                }
+                Some(ResponseId::DelayId(delay_id)) => match inner_result {
+                    Ok(_) => Ok(JsValue::null()),
+                    Err(_) => Err(delay_cancelled_error(delay_id.id.as_str(), ctx)?),
+                },
                 None => Err(JsNativeError::error()
                     .with_message("missing last-id after join-next-try")
                     .into()),
