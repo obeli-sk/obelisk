@@ -416,6 +416,9 @@ impl DeploymentToml {
 pub(crate) struct ServerConfigToml {
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
+    /// Permit deployments to run host processes through `activity_exec`.
+    #[serde(default)]
+    pub(crate) allow_exec_activities: bool,
     #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]

@@ -3034,10 +3034,10 @@ mod deployment {
     };
     use http::header;
 
-    /// Map the REST `allow_missing_runtime_config` flag to the runtime config policy.
-    fn runtime_config_check_from_bool(allow_missing: bool) -> RuntimeConfigCheck {
-        if allow_missing {
-            RuntimeConfigCheck::AllowMissing
+    /// Map the REST `allow_unavailable_runtime_config` flag to the runtime config policy.
+    fn runtime_config_check_from_bool(allow_unavailable: bool) -> RuntimeConfigCheck {
+        if allow_unavailable {
+            RuntimeConfigCheck::AllowUnavailable
         } else {
             RuntimeConfigCheck::Strict
         }
@@ -3354,10 +3354,11 @@ mod deployment {
         pub deployment_toml: String,
         /// Optional human-readable deployment description
         pub description: Option<String>,
-        /// Tolerate missing environment variables / secrets while verifying the
-        /// deployment before persisting it. Defaults to strict (missing config fails).
-        #[serde(default)]
-        pub allow_missing_runtime_config: bool,
+        /// Tolerate runtime requirements unavailable on this server while verifying
+        /// the deployment before persisting it.
+        // backcompat: 0.39.x accepted `allow_missing_runtime_config`; drop the alias after a couple of majors.
+        #[serde(default, alias = "allow_missing_runtime_config")]
+        pub allow_unavailable_runtime_config: bool,
         /// Optional client-supplied deployment ID for idempotent submission.
         /// If a deployment with this ID already exists and its content digest
         /// matches, the submission is a no-op; a digest mismatch is rejected.
@@ -3436,13 +3437,13 @@ mod deployment {
     struct SubmitInputs {
         deployment_toml: String,
         description: Option<String>,
-        allow_missing_runtime_config: bool,
+        allow_unavailable_runtime_config: bool,
         deployment_id: Option<String>,
         files: Vec<server::SuppliedFile>,
     }
 
     /// Parse a `multipart/form-data` submit package. Text fields `deployment_toml`,
-    /// `description`, `allow_missing_runtime_config`, and `deployment_id` carry the
+    /// `description`, `allow_unavailable_runtime_config`, and `deployment_id` carry the
     /// manifest and options. Every other part is a deployment-owned file blob: its
     /// `filename` is the deployment-relative path and its form-field `name` is the
     /// claimed `sha256:...` content digest (or `file` when unknown).
@@ -3457,7 +3458,7 @@ mod deployment {
         };
         let mut deployment_toml = None;
         let mut description = None;
-        let mut allow_missing_runtime_config = false;
+        let mut allow_unavailable_runtime_config = false;
         let mut deployment_id = None;
         let mut files = Vec::new();
         while let Some(field) = multipart
@@ -3482,13 +3483,14 @@ mod deployment {
                             .map_err(|err| bad(format!("invalid `description` field: {err}")))?,
                     );
                 }
-                "allow_missing_runtime_config" => {
+                // backcompat: 0.39.x accepted `allow_missing_runtime_config`; drop the alias after a couple of majors.
+                "allow_unavailable_runtime_config" | "allow_missing_runtime_config" => {
                     let value = field.text().await.map_err(|err| {
                         bad(format!(
-                            "invalid `allow_missing_runtime_config` field: {err}"
+                            "invalid `allow_unavailable_runtime_config` field: {err}"
                         ))
                     })?;
-                    allow_missing_runtime_config = value.trim() == "true";
+                    allow_unavailable_runtime_config = value.trim() == "true";
                 }
                 "deployment_id" => {
                     deployment_id = Some(
@@ -3519,7 +3521,7 @@ mod deployment {
             deployment_toml: deployment_toml
                 .ok_or_else(|| bad("missing `deployment_toml` field".to_string()))?,
             description,
-            allow_missing_runtime_config,
+            allow_unavailable_runtime_config,
             deployment_id,
             files,
         })
@@ -3577,7 +3579,7 @@ mod deployment {
             SubmitInputs {
                 deployment_toml: payload.deployment_toml,
                 description: payload.description,
-                allow_missing_runtime_config: payload.allow_missing_runtime_config,
+                allow_unavailable_runtime_config: payload.allow_unavailable_runtime_config,
                 deployment_id: payload.deployment_id,
                 files: Vec::new(),
             }
@@ -3597,7 +3599,7 @@ mod deployment {
         let result = Box::pin(crate::command::server::submit_deployment(
             state.server_verified.clone(),
             &inputs.deployment_toml,
-            runtime_config_check_from_bool(inputs.allow_missing_runtime_config),
+            runtime_config_check_from_bool(inputs.allow_unavailable_runtime_config),
             Some("web-api".to_string()),
             inputs.description,
             requested_deployment_id,
@@ -3696,10 +3698,11 @@ mod deployment {
     /// Request payload for switching deployment
     #[derive(Deserialize, ToSchema)]
     pub struct DeploymentSwitchPayload {
-        /// Tolerate missing environment variables / secrets while verifying. Rejected
-        /// for a hot redeploy, which requires all runtime config to be available.
-        #[serde(default)]
-        pub allow_missing_runtime_config: bool,
+        /// Tolerate runtime requirements unavailable on this server while verifying.
+        /// Rejected for a hot redeploy.
+        // backcompat: 0.39.x accepted `allow_missing_runtime_config`; drop the alias after a couple of majors.
+        #[serde(default, alias = "allow_missing_runtime_config")]
+        pub allow_unavailable_runtime_config: bool,
         /// Hot redeploy without restart
         #[serde(default)]
         pub hot_redeploy: bool,
@@ -3729,17 +3732,17 @@ mod deployment {
     ) -> Result<Response, HttpResponse> {
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let action = if payload.hot_redeploy {
-            if payload.allow_missing_runtime_config {
+            if payload.allow_unavailable_runtime_config {
                 return Err(HttpResponse::bad_request(
                     accept,
-                    "`allow_missing_runtime_config = true` not allowed with `hot_redeploy = true`"
+                    "`allow_unavailable_runtime_config = true` not allowed with `hot_redeploy = true`"
                         .to_string(),
                 ));
             }
             SwitchDeploymentAction::Activate
         } else {
             SwitchDeploymentAction::Enqueue(runtime_config_check_from_bool(
-                payload.allow_missing_runtime_config,
+                payload.allow_unavailable_runtime_config,
             ))
         };
         let outcome = crate::command::server::switch_deployment(

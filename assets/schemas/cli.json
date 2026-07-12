@@ -87,9 +87,9 @@
               }
             },
             {
-              "name": "--ignore-missing-env-vars",
-              "short": "i",
-              "help": "Skip the check that every environment variable referenced by the deployment is set"
+              "name": "--allow-unavailable-runtime-config",
+              "short": "a",
+              "help": "Tolerate runtime requirements unavailable on this server while verifying"
             },
             {
               "name": "--suppress-type-checking-errors",
@@ -637,8 +637,8 @@
               "help": "Submit an empty deployment with no components"
             },
             {
-              "name": "--allow-missing-runtime-config",
-              "help": "Tolerate missing environment variables / secrets while verifying the deployment before persisting it (default: missing config fails)"
+              "name": "--allow-unavailable-runtime-config",
+              "help": "Tolerate runtime requirements unavailable on this server while verifying the deployment before persisting it"
             },
             {
               "name": "--description",
@@ -673,8 +673,8 @@
               "help": "Enqueue an empty deployment with no components"
             },
             {
-              "name": "--allow-missing-runtime-config",
-              "help": "Tolerate missing environment variables / secrets while verifying the deployment before enqueuing it (default: missing config fails)"
+              "name": "--allow-unavailable-runtime-config",
+              "help": "Tolerate runtime requirements unavailable on this server while verifying the deployment before enqueuing it"
             },
             {
               "name": "--description",
