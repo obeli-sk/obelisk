@@ -13,6 +13,9 @@
 ## If set, the server will fail to start if the binary version doesn't match.
 # obelisk-version = 0.1
 
+## Exec activities run host processes outside the WASM sandbox and are disabled by default.
+# allow_exec_activities = true
+
 ## SQLite configuration (enabled by default)
 # database.sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
 ## Customize PRAGMA statements.

@@ -102,10 +102,10 @@ pub(crate) enum Deployment {
         /// Submit an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Tolerate missing environment variables / secrets while verifying the
-        /// deployment before persisting it (default: missing config fails).
+        /// Tolerate runtime requirements unavailable on this server while verifying
+        /// the deployment before persisting it.
         #[arg(long)]
-        allow_missing_runtime_config: bool,
+        allow_unavailable_runtime_config: bool,
         /// Optional human-readable description.
         #[arg(long)]
         description: Option<String>,
@@ -132,10 +132,10 @@ pub(crate) enum Deployment {
         /// Enqueue an empty deployment with no components.
         #[arg(long)]
         empty: bool,
-        /// Tolerate missing environment variables / secrets while verifying the
-        /// deployment before enqueuing it (default: missing config fails).
+        /// Tolerate runtime requirements unavailable on this server while verifying
+        /// the deployment before enqueuing it.
         #[arg(long)]
-        allow_missing_runtime_config: bool,
+        allow_unavailable_runtime_config: bool,
         /// Optional human-readable description for a newly submitted deployment.
         #[arg(long)]
         description: Option<String>,
@@ -427,9 +427,9 @@ pub(crate) enum Server {
         /// falling back to the Active deployment. Errors if neither is found.
         #[arg(short, long)]
         deployment: Option<PathBuf>,
-        /// Skip the check that every environment variable referenced by the deployment is set.
+        /// Tolerate runtime requirements unavailable on this server while verifying.
         #[arg(long, short)]
-        ignore_missing_env_vars: bool,
+        allow_unavailable_runtime_config: bool,
         /// Do not fail when a component's imports/exports fail type checking against the deployment.
         #[arg(long, short)]
         suppress_type_checking_errors: bool,

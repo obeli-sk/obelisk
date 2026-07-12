@@ -1,8 +1,8 @@
 use crate::args::Generate;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::server::{
-    PrepareDirsParams, VerifyParams, create_engines, deployment_compile_link,
-    deployment_verify_config, prepare_dirs, server_verify,
+    PrepareDirsParams, RuntimeConfigAvailability, VerifyParams, create_engines,
+    deployment_compile_link, deployment_verify_config, prepare_dirs, server_verify,
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_validated};
@@ -598,7 +598,7 @@ async fn generate_wit_deps(
             clean_cache: false,
             clean_codegen_cache: false,
         },
-        ignore_missing_env_vars: true,
+        runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable, // Just extracting WITs, not running components
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
     };

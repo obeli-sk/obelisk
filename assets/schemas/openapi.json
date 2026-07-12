@@ -2205,9 +2205,9 @@
           "deployment_toml"
         ],
         "properties": {
-          "allow_missing_runtime_config": {
+          "allow_unavailable_runtime_config": {
             "type": "boolean",
-            "description": "Tolerate missing environment variables / secrets while verifying the\ndeployment before persisting it. Defaults to strict (missing config fails)."
+            "description": "Tolerate runtime requirements unavailable on this server while verifying\nthe deployment before persisting it."
           },
           "deployment_id": {
             "type": [
@@ -2244,9 +2244,9 @@
         "type": "object",
         "description": "Request payload for switching deployment",
         "properties": {
-          "allow_missing_runtime_config": {
+          "allow_unavailable_runtime_config": {
             "type": "boolean",
-            "description": "Tolerate missing environment variables / secrets while verifying. Rejected\nfor a hot redeploy, which requires all runtime config to be available."
+            "description": "Tolerate runtime requirements unavailable on this server while verifying.\nRejected for a hot redeploy."
           },
           "hot_redeploy": {
             "type": "boolean",

@@ -12,10 +12,10 @@ use grpc::to_channel;
 use std::path::PathBuf;
 use tonic::transport::Channel;
 
-/// Map the CLI `--allow-missing-runtime-config` flag to the wire enum.
-fn runtime_config_check_from_bool(allow_missing: bool) -> grpc_gen::RuntimeConfigCheck {
-    if allow_missing {
-        grpc_gen::RuntimeConfigCheck::AllowMissing
+/// Map the CLI `--allow-unavailable-runtime-config` flag to the wire enum.
+fn runtime_config_check_from_bool(allow_unavailable: bool) -> grpc_gen::RuntimeConfigCheck {
+    if allow_unavailable {
+        grpc_gen::RuntimeConfigCheck::AllowUnavailable
     } else {
         grpc_gen::RuntimeConfigCheck::Strict
     }
@@ -27,7 +27,7 @@ impl args::Deployment {
             args::Deployment::Submit {
                 file,
                 empty,
-                allow_missing_runtime_config,
+                allow_unavailable_runtime_config,
                 description,
                 deployment_id,
                 api_url,
@@ -38,7 +38,7 @@ impl args::Deployment {
                 let id = upload_and_submit_manifest(
                     &mut client,
                     prepared,
-                    runtime_config_check_from_bool(allow_missing_runtime_config),
+                    runtime_config_check_from_bool(allow_unavailable_runtime_config),
                     description,
                     deployment_id,
                 )
@@ -50,13 +50,13 @@ impl args::Deployment {
             args::Deployment::Enqueue {
                 source,
                 empty,
-                allow_missing_runtime_config,
+                allow_unavailable_runtime_config,
                 description,
                 deployment_id,
                 api_url,
             } => {
                 let runtime_config_check =
-                    runtime_config_check_from_bool(allow_missing_runtime_config);
+                    runtime_config_check_from_bool(allow_unavailable_runtime_config);
                 let channel = to_channel(&api_url).await?;
                 let mut client = get_deployment_repository_client(channel).await?;
                 let id = submit_deployment(

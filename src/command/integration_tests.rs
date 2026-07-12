@@ -159,6 +159,7 @@ fn write_test_configs(ip: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     copy_dir_recursive(&fixture_src.join("exec"), &fixture_dst.join("exec"));
     let server_contents = format!(
         r#"api.listening_addr = "{ip}:{API_PORT}"
+allow_exec_activities = true
 webui.enabled = false
 external.listening_addr = "{ip}:{WEBHOOK_PORT}"
 
@@ -674,7 +675,10 @@ impl TestServer {
         let (termination_sender, termination_watcher) = watch::channel(());
 
         let params = RunParams {
-            dir_params: PrepareDirsParams::default(),
+            dir_params: PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
         };
@@ -2231,8 +2235,8 @@ ffqn = "testing:integration/deferred.run"
 }
 
 /// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
-/// verification. Submit is strict by default and tolerant under `ALLOW_MISSING`; a
-/// hot redeploy is always strict and rejects `ALLOW_MISSING` outright.
+/// verification. Submit is strict by default and tolerant under `ALLOW_UNAVAILABLE`; a
+/// hot redeploy is always strict and rejects `ALLOW_UNAVAILABLE` outright.
 #[tokio::test]
 async fn submit_runtime_config_check_grpc() {
     let server = TestServer::start(test_addr!(79)).await;
@@ -2281,8 +2285,8 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
         status.message()
     );
 
-    // ALLOW_MISSING submit tolerates the missing env var and persists.
-    let stored_id = submit(RuntimeConfigCheck::AllowMissing, None)
+    // ALLOW_UNAVAILABLE submit tolerates the missing env var and persists.
+    let stored_id = submit(RuntimeConfigCheck::AllowUnavailable, None)
         .await
         .expect("allow-missing submit must persist")
         .into_inner()
@@ -2291,18 +2295,18 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
         .id;
     let stored_grpc_id = GrpcDeploymentId { id: stored_id };
 
-    // A hot redeploy with ALLOW_MISSING is rejected outright.
+    // A hot redeploy with ALLOW_UNAVAILABLE is rejected outright.
     let status = grpc_client
         .clone()
         .switch_deployment(SwitchDeploymentRequest {
             deployment_id: Some(stored_grpc_id.clone()),
-            runtime_config_check: RuntimeConfigCheck::AllowMissing as i32,
+            runtime_config_check: RuntimeConfigCheck::AllowUnavailable as i32,
             hot_redeploy: true,
         })
         .await
-        .expect_err("hot redeploy must reject allow-missing-runtime-config");
+        .expect_err("hot redeploy must reject allow-unavailable-runtime-config");
     assert_eq!(
-        "argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_MISSING` cannot be used with `hot_redeploy = true`",
+        "argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `hot_redeploy = true`",
         status.message()
     );
 

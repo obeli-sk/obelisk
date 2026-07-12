@@ -432,7 +432,7 @@ impl Server {
                 clean_codegen_cache,
                 server_config,
                 deployment,
-                ignore_missing_env_vars,
+                allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
                 skip_db,
             } => {
@@ -446,7 +446,11 @@ impl Server {
                             clean_cache,
                             clean_codegen_cache,
                         },
-                        ignore_missing_env_vars,
+                        runtime_config_availability: if allow_unavailable_runtime_config {
+                            RuntimeConfigAvailability::AllowUnavailable
+                        } else {
+                            RuntimeConfigAvailability::Strict
+                        },
                         suppress_type_checking_errors,
                         suppress_linking_errors: false,
                     },
@@ -661,10 +665,28 @@ pub(crate) async fn run(
     Ok(())
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeConfigAvailability {
+    Strict,
+    AllowUnavailable,
+}
+impl RuntimeConfigAvailability {
+    fn allows_unavailable(self) -> bool {
+        self == Self::AllowUnavailable
+    }
+
+    fn assert_strict(self) {
+        assert!(
+            self == Self::Strict,
+            "cannot activate a deployment verified with unavailable runtime config allowed"
+        );
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct VerifyParams {
     pub(crate) dir_params: PrepareDirsParams,
-    pub(crate) ignore_missing_env_vars: bool,
+    pub(crate) runtime_config_availability: RuntimeConfigAvailability,
     pub(crate) suppress_type_checking_errors: bool,
     pub(crate) suppress_linking_errors: bool,
 }
@@ -788,7 +810,7 @@ async fn verify_db_schema(
     Ok(result)
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct PrepareDirsParams {
     pub(crate) clean_cache: bool,
     pub(crate) clean_codegen_cache: bool,
@@ -938,6 +960,22 @@ pub(crate) async fn deployment_verify_config(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
+    if !server_verified.allow_exec_activities
+        && !params.runtime_config_availability.allows_unavailable()
+        && !deployment.activities_exec.is_empty()
+    {
+        let component_names = deployment
+            .activities_exec
+            .iter()
+            .map(|activity| activity.name.to_string())
+            .collect::<Vec<_>>()
+            .join("`, `");
+        bail!(
+            "deployment contains exec activities (`{component_names}`), which run outside the \
+             WASM sandbox; enable them with `allow_exec_activities = true` in server.toml or \
+             `OBELISK__ALLOW_EXEC_ACTIVITIES=true`"
+        );
+    }
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
     let deployment =
         DeploymentRunnable::resolve(deployment, cas.as_deref(), &prepared_dirs.wasm_cache_dir)
@@ -947,7 +985,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.http_servers.clone(),
         prepared_dirs.wasm_cache_dir.clone(),
         prepared_dirs.metadata_dir.clone(),
-        params.ignore_missing_env_vars,
+        params.runtime_config_availability,
         server_verified.global_backtrace_persist,
         server_verified.global_executor_instance_limiter.clone(),
         server_verified.fuel,
@@ -1488,7 +1526,7 @@ pub(crate) async fn run_internal(
                 clean_cache: params.dir_params.clean_cache,
                 clean_codegen_cache: params.dir_params.clean_codegen_cache,
             },
-            ignore_missing_env_vars: false,
+            runtime_config_availability: RuntimeConfigAvailability::Strict,
             suppress_type_checking_errors: params.suppress_type_checking_errors,
             suppress_linking_errors: false,
         },
@@ -1671,6 +1709,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
     launch: ServerVerifiedLaunch,
+    allow_exec_activities: bool,
     http_servers: Vec<HttpServer>,
     fuel: Option<u64>,
     global_backtrace_persist: bool,
@@ -1731,6 +1770,7 @@ impl ServerVerified {
                 build_semaphore,
                 workflows_lock_extension_leeway,
             },
+            allow_exec_activities: config.allow_exec_activities,
             http_servers,
             fuel,
             global_backtrace_persist,
@@ -1756,6 +1796,7 @@ pub(crate) type HttpServersToWebhooksAndState = Vec<(
 )>;
 
 pub(crate) struct ServerCompiledLinked {
+    runtime_config_availability: RuntimeConfigAvailability,
     engines: Engines,
     pub(crate) component_registry_ro: ComponentConfigRegistryRO,
     pub(crate) workers_linked: Vec<WorkerLinked>,
@@ -1775,6 +1816,7 @@ impl ServerCompiledLinked {
     ) -> Result<Self, anyhow::Error> {
         trace!("Verified deployment: {deployment_verified:#?}");
         let DeploymentVerified {
+            runtime_config_availability,
             activities_wasm,
             activities_js,
             activities_exec,
@@ -1843,6 +1885,7 @@ impl ServerCompiledLinked {
         );
 
         Ok(ServerCompiledLinked {
+            runtime_config_availability,
             workers_linked: linked.workers,
             component_registry_ro: linked.component_registry_ro,
             engines: server_verified.engines,
@@ -2294,7 +2337,7 @@ pub(crate) async fn submit_deployment(
                 clean_cache: false,
                 clean_codegen_cache: false,
             },
-            ignore_missing_env_vars: runtime_config_check.ignore_missing_env_vars(),
+            runtime_config_availability: runtime_config_check.availability(),
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
         },
@@ -2338,10 +2381,10 @@ pub(crate) async fn submit_deployment(
     upsert_backtrace_sources(conn.as_ref(), cas.as_ref(), &compiled_linked).await;
 
     // Only cache strict-verified artifacts. A hot redeploy is always strict, so an
-    // artifact compiled while tolerating missing env vars (AllowMissing) must not be
+    // artifact compiled while tolerating unavailable runtime config must not be
     // reused to satisfy a later strict switch; a strict artifact satisfies any consumer.
     if let Some(manager) = deployment_switch_manager
-        && !runtime_config_check.ignore_missing_env_vars()
+        && runtime_config_check.availability() == RuntimeConfigAvailability::Strict
     {
         manager
             .store_latest_prepared(PreparedDeploymentSwitch {
@@ -2386,19 +2429,21 @@ impl From<anyhow::Error> for SwitchError {
     }
 }
 
-/// Policy for runtime configuration (environment variables and secrets) that a
-/// deployment references but that may be absent from the server's environment.
+/// Policy for runtime requirements that may be unavailable on the current server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum RuntimeConfigCheck {
     /// Missing environment variables or secrets fail the operation.
     #[default]
     Strict,
-    /// Missing environment variables or secrets are tolerated.
-    AllowMissing,
+    /// Unavailable environment variables, secrets, or server capabilities are tolerated.
+    AllowUnavailable,
 }
 impl RuntimeConfigCheck {
-    fn ignore_missing_env_vars(self) -> bool {
-        self == RuntimeConfigCheck::AllowMissing
+    fn availability(self) -> RuntimeConfigAvailability {
+        match self {
+            Self::Strict => RuntimeConfigAvailability::Strict,
+            Self::AllowUnavailable => RuntimeConfigAvailability::AllowUnavailable,
+        }
     }
 }
 
@@ -2408,10 +2453,10 @@ pub(crate) enum SwitchDeploymentAction {
     Enqueue(RuntimeConfigCheck),
 }
 impl SwitchDeploymentAction {
-    fn ignore_missing_env_vars(self) -> bool {
+    fn runtime_config_availability(self) -> RuntimeConfigAvailability {
         match self {
-            SwitchDeploymentAction::Enqueue(check) => check.ignore_missing_env_vars(),
-            SwitchDeploymentAction::Activate => false,
+            SwitchDeploymentAction::Enqueue(check) => check.availability(),
+            SwitchDeploymentAction::Activate => RuntimeConfigAvailability::Strict,
         }
     }
 }
@@ -2575,7 +2620,7 @@ async fn prepare_switch_deployment(
             clean_cache: false,
             clean_codegen_cache: false,
         },
-        ignore_missing_env_vars: action.ignore_missing_env_vars(),
+        runtime_config_availability: action.runtime_config_availability(),
         suppress_type_checking_errors: false,
         suppress_linking_errors: false,
     };
@@ -2646,6 +2691,9 @@ async fn switch_hot_redeploy(
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<SwitchOutcome, SwitchError> {
+    server_compiled_linked
+        .runtime_config_availability
+        .assert_strict();
     let mut write_guard_ctx = deployment_ctx.write().await;
     if write_guard_ctx.closed {
         return Err(SwitchError::Other(anyhow::anyhow!(
@@ -2753,6 +2801,9 @@ async fn spawn_tasks_and_threads(
     termination_watcher: &watch::Receiver<()>,
     prepared_dirs: PreparedDirs,
 ) -> Result<ServerInit, anyhow::Error> {
+    server_compiled_linked
+        .runtime_config_availability
+        .assert_strict();
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
         db_pool.cas_conn().await?.as_ref(),
@@ -3014,6 +3065,7 @@ async fn start_http_servers(
 
 #[derive(Debug)]
 pub(crate) struct DeploymentVerified {
+    runtime_config_availability: RuntimeConfigAvailability, // Allows asserting strictness on startup and hot redeploy.
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_exec: Vec<ActivityExecConfigVerified>,
@@ -3148,7 +3200,7 @@ impl DeploymentVerified {
         http_servers: Vec<webhook::HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        ignore_missing_env_vars: bool,
+        runtime_config_availability: RuntimeConfigAvailability,
         global_backtrace_persist: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -3156,6 +3208,7 @@ impl DeploymentVerified {
         subscription_interruption: Option<Duration>,
         api_addr_if_webui_enabled: Option<String>,
     ) -> Result<DeploymentVerified, anyhow::Error> {
+        let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_canonical();
         trace!("Using deployment toml: {deployment:#?}");
         // Check uniqueness of http_server names.
@@ -3477,6 +3530,7 @@ impl DeploymentVerified {
                 }
 
                 let deployment_verified = DeploymentVerified {
+                    runtime_config_availability,
                     activities_wasm,
                     activities_js: activities_js_verified,
                     activities_exec: activities_exec_verified,
@@ -4773,9 +4827,9 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            DeploymentRunnable, DeploymentVerified, PrepareDirsParams, ServerCompiledLinked,
-            ServerVerified, VerifyParams, compile_activity_inline, create_engines,
-            deployment_verify_config, prepare_dirs,
+            DeploymentRunnable, DeploymentVerified, PrepareDirsParams, RuntimeConfigAvailability,
+            ServerCompiledLinked, ServerVerified, VerifyParams, compile_activity_inline,
+            create_engines, deployment_verify_config, prepare_dirs,
         },
         config::config_holder::{ConfigHolder, load_deployment_canonical},
     };
@@ -4859,7 +4913,10 @@ mod tests {
 
         let prepared_dirs = prepare_dirs(
             &config,
-            &PrepareDirsParams::default(),
+            &PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
             &config_holder.path_prefixes,
         )
         .await?;
@@ -4867,7 +4924,15 @@ mod tests {
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
         let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
-        let params = VerifyParams::default();
+        let params = VerifyParams {
+            dir_params: PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
+            runtime_config_availability: RuntimeConfigAvailability::Strict,
+            suppress_type_checking_errors: false,
+            suppress_linking_errors: false,
+        };
         let webui_enabled = None;
 
         // Verify deployment. The current disk-authored canonical holds internal absolute
@@ -4879,7 +4944,7 @@ mod tests {
             server_verified.http_servers,
             prepared_dirs.wasm_cache_dir.clone(),
             prepared_dirs.metadata_dir.clone(),
-            params.ignore_missing_env_vars,
+            params.runtime_config_availability,
             server_verified.global_backtrace_persist,
             server_verified.global_executor_instance_limiter,
             server_verified.fuel,
@@ -4932,7 +4997,10 @@ mod tests {
 
         let prepared_dirs = prepare_dirs(
             &config,
-            &PrepareDirsParams::default(),
+            &PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
             &config_holder.path_prefixes,
         )
         .await?;
@@ -4945,13 +5013,94 @@ mod tests {
             &prepared_dirs,
             deployment,
             None,
-            VerifyParams::default(),
+            VerifyParams {
+                dir_params: PrepareDirsParams {
+                    clean_cache: false,
+                    clean_codegen_cache: false,
+                },
+                runtime_config_availability: RuntimeConfigAvailability::Strict,
+                suppress_type_checking_errors: false,
+                suppress_linking_errors: false,
+            },
             &mut termination_watcher,
         )
         .await
         .unwrap_err();
 
         assert!(err.to_string().contains("shared between component types"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deployment_verify_rejects_exec_activities_unless_allowed_or_deferred()
+    -> Result<(), anyhow::Error> {
+        test_utils::set_up();
+
+        let workspace = get_workspace_dir();
+        let config_holder = ConfigHolder::new(
+            crate::project_dirs(),
+            BaseDirs::new(),
+            Some(workspace.join("server-sqlite.toml")),
+        )?;
+        let config = config_holder.load_config().await?;
+        assert!(!config.allow_exec_activities);
+        let deployment =
+            load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
+        let prepared_dirs = prepare_dirs(
+            &config,
+            &PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
+            &config_holder.path_prefixes,
+        )
+        .await?;
+        let engines = create_engines(&config, &prepared_dirs)?;
+        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let (_termination_sender, mut termination_watcher) = watch::channel(());
+
+        let err = deployment_verify_config(
+            &server_verified,
+            &prepared_dirs,
+            deployment.clone(),
+            None,
+            VerifyParams {
+                dir_params: PrepareDirsParams {
+                    clean_cache: false,
+                    clean_codegen_cache: false,
+                },
+                runtime_config_availability: RuntimeConfigAvailability::Strict,
+                suppress_type_checking_errors: false,
+                suppress_linking_errors: false,
+            },
+            &mut termination_watcher,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("run outside the WASM sandbox"));
+        assert!(err.to_string().contains("exec-stream"));
+
+        let verified = deployment_verify_config(
+            &server_verified,
+            &prepared_dirs,
+            deployment,
+            None,
+            VerifyParams {
+                dir_params: PrepareDirsParams {
+                    clean_cache: false,
+                    clean_codegen_cache: false,
+                },
+                runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
+                suppress_type_checking_errors: false,
+                suppress_linking_errors: false,
+            },
+            &mut termination_watcher,
+        )
+        .await?;
+        assert_eq!(
+            verified.runtime_config_availability,
+            RuntimeConfigAvailability::AllowUnavailable
+        );
         Ok(())
     }
 

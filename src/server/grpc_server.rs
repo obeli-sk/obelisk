@@ -1733,8 +1733,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .try_into()?;
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let action = if request.hot_redeploy {
-            if check == RuntimeConfigCheck::AllowMissing {
-                return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_MISSING` cannot be used with `hot_redeploy = true`".to_string()));
+            if check == RuntimeConfigCheck::AllowUnavailable {
+                return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `hot_redeploy = true`".to_string()));
             }
             SwitchDeploymentAction::Activate
         } else {
@@ -1911,7 +1911,9 @@ fn runtime_config_check_from_grpc(
     check: grpc_gen::RuntimeConfigCheck,
 ) -> server::RuntimeConfigCheck {
     match check {
-        grpc_gen::RuntimeConfigCheck::AllowMissing => server::RuntimeConfigCheck::AllowMissing,
+        grpc_gen::RuntimeConfigCheck::AllowUnavailable => {
+            server::RuntimeConfigCheck::AllowUnavailable
+        }
         grpc_gen::RuntimeConfigCheck::Unspecified | grpc_gen::RuntimeConfigCheck::Strict => {
             server::RuntimeConfigCheck::Strict
         }

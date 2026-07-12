@@ -1157,8 +1157,8 @@ message GetCurrentDeploymentIdResponse {
     DeploymentId deployment_id = 1;
 }
 
-// Policy for runtime configuration (environment variables and secrets) that a
-// deployment references but that may be absent from the server's environment.
+// Policy for runtime requirements that may be unavailable on the current server,
+// including environment variables, secrets, and server capabilities.
 // Structural, file, compile, and link validation are always performed regardless
 // of this value.
 enum RuntimeConfigCheck {
@@ -1166,14 +1166,14 @@ enum RuntimeConfigCheck {
     RUNTIME_CONFIG_CHECK_UNSPECIFIED = 0;
     // Missing environment variables or secrets fail the operation.
     RUNTIME_CONFIG_CHECK_STRICT = 1;
-    // Missing environment variables or secrets are tolerated.
-    RUNTIME_CONFIG_CHECK_ALLOW_MISSING = 2;
+    // Unavailable environment variables, secrets, or server capabilities are tolerated.
+    RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE = 2;
 }
 
 message SwitchDeploymentRequest {
     DeploymentId deployment_id = 1;
     // Runtime config availability policy applied while verifying the deployment.
-    // A hot redeploy rejects RUNTIME_CONFIG_CHECK_ALLOW_MISSING.
+    // A hot redeploy rejects RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE.
     RuntimeConfigCheck runtime_config_check = 2;
     // Perform a hot redeployment (reload running components without restart).
     bool hot_redeploy = 3;

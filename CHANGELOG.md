@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(server)* Gate `activity_exec` behind a new `allow_exec_activities` server.toml flag (default disabled), since exec
+  activities run host processes outside the WASM sandbox. Deployments that declare exec activities fail verification
+  unless the operator enables the flag (or `OBELISK__ALLOW_EXEC_ACTIVITIES=true`)
+
+### Changed
+
+- **Breaking:** *(api)* Renamed the runtime-config availability policy from "missing" to "unavailable" so it also covers
+  server capabilities (such as exec activities), not only environment variables and secrets. The CLI flag
+  `--allow-missing-runtime-config` (and `server verify --ignore-missing-env-vars`) is now
+  `--allow-unavailable-runtime-config`, the REST field `allow_missing_runtime_config` is now
+  `allow_unavailable_runtime_config`, and the gRPC enum value `RUNTIME_CONFIG_CHECK_ALLOW_MISSING` is now
+  `RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` (numeric tag `2` is unchanged, so the gRPC wire format is compatible). The REST
+  field keeps a serde alias for `allow_missing_runtime_config`, so 0.39.x HTTP clients keep working for now
+
 ## [0.39.5](https://github.com/obeli-sk/obelisk/compare/v0.39.4...v0.39.5)
 
 This release introduces execution cancellation, enforcing the structured-concurrency guarantee that a

@@ -10,6 +10,11 @@
       ],
       "default": null
     },
+    "allow_exec_activities": {
+      "description": "Permit deployments to run host processes through `activity_exec`.",
+      "type": "boolean",
+      "default": false
+    },
     "api": {
       "$ref": "#/$defs/ApiConfig"
     },
