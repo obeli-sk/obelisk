@@ -6,37 +6,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0](https://github.com/obeli-sk/obelisk/compare/v0.39.5...v0.40.0)
+
+This release secures access to host executable activities and the Obelisk API. Exec activities are
+disabled by default and can be enabled globally or allowlisted by content digest. The API now uses
+bearer token authentication and rejects unauthenticated requests by default. This release also bumps
+the Obelisk WIT packages to new major versions, exposing structured child failure information to WASM
+callers and through a dedicated error type in JavaScript.
+
 ### Added
 
-- *(server)* Gate `activity_exec` behind a new `allow_exec_activities` server.toml flag (default disabled), since exec
-  activities run host processes outside the WASM sandbox. Deployments that declare exec activities fail verification
-  unless the operator enables the flag (or `OBELISK__ALLOW_EXEC_ACTIVITIES=true`)
-- *(server)* `allow_exec_activities` now also accepts an allowlist of exec script content digests
-  (`["sha256:..."]`), so only reviewed scripts may run; a rejected deployment logs the digest line to copy into
-  server.toml after review
-- *(server)* Bearer token authentication on the API port, covering the web API, gRPC, and gRPC-web uniformly. An
-  ephemeral startup token is always generated and printed to the console (again on a denied request), so there is
-  no lockout. Persistent tokens are configured in server.toml as sha256 hashes (`api.token_hashes`, safe to commit)
-  or injected as plaintext via `OBELISK__API__TOKEN` (`api.token`); revocation is deleting a hash line and
-  restarting
-- *(cli)* `obelisk generate token` prints a fresh random API token once, plus its ready-to-paste
-  `api.token_hashes` entry
-- *(cli)* Global `--api-token` flag, with fallback to `OBELISK_API_TOKEN`, then `OBELISK__API__TOKEN`, presented as
-  `Authorization: Bearer` on all gRPC and web API calls
+- *(server)* Gate `activity_exec` behind a new `allow_exec_activities` server.toml setting (default
+  disabled), since exec activities run host processes outside the WASM sandbox. Deployments that
+  declare exec activities fail verification unless the operator enables the setting or sets
+  `OBELISK__ALLOW_EXEC_ACTIVITIES=true` - ([239f564](https://github.com/obeli-sk/obelisk/commit/239f5640516d73fcc38f18ad54b39a29bf08c92a))
+- *(server)* `allow_exec_activities` also accepts an allowlist of exec script content digests
+  (`["sha256:..."]`), so only reviewed scripts may run. A rejected deployment logs the digest line
+  to copy into server.toml after review - ([40ad49d](https://github.com/obeli-sk/obelisk/commit/40ad49d4f05b8c18dce16b04b6f5dbf85652048d))
+- *(api)* Bearer token authentication on the API port, covering the web API, gRPC, and gRPC-web.
+  Persistent tokens can be configured as SHA-256 hashes in `api.token_hashes` or supplied as
+  plaintext through `OBELISK__API__TOKEN`. An ephemeral startup token is always generated and
+  printed to the console - ([81e8006](https://github.com/obeli-sk/obelisk/commit/81e8006704496ced8f122bc9a764ca170020da0c))
+- *(cli)* `obelisk generate token` prints a fresh API token and its ready-to-paste
+  `api.token_hashes` entry. The global `--api-token` flag falls back to `OBELISK_API_TOKEN`, then
+  `OBELISK__API__TOKEN`, and authenticates all gRPC and web API calls - ([81e8006](https://github.com/obeli-sk/obelisk/commit/81e8006704496ced8f122bc9a764ca170020da0c))
+- *(js)* Awaited child failures are exposed as `obelisk.ChildExecutionError`, with `value`,
+  `childId`, `cancelled`, and `failureKind` properties - ([f8c02f3](https://github.com/obeli-sk/obelisk/commit/f8c02f309fe36912ce78521725d7bec65588efc4))
 
 ### Changed
 
 - **Breaking:** *(api)* The API port now denies unauthenticated requests by default (HTTP `401`, gRPC
   `UNAUTHENTICATED`), where previously it accepted anything. Clients must present an accepted token; the
-  `--allow-unauthenticated-api` server flag restores the old behavior for dev or recovery. Webhook `http_server`s are unaffected
-  and stay open
+  `--allow-unauthenticated-api` server flag restores the old behavior for development or recovery.
+  Webhook `http_server`s are unaffected and stay open - ([81e8006](https://github.com/obeli-sk/obelisk/commit/81e8006704496ced8f122bc9a764ca170020da0c)), ([70ea477](https://github.com/obeli-sk/obelisk/commit/70ea47733e96c72d2acf761bd6255b517f5a572d))
 - **Breaking:** *(api)* Renamed the runtime-config availability policy from "missing" to "unavailable" so it also covers
   server capabilities (such as exec activities), not only environment variables and secrets. The CLI flag
   `--allow-missing-runtime-config` (and `server verify --ignore-missing-env-vars`) is now
   `--allow-unavailable-runtime-config`, the REST field `allow_missing_runtime_config` is now
   `allow_unavailable_runtime_config`, and the gRPC enum value `RUNTIME_CONFIG_CHECK_ALLOW_MISSING` is now
-  `RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` (numeric tag `2` is unchanged, so the gRPC wire format is compatible). The REST
-  field keeps a serde alias for `allow_missing_runtime_config`, so 0.39.x HTTP clients keep working for now
+  `RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE`. The gRPC numeric tag `2` is unchanged, and the REST field
+  keeps a serde alias for `allow_missing_runtime_config` so 0.39.x HTTP clients keep working for now - ([239f564](https://github.com/obeli-sk/obelisk/commit/239f5640516d73fcc38f18ad54b39a29bf08c92a))
+- **Breaking:** *(wit)* Bumped `obelisk:types` from 4.2.0 to 5.0.0 and both
+  `obelisk:workflow` and `obelisk:webhook` to 6.0.0. Child platform failures now expose an
+  `execution-failure-kind`; join operations return the value directly and expose the processed response ID
+  separately; delay cancellation uses the same result path; and deprecated interfaces were removed. Existing
+  components must be rebuilt against the new packages - ([0d9bc60](https://github.com/obeli-sk/obelisk/commit/0d9bc609829e6f8f578419ce1d365adb8cfdc9ed))
+- *(wit)* Native components now import support functions without backtrace parameters. Backtrace-carrying
+  variants used by interpreted runtimes live in separate support interfaces - ([f478285](https://github.com/obeli-sk/obelisk/commit/f4782858698d09f9788fd73858857ea05bcadd51))
+- *(js)* `joinNext` now follows the same throwing behavior as `joinNextTry`, direct calls, and generated
+  `awaitNext` functions. Business errors and platform failures throw `obelisk.ChildExecutionError`, while
+  successful unit results and completed delays return `null` - ([7962ca5](https://github.com/obeli-sk/obelisk/commit/7962ca59da229fb54eb5f1cf49d17fc8e22dc6b6)), ([088a8c1](https://github.com/obeli-sk/obelisk/commit/088a8c1a2bc7c5ab074a5f81bbfb9b1ecd3989d7)), ([f8c02f3](https://github.com/obeli-sk/obelisk/commit/f8c02f309fe36912ce78521725d7bec65588efc4))
+- *(cli)* Added `-s` as shorthand for `--server-config` - ([4481785](https://github.com/obeli-sk/obelisk/commit/44817859ab699ee8706226e140d481aab753fcf7))
+
+### Removed
+
+- **Breaking:** *(wit)* Removed the never-implemented `submit-config` type and parameters - ([ab8999f](https://github.com/obeli-sk/obelisk/commit/ab8999f969a58a39c1f4b0c6c10f06ddd51202c4))
 
 ## [0.39.5](https://github.com/obeli-sk/obelisk/compare/v0.39.4...v0.39.5)
 
