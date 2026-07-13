@@ -35,7 +35,6 @@
             },
             {
               "name": "--server-config",
-              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
@@ -82,7 +81,6 @@
             },
             {
               "name": "--server-config",
-              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
