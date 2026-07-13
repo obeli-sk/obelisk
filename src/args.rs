@@ -32,6 +32,10 @@ fn parse_oci_reference(s: &str) -> Result<oci_client::Reference, String> {
     oci_client::Reference::from_str(s).map_err(|e| e.to_string())
 }
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "clap function value parsers must return Result"
+)]
 fn parse_secret_string(value: &str) -> Result<SecretString, std::convert::Infallible> {
     Ok(SecretString::from(value.to_owned()))
 }
