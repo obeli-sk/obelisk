@@ -63,8 +63,8 @@
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
             },
             {
-              "name": "--allow-all",
-              "help": "Disable API authentication, accepting all requests. Dev/recovery override"
+              "name": "--allow-unauthenticated-api",
+              "help": "Accept unauthenticated requests on the API port. Dev/recovery override"
             }
           ]
         },

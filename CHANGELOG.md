@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** *(api)* The API port now denies unauthenticated requests by default (HTTP `401`, gRPC
   `UNAUTHENTICATED`), where previously it accepted anything. Clients must present an accepted token; the
-  `--allow-all` server flag restores the old behavior for dev or recovery. Webhook `http_server`s are unaffected
+  `--allow-unauthenticated-api` server flag restores the old behavior for dev or recovery. Webhook `http_server`s are unaffected
   and stay open
 - **Breaking:** *(api)* Renamed the runtime-config availability policy from "missing" to "unavailable" so it also covers
   server capabilities (such as exec activities), not only environment variables and secrets. The CLI flag

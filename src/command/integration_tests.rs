@@ -663,7 +663,7 @@ impl TestServer {
         Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty(), true).await
     }
 
-    /// Start an empty server with API auth enabled (no `allow_all`), accepting the
+    /// Start an empty server with API auth enabled (no `allow_unauthenticated_api`), accepting the
     /// given extra top-level `server.toml` lines (e.g. `api.token = "..."`).
     async fn start_empty_with_auth(ip: String, server_toml_api_lines: &str) -> Self {
         let (tmp_dir, server_path, _deployment_path) =
@@ -676,7 +676,7 @@ impl TestServer {
         tmp_dir: tempfile::TempDir,
         server_path: PathBuf,
         deployment: LocalDeployment,
-        allow_all: bool,
+        allow_unauthenticated_api: bool,
     ) -> Self {
         test_utils::set_up();
 
@@ -694,7 +694,7 @@ impl TestServer {
             },
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
-            allow_all,
+            allow_unauthenticated_api,
         };
 
         let prepared_dirs = prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes)
@@ -1174,7 +1174,7 @@ impl TestServer {
 }
 
 /// v1 API token auth (`meta/designs/server-security-guard.md`): with auth active
-/// (tests otherwise run with `allow_all`), the API port denies requests without a
+/// (tests otherwise run with `allow_unauthenticated_api`), the API port denies requests without a
 /// valid bearer token and accepts both the plaintext `api.token` and an
 /// `api.token_hashes` entry, on the web API and at gRPC stream open.
 #[tokio::test]

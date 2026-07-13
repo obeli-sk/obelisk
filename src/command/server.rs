@@ -410,7 +410,7 @@ impl Server {
                 empty: deployment_empty,
                 description,
                 suppress_type_checking_errors,
-                allow_all,
+                allow_unauthenticated_api,
             } => {
                 Box::pin(run(
                     project_dirs(),
@@ -426,7 +426,7 @@ impl Server {
                         },
                         clean_sqlite_directory,
                         suppress_type_checking_errors,
-                        allow_all,
+                        allow_unauthenticated_api,
                     },
                 ))
                 .await
@@ -626,8 +626,8 @@ pub(crate) struct RunParams {
     pub(crate) dir_params: PrepareDirsParams,
     pub(crate) clean_sqlite_directory: bool,
     pub(crate) suppress_type_checking_errors: bool,
-    /// Disable API authentication (`--allow-all`), accepting unauthenticated requests.
-    pub(crate) allow_all: bool,
+    /// Accept unauthenticated API requests (`--allow-unauthenticated-api`).
+    pub(crate) allow_unauthenticated_api: bool,
 }
 
 pub(crate) async fn run(
@@ -1727,8 +1727,10 @@ pub(crate) async fn run_internal(
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router.fallback_service(grpc_service);
-        let app_svc = if params.allow_all {
-            warn!("API authentication is disabled by --allow-all: accepting all requests");
+        let app_svc = if params.allow_unauthenticated_api {
+            warn!(
+                "API authentication is disabled by --allow-unauthenticated-api: accepting all API requests"
+            );
             app.into_make_service()
         } else {
             let api_auth = Arc::new(crate::server::auth::ApiAuth::new(&api_config));
