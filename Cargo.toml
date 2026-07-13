@@ -63,6 +63,7 @@ serde_json.workspace = true
 serde_with.workspace = true
 serde.workspace = true
 sha2.workspace = true
+subtle.workspace = true
 strum.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
@@ -326,6 +327,7 @@ serde_json = { version = "1.0.150", features = ["preserve_order"] }
 serde_with = "3.21.0"
 hmac = "0.12.1"
 sha2 = "0.10.9"
+subtle = "2.6.1"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3.27"

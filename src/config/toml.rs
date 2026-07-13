@@ -518,14 +518,31 @@ pub(crate) struct ApiConfig {
     pub(crate) enabled: bool,
     #[serde(default = "default_api_listening_addr")]
     pub(crate) listening_addr: SocketAddr,
+    /// Accepted API bearer tokens as `sha256:<hex>` digests of the token text.
+    /// Hashes are not secrets, so this file stays safe to commit.
+    /// Generate an entry with `obelisk generate token`.
+    #[serde(default)]
+    pub(crate) token_hashes: Vec<Digest>,
+    /// Plaintext accepted token, intended for env injection only
+    /// (`OBELISK__API__TOKEN`); do not write it into the config file.
+    #[serde(default, deserialize_with = "deserialize_opt_secret_string")]
+    #[schemars(with = "Option<String>")]
+    pub(crate) token: Option<SecretString>,
 }
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             listening_addr: default_api_listening_addr(),
+            token_hashes: Vec::new(),
+            token: None,
         }
     }
+}
+fn deserialize_opt_secret_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<SecretString>, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.map(SecretString::from))
 }
 fn default_api_listening_addr() -> SocketAddr {
     "127.0.0.1:5005".parse().expect("valid default address")

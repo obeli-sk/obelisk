@@ -139,6 +139,26 @@ impl Generate {
                 }
                 Ok(())
             }
+            Generate::Token { json } => {
+                let token = crate::api::generate_token();
+                let hash = crate::api::token_hash(&token);
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "token": token,
+                            "hash": hash.to_string(),
+                        }))?
+                    );
+                } else {
+                    println!("API token (shown only once, store it securely):");
+                    println!("{token}");
+                    println!();
+                    println!("Add its hash to `api.token_hashes` in server.toml:");
+                    println!("api.token_hashes = [\"{hash}\"]");
+                }
+                Ok(())
+            }
             Generate::Prompt { description } => {
                 let version = format!("v{PKG_VERSION}");
                 let description = description.join(" ");

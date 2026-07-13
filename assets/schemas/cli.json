@@ -3,6 +3,10 @@
   "about": "Obelisk: deterministic workflow engine",
   "options": [
     {
+      "name": "--api-token",
+      "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+    },
+    {
       "name": "--version",
       "short": "v",
       "help": "Print version"
@@ -31,6 +35,7 @@
             },
             {
               "name": "--server-config",
+              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
@@ -56,6 +61,10 @@
               "name": "--suppress-type-checking-errors",
               "short": "s",
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
+            },
+            {
+              "name": "--allow-unauthenticated-api",
+              "help": "Accept unauthenticated requests on the API port. Dev/recovery override"
             }
           ]
         },
@@ -73,6 +82,7 @@
             },
             {
               "name": "--server-config",
+              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
@@ -1090,6 +1100,17 @@
         {
           "name": "deployment-id",
           "about": "Generate a fresh random deployment ID and print it to stdout",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of plain text"
+            }
+          ]
+        },
+        {
+          "name": "token",
+          "about": "Generate a random API token plus the `sha256:` hash entry accepted in `server.toml` `api.token_hashes`",
           "options": [
             {
               "name": "--json",

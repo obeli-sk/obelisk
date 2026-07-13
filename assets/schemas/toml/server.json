@@ -83,6 +83,21 @@
         "listening_addr": {
           "type": "string",
           "default": "127.0.0.1:5005"
+        },
+        "token_hashes": {
+          "description": "Accepted API bearer tokens as `sha256:<hex>` digests of the token text.\nHashes are not secrets, so this file stays safe to commit.\nGenerate an entry with `obelisk generate token`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "token": {
+          "description": "Plaintext accepted token, intended for env injection only\n(`OBELISK__API__TOKEN`); do not write it into the config file.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

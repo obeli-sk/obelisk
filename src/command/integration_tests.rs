@@ -150,7 +150,10 @@ pub(crate) use test_addr;
 /// Write separate server and deployment TOML configs to temp files and return their paths.
 /// The server config includes API, DB, and wasm settings.
 /// The deployment config references the JS fixtures from the workspace tree.
-fn write_test_configs(ip: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn write_test_configs(
+    ip: &str,
+    server_toml_api_lines: &str,
+) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let workspace = get_workspace_dir();
     let db_dir = tempfile::tempdir().unwrap();
     let fixture_src = workspace.join("crates/testing/test-programs");
@@ -159,6 +162,7 @@ fn write_test_configs(ip: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
     copy_dir_recursive(&fixture_src.join("exec"), &fixture_dst.join("exec"));
     let server_contents = format!(
         r#"api.listening_addr = "{ip}:{API_PORT}"
+{server_toml_api_lines}
 allow_exec_activities = true
 webui.enabled = false
 external.listening_addr = "{ip}:{WEBHOOK_PORT}"
@@ -647,16 +651,24 @@ struct TestServer {
 
 impl TestServer {
     async fn start(ip: String) -> Self {
-        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip);
+        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment).await
+        Self::launch(ip, tmp_dir, server_path, deployment, true).await
     }
 
     /// Start a server with an empty deployment (no components, no CAS blobs), so a later
     /// `deployment apply` exercises the upload-then-submit path from a clean store.
     async fn start_empty(ip: String) -> Self {
-        let (tmp_dir, server_path, _deployment_path) = write_test_configs(&ip);
-        Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty()).await
+        let (tmp_dir, server_path, _deployment_path) = write_test_configs(&ip, "");
+        Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty(), true).await
+    }
+
+    /// Start an empty server with API auth enabled (no `allow_unauthenticated_api`), accepting the
+    /// given extra top-level `server.toml` lines (e.g. `api.token = "..."`).
+    async fn start_empty_with_auth(ip: String, server_toml_api_lines: &str) -> Self {
+        let (tmp_dir, server_path, _deployment_path) =
+            write_test_configs(&ip, server_toml_api_lines);
+        Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty(), false).await
     }
 
     async fn launch(
@@ -664,6 +676,7 @@ impl TestServer {
         tmp_dir: tempfile::TempDir,
         server_path: PathBuf,
         deployment: LocalDeployment,
+        allow_unauthenticated_api: bool,
     ) -> Self {
         test_utils::set_up();
 
@@ -681,6 +694,7 @@ impl TestServer {
             },
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
+            allow_unauthenticated_api,
         };
 
         let prepared_dirs = prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes)
@@ -726,7 +740,8 @@ impl TestServer {
                 .send()
                 .await;
             if let Ok(resp) = resp
-                && resp.status().is_success()
+                && (resp.status().is_success()
+                    || resp.status() == reqwest::StatusCode::UNAUTHORIZED)
             {
                 debug!("Pinging server OK");
                 break;
@@ -1060,8 +1075,8 @@ impl TestServer {
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap()
-                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+                .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
         let submit = async |files| {
             grpc_client
@@ -1119,8 +1134,8 @@ impl TestServer {
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap()
-                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+                .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
         let resp = grpc_client
             .switch_deployment(SwitchDeploymentRequest {
                 deployment_id: Some(GrpcDeploymentId {
@@ -1156,6 +1171,71 @@ impl TestServer {
         let body: Value = resp.json().await.unwrap();
         assert_eq!(body["ok"], "switched", "unexpected switch outcome");
     }
+}
+
+/// v1 API token auth (`meta/designs/server-security-guard.md`): with auth active
+/// (tests otherwise run with `allow_unauthenticated_api`), the API port denies requests without a
+/// valid bearer token and accepts both the plaintext `api.token` and an
+/// `api.token_hashes` entry, on the web API and at gRPC stream open.
+#[tokio::test]
+async fn api_auth_should_deny_unauthenticated_requests() {
+    fn list_components_request() -> ListComponentsRequest {
+        ListComponentsRequest {
+            function_name: None,
+            component_digest: None,
+            extensions: false,
+            deployment_id: None,
+        }
+    }
+
+    let plain_token = "plain-secret-token";
+    let hashed_token = "hashed-secret-token";
+    let server = TestServer::start_empty_with_auth(
+        test_addr!(89),
+        &format!(
+            "api.token = \"{plain_token}\"\napi.token_hashes = [\"{hash}\"]",
+            hash = crate::api::token_hash(hashed_token)
+        ),
+    )
+    .await;
+
+    let url = format!("{}/v1/functions", server.base_url);
+    for wrong in [
+        server.client.get(&url),
+        server.client.get(&url).bearer_auth("wrong-token"),
+    ] {
+        assert_eq!(
+            wrong.send().await.unwrap().status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+    }
+    for accepted in [plain_token, hashed_token] {
+        let resp = server
+            .client
+            .get(&url)
+            .bearer_auth(accepted)
+            .send()
+            .await
+            .unwrap();
+        assert!(resp.status().is_success(), "status: {}", resp.status());
+    }
+
+    let mut fn_client = FunctionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap();
+    let status = fn_client
+        .list_components(list_components_request())
+        .await
+        .unwrap_err();
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    let mut authenticated = tonic::Request::new(list_components_request());
+    authenticated.metadata_mut().insert(
+        "authorization",
+        format!("Bearer {plain_token}").parse().unwrap(),
+    );
+    fn_client.list_components(authenticated).await.unwrap();
+
+    server.shutdown().await;
 }
 
 /// Regression test for hot-deploying local WASM files to a server that starts empty.
@@ -1227,8 +1307,8 @@ impl TestDeployClient {
                     DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
                         .await
                         .unwrap()
-                        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-                        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+                        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+                        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
                 let submit_resp = grpc_client
                     .submit_deployment(SubmitDeploymentRequest {
                         deployment_toml: new_deployment_toml,
@@ -2136,8 +2216,8 @@ ffqn = "testing:integration/deferred.run"
         DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
             .await
             .unwrap()
-            .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-            .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+            .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+            .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
     let submit = |files, id| {
         let mut client = grpc_client.clone();
         let toml = prepared.deployment_toml.clone();
@@ -2254,8 +2334,8 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
     let submit = |check: RuntimeConfigCheck, id: Option<GrpcDeploymentId>| {
         let mut client = grpc_client.clone();
@@ -2456,8 +2536,8 @@ async fn gc_orphan_files_grpc() {
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
     // Prepare a deployment-owned JS file (digest-enriched) from disk. `section` selects
     // `activity_js` or `workflow_js` (a JS workflow validates its source at link time, so
