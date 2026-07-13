@@ -61,6 +61,7 @@ callers and through a dedicated error type in JavaScript.
 ### Removed
 
 - **Breaking:** *(wit)* Removed the never-implemented `submit-config` type and parameters - ([ab8999f](https://github.com/obeli-sk/obelisk/commit/ab8999f969a58a39c1f4b0c6c10f06ddd51202c4))
+- **Breaking:** *(cli)*: Disallow `-s` shorthand for `--suppress-type-checking-errors` - ([ced8a19e](https://github.com/obeli-sk/obelisk/commit/ced8a19ec94d16720afb056859a5e523499e8a62))
 
 ## [0.39.5](https://github.com/obeli-sk/obelisk/compare/v0.39.4...v0.39.5)
 

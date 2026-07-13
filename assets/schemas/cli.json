@@ -58,7 +58,6 @@
             },
             {
               "name": "--suppress-type-checking-errors",
-              "short": "s",
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
             },
             {
@@ -101,7 +100,6 @@
             },
             {
               "name": "--suppress-type-checking-errors",
-              "short": "s",
               "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
             },
             {

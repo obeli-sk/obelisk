@@ -438,7 +438,7 @@ pub(crate) enum Server {
         #[arg(long)]
         description: Option<String>,
         /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
-        #[arg(long, short)]
+        #[arg(long)]
         suppress_type_checking_errors: bool,
         /// Accept unauthenticated requests on the API port. Dev/recovery override.
         #[arg(long)]
@@ -463,7 +463,7 @@ pub(crate) enum Server {
         #[arg(long, short)]
         allow_unavailable_runtime_config: bool,
         /// Do not fail when a component's imports/exports fail type checking against the deployment.
-        #[arg(long, short)]
+        #[arg(long)]
         suppress_type_checking_errors: bool,
         /// Skip opening the sqlite database and validating its schema.
         #[arg(long)]
