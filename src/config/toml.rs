@@ -417,8 +417,10 @@ pub(crate) struct ServerConfigToml {
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
     /// Permit deployments to run host processes through `activity_exec`.
+    /// `false` denies all (default), `true` allows any, a list of `sha256:...`
+    /// content digests allows only the listed exec scripts.
     #[serde(default)]
-    pub(crate) allow_exec_activities: bool,
+    pub(crate) allow_exec_activities: AllowExecActivities,
     #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]
@@ -442,6 +444,71 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+/// Exec activity policy: deny all, allow any, or allow only scripts whose
+/// content digest (digest of the exact script text that runs) is listed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) enum AllowExecActivities {
+    #[default]
+    Deny,
+    AllowAny,
+    Allowlist(Vec<ContentDigest>),
+}
+impl<'de> Deserialize<'de> for AllowExecActivities {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct AllowExecActivitiesVisitor;
+        impl<'de> serde::de::Visitor<'de> for AllowExecActivitiesVisitor {
+            type Value = AllowExecActivities;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a boolean or a list of `sha256:...` content digests")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(if v {
+                    AllowExecActivities::AllowAny
+                } else {
+                    AllowExecActivities::Deny
+                })
+            }
+
+            // The `OBELISK__ALLOW_EXEC_ACTIVITIES` env override arrives as a string.
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                match v.parse::<bool>() {
+                    Ok(v) => self.visit_bool(v),
+                    Err(_) => Err(E::invalid_value(serde::de::Unexpected::Str(v), &self)),
+                }
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut digests = Vec::new();
+                while let Some(digest) = seq.next_element::<ContentDigest>()? {
+                    digests.push(digest);
+                }
+                Ok(AllowExecActivities::Allowlist(digests))
+            }
+        }
+        deserializer.deserialize_any(AllowExecActivitiesVisitor)
+    }
+}
+
+impl JsonSchema for AllowExecActivities {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("AllowExecActivities")
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "anyOf": [
+                {"type": "boolean"},
+                {"type": "array", "items": {"type": "string"}}
+            ]
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -3773,6 +3840,42 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 "#;
             let result = toml::from_str::<TestConfig>(toml_str);
             assert!(result.is_err(), "Should fail on `extra_stuff`");
+        }
+    }
+
+    mod allow_exec_activities {
+        use super::super::*;
+
+        #[derive(serde::Deserialize, Debug)]
+        struct TestConfig {
+            #[serde(default)]
+            allow: AllowExecActivities,
+        }
+
+        const DIGEST: &str =
+            "sha256:abababababababababababababababababababababababababababababababab";
+
+        #[test]
+        fn deserialize_bool_and_digest_list() {
+            let actual: TestConfig = toml::from_str("allow = true").unwrap();
+            assert_eq!(AllowExecActivities::AllowAny, actual.allow);
+            let actual: TestConfig = toml::from_str("allow = false").unwrap();
+            assert_eq!(AllowExecActivities::Deny, actual.allow);
+            let actual: TestConfig = toml::from_str("").unwrap();
+            assert_eq!(AllowExecActivities::Deny, actual.allow);
+            let actual: TestConfig = toml::from_str(&format!("allow = [\"{DIGEST}\"]")).unwrap();
+            assert_eq!(
+                AllowExecActivities::Allowlist(vec![DIGEST.parse().unwrap()]),
+                actual.allow
+            );
+        }
+
+        #[test]
+        fn deserialize_bool_string_as_sent_by_env_override() {
+            // `OBELISK__ALLOW_EXEC_ACTIVITIES=true` reaches serde as a string.
+            let actual: TestConfig = toml::from_str(r#"allow = "true""#).unwrap();
+            assert_eq!(AllowExecActivities::AllowAny, actual.allow);
+            toml::from_str::<TestConfig>(r#"allow = "yes""#).unwrap_err();
         }
     }
 
