@@ -1,7 +1,8 @@
 use crate::FunctionMetadataVerbosity;
-use crate::FunctionRepositoryClient;
 use crate::args;
 use crate::args::TomlComponentType;
+use crate::client::FunctionRepositoryClient;
+use crate::client::get_fn_repository_client;
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ComponentLocationToml;
@@ -11,7 +12,6 @@ use crate::config::toml::DurationConfig;
 use crate::config::toml::JsLocationToml;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::config::wasm_cache_metadata_dir;
-use crate::get_fn_repository_client;
 use crate::oci;
 use crate::oci::ComponentMetadataAnnotation;
 use crate::project_dirs;

@@ -1075,8 +1075,8 @@ impl TestServer {
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap()
-                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+                .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
         let submit = async |files| {
             grpc_client
@@ -1134,8 +1134,8 @@ impl TestServer {
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap()
-                .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-                .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+                .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+                .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
         let resp = grpc_client
             .switch_deployment(SwitchDeploymentRequest {
                 deployment_id: Some(GrpcDeploymentId {
@@ -1194,7 +1194,7 @@ async fn api_auth_should_deny_unauthenticated_requests() {
         test_addr!(89),
         &format!(
             "api.token = \"{plain_token}\"\napi.token_hashes = [\"{hash}\"]",
-            hash = crate::server::auth::token_hash(hashed_token)
+            hash = crate::api::token_hash(hashed_token)
         ),
     )
     .await;
@@ -1307,8 +1307,8 @@ impl TestDeployClient {
                     DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
                         .await
                         .unwrap()
-                        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-                        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+                        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+                        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
                 let submit_resp = grpc_client
                     .submit_deployment(SubmitDeploymentRequest {
                         deployment_toml: new_deployment_toml,
@@ -2216,8 +2216,8 @@ ffqn = "testing:integration/deferred.run"
         DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
             .await
             .unwrap()
-            .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-            .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+            .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+            .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
     let submit = |files, id| {
         let mut client = grpc_client.clone();
         let toml = prepared.deployment_toml.clone();
@@ -2334,8 +2334,8 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
     let submit = |check: RuntimeConfigCheck, id: Option<GrpcDeploymentId>| {
         let mut client = grpc_client.clone();
@@ -2536,8 +2536,8 @@ async fn gc_orphan_files_grpc() {
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
     // Prepare a deployment-owned JS file (digest-enriched) from disk. `section` selects
     // `activity_js` or `workflow_js` (a JS workflow validates its source at link time, so

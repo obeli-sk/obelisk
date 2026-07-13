@@ -1695,8 +1695,8 @@ pub(crate) async fn run_internal(
         .accept_compressed(CompressionEncoding::Gzip)
         // Submit requests inline deployment-owned blobs; raise the decode limit
         // well above tonic's 4 MiB default. `GetFile` responses are likewise large.
-        .max_decoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE)
-        .max_encoding_message_size(crate::MAX_GRPC_MESSAGE_SIZE),
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE),
     )
     .add_service(
         tonic_reflection::server::Builder::configure()

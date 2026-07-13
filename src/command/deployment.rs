@@ -1,7 +1,7 @@
 use crate::args::{self, DeploymentSource};
+use crate::client::get_deployment_repository_client;
 use crate::config::manifest::{PreparedDeploymentManifest, prepare_deployment_manifest_from_disk};
 use crate::config::toml::sanitize_deployment_relative_path;
-use crate::get_deployment_repository_client;
 use anyhow::{Context as _, bail};
 use chrono::DateTime;
 use concepts::prefixed_ulid::DeploymentId;
@@ -300,7 +300,7 @@ async fn write_new_file(
 }
 
 type DeploymentClient = grpc::grpc_gen::deployment_repository_client::DeploymentRepositoryClient<
-    tonic::service::interceptor::InterceptedService<Channel, crate::ClientInterceptor>,
+    tonic::service::interceptor::InterceptedService<Channel, crate::client::ClientInterceptor>,
 >;
 
 /// If the source is a file, submit it and return the new ID. If it's an ID, return it directly.

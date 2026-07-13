@@ -12,11 +12,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use concepts::component_id::Digest;
-use rand::Rng as _;
 use secrecy::ExposeSecret as _;
-use sha2::{Digest as _, Sha256};
-use std::fmt::Write as _;
 use std::sync::Arc;
 use subtle::ConstantTimeEq as _;
 use tracing::{debug, warn};
@@ -31,14 +27,20 @@ pub(crate) struct ApiAuth {
 
 impl ApiAuth {
     pub(crate) fn new(config: &ApiConfig, allow_all: bool) -> Self {
-        let startup_token = generate_token();
-        let mut accepted = vec![(sha256(&startup_token), "startup-token".to_string())];
+        let startup_token = crate::api::generate_token();
+        let mut accepted = vec![(
+            crate::api::token_digest(&startup_token),
+            "startup-token".to_string(),
+        )];
         for digest in &config.token_hashes {
             accepted.push((digest.0, hash_prefix_label(digest)));
         }
         if let Some(token) = &config.token {
-            let digest = sha256(token.expose_secret());
-            accepted.push((digest, hash_prefix_label(&Digest(digest))));
+            let digest = crate::api::token_digest(token.expose_secret());
+            accepted.push((
+                digest,
+                hash_prefix_label(&concepts::component_id::Digest(digest)),
+            ));
         }
         Self {
             accepted,
@@ -68,7 +70,7 @@ impl ApiAuth {
         }
         // Hash-then-compare: digests of the secret are matched, so the comparison
         // cannot leak anything useful about accepted tokens.
-        let digest = sha256(token.trim());
+        let digest = crate::api::token_digest(token.trim());
         self.accepted
             .iter()
             .find(|(accepted, _)| accepted.ct_eq(&digest).into())
@@ -123,29 +125,7 @@ fn deny_response(headers: &HeaderMap) -> Response {
     }
 }
 
-fn sha256(token: &str) -> [u8; 32] {
-    Sha256::digest(token.as_bytes()).into()
-}
-
-/// Digest of a token as accepted in `api.token_hashes`; displays as `sha256:<hex>`.
-pub(crate) fn token_hash(token: &str) -> Digest {
-    Digest(sha256(token))
-}
-
-/// Generate a high-entropy random token (64 hex chars).
-pub(crate) fn generate_token() -> String {
-    hex(&rand::rng().random::<[u8; 32]>())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        write!(&mut out, "{b:02x}").expect("writing to string");
-    }
-    out
-}
-
 /// Audit-log identity of a `token_hashes` entry: the first 8 hex chars of its digest.
-fn hash_prefix_label(digest: &Digest) -> String {
-    format!("token:{}", &hex(&digest.0)[..8])
+fn hash_prefix_label(digest: &concepts::component_id::Digest) -> String {
+    format!("token:{}", &digest.to_string()["sha256:".len()..][..8])
 }

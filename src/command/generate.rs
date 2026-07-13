@@ -140,8 +140,8 @@ impl Generate {
                 Ok(())
             }
             Generate::Token { json } => {
-                let token = crate::server::auth::generate_token();
-                let hash = crate::server::auth::token_hash(&token);
+                let token = crate::api::generate_token();
+                let hash = crate::api::token_hash(&token);
                 if json {
                     println!(
                         "{}",
