@@ -11,9 +11,8 @@
       "default": null
     },
     "allow_exec_activities": {
-      "description": "Permit deployments to run host processes through `activity_exec`.",
-      "type": "boolean",
-      "default": false
+      "description": "Permit deployments to run host processes through `activity_exec`.\n`false` denies all (default), `true` allows any, a list of `sha256:...`\ncontent digests allows only the listed exec scripts.",
+      "$ref": "#/$defs/AllowExecActivities"
     },
     "api": {
       "$ref": "#/$defs/ApiConfig"
@@ -61,6 +60,19 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "AllowExecActivities": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
     "ApiConfig": {
       "type": "object",
       "properties": {

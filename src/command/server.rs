@@ -23,6 +23,7 @@ use crate::config::toml::ActivityStubExtConfigVerified;
 use crate::config::toml::ActivityStubExtInlineConfigVerified;
 use crate::config::toml::ActivityWasmComponentConfigTomlExt as _;
 use crate::config::toml::ActivityWasmConfigVerified;
+use crate::config::toml::AllowExecActivities;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentCommon;
 use crate::config::toml::ComponentLocationFetchExt as _;
@@ -960,21 +961,48 @@ pub(crate) async fn deployment_verify_config(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
-    if !server_verified.allow_exec_activities
-        && !params.runtime_config_availability.allows_unavailable()
+    if !params.runtime_config_availability.allows_unavailable()
         && !deployment.activities_exec.is_empty()
     {
-        let component_names = deployment
-            .activities_exec
-            .iter()
-            .map(|activity| activity.name.to_string())
-            .collect::<Vec<_>>()
-            .join("`, `");
-        bail!(
-            "deployment contains exec activities (`{component_names}`), which run outside the \
-             WASM sandbox; enable them with `allow_exec_activities = true` in server.toml or \
-             `OBELISK__ALLOW_EXEC_ACTIVITIES=true`"
-        );
+        match &server_verified.allow_exec_activities {
+            AllowExecActivities::AllowAny => {}
+            AllowExecActivities::Deny => {
+                let lines = exec_content_digest_lines(
+                    &deployment.activities_exec,
+                    &prepared_dirs.wasm_cache_dir,
+                )
+                .await?
+                .into_iter()
+                .map(|(_, line)| line)
+                .collect::<Vec<_>>();
+                bail!(
+                    "deployment contains exec activities, which run outside the WASM sandbox; \
+                     enable them with `allow_exec_activities = true` in server.toml or \
+                     `OBELISK__ALLOW_EXEC_ACTIVITIES=true`, or allowlist the reviewed scripts \
+                     by adding to server.toml:\nallow_exec_activities = [\n{}\n]",
+                    lines.join("\n")
+                );
+            }
+            AllowExecActivities::Allowlist(allowed) => {
+                let rejected = exec_content_digest_lines(
+                    &deployment.activities_exec,
+                    &prepared_dirs.wasm_cache_dir,
+                )
+                .await?
+                .into_iter()
+                .filter(|(digest, _)| !allowed.contains(digest))
+                .map(|(_, line)| line)
+                .collect::<Vec<_>>();
+                if !rejected.is_empty() {
+                    bail!(
+                        "deployment contains exec activities, which run outside the WASM sandbox, \
+                         whose content digests are not in the `allow_exec_activities` allowlist \
+                         in server.toml; review each script, then allow it by adding its line:\n{}",
+                        rejected.join("\n")
+                    );
+                }
+            }
+        }
     }
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
     let deployment =
@@ -996,6 +1024,26 @@ pub(crate) async fn deployment_verify_config(
     .await?;
     trace!("Verified deployment: {deployment_verified:#?}");
     Ok(deployment_verified)
+}
+
+/// For each exec activity, the digest of the exact script text that runs plus a
+/// server.toml-pasteable allowlist line: `  "sha256:...", # name (ffqn)`.
+async fn exec_content_digest_lines(
+    activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
+    wasm_cache_dir: &Path,
+) -> anyhow::Result<Vec<(ContentDigest, String)>> {
+    let mut digests_with_lines = Vec::with_capacity(activities_exec.len());
+    for activity in activities_exec {
+        let resolved = activity.resolve(wasm_cache_dir).await?;
+        let digest = compute_content_digest(&resolved.source_bytes);
+        let line = format!(
+            "  \"{digest}\", # {name} ({ffqn})",
+            name = activity.name,
+            ffqn = activity.ffqn
+        );
+        digests_with_lines.push((digest, line));
+    }
+    Ok(digests_with_lines)
 }
 
 /// Look up the current deployment from the database.
@@ -1709,7 +1757,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
     launch: ServerVerifiedLaunch,
-    allow_exec_activities: bool,
+    allow_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
     fuel: Option<u64>,
     global_backtrace_persist: bool,
@@ -1763,6 +1811,12 @@ impl ServerVerified {
             .global_executor_instance_limiter
             .as_semaphore();
         let database_subscription_interruption = config.database.get_subscription_interruption();
+        if config.allow_exec_activities == AllowExecActivities::AllowAny {
+            warn!(
+                "`allow_exec_activities = true` permits deployments to run arbitrary host \
+                 programs; consider allowlisting reviewed scripts by content digest instead"
+            );
+        }
 
         Ok(Self {
             launch: ServerVerifiedLaunch {
@@ -4829,9 +4883,12 @@ mod tests {
         command::server::{
             DeploymentRunnable, DeploymentVerified, PrepareDirsParams, RuntimeConfigAvailability,
             ServerCompiledLinked, ServerVerified, VerifyParams, compile_activity_inline,
-            create_engines, deployment_verify_config, prepare_dirs,
+            compute_content_digest, create_engines, deployment_verify_config, prepare_dirs,
         },
-        config::config_holder::{ConfigHolder, load_deployment_canonical},
+        config::{
+            config_holder::{ConfigHolder, load_deployment_canonical},
+            toml::{AllowExecActivities, ScriptLocationResolved},
+        },
     };
     use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
     use concepts::{
@@ -5043,7 +5100,7 @@ mod tests {
             Some(workspace.join("server-sqlite.toml")),
         )?;
         let config = config_holder.load_config().await?;
-        assert!(!config.allow_exec_activities);
+        assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
         let deployment =
             load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
@@ -5079,6 +5136,9 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("run outside the WASM sandbox"));
         assert!(err.to_string().contains("exec-stream"));
+        // The error must contain a pasteable allowlist block.
+        assert!(err.to_string().contains("allow_exec_activities = [\n"));
+        assert!(err.to_string().contains("\"sha256:"));
 
         let verified = deployment_verify_config(
             &server_verified,
@@ -5101,6 +5161,90 @@ mod tests {
             verified.runtime_config_availability,
             RuntimeConfigAvailability::AllowUnavailable
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deployment_verify_exec_allowlist_should_check_content_digests()
+    -> Result<(), anyhow::Error> {
+        test_utils::set_up();
+
+        let workspace = get_workspace_dir();
+        let config_holder = ConfigHolder::new(
+            crate::project_dirs(),
+            BaseDirs::new(),
+            Some(workspace.join("server-sqlite.toml")),
+        )?;
+        let mut config = config_holder.load_config().await?;
+        let deployment =
+            load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
+        let digests = deployment
+            .activities_exec
+            .iter()
+            .map(|activity| match &activity.location {
+                ScriptLocationResolved::Content { content, .. } => {
+                    compute_content_digest(content.as_bytes())
+                }
+                ScriptLocationResolved::Oci { .. } => {
+                    unreachable!("fixture uses only inline/local scripts")
+                }
+            })
+            .collect::<Vec<_>>();
+        let prepared_dirs = prepare_dirs(
+            &config,
+            &PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
+            &config_holder.path_prefixes,
+        )
+        .await?;
+        let engines = create_engines(&config, &prepared_dirs)?;
+        let (_termination_sender, mut termination_watcher) = watch::channel(());
+        let verify_params = VerifyParams {
+            dir_params: PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
+            runtime_config_availability: RuntimeConfigAvailability::Strict,
+            suppress_type_checking_errors: false,
+            suppress_linking_errors: false,
+        };
+
+        // An allowlist missing the first digest must reject the deployment,
+        // printing the missing digest so it can be copy-pasted after review.
+        config.allow_exec_activities = AllowExecActivities::Allowlist(digests[1..].to_vec());
+        let server_verified =
+            Box::pin(ServerVerified::new(engines.clone(), config.clone())).await?;
+        let err = deployment_verify_config(
+            &server_verified,
+            &prepared_dirs,
+            deployment.clone(),
+            None,
+            verify_params.clone(),
+            &mut termination_watcher,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("allow_exec_activities"));
+        assert!(err.to_string().contains(&digests[0].to_string()));
+        assert!(
+            err.to_string()
+                .contains(deployment.activities_exec[0].name.as_str())
+        );
+
+        // The full allowlist must pass strict verification.
+        config.allow_exec_activities = AllowExecActivities::Allowlist(digests);
+        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        deployment_verify_config(
+            &server_verified,
+            &prepared_dirs,
+            deployment,
+            None,
+            verify_params,
+            &mut termination_watcher,
+        )
+        .await?;
         Ok(())
     }
 

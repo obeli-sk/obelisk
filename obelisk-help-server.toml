@@ -14,7 +14,13 @@
 # obelisk-version = 0.1
 
 ## Exec activities run host processes outside the WASM sandbox and are disabled by default.
+## Allow any exec activity (logs a warning):
 # allow_exec_activities = true
+## Or allow only reviewed scripts, pinned by the digest of the exact script text.
+## A rejected deployment logs the digest line to copy here after review:
+# allow_exec_activities = [
+#   "sha256:...",   # greet.sh, reviewed 2026-07-13
+# ]
 
 ## SQLite configuration (enabled by default)
 # database.sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
