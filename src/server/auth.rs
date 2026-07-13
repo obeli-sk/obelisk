@@ -12,7 +12,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use secrecy::ExposeSecret as _;
+use secrecy::{ExposeSecret as _, SecretString};
 use std::sync::Arc;
 use subtle::ConstantTimeEq as _;
 use tracing::{debug, warn};
@@ -20,16 +20,15 @@ use tracing::{debug, warn};
 pub(crate) struct ApiAuth {
     /// Accepted token digests with the identity label used in audit logs.
     accepted: Vec<([u8; 32], String)>,
-    /// Always-generated recovery token, printed to the console, valid until shutdown.
-    startup_token: String,
-    allow_all: bool,
+    /// Recovery token, printed to the console, valid until shutdown.
+    startup_token: SecretString,
 }
 
 impl ApiAuth {
-    pub(crate) fn new(config: &ApiConfig, allow_all: bool) -> Self {
-        let startup_token = crate::api::generate_token();
+    pub(crate) fn new(config: &ApiConfig) -> Self {
+        let startup_token = SecretString::from(crate::api::generate_token());
         let mut accepted = vec![(
-            crate::api::token_digest(&startup_token),
+            crate::api::token_digest(startup_token.expose_secret()),
             "startup-token".to_string(),
         )];
         for digest in &config.token_hashes {
@@ -45,18 +44,14 @@ impl ApiAuth {
         Self {
             accepted,
             startup_token,
-            allow_all,
         }
     }
 
-    pub(crate) fn startup_token(&self) -> &str {
+    pub(crate) fn startup_token(&self) -> &SecretString {
         &self.startup_token
     }
 
     fn check(&self, headers: &HeaderMap) -> Result<&str, &'static str> {
-        if self.allow_all {
-            return Ok("allow-all");
-        }
         let presented = headers
             .get(header::AUTHORIZATION)
             .ok_or("missing `authorization` header")?
@@ -95,7 +90,7 @@ pub(crate) async fn auth_middleware(
                 (CLI: `--api-token` or OBELISK_API_TOKEN). This server's startup token: {}",
                 req.method(),
                 req.uri().path(),
-                auth.startup_token
+                auth.startup_token.expose_secret()
             );
             deny_response(req.headers())
         }

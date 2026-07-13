@@ -111,6 +111,7 @@ use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
+use secrecy::ExposeSecret as _;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::fmt::Debug;
@@ -1724,27 +1725,23 @@ pub(crate) async fn run_internal(
         prepared_dirs: server_init.prepared_dirs.clone(),
         deployment_switch_manager,
     });
-    let api_auth = Arc::new(crate::server::auth::ApiAuth::new(
-        &api_config,
-        params.allow_all,
-    ));
-    if api_listening_addr.is_some() {
-        if params.allow_all {
+    if let Some(api_listening_addr) = api_listening_addr {
+        let app = app_router.fallback_service(grpc_service);
+        let app_svc = if params.allow_all {
             warn!("API authentication is disabled by --allow-all: accepting all requests");
+            app.into_make_service()
         } else {
-            info!("API startup token: {}", api_auth.startup_token());
-        }
-    }
-    let app: axum::Router<()> =
-        app_router
-            .fallback_service(grpc_service)
-            .layer(axum::middleware::from_fn_with_state(
+            let api_auth = Arc::new(crate::server::auth::ApiAuth::new(&api_config));
+            info!(
+                "API startup token: {}",
+                api_auth.startup_token().expose_secret()
+            );
+            app.layer(axum::middleware::from_fn_with_state(
                 api_auth,
                 crate::server::auth::auth_middleware,
-            ));
-    let app_svc = app.into_make_service();
-
-    if let Some(api_listening_addr) = api_listening_addr {
+            ))
+            .into_make_service()
+        };
         let listener = TcpListener::bind(api_listening_addr)
             .await
             .with_context(|| format!("cannot bind to {api_listening_addr}"))?;
