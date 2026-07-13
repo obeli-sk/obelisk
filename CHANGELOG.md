@@ -56,11 +56,12 @@ callers and through a dedicated error type in JavaScript.
 - *(js)* `joinNext` now follows the same throwing behavior as `joinNextTry`, direct calls, and generated
   `awaitNext` functions. Business errors and platform failures throw `obelisk.ChildExecutionError`, while
   successful unit results and completed delays return `null` - ([7962ca5](https://github.com/obeli-sk/obelisk/commit/7962ca59da229fb54eb5f1cf49d17fc8e22dc6b6)), ([088a8c1](https://github.com/obeli-sk/obelisk/commit/088a8c1a2bc7c5ab074a5f81bbfb9b1ecd3989d7)), ([f8c02f3](https://github.com/obeli-sk/obelisk/commit/f8c02f309fe36912ce78521725d7bec65588efc4))
-- *(cli)* Added `-s` as shorthand for `--server-config` - ([4481785](https://github.com/obeli-sk/obelisk/commit/44817859ab699ee8706226e140d481aab753fcf7))
+
 
 ### Removed
 
 - **Breaking:** *(wit)* Removed the never-implemented `submit-config` type and parameters - ([ab8999f](https://github.com/obeli-sk/obelisk/commit/ab8999f969a58a39c1f4b0c6c10f06ddd51202c4))
+- **Breaking:** *(cli)*: Disallow `-s` shorthand for `--suppress-type-checking-errors` - ([ced8a19e](https://github.com/obeli-sk/obelisk/commit/ced8a19ec94d16720afb056859a5e523499e8a62))
 
 ## [0.39.5](https://github.com/obeli-sk/obelisk/compare/v0.39.4...v0.39.5)
 

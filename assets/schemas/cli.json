@@ -35,7 +35,6 @@
             },
             {
               "name": "--server-config",
-              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
@@ -59,7 +58,6 @@
             },
             {
               "name": "--suppress-type-checking-errors",
-              "short": "s",
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
             },
             {
@@ -82,7 +80,6 @@
             },
             {
               "name": "--server-config",
-              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
@@ -103,7 +100,6 @@
             },
             {
               "name": "--suppress-type-checking-errors",
-              "short": "s",
               "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
             },
             {

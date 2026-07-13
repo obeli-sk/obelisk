@@ -424,7 +424,7 @@ pub(crate) enum Server {
         #[arg(long)]
         clean_codegen_cache: bool,
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
-        #[arg(short, long)]
+        #[arg(long)]
         server_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
         /// overriding any existing Enqueued or Active deployment in the database.
@@ -438,7 +438,7 @@ pub(crate) enum Server {
         #[arg(long)]
         description: Option<String>,
         /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
-        #[arg(long, short)]
+        #[arg(long)]
         suppress_type_checking_errors: bool,
         /// Accept unauthenticated requests on the API port. Dev/recovery override.
         #[arg(long)]
@@ -453,7 +453,7 @@ pub(crate) enum Server {
         #[arg(long)]
         clean_codegen_cache: bool,
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
-        #[arg(short, long)]
+        #[arg(long)]
         server_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
         /// falling back to the Active deployment. Errors if neither is found.
@@ -463,7 +463,7 @@ pub(crate) enum Server {
         #[arg(long, short)]
         allow_unavailable_runtime_config: bool,
         /// Do not fail when a component's imports/exports fail type checking against the deployment.
-        #[arg(long, short)]
+        #[arg(long)]
         suppress_type_checking_errors: bool,
         /// Skip opening the sqlite database and validating its schema.
         #[arg(long)]
