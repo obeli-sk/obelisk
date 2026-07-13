@@ -11,9 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(server)* Gate `activity_exec` behind a new `allow_exec_activities` server.toml flag (default disabled), since exec
   activities run host processes outside the WASM sandbox. Deployments that declare exec activities fail verification
   unless the operator enables the flag (or `OBELISK__ALLOW_EXEC_ACTIVITIES=true`)
+- *(server)* `allow_exec_activities` now also accepts an allowlist of exec script content digests
+  (`["sha256:..."]`), so only reviewed scripts may run; a rejected deployment logs the digest line to copy into
+  server.toml after review
+- *(server)* Bearer token authentication on the API port, covering the web API, gRPC, and gRPC-web uniformly. An
+  ephemeral startup token is always generated and printed to the console (again on a denied request), so there is
+  no lockout. Persistent tokens are configured in server.toml as sha256 hashes (`api.token_hashes`, safe to commit)
+  or injected as plaintext via `OBELISK__API__TOKEN` (`api.token`); revocation is deleting a hash line and
+  restarting
+- *(cli)* `obelisk generate token` prints a fresh random API token once, plus its ready-to-paste
+  `api.token_hashes` entry
+- *(cli)* Global `--api-token` flag, with fallback to `OBELISK_API_TOKEN`, then `OBELISK__API__TOKEN`, presented as
+  `Authorization: Bearer` on all gRPC and web API calls
 
 ### Changed
 
+- **Breaking:** *(api)* The API port now denies unauthenticated requests by default (HTTP `401`, gRPC
+  `UNAUTHENTICATED`), where previously it accepted anything. Clients must present an accepted token; the
+  `--allow-all` server flag restores the old behavior for dev or recovery. Webhook `http_server`s are unaffected
+  and stay open
 - **Breaking:** *(api)* Renamed the runtime-config availability policy from "missing" to "unavailable" so it also covers
   server capabilities (such as exec activities), not only environment variables and secrets. The CLI flag
   `--allow-missing-runtime-config` (and `server verify --ignore-missing-env-vars`) is now

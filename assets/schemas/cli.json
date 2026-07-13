@@ -3,6 +3,10 @@
   "about": "Obelisk: deterministic workflow engine",
   "options": [
     {
+      "name": "--api-token",
+      "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+    },
+    {
       "name": "--version",
       "short": "v",
       "help": "Print version"
@@ -56,6 +60,10 @@
               "name": "--suppress-type-checking-errors",
               "short": "s",
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
+            },
+            {
+              "name": "--allow-all",
+              "help": "Disable API authentication, accepting all requests. Dev/recovery override"
             }
           ]
         },
@@ -1090,6 +1098,17 @@
         {
           "name": "deployment-id",
           "about": "Generate a fresh random deployment ID and print it to stdout",
+          "options": [
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output as JSON instead of plain text"
+            }
+          ]
+        },
+        {
+          "name": "token",
+          "about": "Generate a random API token plus the `sha256:` hash entry accepted in `server.toml` `api.token_hashes`",
           "options": [
             {
               "name": "--json",

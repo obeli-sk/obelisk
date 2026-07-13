@@ -409,6 +409,7 @@ impl Server {
                 empty: deployment_empty,
                 description,
                 suppress_type_checking_errors,
+                allow_all,
             } => {
                 Box::pin(run(
                     project_dirs(),
@@ -424,6 +425,7 @@ impl Server {
                         },
                         clean_sqlite_directory,
                         suppress_type_checking_errors,
+                        allow_all,
                     },
                 ))
                 .await
@@ -623,6 +625,8 @@ pub(crate) struct RunParams {
     pub(crate) dir_params: PrepareDirsParams,
     pub(crate) clean_sqlite_directory: bool,
     pub(crate) suppress_type_checking_errors: bool,
+    /// Disable API authentication (`--allow-all`), accepting unauthenticated requests.
+    pub(crate) allow_all: bool,
 }
 
 pub(crate) async fn run(
@@ -1442,6 +1446,8 @@ pub(crate) async fn run_internal(
     mut termination_watcher: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
+    // `config` is moved into `server_verify` below; keep the API auth config.
+    let api_config = config.api.clone();
 
     let global_webhook_instance_limiter = config
         .wasm_global_config
@@ -1718,7 +1724,24 @@ pub(crate) async fn run_internal(
         prepared_dirs: server_init.prepared_dirs.clone(),
         deployment_switch_manager,
     });
-    let app: axum::Router<()> = app_router.fallback_service(grpc_service);
+    let api_auth = Arc::new(crate::server::auth::ApiAuth::new(
+        &api_config,
+        params.allow_all,
+    ));
+    if api_listening_addr.is_some() {
+        if params.allow_all {
+            warn!("API authentication is disabled by --allow-all: accepting all requests");
+        } else {
+            info!("API startup token: {}", api_auth.startup_token());
+        }
+    }
+    let app: axum::Router<()> =
+        app_router
+            .fallback_service(grpc_service)
+            .layer(axum::middleware::from_fn_with_state(
+                api_auth,
+                crate::server::auth::auth_middleware,
+            ));
     let app_svc = app.into_make_service();
 
     if let Some(api_listening_addr) = api_listening_addr {
@@ -1746,7 +1769,10 @@ pub(crate) async fn run_internal(
 }
 
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
-    let headers = request.headers();
+    let mut headers = request.headers().clone();
+    if let Some(authorization) = headers.get_mut(axum::http::header::AUTHORIZATION) {
+        authorization.set_sensitive(true);
+    }
     info_span!(
         "gRPC request",
         "otel.name" = format!("gRPC request {}", request.uri().path()),

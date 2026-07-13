@@ -7,7 +7,6 @@ use chrono::DateTime;
 use concepts::prefixed_ulid::DeploymentId;
 use grpc::grpc_gen;
 use grpc::grpc_gen::switch_deployment_response::Outcome;
-use grpc::injector::TracingInjector;
 use grpc::to_channel;
 use std::path::PathBuf;
 use tonic::transport::Channel;
@@ -301,7 +300,7 @@ async fn write_new_file(
 }
 
 type DeploymentClient = grpc::grpc_gen::deployment_repository_client::DeploymentRepositoryClient<
-    tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
+    tonic::service::interceptor::InterceptedService<Channel, crate::ClientInterceptor>,
 >;
 
 /// If the source is a file, submit it and return the new ID. If it's an ID, return it directly.

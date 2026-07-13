@@ -341,7 +341,7 @@ pub(crate) async fn submit(
             follow,
             no_reconnect,
         } => {
-            let client = reqwest::Client::builder()
+            let client = crate::web_api_client_builder()?
                 .build()
                 .context("failed to build HTTP client")?;
 
@@ -773,7 +773,7 @@ async fn get_execution_status_json(
     follow: bool,
     no_reconnect: bool,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let reconnect = !no_reconnect;
     let mut last_status: Option<serde_json::Value> = None;
 
@@ -812,7 +812,7 @@ async fn get_execution_result_json(
     follow: bool,
     no_reconnect: bool,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let reconnect = follow && !no_reconnect;
 
     loop {
@@ -853,7 +853,7 @@ async fn send_and_print(req: reqwest::RequestBuilder) -> anyhow::Result<()> {
 }
 
 async fn replay(api_url: &str, execution_id: ExecutionId, json: bool) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let accept = if json {
         "application/json"
     } else {
@@ -870,7 +870,7 @@ async fn replay_json(
     api_url: &str,
     execution_id: &ExecutionId,
 ) -> anyhow::Result<serde_json::Value> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let resp = client
         .put(format!("{api_url}/v1/executions/{execution_id}/replay"))
         .header(ACCEPT, "application/json")
@@ -999,7 +999,7 @@ async fn advance(
     if opts.pause_delays {
         pause_delays_in_replay(&mut advance_request);
     }
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let accept = if opts.json {
         "application/json"
     } else {
@@ -1248,7 +1248,7 @@ async fn execution_list(
     limit: u16,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let accept = if json {
         "application/json"
     } else {
@@ -1473,7 +1473,7 @@ async fn execution_logs_cmd(
     after: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
     let body = fetch_logs(&client, &logs_url, opts, None, after.as_deref(), "newer").await?;
     print_log_items(&body, json, opts.show_run_id, opts.show_derived)?;
@@ -1487,7 +1487,7 @@ async fn follow_logs(
     initial_after: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
     let status_url = format!("{api_url}/v1/executions/{execution_id}/status");
     let mut cursor: Option<String> = None;
@@ -1547,7 +1547,7 @@ async fn execution_events_cmd(
     limit: u16,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let accept = if json {
         "application/json"
     } else {
@@ -1575,7 +1575,7 @@ async fn execution_responses_cmd(
     limit: u16,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::web_api_client()?;
     let accept = if json {
         "application/json"
     } else {

@@ -3482,6 +3482,7 @@ dependencies = [
  "serde_with",
  "sha2 0.10.9",
  "strum 0.28.0",
+ "subtle",
  "tempfile",
  "test-programs-fibo-workflow-outer-builder",
  "test-utils",

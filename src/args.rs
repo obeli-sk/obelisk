@@ -3,6 +3,7 @@ use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
 };
+use secrecy::SecretString;
 
 /// Deployment TOML section names, used as the key in the deployment TOML file.
 #[derive(
@@ -29,6 +30,10 @@ fn parse_oci_reference(s: &str) -> Result<oci_client::Reference, String> {
         .strip_prefix("oci://")
         .ok_or_else(|| format!("OCI reference must start with `oci://`, got: {s}"))?;
     oci_client::Reference::from_str(s).map_err(|e| e.to_string())
+}
+
+fn parse_secret_string(value: &str) -> Result<SecretString, std::convert::Infallible> {
+    Ok(SecretString::from(value.to_owned()))
 }
 
 /// A deployment source: either a path to a TOML file or an existing deployment ID.
@@ -63,6 +68,16 @@ about = "Obelisk: deterministic workflow engine", disable_version_flag = true, d
 pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Subcommand,
+
+    /// API token presented to the server as `Authorization: Bearer <token>`.
+    /// Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "TOKEN",
+        value_parser = parse_secret_string
+    )]
+    pub(crate) api_token: Option<SecretString>,
 
     /// Print version
     #[arg(short, long, action = clap::ArgAction::Version)]
@@ -367,6 +382,16 @@ pub(crate) enum Generate {
         #[arg(short, long)]
         json: bool,
     },
+    /// Generate a random API token plus the `sha256:` hash entry accepted in
+    /// `server.toml` `api.token_hashes`.
+    ///
+    /// The plaintext token is printed once and never stored; revoke it by
+    /// deleting its hash line and restarting the server.
+    Token {
+        /// Output as JSON instead of plain text.
+        #[arg(short, long)]
+        json: bool,
+    },
     /// Print a prompt context for authoring an Obelisk application with a coding agent.
     ///
     /// Usage: obelisk generate prompt description of what to build | claude
@@ -411,6 +436,9 @@ pub(crate) enum Server {
         /// Do not fail startup when a component's imports/exports fail type checking against the current deployment.
         #[arg(long, short)]
         suppress_type_checking_errors: bool,
+        /// Disable API authentication, accepting all requests. Dev/recovery override.
+        #[arg(long)]
+        allow_all: bool,
     },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify {
