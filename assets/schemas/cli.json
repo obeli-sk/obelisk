@@ -95,7 +95,6 @@
             },
             {
               "name": "--allow-unavailable-runtime-config",
-              "short": "a",
               "help": "Tolerate runtime requirements unavailable on this server while verifying"
             },
             {
