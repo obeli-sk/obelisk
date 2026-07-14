@@ -460,7 +460,7 @@ pub(crate) enum Server {
         #[arg(short, long)]
         deployment: Option<PathBuf>,
         /// Tolerate runtime requirements unavailable on this server while verifying.
-        #[arg(long, short)]
+        #[arg(long)]
         allow_unavailable_runtime_config: bool,
         /// Do not fail when a component's imports/exports fail type checking against the deployment.
         #[arg(long)]
