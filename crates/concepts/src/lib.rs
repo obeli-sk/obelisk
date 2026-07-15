@@ -1373,15 +1373,20 @@ pub mod prefixed_ulid {
     impl DelayId {
         #[must_use]
         pub fn new(execution_id: &ExecutionId, join_set_id: &JoinSetId) -> DelayId {
-            Self::new_with_index(execution_id, join_set_id, DELAY_ID_START_IDX)
+            Self::from_index(execution_id, join_set_id, DELAY_ID_START_IDX)
         }
 
+        #[cfg(any(test, feature = "test"))]
         #[must_use]
         pub fn new_with_index(
             execution_id: &ExecutionId,
             join_set_id: &JoinSetId,
             idx: u64,
         ) -> DelayId {
+            Self::from_index(execution_id, join_set_id, idx)
+        }
+
+        fn from_index(execution_id: &ExecutionId, join_set_id: &JoinSetId, idx: u64) -> DelayId {
             let ExecutionIdDerived {
                 top_level: PrefixedUlid { ulid, .. },
                 infix,
@@ -1396,11 +1401,21 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
+        pub fn index(&self) -> u64 {
+            self.idx
+        }
+
+        #[must_use]
         pub fn get_incremented(&self) -> Self {
+            self.get_incremented_by(1)
+        }
+
+        #[must_use]
+        pub fn get_incremented_by(&self, count: u64) -> Self {
             Self {
                 top_level: self.top_level,
                 infix: self.infix.clone(),
-                idx: self.idx + 1,
+                idx: self.idx + count,
             }
         }
 

@@ -93,7 +93,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "join_set_id": "n:a",
             "request": {
               "type": "delay_request",
-              "delay_id": "Delay_00000000000000000000000000.n:a_0",
+              "delay_id": "Delay_00000000000000000000000000.n:a_1",
               "expires_at": "1970-01-02T00:00:00Z",
               "schedule_at": {
                 "in": {
@@ -242,7 +242,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "join_set_id": "n:f",
             "request": {
               "type": "delay_request",
-              "delay_id": "Delay_00000000000000000000000000.n:f_0",
+              "delay_id": "Delay_00000000000000000000000000.n:f_1",
               "expires_at": "1970-01-02T00:00:00Z",
               "schedule_at": {
                 "in": {
@@ -473,7 +473,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
         "join_set_id": "n:a",
         "event": {
           "type": "delay_finished",
-          "delay_id": "Delay_00000000000000000000000000.n:a_0",
+          "delay_id": "Delay_00000000000000000000000000.n:a_1",
           "result": {
             "Err": null
           }
@@ -518,7 +518,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
         "join_set_id": "n:f",
         "event": {
           "type": "delay_finished",
-          "delay_id": "Delay_00000000000000000000000000.n:f_0",
+          "delay_id": "Delay_00000000000000000000000000.n:f_1",
           "result": {
             "Err": null
           }

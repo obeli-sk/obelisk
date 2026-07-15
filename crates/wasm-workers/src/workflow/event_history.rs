@@ -2106,12 +2106,11 @@ impl EventHistory {
         execution_id: &ExecutionId,
     ) -> DelayId {
         // TODO: Optimize
-        let idx = self
+        let offset = self
             .event_history
             .iter()
             .filter(|(event, processing_status, _version)| {
-                // Ignore unprocessed events, which happens only on replay where we need to produce "old" ids.
-                // Applying the `EventCall::SubmitDelay` will immediately mark this as processed.
+                // Applying `SubmitDelay` immediately marks the event as processed.
                 *processing_status == Processed &&
                 matches!(
                     event,
@@ -2120,11 +2119,33 @@ impl EventHistory {
                 )
             })
             .count();
-        DelayId::new_with_index(
-            execution_id,
-            join_set_id,
-            u64::try_from(idx).expect("too many delays in a join set"),
-        )
+        let offset = u64::try_from(offset).expect("too many delays in a join set");
+        let new_delay_id = DelayId::new(execution_id, join_set_id).get_incremented_by(offset);
+
+        // backcompat: 0.40.0 histories can contain delay indices starting at 0.
+        // Reuse the persisted id only when it follows the old or current sequence.
+        if let Some(found_delay_id) =
+            self.event_history
+                .iter()
+                .find_map(
+                    |(event, processing_status, _version)| match (event, processing_status) {
+                        (
+                            HistoryEvent::JoinSetRequest {
+                                join_set_id: found_join_set_id,
+                                request: JoinSetRequest::DelayRequest { delay_id, .. },
+                            },
+                            Unprocessed,
+                        ) if join_set_id == found_join_set_id => Some(delay_id),
+                        _ => None,
+                    },
+                )
+        {
+            // return the found DelayId if it is 0-based.
+            if found_delay_id.index() == offset {
+                return found_delay_id.clone();
+            }
+        }
+        new_delay_id
     }
 }
 
