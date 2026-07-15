@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(js)* A cancelled `obelisk.sleep` now throws `obelisk.ChildError` (with `cancelled: true` and
+  `failureKind: "cancelled"`) instead of a plain `Error`; the message stays `Sleep was cancelled`.
+  Its `.value` is `undefined`, indicating that the cancellation has no business error payload.
+  Re-throwing the caught error serializes that value as a `null` workflow err payload, like any
+  other payload-less `ChildError`, instead of propagating the message string.
+- *(js)* A delay cancelled inside a join set now also sets `failureKind: "cancelled"` on the
+  `ChildError` thrown by `joinNext`/`joinNextTry` (previously only `cancelled: true` was set).
+
+### Deprecated
+
+- *(js)* Renamed `obelisk.ChildExecutionError` to `obelisk.ChildError`, which now also covers
+  cancelled delays and sleeps. The old name stays as a deprecated alias for the same constructor,
+  so `instanceof` checks against either name keep working; instances now report
+  `name: "ChildError"`.
+
 ## [0.40.0](https://github.com/obeli-sk/obelisk/compare/v0.39.5...v0.40.0)
 
 This release secures access to host executable activities and the Obelisk API. Exec activities are
