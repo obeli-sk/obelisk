@@ -19,7 +19,6 @@ use concepts::storage::{DbErrorWriteNonRetriable, HistoryEvent, ListExecutionsFi
 use concepts::storage::{HistoryEventScheduleAt, JoinSetResponseEvent, LogFilter};
 use concepts::storage::{LogCursor, LogEntry, LogInfoAppendRow};
 use concepts::time::ClockFn;
-use concepts::time::Now;
 use concepts::{ComponentId, Params, StrVariant, SupportedFunctionReturnValue};
 use concepts::{ComponentRetryConfig, JoinSetId, JoinSetKind, SUPPORTED_RETURN_VALUE_OK_EMPTY};
 use concepts::{ExecutionId, FunctionFqn, prefixed_ulid::ExecutorId};
@@ -1492,7 +1491,7 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
             execution_id.clone(),
             version,
             AppendRequest {
-                created_at: Now.now(),
+                created_at: sim_clock.now(),
                 event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
@@ -1701,7 +1700,7 @@ async fn append_same_delay_id_twice_should_fail(
             execution_id.clone(),
             version,
             AppendRequest {
-                created_at: Now.now(),
+                created_at: sim_clock.now(),
                 event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
@@ -1723,7 +1722,7 @@ async fn append_same_delay_id_twice_should_fail(
             execution_id.clone(),
             version,
             AppendRequest {
-                created_at: Now.now(),
+                created_at: sim_clock.now(),
                 event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
@@ -2041,7 +2040,7 @@ async fn append_response_with_same_id_twice_should_fail(
             execution_id.clone(),
             version,
             AppendRequest {
-                created_at: Now.now(),
+                created_at: sim_clock.now(),
                 event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),
@@ -2136,7 +2135,7 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
             execution_id.clone(),
             version,
             AppendRequest {
-                created_at: Now.now(),
+                created_at: sim_clock.now(),
                 event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id: join_set_id.clone(),

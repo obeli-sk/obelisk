@@ -2856,7 +2856,6 @@ mod tests {
     use crate::SupportedFunctionReturnValue;
     use chrono::DateTime;
     use chrono::Datelike;
-    use chrono::Utc;
     use insta::assert_snapshot;
     use rstest::rstest;
     use std::time::Duration;
@@ -2900,7 +2899,7 @@ mod tests {
     fn serde_pending_state_finished_should_work(result_kind: PendingStateFinishedResultKind) {
         let expected = PendingStateFinished {
             version: 0,
-            finished_at: Utc::now(),
+            finished_at: DateTime::UNIX_EPOCH,
             result_kind,
         };
 

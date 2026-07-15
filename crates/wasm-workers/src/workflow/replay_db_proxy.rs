@@ -737,7 +737,6 @@ mod tests {
     use super::*;
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
-    use chrono::Utc;
     use concepts::{FunctionFqn, Params};
     use rstest::rstest;
 
@@ -755,7 +754,7 @@ mod tests {
         let real_connection = db_pool.connection().await.unwrap();
         let parent_execution_id = ExecutionId::from_parts(0, 0);
         let child_execution_id = ExecutionId::from_parts(0, 1);
-        let created_at = Utc::now();
+        let created_at = DateTime::UNIX_EPOCH;
         let parent_version = real_connection
             .create(CreateRequest {
                 created_at,

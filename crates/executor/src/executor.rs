@@ -1122,7 +1122,7 @@ mod tests {
     use concepts::storage::{
         ExecutionEvent, ExecutionRequest, HistoryEvent, PendingState, PendingStatePendingAt,
     };
-    use concepts::time::{ConstClock, Now};
+    use concepts::time::ConstClock;
     use concepts::{
         FunctionMetadata, JoinSetKind, ParameterTypes, Params, RETURN_TYPE_DUMMY,
         SUPPORTED_RETURN_VALUE_OK_EMPTY, StrVariant, SupportedFunctionReturnValue, TrapKind,
@@ -1162,7 +1162,7 @@ mod tests {
         locking_strategy: LockingStrategy,
     ) {
         set_up();
-        let created_at = Now.now();
+        let created_at = DateTime::UNIX_EPOCH;
         let (_guard, db_pool, db_close) = database.set_up().await;
         let db_connection = db_pool.connection_test().await.unwrap();
         execute_simple_lifecycle_tick_based_inner(
@@ -1236,7 +1236,7 @@ mod tests {
         locking_strategy: LockingStrategy,
     ) {
         set_up();
-        let created_at = Now.now();
+        let created_at = DateTime::UNIX_EPOCH;
         let clock_fn = Box::new(ConstClock(created_at));
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let exec_config = ExecConfig {
@@ -1508,7 +1508,7 @@ mod tests {
         locking_strategy: LockingStrategy,
     ) {
         set_up();
-        let created_at = Now.now();
+        let created_at = DateTime::UNIX_EPOCH;
         let clock_fn = Box::new(ConstClock(created_at));
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
         let exec_config = ExecConfig {

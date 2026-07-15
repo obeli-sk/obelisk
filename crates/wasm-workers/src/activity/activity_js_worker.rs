@@ -300,7 +300,7 @@ mod tests {
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{Locked, Version};
-    use concepts::time::{ClockFn, Now, TokioSleep};
+    use concepts::time::{ClockFn, TokioSleep};
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
     };
@@ -308,6 +308,7 @@ mod tests {
     use executor::worker::{WorkerContext, WorkerError, WorkerResultOk};
     use rstest::rstest;
     use serde_json::json;
+    use test_utils::sim_clock::SimClock;
     use tokio::sync::mpsc;
     use tracing::info_span;
     use val_json::wast_val::WastVal;
@@ -319,6 +320,7 @@ mod tests {
         user_return_type: ReturnTypeExtendable,
         allowed_hosts: Vec<crate::http_request_policy::AllowedHostConfig>,
         logs_storage_config: Option<crate::component_logger::LogStrageConfig>,
+        clock_fn: Box<dyn ClockFn>,
     }
 
     impl JsWorkerBuilder {
@@ -340,6 +342,7 @@ mod tests {
                 },
                 allowed_hosts: Vec::new(),
                 logs_storage_config: None,
+                clock_fn: SimClock::epoch().clone_box(),
             }
         }
 
@@ -371,12 +374,16 @@ mod tests {
             self
         }
 
+        fn with_clock_fn(mut self, clock_fn: Box<dyn ClockFn>) -> Self {
+            self.clock_fn = clock_fn;
+            self
+        }
+
         async fn build(self) -> Arc<dyn Worker> {
             let engine =
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let cancel_registry = CancelRegistry::new();
             let (db_forwarder_sender, _) = mpsc::channel(1);
-            let clock_fn: Box<dyn ClockFn> = Now.clone_box();
 
             let component_id = concepts::ComponentId::new(
                 ComponentType::Activity,
@@ -406,7 +413,7 @@ mod tests {
                 wasm_component,
                 config,
                 engine,
-                clock_fn,
+                self.clock_fn,
                 std::sync::Arc::new(TokioSleep),
             )
             .unwrap();
@@ -474,7 +481,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
+                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
             executor_close_watcher,
@@ -510,7 +517,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
+                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
             executor_close_watcher,
@@ -1207,6 +1214,7 @@ mod tests {
         js_source: &str,
         user_ffqn: FunctionFqn,
         listener: &std::net::TcpListener,
+        clock_fn: Box<dyn ClockFn>,
     ) -> Arc<dyn Worker> {
         let server_address = listener
             .local_addr()
@@ -1222,6 +1230,7 @@ mod tests {
         JsWorkerBuilder::new(js_source, user_ffqn)
             .with_params(user_params)
             .with_allowed_host(&allowed_host)
+            .with_clock_fn(clock_fn)
             .build()
             .await
     }
@@ -1255,12 +1264,19 @@ mod tests {
         "#;
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let worker =
-            new_js_activity_worker_for_retry_test(js_source, ffqn.clone(), &listener).await;
+        let sim_clock = SimClock::epoch();
+        let worker = new_js_activity_worker_for_retry_test(
+            js_source,
+            ffqn.clone(),
+            &listener,
+            sim_clock.clone_box(),
+        )
+        .await;
 
         run_http_get_retry_test(
             listener,
             worker,
+            sim_clock,
             ffqn,
             |uri| Params::from_json_values_test(vec![json!(format!("{uri}/"))]),
             locking_strategy,

@@ -606,7 +606,7 @@ mod tests {
         PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
         PendingStatePendingAt, Version,
     };
-    use concepts::time::{ClockFn, Now, TokioSleep};
+    use concepts::time::{ClockFn, TokioSleep};
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
         TypeWrapperTopLevel,
@@ -750,7 +750,7 @@ mod tests {
     ) {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
         let cancel_registry = CancelRegistry::new();
-        let clock_fn: Box<dyn ClockFn> = Now.clone_box();
+        let clock_fn: Box<dyn ClockFn> = SimClock::epoch().clone_box();
 
         let component_id = concepts::ComponentId::new(
             ComponentType::Workflow,
@@ -829,7 +829,7 @@ mod tests {
         user_ffqn: &FunctionFqn,
     ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
         let engine = Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-        let clock_fn: Box<dyn ClockFn> = Now.clone_box();
+        let clock_fn: Box<dyn ClockFn> = SimClock::epoch().clone_box();
 
         let component_id = concepts::ComponentId::new(
             ComponentType::Workflow,
@@ -898,7 +898,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
+                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
             executor_close_watcher: tokio::sync::watch::channel(false).1,
@@ -1566,7 +1566,6 @@ mod tests {
             );
         }
 
-        let stopwatch = std::time::Instant::now();
         let (log_sender, mut log_storage_recv) = mpsc::channel(100);
         let replay_worker = build_js_replay_worker(
             DeploymentId::generate(),
@@ -1584,7 +1583,6 @@ mod tests {
             default_return_type(),
         );
         replay_worker.replay(execution_id).await.unwrap();
-        info!("Replayed in {:?}", stopwatch.elapsed());
         // Drop the worker so the log_sender is closed; otherwise `recv_many` blocks indefinitely.
         drop(replay_worker);
         let mut buffer = Vec::new();

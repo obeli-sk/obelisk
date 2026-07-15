@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use concepts::time::{ClockFn, Now};
+use concepts::time::ClockFn;
 use std::{sync::Arc, time::Duration};
 use tracing::info;
 
@@ -9,9 +9,8 @@ pub struct SimClock {
 }
 
 impl Default for SimClock {
-    // TODO: Rename to system_time
     fn default() -> Self {
-        Self::new(Now.now())
+        Self::epoch()
     }
 }
 

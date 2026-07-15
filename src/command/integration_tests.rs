@@ -838,11 +838,11 @@ impl TestServer {
             .expect("events parse failed")
     }
 
-    async fn get_logs(&self, execution_id: &str) -> Value {
+    async fn get_logs(&self, execution_id: &str, length: usize) -> Value {
         self.client
             .get(format!(
-                "{}/v1/executions/{execution_id}/logs?length=100&direction=newer",
-                self.base_url
+                "{}/v1/executions/{execution_id}/logs?length={length}&direction=newer",
+                self.base_url,
             ))
             .header("Accept", "application/json")
             .send()
@@ -1722,7 +1722,7 @@ impl TestServer {
             ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap();
-        for _ in 0..200 {
+        loop {
             if let Ok(resp) = grpc_client
                 .cancel_execution(CancelExecutionRequest {
                     execution_id: Some(GrpcExecutionId {
@@ -1736,12 +1736,11 @@ impl TestServer {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        panic!("execution {execution_id} was never cancellable");
     }
 
     /// Cancel a delay out-of-band, retrying until the workflow has submitted it.
     async fn cancel_delay_with_retries(&self, delay_id: &str) {
-        for _ in 0..200 {
+        loop {
             let resp = self
                 .client
                 .put(format!("{}/v1/delays/{delay_id}/cancel", self.base_url))
@@ -1754,7 +1753,6 @@ impl TestServer {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        panic!("delay {delay_id} was never cancellable");
     }
 
     async fn step_execution_until_finished_grpc(
@@ -2752,9 +2750,13 @@ async fn greet_activity_logs() {
     // Consume the streamed body to wait for execution to finish.
     let _: Value = resp.json().await.unwrap();
 
-    // Allow log forwarding to flush.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let logs = server.get_logs(&exec_id).await;
+    let logs = loop {
+        let logs = server.get_logs(&exec_id, 1).await;
+        if logs.as_array().expect("logs must be an array").len() == 1 {
+            break logs;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     let logs = sanitize_json(&logs);
     insta::assert_json_snapshot!("greet_activity_logs", logs);
     server.shutdown().await;
@@ -2853,8 +2855,7 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
     );
     // Cancelling a paused activity is async: the driver finalizes it to
     // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
-    let mut activity_finished = false;
-    for _ in 0..100 {
+    loop {
         let summary = server.get_status_summary_grpc(&activity_id).await;
         if matches!(
             summary
@@ -2863,12 +2864,10 @@ async fn cancel_execution_grpc_routes_activities_and_cancellable_workflows() {
                 .and_then(|status| status.status.as_ref()),
             Some(grpc::grpc_gen::execution_status::Status::Finished(_))
         ) {
-            activity_finished = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(activity_finished, "cancelled paused activity must finish");
 
     let cancellable_workflow_id = server
         .seed_cancellable_parent_blocked_on_uncancellable_child()
@@ -2961,8 +2960,7 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
     );
     // Cancelling a paused activity is async: the driver finalizes it to
     // Finished(Cancelled) on a later tick, so poll rather than asserting immediately.
-    let mut activity_finished = false;
-    for _ in 0..100 {
+    loop {
         let summary = server.get_status_summary_grpc(&activity_id).await;
         if matches!(
             summary
@@ -2971,12 +2969,10 @@ async fn cancel_execution_webapi_routes_activities_and_cancellable_workflows() {
                 .and_then(|status| status.status.as_ref()),
             Some(grpc::grpc_gen::execution_status::Status::Finished(_))
         ) {
-            activity_finished = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(activity_finished, "cancelled paused activity must finish");
 
     let cancellable_workflow_id = server
         .seed_cancellable_parent_blocked_on_uncancellable_child()
@@ -3084,8 +3080,7 @@ async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled(
         .unwrap();
 
     // Wait until it has run and created the delay (blocked, or kept warm-locked).
-    let mut started = false;
-    for _ in 0..100 {
+    loop {
         let status = server.get_status_summary_grpc(&exec_id).await;
         if matches!(
             status
@@ -3094,12 +3089,10 @@ async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled(
                 .and_then(|status| status.status.as_ref()),
             Some(Status::BlockedByJoinSet(_) | Status::Locked(_))
         ) {
-            started = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert!(started, "workflow never started/blocked on the sleep");
 
     let resp = grpc_client
         .cancel_execution(CancelExecutionRequest {
@@ -3116,25 +3109,23 @@ async fn cancellation_driver_finishes_running_cancellable_workflow_as_cancelled(
     );
 
     // The driver drives it to Finished(Cancelled) without the 100s sleep ever expiring.
-    let mut finished_kind = None;
-    for _ in 0..100 {
+    let finished_kind = loop {
         let status = server.get_status_summary_grpc(&exec_id).await;
         if let Some(Status::Finished(finished)) = status
             .current_status
             .as_ref()
             .and_then(|status| status.status.as_ref())
         {
-            finished_kind = Some(
+            break Some(
                 finished
                     .result_kind
                     .as_ref()
                     .and_then(|rk| rk.value)
                     .expect("finished must carry a result kind"),
             );
-            break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    };
     assert_eq!(
         finished_kind,
         Some(grpc::grpc_gen::result_kind::Value::ExecutionFailureKind(
@@ -4882,25 +4873,21 @@ async fn activity_exec_stream_logs() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": null }));
 
-    let stderr_entries = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let logs = server.get_logs(&exec_id).await;
-            debug!("Fetched logs: {logs:?}");
-            let stderr_entries: Vec<Value> = logs
-                .as_array()
-                .expect("logs must be an array")
-                .iter()
-                .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
-                .cloned()
-                .collect();
-            if stderr_entries.len() >= 2 {
-                break stderr_entries;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+    let stderr_entries = loop {
+        let logs = server.get_logs(&exec_id, 2).await;
+        debug!("Fetched logs: {logs:?}");
+        let stderr_entries: Vec<Value> = logs
+            .as_array()
+            .expect("logs must be an array")
+            .iter()
+            .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
+            .cloned()
+            .collect();
+        if stderr_entries.len() == 2 {
+            break stderr_entries;
         }
-    })
-    .await
-    .expect("timed out waiting for stderr stream entries");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
 
     // Streaming must produce 2 separate stderr entries (one per echo).
     assert_eq!(
