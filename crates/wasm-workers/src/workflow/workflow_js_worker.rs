@@ -1792,7 +1792,7 @@ mod tests {
                 js.joinNext();
             } catch (e) {
                 threw = true;
-                isChildErr = e instanceof obelisk.ChildExecutionError;
+                isChildErr = e instanceof obelisk.ChildError;
                 isError = e instanceof Error;
                 valueIsUndefined = e.value === undefined;
                 cancelled = e.cancelled;
@@ -1822,7 +1822,7 @@ mod tests {
             "lastId should be set before throwing child err, got {result}"
         );
         assert_eq!(json!(true), result["threw"]);
-        // A unit err (result<string> has no err type) throws a ChildExecutionError
+        // A unit err (result<string> has no err type) throws a ChildError
         // (also an Error) whose `.value` is undefined; it is a business err, not a
         // platform failure, so `.cancelled` is false and `.failureKind` is absent.
         assert_eq!(json!(true), result["isChildErr"]);

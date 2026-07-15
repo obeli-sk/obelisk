@@ -1,16 +1,20 @@
 // Await a child execution that is cancelled out-of-band. The child's cancellation
 // is a platform failure (not a business err), so `joinNext` throws a
-// `ChildExecutionError` whose `.cancelled` is true, `.failureKind` is `cancelled`
+// `ChildError` whose `.cancelled` is true, `.failureKind` is `cancelled`
 // and `.value` is undefined (no err payload to carry).
 export default function cancel_child_error() {
+    // Deprecated alias must stay the very same constructor.
+    if (obelisk.ChildExecutionError !== obelisk.ChildError) {
+        throw 'expected obelisk.ChildExecutionError to alias obelisk.ChildError';
+    }
     // A named join set gives the child a well-known id the test can reconstruct.
     const js = obelisk.createJoinSet({ name: 'cancel-set' });
     const childId = js.submit('testing:integration/workflow-sleep.sleep-cancellable', []);
     try {
         js.joinNext();
     } catch (e) {
-        if (!(e instanceof obelisk.ChildExecutionError)) {
-            throw `expected ChildExecutionError, got: ${e}`;
+        if (!(e instanceof obelisk.ChildError)) {
+            throw `expected ChildError, got: ${e}`;
         }
         if (e.cancelled !== true) {
             throw `expected cancelled=true, got: ${e.cancelled}`;

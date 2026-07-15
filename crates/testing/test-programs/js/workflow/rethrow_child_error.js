@@ -1,4 +1,4 @@
-// Catch a child execution's string err as a ChildExecutionError and re-throw it.
+// Catch a child execution's string err as a ChildError and re-throw it.
 // The transparent re-propagation must reproduce the original err payload as the
 // workflow's own err value (i.e. `throw e` behaves like `throw e.value`).
 import { myStubSubmit } from 'testing:integration-obelisk-ext/stubs';
@@ -11,8 +11,8 @@ export default function rethrow_child_error(id) {
     try {
         js.joinNext();
     } catch (e) {
-        if (!(e instanceof obelisk.ChildExecutionError)) {
-            throw `expected ChildExecutionError, got: ${e}`;
+        if (!(e instanceof obelisk.ChildError)) {
+            throw `expected ChildError, got: ${e}`;
         }
         throw e; // transparent re-propagation -> workflow err 'boom'
     }
