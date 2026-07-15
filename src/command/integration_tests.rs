@@ -3438,7 +3438,7 @@ async fn submit_workflow_with_join_next_try_semantics() {
     server.shutdown().await;
 }
 
-/// A caught `ChildExecutionError` re-thrown with `throw e` transparently
+/// A caught `ChildError` re-thrown with `throw e` transparently
 /// reproduces the child's original err payload as the workflow's err.
 #[tokio::test]
 async fn submit_workflow_rethrows_child_execution_error() {
@@ -3457,7 +3457,7 @@ async fn submit_workflow_rethrows_child_execution_error() {
 }
 
 /// A child execution cancelled out-of-band surfaces to an awaiting JS parent as a
-/// `ChildExecutionError` with `.cancelled === true` and `.failureKind === "cancelled"`
+/// `ChildError` with `.cancelled === true` and `.failureKind === "cancelled"`
 /// (a platform failure with no err payload), not as a business err value.
 #[tokio::test]
 async fn submit_workflow_child_cancelled_surfaces_child_execution_error() {

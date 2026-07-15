@@ -86,6 +86,8 @@
 //! const wakeUp = obelisk.sleep({ milliseconds: 500 }); // Date
 //! const namedWakeUp = obelisk.sleep({ seconds: 30 }, "retry-timeout"); // Date
 //! console.log(wakeUp.toISOString()); // e.g. "2024-01-01T00:00:00.500Z"
+//! // A cancelled sleep throws an obelisk.ChildError with
+//! // cancelled=true and failureKind="cancelled".
 //! ```
 //!
 //! ## Random (Deterministic)
@@ -142,9 +144,7 @@ use crate::generated::obelisk::workflow::workflow_support_backtrace::{
     join_set_create_named, random_string, random_u64, random_u64_inclusive, schedule_json, sleep,
     stub_json, submit_delay, submit_json,
 };
-use boa_common::child_execution_error::{
-    ChildExecutionError, ChildExecutionErrorParts, make_child_execution_error,
-};
+use boa_common::child_error::{ChildError, ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
 use boa_common::imports::{self, ProxyKind};
@@ -473,7 +473,7 @@ fn create_ext_get_proxy(context: &mut Context) -> JsValue {
 }
 
 /// Unwrap a `Result<Option<String>, Option<String>>` from a child outcome into a
-/// JS value: returns the ok value, or throws an [`obelisk.ChildExecutionError`]
+/// JS value: returns the ok value, or throws an [`obelisk.ChildError`]
 /// built from the given child `exec_id`.
 fn unwrap_result(
     inner_result: Result<Option<String>, Option<String>>,
@@ -488,7 +488,7 @@ fn unwrap_result(
 }
 
 /// Kebab-case string for a WIT `execution-failure-kind`, used as
-/// `ChildExecutionError.failureKind`.
+/// `ChildError.failureKind`.
 fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
     match kind {
         ExecutionFailureKind::TimedOut => "timed-out",
@@ -499,7 +499,7 @@ fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
     }
 }
 
-/// Build a `ChildExecutionError` for a failed child execution, disambiguating a
+/// Build a `ChildError` for a failed child execution, disambiguating a
 /// business `err` from a platform failure via `get-execution-failure-kind`.
 fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsResult<JsError> {
     let exec = ExecutionId {
@@ -508,36 +508,38 @@ fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsR
     match get_execution_failure_kind(&exec) {
         Ok(Some(kind)) => {
             let cancelled = matches!(kind, ExecutionFailureKind::Cancelled);
-            make_child_execution_error(
-                &ChildExecutionErrorParts {
+            make_child_error(
+                &ChildErrorParts {
                     child_id: Some(exec_id),
                     delay_id: None,
                     value_json: None,
                     failure_kind: Some(exec_failure_kind_str(kind)),
                     cancelled,
+                    message: None,
                 },
                 ctx,
             )
         }
-        Ok(None) => make_child_execution_error(
-            &ChildExecutionErrorParts {
+        Ok(None) => make_child_error(
+            &ChildErrorParts {
                 child_id: Some(exec_id),
                 delay_id: None,
                 value_json: payload.as_deref(),
                 failure_kind: None,
                 cancelled: false,
+                message: None,
             },
             ctx,
         ),
         // Failure kind is unresolvable (e.g. not-yet-processed): surface as a
-        // plain host error rather than a ChildExecutionError.
+        // plain host error rather than a ChildError.
         Err(e) => Ok(JsNativeError::error()
             .with_message(format!("failed to resolve child failure kind: {:?}", e))
             .into()),
     }
 }
 
-/// Build a `ChildExecutionError` for a failed direct call (`obelisk.call` / an
+/// Build a `ChildError` for a failed direct call (`obelisk.call` / an
 /// import proxy), whose child id comes from `last-direct-call-id`.
 fn call_child_error(
     child_id: Option<&str>,
@@ -546,40 +548,42 @@ fn call_child_error(
 ) -> JsResult<JsError> {
     match child_id {
         Some(id) => child_error(id, payload, ctx),
-        None => make_child_execution_error(
-            &ChildExecutionErrorParts {
+        None => make_child_error(
+            &ChildErrorParts {
                 child_id: None,
                 delay_id: None,
                 value_json: payload.as_deref(),
                 failure_kind: None,
                 cancelled: false,
+                message: None,
             },
             ctx,
         ),
     }
 }
 
-/// If `js_err` is a re-thrown [`obelisk.ChildExecutionError`], return its `.value`
+/// If `js_err` is a re-thrown [`obelisk.ChildError`], return its `.value`
 /// (the original business payload). Detection is brand-safe via `downcast_ref` on
 /// the native marker, not by sniffing `.name`/prototype.
-fn child_execution_error_rethrow_value(js_err: &JsError, ctx: &mut Context) -> Option<JsValue> {
+fn child_error_rethrow_value(js_err: &JsError, ctx: &mut Context) -> Option<JsValue> {
     let obj = js_err.as_opaque()?.as_object()?;
-    if obj.downcast_ref::<ChildExecutionError>().is_some() {
+    if obj.downcast_ref::<ChildError>().is_some() {
         obj.get(js_string!("value"), ctx).ok()
     } else {
         None
     }
 }
 
-/// Build a `ChildExecutionError` for a cancelled delay.
+/// Build a `ChildError` for a cancelled delay.
 fn delay_cancelled_error(delay_id: &str, ctx: &mut Context) -> JsResult<JsError> {
-    make_child_execution_error(
-        &ChildExecutionErrorParts {
+    make_child_error(
+        &ChildErrorParts {
             child_id: None,
             delay_id: Some(delay_id),
             value_json: None,
-            failure_kind: None,
+            failure_kind: Some("cancelled"),
             cancelled: true,
+            message: None,
         },
         ctx,
     )
@@ -778,20 +782,18 @@ pub fn execute(
         }
         Err(js_err) => {
             // JSON-encode the thrown value (consistent with ok branch).
-            // A re-thrown `ChildExecutionError` (`throw e`) is transparent: it
+            // A re-thrown `ChildError` (`throw e`) is transparent: it
             // re-serializes its `.value`, so it behaves like `throw e.value`.
             // `throw new Error("msg")` → JSON-encode the message string.
             // `throw expr` (null, string, number, object, …) → serialize via to_json.
-            let err_json = if let Some(value) =
-                child_execution_error_rethrow_value(&js_err, &mut context)
-            {
+            let err_json = if let Some(value) = child_error_rethrow_value(&js_err, &mut context) {
                 match value.to_json(&mut context) {
                     Ok(Some(json_val)) => serde_json::to_string(&json_val)
                         .expect("serde_json::Value must be serializable"),
                     Ok(None) => "null".to_string(), // undefined → null
                     Err(e) => {
                         return Err(JsRuntimeError::WrongThrownType(format!(
-                            "cannot serialize re-thrown ChildExecutionError value to JSON: {e:?}"
+                            "cannot serialize re-thrown ChildError value to JSON: {e:?}"
                         )));
                     }
                 }
@@ -995,9 +997,19 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
                 date.set_time(ms, ctx)?;
                 Ok(date.into())
             }
-            Err(()) => Err(JsNativeError::error()
-                .with_message("Sleep was cancelled")
-                .into()),
+            // A cancelled sleep throws a ChildError so it is catchable like any
+            // other cancellation, with the message kept stable.
+            Err(()) => Err(make_child_error(
+                &ChildErrorParts {
+                    child_id: None,
+                    delay_id: None,
+                    value_json: None,
+                    failure_kind: Some("cancelled"),
+                    cancelled: true,
+                    message: Some("Sleep was cancelled"),
+                },
+                ctx,
+            )?),
         }
     });
     obelisk.set(
@@ -1212,9 +1224,10 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         };",
     ))?;
 
-    // obelisk.ChildExecutionError — native, brand-safe error thrown for a failed
-    // awaited child execution or a cancelled delay.
-    boa_common::child_execution_error::register(context)?;
+    // obelisk.ChildError (plus the deprecated obelisk.ChildExecutionError alias):
+    // native, brand-safe error thrown for a failed awaited child execution, a
+    // cancelled delay, or a cancelled sleep.
+    boa_common::child_error::register(context)?;
 
     Ok(())
 }

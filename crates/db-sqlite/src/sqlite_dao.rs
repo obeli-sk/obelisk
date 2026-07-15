@@ -805,8 +805,8 @@ impl SqlitePool {
                     // save result to be sent to the caller
                     *fn_res.lock().unwrap() = Some(func_res);
                     match tx_type {
-                        TxType::MultipleWrites => res,
-                        TxType::Other => Ok(()),
+                        TxType::MultipleWrites => res, // Rollback, skipping this on LTX replay.
+                        TxType::Other => Ok(()), // Failed single write should not rollback the PhyTx
                     }
                 }),
                 sent_at: Instant::now(),
