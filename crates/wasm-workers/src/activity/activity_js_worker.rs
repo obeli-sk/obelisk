@@ -300,7 +300,7 @@ mod tests {
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{Locked, Version};
-    use concepts::time::{ClockFn, Now, TokioSleep};
+    use concepts::time::{ClockFn, TokioSleep};
     use concepts::{
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
     };
@@ -342,7 +342,7 @@ mod tests {
                 },
                 allowed_hosts: Vec::new(),
                 logs_storage_config: None,
-                clock_fn: Now.clone_box(),
+                clock_fn: SimClock::epoch().clone_box(),
             }
         }
 
@@ -481,7 +481,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
+                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
             executor_close_watcher,
@@ -517,7 +517,7 @@ mod tests {
                 executor_id: ExecutorId::generate(),
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 run_id: RunId::generate(),
-                lock_expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
+                lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
             executor_close_watcher,

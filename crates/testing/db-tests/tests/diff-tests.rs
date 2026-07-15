@@ -19,7 +19,6 @@ use concepts::storage::Pagination;
 use concepts::storage::Version;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::time::ClockFn as _;
-use concepts::time::Now;
 use obeli_db_tests::Database;
 use obeli_db_tests::SOME_FFQN;
 use rstest::rstest;
@@ -46,13 +45,13 @@ async fn diff_proptest_inner(seed: u64) {
     let mut unstructured = unstructured_holder.unstructured();
     let execution_id = ExecutionId::generate();
     let create_req = CreateRequest {
-        created_at: Now.now(),
+        created_at: DateTime::UNIX_EPOCH,
         execution_id: execution_id.clone(),
         ffqn: SOME_FFQN,
         params: Params::empty(),
         parent: None,
         metadata: concepts::ExecutionMetadata::empty(),
-        scheduled_at: Now.now(),
+        scheduled_at: DateTime::UNIX_EPOCH,
         component_id: ComponentId::dummy_activity(),
         deployment_id: DEPLOYMENT_ID_DUMMY,
         scheduled_by: None,
@@ -147,7 +146,7 @@ fn arbitrary_valid_append_request(
 ) -> arbitrary::Result<AppendRequest> {
     let mut req = AppendRequest {
         event: postgres_compatible(&unstructured.arbitrary()?),
-        created_at: Now.now(),
+        created_at: DateTime::UNIX_EPOCH,
     };
     normalize_timestamps(&mut req, unstructured)?;
     Ok(req)

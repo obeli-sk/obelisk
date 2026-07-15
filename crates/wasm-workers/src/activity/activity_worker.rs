@@ -548,7 +548,6 @@ pub(crate) mod tests {
     use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
     use concepts::storage::{DbPool, TimeoutOutcome};
     use concepts::storage::{ExecutionRequest, Version};
-    use concepts::time::Now;
     use concepts::time::TokioSleep;
     use concepts::{ComponentRetryConfig, ComponentType};
     use concepts::{
@@ -1038,11 +1037,12 @@ pub(crate) mod tests {
         let engine =
             Engines::get_activity_engine_test(EngineConfig::pooling_nocache_testing(pool_opts))
                 .unwrap();
+        let sim_clock = SimClock::epoch();
 
         let (fibo_worker, _) = new_activity_worker(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             engine,
-            Now.clone_box(),
+            sim_clock.clone_box(),
             TokioSleep,
         )
         .await;
@@ -1050,6 +1050,7 @@ pub(crate) mod tests {
         let join_handles = (0..tasks)
             .map(|_| {
                 let fibo_worker = fibo_worker.clone();
+                let sim_clock = sim_clock.clone();
                 let execution_id = ExecutionId::generate();
                 let (executor_close_tx, executor_close_watcher) =
                     tokio::sync::watch::channel(false);
@@ -1070,7 +1071,7 @@ pub(crate) mod tests {
                         executor_id: ExecutorId::generate(),
                         deployment_id: DEPLOYMENT_ID_DUMMY,
                         run_id: RunId::generate(),
-                        lock_expires_at: Now.now() + lock_expiry,
+                        lock_expires_at: sim_clock.now() + lock_expiry,
                         retry_config: ComponentRetryConfig::ZERO,
                     },
                     executor_close_watcher,
@@ -1386,7 +1387,6 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
         info!("Creating execution");
-        let stopwatch = std::time::Instant::now();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -1423,8 +1423,6 @@ pub(crate) mod tests {
                 .len()
         );
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let stopwatch = stopwatch.elapsed();
-        info!("Finished in {stopwatch:?}");
         let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
                 ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces) }
@@ -1518,7 +1516,6 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
         info!("Creating execution");
-        let stopwatch = std::time::Instant::now();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -1555,8 +1552,6 @@ pub(crate) mod tests {
                 .len()
         );
         let exec_log = db_connection.get(&execution_id).await.unwrap();
-        let stopwatch = stopwatch.elapsed();
-        info!("Finished in {stopwatch:?}");
         let (res, http_client_traces) = assert_matches!(
                 exec_log.last_event().event.clone(),
                 ExecutionRequest::Finished { retval, http_client_traces: Some(http_client_traces) }

@@ -2535,7 +2535,7 @@ pub(crate) mod tests {
             cancel_registry,
         )
         .await;
-        // simulate a scheduling problem where deadline < Now.clone_box(), meaning there is no point in running the execution.
+        // Simulate a scheduling problem where the deadline is before the current time.
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
         let ctx = WorkerContext {

@@ -2995,7 +2995,7 @@ pub(crate) mod tests {
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStatePendingAt,
     };
     use concepts::storage::{DbPoolCloseable, ExecutionLog};
-    use concepts::time::{ClockFn, Now};
+    use concepts::time::ClockFn;
     use concepts::{
         ComponentId, ComponentRetryConfig, ExecutionFailureKind, ExecutionMetadata,
         FinishedExecutionFailure, FunctionRegistry, IfcFqnName, JoinSetId, JoinSetKind,
@@ -3655,7 +3655,7 @@ pub(crate) mod tests {
         const SUBMITS: usize = 10;
         test_utils::set_up();
         let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
-        let sim_clock = SimClock::new(Now.now());
+        let sim_clock = SimClock::epoch();
         let db_connection = db_pool.connection_test().await.unwrap();
 
         // Create an execution.
