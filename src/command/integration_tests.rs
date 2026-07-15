@@ -3566,7 +3566,7 @@ async fn submit_workflow_cancelled_delay_surfaces_child_error() {
     let execution_id = server.generate_execution_id().await;
     let execution_id = execution_id.parse::<ExecutionId>().unwrap();
     let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("cancel-delay")).unwrap();
-    let delay_id = DelayId::new_with_index(&execution_id, &join_set_id, 0).to_string();
+    let delay_id = DelayId::new(&execution_id, &join_set_id).to_string();
     let execution_id = execution_id.to_string();
 
     let follow = server.submit_follow_with_id(

@@ -70,7 +70,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
             "join_set_id": "g:1",
             "request": {
               "type": "delay_request",
-              "delay_id": "Delay_00000000000000000000000000.g:1_0",
+              "delay_id": "Delay_00000000000000000000000000.g:1_1",
               "expires_at": "1970-01-01T00:00:10Z",
               "schedule_at": {
                 "in": {
@@ -157,7 +157,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
         "join_set_id": "g:1",
         "event": {
           "type": "delay_finished",
-          "delay_id": "Delay_00000000000000000000000000.g:1_0",
+          "delay_id": "Delay_00000000000000000000000000.g:1_1",
           "result": {
             "Err": null
           }
