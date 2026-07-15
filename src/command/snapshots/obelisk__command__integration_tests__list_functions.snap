@@ -121,6 +121,12 @@ expression: functions
     "ffqn": "testing:integration/workflow-cancel-child-error.cancel-child-error"
   },
   {
+    "ffqn": "testing:integration/workflow-cancel-sleep-error.cancel-sleep-error"
+  },
+  {
+    "ffqn": "testing:integration/workflow-cancel-delay-error.cancel-delay-error"
+  },
+  {
     "ffqn": "testing:integration/workflow-math-random.math-random"
   },
   {

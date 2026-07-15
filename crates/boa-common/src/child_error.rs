@@ -1,5 +1,5 @@
-//! `obelisk.ChildExecutionError` — the single catchable type thrown when an
-//! awaited child execution (or a cancelled delay) fails.
+//! `obelisk.ChildError`: the single catchable type thrown when an awaited
+//! child execution, a cancelled delay, or a cancelled `obelisk.sleep` fails.
 //!
 //! It replaces the earlier "throw the raw err value / `throw null`" behavior:
 //! - Always truthy and `instanceof Error` (its prototype is spliced onto
@@ -10,10 +10,14 @@
 //!   instance via the native brand (`downcast_ref`) and re-serializes `.value`,
 //!   so `throw e` behaves like `throw e.value`.
 //!
-//! The native data ([`ChildExecutionError`]) is intentionally empty: every
-//! user-visible field lives as an ordinary JS own property. The Rust struct
-//! exists only as a brand that the producer can detect via `downcast_ref`,
-//! rather than sniffing a spoofable `.name`/prototype.
+//! `obelisk.ChildExecutionError` (the 0.40.0 name) stays as a deprecated alias
+//! for the same constructor, so `instanceof` checks against either name are
+//! identical.
+//!
+//! The native data ([`ChildError`]) is intentionally empty: every user-visible
+//! field lives as an ordinary JS own property. The Rust struct exists only as a
+//! brand that the producer can detect via `downcast_ref`, rather than sniffing
+//! a spoofable `.name`/prototype.
 
 use boa_engine::{
     Context, JsError, JsNativeError, JsObject, JsResult, JsValue, Source,
@@ -22,12 +26,12 @@ use boa_engine::{
 };
 use boa_gc::{Finalize, Trace};
 
-/// Native brand stored inside every `obelisk.ChildExecutionError` instance.
+/// Native brand stored inside every `obelisk.ChildError` instance.
 #[derive(Debug, Trace, Finalize, boa_engine::JsData)]
-pub struct ChildExecutionError;
+pub struct ChildError;
 
-impl Class for ChildExecutionError {
-    const NAME: &'static str = "ChildExecutionError";
+impl Class for ChildError {
+    const NAME: &'static str = "ChildError";
     const LENGTH: usize = 1;
 
     fn data_constructor(
@@ -35,7 +39,7 @@ impl Class for ChildExecutionError {
         _args: &[JsValue],
         _context: &mut Context,
     ) -> JsResult<Self> {
-        Ok(ChildExecutionError)
+        Ok(ChildError)
     }
 
     fn object_constructor(
@@ -46,12 +50,7 @@ impl Class for ChildExecutionError {
         let obj = instance.clone().upcast();
         let message = args.first().cloned().unwrap_or(JsValue::undefined());
         obj.set(js_string!("message"), message, false, context)?;
-        obj.set(
-            js_string!("name"),
-            js_string!("ChildExecutionError"),
-            false,
-            context,
-        )?;
+        obj.set(js_string!("name"), js_string!("ChildError"), false, context)?;
         Ok(())
     }
 
@@ -60,27 +59,31 @@ impl Class for ChildExecutionError {
     }
 }
 
-/// Register `obelisk.ChildExecutionError`.
+/// Register `obelisk.ChildError` (and its deprecated alias
+/// `obelisk.ChildExecutionError`).
 ///
 /// Must run after the global `obelisk` object has been installed. Registers the
 /// native class, moves the constructor under `obelisk` (off the global
 /// namespace), and splices its prototype chain onto `Error` so that
 /// `instanceof Error` holds and instances inherit `Error.prototype`.
 pub fn register(context: &mut Context) -> JsResult<()> {
-    context.register_global_class::<ChildExecutionError>()?;
+    context.register_global_class::<ChildError>()?;
+    // backcompat: 0.40.x apps catch obelisk.ChildExecutionError; keep the alias
+    // (same constructor, so `instanceof` is identical) until the old name is removed.
     context.eval(Source::from_bytes(
-        "obelisk.ChildExecutionError = globalThis.ChildExecutionError;\n\
-         delete globalThis.ChildExecutionError;\n\
-         Object.setPrototypeOf(obelisk.ChildExecutionError.prototype, Error.prototype);\n\
-         Object.setPrototypeOf(obelisk.ChildExecutionError, Error);",
+        "obelisk.ChildError = globalThis.ChildError;\n\
+         delete globalThis.ChildError;\n\
+         Object.setPrototypeOf(obelisk.ChildError.prototype, Error.prototype);\n\
+         Object.setPrototypeOf(obelisk.ChildError, Error);\n\
+         obelisk.ChildExecutionError = obelisk.ChildError;",
     ))?;
     Ok(())
 }
 
 /// Resolved pieces of a child-execution failure, gathered by each runtime from
 /// its own host bindings before delegating message/object construction here.
-pub struct ChildExecutionErrorParts<'a> {
-    /// Completed child execution id; `None` for a delay.
+pub struct ChildErrorParts<'a> {
+    /// Completed child execution id; `None` for a delay or a cancelled sleep.
     pub child_id: Option<&'a str>,
     /// Cancelled delay id; `Some` only for a cancelled delay.
     pub delay_id: Option<&'a str>,
@@ -88,18 +91,18 @@ pub struct ChildExecutionErrorParts<'a> {
     /// platform failure.
     pub value_json: Option<&'a str>,
     /// Execution-failure kind as a kebab string (mirrors the WIT
-    /// `execution-failure-kind` enum) for a platform failure; `None` for a
-    /// business err or a cancelled delay.
+    /// `execution-failure-kind` enum) for a platform failure or a cancelled
+    /// delay/sleep (`"cancelled"`); `None` for a business err.
     pub failure_kind: Option<&'a str>,
     /// Whether the child or delay was cancelled.
     pub cancelled: bool,
+    /// Verbatim `.message` override; when `None` the message is derived from
+    /// the other parts.
+    pub message: Option<&'a str>,
 }
 
-/// Build a `ChildExecutionError` and wrap it as a throwable [`JsError`].
-pub fn make_child_execution_error(
-    parts: &ChildExecutionErrorParts,
-    context: &mut Context,
-) -> JsResult<JsError> {
+/// Build a `ChildError` and wrap it as a throwable [`JsError`].
+pub fn make_child_error(parts: &ChildErrorParts, context: &mut Context) -> JsResult<JsError> {
     // `.value` is the parsed business payload, and `undefined` for a platform
     // failure (kind set, synthesized sentinel dropped) or a unit err.
     let value = match (parts.failure_kind, parts.value_json) {
@@ -107,7 +110,10 @@ pub fn make_child_execution_error(
         (None, Some(json)) => context.eval(Source::from_bytes(&format!("({json})")))?,
     };
 
-    let message = build_message(parts, &value);
+    let message = match parts.message {
+        Some(message) => message.to_string(),
+        None => build_message(parts, &value),
+    };
 
     // Construct via the registered constructor so the instance carries the
     // native brand and the (Error-spliced) prototype.
@@ -150,7 +156,7 @@ pub fn make_child_execution_error(
 }
 
 /// A human-facing one-liner; programmatic access always goes through `.value`.
-fn build_message(parts: &ChildExecutionErrorParts, value: &JsValue) -> String {
+fn build_message(parts: &ChildErrorParts, value: &JsValue) -> String {
     if let Some(delay_id) = parts.delay_id {
         return format!("delay {delay_id} cancelled");
     }
@@ -166,7 +172,7 @@ fn build_message(parts: &ChildExecutionErrorParts, value: &JsValue) -> String {
     msg
 }
 
-/// Fetch the `obelisk.ChildExecutionError` constructor.
+/// Fetch the `obelisk.ChildError` constructor.
 fn ctor(context: &mut Context) -> JsResult<JsObject> {
     let global = context.global_object();
     let obelisk = global
@@ -174,11 +180,11 @@ fn ctor(context: &mut Context) -> JsResult<JsObject> {
         .as_object()
         .ok_or_else(|| JsNativeError::error().with_message("global obelisk object missing"))?;
     obelisk
-        .get(js_string!("ChildExecutionError"), context)?
+        .get(js_string!("ChildError"), context)?
         .as_object()
         .ok_or_else(|| {
             JsNativeError::error()
-                .with_message("obelisk.ChildExecutionError missing")
+                .with_message("obelisk.ChildError missing")
                 .into()
         })
 }

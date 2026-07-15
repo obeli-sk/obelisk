@@ -293,6 +293,20 @@ expression: components
   {
     "component_id": {
       "component_type": "workflow",
+      "name": "test_cancel_delay_error_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_cancel_sleep_error_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
       "name": "test_date_now_workflow",
       "component_digest": "sha256:<REDACTED>"
     }

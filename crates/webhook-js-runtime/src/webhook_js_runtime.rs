@@ -108,7 +108,7 @@ use crate::generated::obelisk::webhook::webhook_support::{
     self, ExecutionStatus, ExecutionStatusFinished,
 };
 use crate::generated::obelisk::webhook::webhook_support_backtrace;
-use boa_common::child_execution_error::{ChildExecutionErrorParts, make_child_execution_error};
+use boa_common::child_error::{ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
 use boa_common::esm::{EsmError, get_default_export, resolve_promise};
@@ -469,7 +469,7 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
 }
 
 /// Unwrap a `Result<Option<String>, Option<String>>` from a child outcome into a
-/// JS value: returns the ok value, or throws an [`obelisk.ChildExecutionError`]
+/// JS value: returns the ok value, or throws an [`obelisk.ChildError`]
 /// built from the given child `exec_id`.
 fn unwrap_result(
     inner_result: Result<Option<String>, Option<String>>,
@@ -484,7 +484,7 @@ fn unwrap_result(
 }
 
 /// Kebab-case string for a WIT `execution-failure-kind`, used as
-/// `ChildExecutionError.failureKind`.
+/// `ChildError.failureKind`.
 fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
     match kind {
         ExecutionFailureKind::TimedOut => "timed-out",
@@ -495,7 +495,7 @@ fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
     }
 }
 
-/// Build a `ChildExecutionError` for a failed child execution, disambiguating a
+/// Build a `ChildError` for a failed child execution, disambiguating a
 /// business `err` from a platform failure via `get-execution-failure-kind`.
 fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsResult<JsError> {
     let exec = ExecutionId {
@@ -504,24 +504,26 @@ fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsR
     match webhook_support::get_execution_failure_kind(&exec) {
         Ok(Some(kind)) => {
             let cancelled = matches!(kind, ExecutionFailureKind::Cancelled);
-            make_child_execution_error(
-                &ChildExecutionErrorParts {
+            make_child_error(
+                &ChildErrorParts {
                     child_id: Some(exec_id),
                     delay_id: None,
                     value_json: None,
                     failure_kind: Some(exec_failure_kind_str(kind)),
                     cancelled,
+                    message: None,
                 },
                 ctx,
             )
         }
-        Ok(None) => make_child_execution_error(
-            &ChildExecutionErrorParts {
+        Ok(None) => make_child_error(
+            &ChildErrorParts {
                 child_id: Some(exec_id),
                 delay_id: None,
                 value_json: payload.as_deref(),
                 failure_kind: None,
                 cancelled: false,
+                message: None,
             },
             ctx,
         ),
@@ -531,7 +533,7 @@ fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsR
     }
 }
 
-/// Build a `ChildExecutionError` for a failed direct call (`obelisk.call` / an
+/// Build a `ChildError` for a failed direct call (`obelisk.call` / an
 /// import proxy), whose child id comes from `last-direct-call-id`.
 fn call_child_error(
     child_id: Option<&str>,
@@ -540,13 +542,14 @@ fn call_child_error(
 ) -> JsResult<JsError> {
     match child_id {
         Some(id) => child_error(id, payload, ctx),
-        None => make_child_execution_error(
-            &ChildExecutionErrorParts {
+        None => make_child_error(
+            &ChildErrorParts {
                 child_id: None,
                 delay_id: None,
                 value_json: payload.as_deref(),
                 failure_kind: None,
                 cancelled: false,
+                message: None,
             },
             ctx,
         ),
@@ -817,9 +820,10 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     // Set obelisk as global
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
 
-    // obelisk.ChildExecutionError — native, brand-safe error thrown for a failed
-    // child execution awaited via obelisk.call / obelisk.get / obelisk.tryGet.
-    boa_common::child_execution_error::register(context)?;
+    // obelisk.ChildError (plus the deprecated obelisk.ChildExecutionError alias):
+    // native, brand-safe error thrown for a failed child execution awaited via
+    // obelisk.call / obelisk.get / obelisk.tryGet.
+    boa_common::child_error::register(context)?;
 
     Ok(())
 }

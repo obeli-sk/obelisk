@@ -3667,7 +3667,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             // fibo(50) returns err in the test activity (n > 40 returns error).
             // fibo returns result<u64> (no err type), so the child fails with a unit
-            // err: a ChildExecutionError whose `.value` is undefined.
+            // err: a ChildError whose `.value` is undefined.
             let js_source = r#"
                 export default function handle(request) {
                     try {
@@ -3676,7 +3676,7 @@ pub(crate) mod tests {
                     } catch (e) {
                         return Response.json({
                             threw: true,
-                            isChildErr: e instanceof obelisk.ChildExecutionError,
+                            isChildErr: e instanceof obelisk.ChildError,
                             isError: e instanceof Error,
                             valueIsUndefined: e.value === undefined,
                             cancelled: e.cancelled,
@@ -3703,7 +3703,7 @@ pub(crate) mod tests {
             let resp = fetch_task.await.unwrap();
             assert_eq!(resp.status().as_u16(), 200);
             let body: serde_json::Value = resp.json().await.unwrap();
-            // Should have caught a ChildExecutionError with an undefined value
+            // Should have caught a ChildError with an undefined value
             // (unit err), which is a business err (not cancelled), and a child id.
             assert_eq!(body["threw"], serde_json::json!(true));
             assert_eq!(body["isChildErr"], serde_json::json!(true));
