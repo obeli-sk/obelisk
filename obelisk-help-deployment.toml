@@ -42,12 +42,18 @@
 ## Each `[[activity_wasm.allowed_host]]` entry permits outbound requests to a host.
 ## If no entries are defined, all outbound HTTP connections are blocked.
 ##
-## Supports wildcards:
+## `pattern` matches the request origin: scheme, host, and port. It uses the
+## limited wildcard syntax below, not regular expressions, and must not contain
+## a URL path. A pattern without a scheme uses HTTPS; one without a port uses
+## the scheme's default port (80 for HTTP, 443 for HTTPS).
+##
+## Supported patterns:
 ## - "*" matches all HTTPS hosts on port 443
 ## - "*://*" matches http://host:80 and https://host:443 (any host, default ports)
 ## - "*://*:*" matches any scheme, any host, any port
 ## - "*.example.com" matches subdomains
 ## - "http://192.168.1.*" matches a /24 range
+## - "http://localhost:*" matches localhost on any HTTP port
 ##
 ## Method restrictions:
 ## - `methods = "*"` allows all methods
