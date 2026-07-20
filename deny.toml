@@ -39,8 +39,6 @@ skip = [
     { name = "thiserror", version = "1" },
     { name = "thiserror-impl", version = "1" },
     { name = "wast", version = "35" },
-    # wat 1.252 (via wasm-compose) pulls wast 252; canonical wasm-tools suite is 251
-    { name = "wast", version = "252" },
     # wasmtime-internal-cache uses toml 0.9 and its transitive deps
     { name = "toml", version = "0.9" },
     { name = "toml_datetime", version = "0.7" },
@@ -48,6 +46,8 @@ skip = [
     { name = "getrandom", version = "0.2" },
     # rand 0.9 uses getrandom 0.3; we directly depend on getrandom 0.4
     { name = "getrandom", version = "0.3" },
+    # cap-std 4 uses io-lifetimes 3 directly while fs-set-times uses io-lifetimes 2
+    { name = "io-lifetimes", version = "2" },
     # obelisk uses rand 0.9; postgres-protocol requires rand 0.10
     { name = "rand", version = "0.9" },
     { name = "rand_core", version = "0.9" },
@@ -72,9 +72,6 @@ skip = [
     { name = "wasm-metadata", version = "0.244" },
     { name = "wit-component", version = "0.244" },
     { name = "wit-parser", version = "0.244" },
-    # wasm-compose 0.251 (wasmtime dep) uses wasm-tools 0.251, but its `wat` dep
-    # pulls in wasm-tools 0.252 — canonical is 0.251, 0.252 is skipped
-    { name = "wasm-encoder", version = "0.252" },
     # oci-spec (via oci-client) requires strum 0.27 and darling 0.20
     { name = "strum", version = "0.27" },
     { name = "strum_macros", version = "0.27" },

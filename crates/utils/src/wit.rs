@@ -104,6 +104,7 @@ pub(crate) fn rebuild_resolve(
                 WorldKey::Interface(ifc_id),
                 WorldItem::Interface {
                     id: ifc_id,
+                    docs: wit_parser::Docs::default(),
                     stability: Stability::Unknown,
                     span: Span::default(),
                 },
@@ -898,6 +899,7 @@ pub(crate) fn build_primary_resolve(
                     WorldKey::Interface(ifc_id),
                     WorldItem::Interface {
                         id: ifc_id,
+                        docs: wit_parser::Docs::default(),
                         stability: Stability::Unknown,
                         span: Span::default(),
                     },
