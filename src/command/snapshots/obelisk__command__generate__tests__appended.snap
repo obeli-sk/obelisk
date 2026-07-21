@@ -1,0 +1,5 @@
+---
+source: src/command/generate.rs
+expression: contents
+---
+api.token_hashes = ["sha256:308eda9daf26b7446b284449a5895ab9a04ff30c129d4454e471cfb81bf5557d", "sha256:6c67163bbed989f232b31acc4f04df54b31285bfc01bd022c735b71e041a4754"]

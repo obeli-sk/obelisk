@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(cli)* `obelisk generate token` now prints only the token to stdout, so it composes with env
+  injection: `OBELISK__API__TOKEN=$(obelisk generate token)`. When stdout is a terminal, the
+  ready-to-paste `api.token_hashes` entry is still printed, on stderr. The `sha256:` hash is also
+  available via `--json`, and the new `--server-config <server.toml>` flag appends it to
+  `api.token_hashes` in place.
 - *(js)* A cancelled `obelisk.sleep` now throws `obelisk.ChildError` (with `cancelled: true` and
   `failureKind: "cancelled"`) instead of a plain `Error`; the message stays `Sleep was cancelled`.
   Its `.value` is `undefined`, indicating that the cancellation has no business error payload.

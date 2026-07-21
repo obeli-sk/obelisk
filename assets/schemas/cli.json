@@ -1105,12 +1105,19 @@
         },
         {
           "name": "token",
-          "about": "Generate a random API token plus the `sha256:` hash entry accepted in `server.toml` `api.token_hashes`",
+          "about": "Generate a random API token and print it to stdout",
           "options": [
             {
               "name": "--json",
               "short": "j",
-              "help": "Output as JSON instead of plain text"
+              "help": "Output the token and its `sha256:` hash as JSON instead of plain text"
+            },
+            {
+              "name": "--server-config",
+              "help": "Append the token's hash to `api.token_hashes` in this server.toml file",
+              "accepts": {
+                "path": true
+              }
             }
           ]
         },
