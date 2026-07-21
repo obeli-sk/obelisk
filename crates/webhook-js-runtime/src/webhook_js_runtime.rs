@@ -889,5 +889,9 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
         }));
     }
 
-    Ok(ScheduleAt::Now)
+    Err(JsNativeError::typ()
+        .with_message(
+            "schedule object has no recognized key (milliseconds, seconds, minutes, hours, days, at) and is not a Date",
+        )
+        .into())
 }
