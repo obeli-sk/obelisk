@@ -148,7 +148,7 @@ use boa_common::child_error::{ChildError, ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::helpers::{new_object, parse_ffqn};
 use boa_common::imports::{self, ProxyKind};
-use boa_engine::context::time::FixedClock;
+use boa_engine::context::time::{Clock, JsInstant};
 use boa_engine::module::MapModuleLoader;
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, Module, NativeFunction,
@@ -709,7 +709,7 @@ pub fn execute(
     let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
         .job_executor(executor.clone())
-        .clock(Rc::new(FixedClock::from_millis(0)))
+        .clock(Rc::new(ObeliskClock))
         .module_loader(loader.clone())
         .build()
         .expect("building context must work");
@@ -723,9 +723,6 @@ pub fn execute(
 
     // Override Math.random() to use deterministic random source
     setup_math_random(&mut context).expect("Math.random setup must work");
-
-    // Override Date.now() to use the Obelisk clock via sleep(0)
-    setup_date_now(&mut context).expect("Date.now setup must work");
 
     // Register synthetic modules for WIT-style imports (e.g., 'ns:pkg/ifc').
     // Each imported function becomes a NativeFunction proxy to the appropriate
@@ -993,8 +990,11 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         match sleep(schedule, name.as_deref(), Some(&backtrace)) {
             Ok(dt) => {
                 let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
-                let date = JsDate::new(ctx);
-                date.set_time(ms, ctx)?;
+                // Construct `new Date(ms)` directly. Passing the timestamp avoids the
+                // clock read that `JsDate::new` triggers via `ObeliskClock`, which would
+                // append a spurious extra delay on every `obelisk.sleep`.
+                let date_ctor = ctx.intrinsics().constructors().date().constructor();
+                let date = date_ctor.construct(&[JsValue::from(ms)], Some(&date_ctor), ctx)?;
                 Ok(date.into())
             }
             // A cancelled sleep throws a ChildError so it is catchable like any
@@ -1262,31 +1262,25 @@ fn setup_math_random(context: &mut Context) -> JsResult<()> {
     Ok(())
 }
 
-/// Override `Date.now()` to return the current Obelisk clock time via
-/// `sleep(0, None)`.
-///
-/// Returns milliseconds since Unix epoch as f64 (matching the JS spec).
-fn setup_date_now(context: &mut Context) -> JsResult<()> {
-    let date_now_fn = NativeFunction::from_fn_ptr(|_this, _args, ctx| {
-        let backtrace = capture_backtrace(ctx);
-        let dt = sleep(ScheduleAt::Now, None, Some(&backtrace))
-            .map_err(|()| JsNativeError::error().with_message("sleep failed"))?;
-        let ms = (dt.seconds as f64) * 1000.0 + (dt.nanoseconds as f64) / 1_000_000.0;
-        Ok(JsValue::from(ms))
-    });
+/// Backs every wall-clock `Date` read (`new Date()`, `Date()`, `Date.now()`) with the
+/// deterministic Obelisk clock via `sleep(Now)`, so time is stable across replay. Boa's
+/// `Date` builtin reads `system_time_millis()` for all three paths.
+struct ObeliskClock;
 
-    let global = context.global_object();
-    let date = global
-        .get(js_string!("Date"), context)
-        .expect("global Date object must be found");
-    let date_obj = date.as_object().expect("global Date must be an object");
-    date_obj.set(
-        js_string!("now"),
-        date_now_fn.to_js_function(context.realm()),
-        false,
-        context,
-    )?;
-    Ok(())
+impl Clock for ObeliskClock {
+    fn now(&self) -> JsInstant {
+        // The monotonic clock is only consumed by timeout jobs (`setTimeout`), which
+        // `DeterministicJobExecutor` already rejects. Reaching here would mean a
+        // non-deterministic time source slipped into a workflow, so fail loudly.
+        obelisk_log::error("Workflow must be deterministic, monotonic clock is not supported");
+        panic!("monotonic clock is not supported in workflows")
+    }
+
+    fn system_time_millis(&self) -> i64 {
+        let dt =
+            sleep(ScheduleAt::Now, None, None).expect("clock read via sleep(Now) must not fail");
+        (dt.seconds as i64) * 1000 + (dt.nanoseconds as i64) / 1_000_000
+    }
 }
 
 // Property key for storing join set index
@@ -1536,6 +1530,43 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
         .as_object()
         .ok_or_else(|| JsNativeError::typ().with_message("schedule must be an object"))?;
 
+    // A JS `Date` is accepted as an absolute wake-up time; `sleep` also returns a
+    // `Date`, making the API symmetric.
+    if let Ok(date) = JsDate::from_object(obj.clone()) {
+        let millis = date.get_time(ctx)?.to_number(ctx)?;
+        if millis.is_nan() {
+            return Err(JsNativeError::typ()
+                .with_message("schedule Date is an Invalid Date")
+                .into());
+        }
+        let millis = millis as i64;
+        let seconds = (millis / 1000).max(0) as u64;
+        let nanoseconds = ((millis % 1000).max(0) * 1_000_000) as u32;
+        return Ok(ScheduleAt::At(Datetime {
+            seconds,
+            nanoseconds,
+        }));
+    }
+
+    // The duration keys and `at` are mutually exclusive: they are not summed, so
+    // more than one is a mistake. Reject it instead of silently picking one by
+    // precedence order.
+    let present: Vec<&str> = ["milliseconds", "seconds", "minutes", "hours", "days", "at"]
+        .into_iter()
+        .filter(|key| {
+            obj.get(JsString::from(*key), ctx)
+                .is_ok_and(|v| !v.is_undefined())
+        })
+        .collect();
+    if present.len() > 1 {
+        return Err(JsNativeError::typ()
+            .with_message(format!(
+                "schedule object has multiple keys ({}); specify exactly one of milliseconds, seconds, minutes, hours, days, or at",
+                present.join(", ")
+            ))
+            .into());
+    }
+
     // Check for different duration types
     if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx)
         && !ms.is_undefined()
@@ -1587,5 +1618,9 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
         }));
     }
 
-    Ok(ScheduleAt::Now)
+    Err(JsNativeError::typ()
+        .with_message(
+            "schedule object has no recognized key (milliseconds, seconds, minutes, hours, days, at) and is not a Date",
+        )
+        .into())
 }

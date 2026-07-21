@@ -1005,6 +1005,37 @@ mod tests {
         assert_eq!(extract_string(&err_val.value), "something went wrong");
     }
 
+    /// A schedule object with more than one of the mutually-exclusive keys is
+    /// rejected (rather than silently picking one). The JS catches the thrown
+    /// `TypeError` and returns its message so we can assert on it.
+    #[tokio::test]
+    async fn workflow_js_schedule_rejects_multiple_keys() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
+        let js_source = r"
+            export default function fail() {
+                try {
+                    obelisk.sleep({ seconds: 5, minutes: 3 });
+                    return 'no-throw';
+                } catch (e) {
+                    return String(e.message ?? e);
+                }
+            }
+        ";
+
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let msg = extract_string(&output.expect("should have ok value").value);
+        assert!(
+            msg.contains("multiple keys") && msg.contains("seconds") && msg.contains("minutes"),
+            "expected a multiple-keys rejection naming the conflicting keys, got: {msg}"
+        );
+    }
+
     #[tokio::test]
     async fn workflow_js_syntax_error_should_fail_to_link() {
         test_utils::set_up();
@@ -2301,6 +2332,59 @@ mod tests {
         db_close.close().await;
     }
 
+    /// Test: `new Date()` resolves to the same deterministic Obelisk clock as
+    /// `Date.now()` (both go through `ObeliskClock::system_time_millis`). In 0.40.0
+    /// the workflow runtime wired a `FixedClock(0)`, so `new Date()` returned epoch 0
+    /// while `Date.now()` returned the real clock; this asserts they now agree.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_new_date(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_new_date(params) {
+            const now = new Date().getTime();
+            return JSON.stringify({ now });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_no_activities(db_pool.clone(), js_source, "test-new-date")
+                .await;
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await; // workflow yields at sleep_bt(Now), expires_at=42ms
+        harness.advance_time(Duration::ZERO).await; // fire the timer (42ms ≤ 42ms)
+        harness.tick().await; // workflow resumes, clock read returns 42ms
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(42),
+            result["now"],
+            "new Date() should return the simulated clock time (42ms): {result}"
+        );
+
+        // Same as Date.now(): the clock read goes through sleep_bt(Now), which
+        // creates a JoinSetRequest::DelayRequest event.
+        let db_conn = db_pool.connection_test().await.unwrap();
+        let log = db_conn.get(&harness.execution_id).await.unwrap();
+        assert!(
+            log.events.iter().any(|e| matches!(
+                e.event,
+                ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        request: JoinSetRequest::DelayRequest { .. },
+                        ..
+                    }
+                }
+            )),
+            "expected a JoinSetRequest::DelayRequest event for new Date()"
+        );
+        drop(harness);
+        drop(db_conn);
+        db_close.close().await;
+    }
+
     /// Test: `obelisk.sleep()` returns a `Date` object representing the wake-up time.
     /// - `advance_time(42ms)` → clock=42ms
     /// - `tick()` → workflow calls `sleep({ milliseconds: 100 })`, yields at `expires_at=142ms`
@@ -2335,6 +2419,43 @@ mod tests {
             json!(142),
             result["ms"],
             "sleep() should return a Date whose getTime() equals the wake-up ms: {result}"
+        );
+        drop(harness);
+        db_close.close().await;
+    }
+
+    /// Test: `obelisk.sleep` accepts a JS `Date` as an absolute wake-up time
+    /// (symmetric with the `Date` it returns). `new Date(142)` is 142ms since epoch,
+    /// so with the clock at 42ms the sleep must resolve at the absolute 142ms.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_sleep_accepts_date(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_sleep_date_arg(params) {
+            const wakeUp = obelisk.sleep(new Date(142));
+            return JSON.stringify({ ms: wakeUp.getTime() });
+        }";
+
+        let harness = JsWorkflowTestHarness::with_no_activities(
+            db_pool.clone(),
+            js_source,
+            "test-sleep-date-arg",
+        )
+        .await;
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await; // workflow yields at sleep, expires_at=142ms absolute
+        harness.advance_time(Duration::from_millis(100)).await; // clock=142ms, fire the timer
+        harness.tick().await; // workflow resumes
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(142),
+            result["ms"],
+            "sleep(new Date(142)) should wake at the absolute 142ms: {result}"
         );
         drop(harness);
         db_close.close().await;
