@@ -2301,6 +2301,59 @@ mod tests {
         db_close.close().await;
     }
 
+    /// Test: `new Date()` resolves to the same deterministic Obelisk clock as
+    /// `Date.now()` (both go through `ObeliskClock::system_time_millis`). In 0.40.0
+    /// the workflow runtime wired a `FixedClock(0)`, so `new Date()` returned epoch 0
+    /// while `Date.now()` returned the real clock; this asserts they now agree.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_new_date(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_new_date(params) {
+            const now = new Date().getTime();
+            return JSON.stringify({ now });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_no_activities(db_pool.clone(), js_source, "test-new-date")
+                .await;
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await; // workflow yields at sleep_bt(Now), expires_at=42ms
+        harness.advance_time(Duration::ZERO).await; // fire the timer (42ms ≤ 42ms)
+        harness.tick().await; // workflow resumes, clock read returns 42ms
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(42),
+            result["now"],
+            "new Date() should return the simulated clock time (42ms): {result}"
+        );
+
+        // Same as Date.now(): the clock read goes through sleep_bt(Now), which
+        // creates a JoinSetRequest::DelayRequest event.
+        let db_conn = db_pool.connection_test().await.unwrap();
+        let log = db_conn.get(&harness.execution_id).await.unwrap();
+        assert!(
+            log.events.iter().any(|e| matches!(
+                e.event,
+                ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        request: JoinSetRequest::DelayRequest { .. },
+                        ..
+                    }
+                }
+            )),
+            "expected a JoinSetRequest::DelayRequest event for new Date()"
+        );
+        drop(harness);
+        drop(db_conn);
+        db_close.close().await;
+    }
+
     /// Test: `obelisk.sleep()` returns a `Date` object representing the wake-up time.
     /// - `advance_time(42ms)` → clock=42ms
     /// - `tick()` → workflow calls `sleep({ milliseconds: 100 })`, yields at `expires_at=142ms`
