@@ -1548,6 +1548,25 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
         }));
     }
 
+    // The duration keys and `at` are mutually exclusive: they are not summed, so
+    // more than one is a mistake. Reject it instead of silently picking one by
+    // precedence order.
+    let present: Vec<&str> = ["milliseconds", "seconds", "minutes", "hours", "days", "at"]
+        .into_iter()
+        .filter(|key| {
+            obj.get(JsString::from(*key), ctx)
+                .is_ok_and(|v| !v.is_undefined())
+        })
+        .collect();
+    if present.len() > 1 {
+        return Err(JsNativeError::typ()
+            .with_message(format!(
+                "schedule object has multiple keys ({}); specify exactly one of milliseconds, seconds, minutes, hours, days, or at",
+                present.join(", ")
+            ))
+            .into());
+    }
+
     // Check for different duration types
     if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx)
         && !ms.is_undefined()

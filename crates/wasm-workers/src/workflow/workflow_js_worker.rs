@@ -1005,6 +1005,37 @@ mod tests {
         assert_eq!(extract_string(&err_val.value), "something went wrong");
     }
 
+    /// A schedule object with more than one of the mutually-exclusive keys is
+    /// rejected (rather than silently picking one). The JS catches the thrown
+    /// `TypeError` and returns its message so we can assert on it.
+    #[tokio::test]
+    async fn workflow_js_schedule_rejects_multiple_keys() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
+        let js_source = r#"
+            export default function fail() {
+                try {
+                    obelisk.sleep({ seconds: 5, minutes: 3 });
+                    return 'no-throw';
+                } catch (e) {
+                    return String(e.message ?? e);
+                }
+            }
+        "#;
+
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let msg = extract_string(&output.expect("should have ok value").value);
+        assert!(
+            msg.contains("multiple keys") && msg.contains("seconds") && msg.contains("minutes"),
+            "expected a multiple-keys rejection naming the conflicting keys, got: {msg}"
+        );
+    }
+
     #[tokio::test]
     async fn workflow_js_syntax_error_should_fail_to_link() {
         test_utils::set_up();
