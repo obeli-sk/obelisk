@@ -1012,7 +1012,7 @@ mod tests {
     async fn workflow_js_schedule_rejects_multiple_keys() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
-        let js_source = r#"
+        let js_source = r"
             export default function fail() {
                 try {
                     obelisk.sleep({ seconds: 5, minutes: 3 });
@@ -1021,7 +1021,7 @@ mod tests {
                     return String(e.message ?? e);
                 }
             }
-        "#;
+        ";
 
         let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
         let ctx = make_worker_context(ffqn, &[]);
