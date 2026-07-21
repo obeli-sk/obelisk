@@ -120,7 +120,7 @@ use boa_engine::class::Class;
 use boa_engine::module::MapModuleLoader;
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
-    js_string, property::Attribute,
+    js_string, object::builtins::JsDate, property::Attribute,
 };
 use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
@@ -837,6 +837,24 @@ fn parse_schedule_at(value: &JsValue, ctx: &mut Context) -> JsResult<ScheduleAt>
     let obj = value
         .as_object()
         .ok_or_else(|| JsNativeError::typ().with_message("schedule must be an object"))?;
+
+    // A JS `Date` is accepted as an absolute wake-up time; `sleep` also returns a
+    // `Date`, making the API symmetric.
+    if let Ok(date) = JsDate::from_object(obj.clone()) {
+        let millis = date.get_time(ctx)?.to_number(ctx)?;
+        if millis.is_nan() {
+            return Err(JsNativeError::typ()
+                .with_message("schedule Date is an Invalid Date")
+                .into());
+        }
+        let millis = millis as i64;
+        let seconds = (millis / 1000).max(0) as u64;
+        let nanoseconds = ((millis % 1000).max(0) * 1_000_000) as u32;
+        return Ok(ScheduleAt::At(Datetime {
+            seconds,
+            nanoseconds,
+        }));
+    }
 
     // Check for different duration types
     if let Ok(ms) = obj.get(js_string!("milliseconds"), ctx)

@@ -2393,6 +2393,43 @@ mod tests {
         db_close.close().await;
     }
 
+    /// Test: `obelisk.sleep` accepts a JS `Date` as an absolute wake-up time
+    /// (symmetric with the `Date` it returns). `new Date(142)` is 142ms since epoch,
+    /// so with the clock at 42ms the sleep must resolve at the absolute 142ms.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_sleep_accepts_date(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_sleep_date_arg(params) {
+            const wakeUp = obelisk.sleep(new Date(142));
+            return JSON.stringify({ ms: wakeUp.getTime() });
+        }";
+
+        let harness = JsWorkflowTestHarness::with_no_activities(
+            db_pool.clone(),
+            js_source,
+            "test-sleep-date-arg",
+        )
+        .await;
+        harness.advance_time(Duration::from_millis(42)).await;
+        harness.tick().await; // workflow yields at sleep, expires_at=142ms absolute
+        harness.advance_time(Duration::from_millis(100)).await; // clock=142ms, fire the timer
+        harness.tick().await; // workflow resumes
+
+        let result = harness.get_result_json().await;
+        assert_eq!(
+            json!(142),
+            result["ms"],
+            "sleep(new Date(142)) should wake at the absolute 142ms: {result}"
+        );
+        drop(harness);
+        db_close.close().await;
+    }
+
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
