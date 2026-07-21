@@ -57,6 +57,17 @@ jobs:
               exit 1
           fi
 
+  check-js-runtime-freshness:
+    name: JS runtime pins up to date
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Check JS runtime version pins are newer than their sources
+        run: ./scripts/check-js-runtime-freshness.sh
+
   deny:
     name: cargo deny
     runs-on: ubuntu-24.04
