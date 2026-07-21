@@ -187,15 +187,144 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
     }
 }
 
+/// Deterministic-test deadline tracker driven by `SimClock` instead of real
+/// tokio time. Deadlines are compared against simulated time and the `track`
+/// future only resolves when the test advances the sim clock past the deadline,
+/// so a blocked `Await` join-next waits for the response notification rather than
+/// racing real wall-clock latency.
+#[cfg(test)]
+pub(crate) struct DeadlineTrackerSim {
+    deadline: DateTime<Utc>,
+    deadline_minus_leeway: DateTime<Utc>,
+    leeway: Duration,
+    clock: test_utils::sim_clock::SimClock,
+    executor_close_watcher: watch::Receiver<bool>,
+}
+
+#[cfg(test)]
+fn add_duration(time: DateTime<Utc>, duration: Duration) -> DateTime<Utc> {
+    time + chrono::TimeDelta::from_std(duration).expect("test durations never overflow TimeDelta")
+}
+
+#[cfg(test)]
+#[async_trait]
+impl DeadlineTracker for DeadlineTrackerSim {
+    fn check_preempt(&self) -> Result<(), PreemptRequested> {
+        if *self.executor_close_watcher.borrow() {
+            Err(PreemptRequested::ExecutorClosing)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn track(
+        &self,
+        max_duration: Option<Duration>,
+    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>> {
+        let now = self.clock.now();
+        if self.deadline <= now {
+            return None;
+        }
+        let expiry = if let Some(max_duration) = max_duration {
+            min(add_duration(now, max_duration), self.deadline_minus_leeway)
+        } else {
+            self.deadline_minus_leeway
+        };
+        let clock = self.clock.clone();
+        // Subscribe now, before the future is awaited, so time advances between
+        // this call and the first poll are not missed.
+        let mut time_watcher = self.clock.subscribe();
+        let mut executor_close_watcher = self.executor_close_watcher.clone();
+        Some(Box::pin(async move {
+            loop {
+                if clock.now() >= expiry {
+                    return TimeoutOutcome::Timeout;
+                }
+                tokio::select! {
+                    // `Err` means the `SimClock` was dropped: time will never advance again.
+                    res = time_watcher.changed() => if res.is_err() {
+                        return TimeoutOutcome::Timeout;
+                    },
+                    _ = executor_close_watcher.wait_for(|&v| v) => return TimeoutOutcome::Timeout,
+                }
+            }
+        }))
+    }
+
+    fn close_to_expired(&self) -> bool {
+        self.deadline_minus_leeway <= self.clock.now()
+    }
+
+    fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
+        if *self.executor_close_watcher.borrow() {
+            Err(EpochCallbackError::ExecutorClosing)
+        } else if self.deadline <= self.clock.now() {
+            Err(EpochCallbackError::LockExpired)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
+        let now = self.clock.now();
+        self.deadline = add_duration(now, lock_extension);
+        let lock_duration = if lock_extension > self.leeway {
+            lock_extension.checked_sub(self.leeway).unwrap()
+        } else {
+            warn!(
+                "Not setting the leeway as deadline duration {lock_extension:?} is shorter than leeway {:?}",
+                self.leeway
+            );
+            lock_extension
+        };
+        self.deadline_minus_leeway = add_duration(now, lock_duration);
+        self.deadline
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct DeadlineTrackerFactorySim {
+    leeway: Duration,
+    clock: test_utils::sim_clock::SimClock,
+}
+
+#[cfg(test)]
+impl DeadlineTrackerFactory for DeadlineTrackerFactorySim {
+    fn create(
+        &self,
+        lock_expires_at: DateTime<Utc>,
+        executor_close_watcher: watch::Receiver<bool>,
+    ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
+        let started_at = self.clock.now();
+        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
+            return Err(LockAlreadyExpired { started_at });
+        };
+        let deadline_minus_leeway = if deadline_duration > self.leeway {
+            lock_expires_at
+                - chrono::TimeDelta::from_std(self.leeway).expect("leeway fits in TimeDelta")
+        } else {
+            warn!("Not setting the leeway as deadline duration is too short");
+            lock_expires_at
+        };
+        Ok(Box::new(DeadlineTrackerSim {
+            deadline: lock_expires_at,
+            deadline_minus_leeway,
+            leeway: self.leeway,
+            clock: self.clock.clone(),
+            executor_close_watcher,
+        }))
+    }
+}
+
 #[cfg(test)]
 #[must_use]
 pub fn deadline_tracker_factory_test(
     sim_clock: &test_utils::sim_clock::SimClock,
 ) -> std::sync::Arc<impl DeadlineTrackerFactory + use<>> {
-    std::sync::Arc::new(DeadlineTrackerFactoryTokio::new(
-        Duration::ZERO,
-        sim_clock.clone_box(),
-    ))
+    std::sync::Arc::new(DeadlineTrackerFactorySim {
+        leeway: Duration::ZERO,
+        clock: sim_clock.clone(),
+    })
 }
 
 pub struct DeadlineTrackerFactoryForReplay {}
