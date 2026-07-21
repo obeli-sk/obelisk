@@ -44,6 +44,10 @@ Or manually install dependencies (see [dev-deps.txt](dev-deps.txt)).
 scripts/check.sh
 ```
 
+## Linting
+
+Always run `scripts/clippy.sh` to lint.
+
 ## Running Tests
 
 Postgres must be running. Start a container:

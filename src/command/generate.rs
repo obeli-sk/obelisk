@@ -139,9 +139,23 @@ impl Generate {
                 }
                 Ok(())
             }
-            Generate::Token { json } => {
+            Generate::Token {
+                json,
+                server_config,
+            } => {
                 let token = crate::api::generate_token();
                 let hash = crate::api::token_hash(&token);
+                if let Some(server_config) = &server_config {
+                    let contents = tokio::fs::read_to_string(server_config)
+                        .await
+                        .with_context(|| format!("cannot read {server_config:?}"))?;
+                    let contents = add_token_hash(&contents, &hash)
+                        .with_context(|| format!("cannot update {server_config:?}"))?;
+                    tokio::fs::write(server_config, contents)
+                        .await
+                        .with_context(|| format!("cannot write {server_config:?}"))?;
+                    eprintln!("Added {hash} to `api.token_hashes` in {server_config:?}");
+                }
                 if json {
                     println!(
                         "{}",
@@ -151,11 +165,16 @@ impl Generate {
                         }))?
                     );
                 } else {
-                    println!("API token (shown only once, store it securely):");
                     println!("{token}");
-                    println!();
-                    println!("Add its hash to `api.token_hashes` in server.toml:");
-                    println!("api.token_hashes = [\"{hash}\"]");
+                    // Quiet when stdout is captured ($(...), direnv, pipes).
+                    if server_config.is_none()
+                        && std::io::IsTerminal::is_terminal(&std::io::stdout())
+                    {
+                        eprintln!(
+                            "Add to server.toml (or rerun with --server-config <server.toml>):"
+                        );
+                        eprintln!("api.token_hashes = [\"{hash}\"]");
+                    }
                 }
                 Ok(())
             }
@@ -169,6 +188,30 @@ impl Generate {
             }
         }
     }
+}
+
+fn add_token_hash(
+    server_config_contents: &str,
+    hash: &concepts::component_id::Digest,
+) -> Result<String, anyhow::Error> {
+    use toml_edit::{DocumentMut, Item, Table};
+    let mut doc = server_config_contents
+        .parse::<DocumentMut>()
+        .context("cannot parse server config as TOML")?;
+    let api = doc
+        .entry("api")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_like_mut()
+        .context("`api` must be a table")?;
+    let hashes = api
+        .entry("token_hashes")
+        .or_insert(Item::Value(
+            toml_edit::Value::Array(toml_edit::Array::new()),
+        ))
+        .as_array_mut()
+        .context("`api.token_hashes` must be an array")?;
+    hashes.push(hash.to_string());
+    Ok(doc.to_string())
 }
 
 #[derive(Debug, Serialize)]
@@ -839,4 +882,26 @@ async fn write_wit_deps(
         }
     }
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::add_token_hash;
+
+    #[test]
+    fn add_token_hash_should_create_and_append() {
+        let hash = crate::api::token_hash("some-token");
+        // Missing `api` table is created.
+        let contents = add_token_hash("[webui]\nenabled = false\n", &hash).unwrap();
+        insta::assert_snapshot!("created", contents);
+        // Existing entries, including dotted-key style, are kept.
+        let contents = add_token_hash(
+            &format!("api.token_hashes = [\"{hash}\"]\n"),
+            &crate::api::token_hash("other-token"),
+        )
+        .unwrap();
+        insta::assert_snapshot!("appended", contents);
+        // A scalar in place of the array is rejected.
+        add_token_hash("[api]\ntoken_hashes = true\n", &hash).unwrap_err();
+    }
 }

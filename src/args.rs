@@ -386,15 +386,20 @@ pub(crate) enum Generate {
         #[arg(short, long)]
         json: bool,
     },
-    /// Generate a random API token plus the `sha256:` hash entry accepted in
-    /// `server.toml` `api.token_hashes`.
+    /// Generate a random API token and print it to stdout.
     ///
+    /// Stdout carries only the token, so it composes with env injection:
+    /// `OBELISK__API__TOKEN=$(obelisk generate token)`. When run interactively,
+    /// the token's `api.token_hashes` entry is also printed to stderr.
     /// The plaintext token is printed once and never stored; revoke it by
-    /// deleting its hash line and restarting the server.
+    /// deleting its `api.token_hashes` entry and restarting the server.
     Token {
-        /// Output as JSON instead of plain text.
+        /// Output the token and its `sha256:` hash as JSON instead of plain text.
         #[arg(short, long)]
         json: bool,
+        /// Append the token's hash to `api.token_hashes` in this server.toml file.
+        #[arg(long)]
+        server_config: Option<PathBuf>,
     },
     /// Print a prompt context for authoring an Obelisk application with a coding agent.
     ///

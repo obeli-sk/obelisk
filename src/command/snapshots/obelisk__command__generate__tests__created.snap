@@ -1,0 +1,9 @@
+---
+source: src/command/generate.rs
+expression: contents
+---
+[webui]
+enabled = false
+
+[api]
+token_hashes = ["sha256:308eda9daf26b7446b284449a5895ab9a04ff30c129d4454e471cfb81bf5557d"]
