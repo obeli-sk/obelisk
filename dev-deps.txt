@@ -9,5 +9,5 @@ rustc 1.96.0 (ac68faa20 2026-05-25)
 rust-version 1.96.0
 wasm-tools 1.253.0
 cargo-zigbuild 0.23.0
-litestream v0.5.14
+litestream v0.5.15
 ldd (GNU libc) 2.42
