@@ -60,6 +60,11 @@ skip = [
     { name = "hashbrown", version = "0.15" },
     { name = "hashbrown", version = "0.16.1" },
     { name = "foldhash", version = "0.1" },
+    # boa_engine requires itertools 0.15 while the workspace and wasmtime use 0.14
+    { name = "itertools", version = "0.15" },
+    # boa_interner requires phf 0.14 while tokio-postgres uses 0.13
+    { name = "phf", version = "0.14" },
+    { name = "phf_shared", version = "0.14" },
     # obelisk uses sha2 0.10 RustCrypto suite; postgres-protocol requires sha2 0.11
     { name = "sha2", version = "0.10" },
     { name = "digest", version = "0.10" },

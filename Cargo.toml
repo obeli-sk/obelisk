@@ -378,9 +378,9 @@ wasmparser = "0.252.0"
 wit-component = "0.252.0"
 
 # boa
-boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.7", default-features = false }
-boa_gc = { package="obeli-sk-boa-gc", version="1.0.0-obeli-sk.7" }
-boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.7", default-features = false, features = ["fetch"] }
+boa_engine = { package="obeli-sk-boa-engine", version="1.0.0-obeli-sk.9", default-features = false }
+boa_gc = { package="obeli-sk-boa-gc", version="1.0.0-obeli-sk.9" }
+boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.9", default-features = false, features = ["fetch"] }
 
 # boa_engine = { path = "../wasm/boa/core/engine", default-features = false }
 # boa_gc = { path = "../wasm/boa/core/gc" }

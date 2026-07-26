@@ -343,6 +343,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -679,7 +685,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f70e4ddd6beedefeb48f59d5f85fc21365a66e7976408c3d39f6cbbc4f03e08c"
 dependencies = [
  "divan-macros",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -725,6 +731,16 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "comfy-table"
+version = "7.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "958c5d6ecf1f214b4c2bbbbf6ab9523a864bd136dcf71a7e8904799acfe1ad47"
+dependencies = [
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1981,6 +1997,8 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
  "serde",
  "serde_core",
@@ -2434,6 +2452,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2813,9 +2840,9 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-version = "0.4.8"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -2913,9 +2940,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-ast"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e2fac833e8c14c146c53a0c4f0043f8833c86926abc6c15957130fa431c84e8"
+checksum = "2aa29508423b865d32ed36f6fd9a2871f40bb7d5076d2f6ba17a0b8b2f3d7e33"
 dependencies = [
  "bitflags",
  "indexmap 2.14.0",
@@ -2929,9 +2956,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-engine"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "563b6d7275912b96111ea2ee1d004b90a61a1a373224034a2866cdcda9c2ffdf"
+checksum = "f767cbca57d35fa814c7717994eb1a8059af1d20adf9e416d8bcd9f860ad71db"
 dependencies = [
  "aligned-vec",
  "arrayvec",
@@ -2946,11 +2973,11 @@ dependencies = [
  "fast-float2",
  "futures-concurrency",
  "futures-lite 2.6.1",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "icu_normalizer",
  "indexmap 2.14.0",
  "intrusive-collections",
- "itertools",
+ "itertools 0.15.0",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -2981,13 +3008,13 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-gc"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c10105a014d0b19d52e67c4803a073e3a8b8a4a6f311223d237ead05d60404e"
+checksum = "21a571fc82289717faac2064ce6fee18ef3302fbb807f27063b2de3c7b72b973"
 dependencies = [
  "arrayvec",
  "either",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "obeli-sk-boa-macros",
  "obeli-sk-boa-string",
  "thin-vec",
@@ -2995,25 +3022,25 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-interner"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fca2f7a466dc189a0297990c72f598d90f8dc5c148505cce8ac156f1f84a3a88"
+checksum = "cddb06f93b1ed186e98c3004e53a82ce0b7bddab2130dfedbfe498b134523204"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "indexmap 2.14.0",
  "obeli-sk-boa-gc",
  "obeli-sk-boa-macros",
  "once_cell",
- "phf",
+ "phf 0.14.0",
  "rustc-hash",
  "static_assertions",
 ]
 
 [[package]]
 name = "obeli-sk-boa-macros"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "052bef50cc8bd1e3f61662f23bcbe8de174ef6c56cceda9a8c47fee3b5e1df43"
+checksum = "4eca142af2b86e9524ee16bfe3201e241a324153ba8f4c7b25cb57f69fd59bcf"
 dependencies = [
  "cfg-if",
  "cow-utils",
@@ -3025,9 +3052,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-parser"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9baddb4f2fbd3a5753db487bf1c8c2bb9724983130cacbfa26f123d593562f72"
+checksum = "fc3e6bcf962bf89205dd93f04ddd7141c0d3b57bbf7c87ed94bb71ec34dfd566"
 dependencies = [
  "bitflags",
  "fast-float2",
@@ -3043,11 +3070,10 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-runtime"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab1042e4a9d5281a12121c9aa8c574649fbce9a78a7c50462e5ee1e68748719"
+checksum = "af01172ad64008214f417271448c0df0ef415c9f4baa655f73e90537a5b0bc6d"
 dependencies = [
- "base64 0.22.1",
  "bytemuck",
  "either",
  "form_urlencoded",
@@ -3056,6 +3082,7 @@ dependencies = [
  "http",
  "obeli-sk-boa-engine",
  "obeli-sk-boa-gc",
+ "obeli-sk-boa-wintertc",
  "rustc-hash",
  "serde_json",
  "url",
@@ -3063,9 +3090,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-string"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff28635df03388e5921f32e49b6710f5a9dfae75c6870aa586376446de726c0e"
+checksum = "bfd5ff0040229a7bf16310386eb6b8697e818c262045626e8745b7f48916346f"
 dependencies = [
  "fast-float2",
  "itoa",
@@ -3073,6 +3100,19 @@ dependencies = [
  "rustc-hash",
  "ryu-js",
  "static_assertions",
+]
+
+[[package]]
+name = "obeli-sk-boa-wintertc"
+version = "1.0.0-obeli-sk.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3a3db1f31d519ddd4da4658fd1bc31d5b35272d92fbc031000c92acd4df4cd1"
+dependencies = [
+ "base64 0.23.0",
+ "comfy-table",
+ "obeli-sk-boa-engine",
+ "obeli-sk-boa-gc",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -3164,7 +3204,7 @@ dependencies = [
  "derive_more",
  "hashbrown 0.16.1",
  "hdrhistogram",
- "itertools",
+ "itertools 0.14.0",
  "obeli-sk-concepts",
  "obeli-sk-db-common",
  "obeli-sk-val-json",
@@ -3254,18 +3294,18 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-small-btree"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2f2f369605a9b42ec7e1a4a7f6169591ef709a28f9898af00c3a26e9947de00"
+checksum = "23dc0d64a13ff20c36e21ade9c47af330907d938b2cb39c1c5e7ea1d6412d303"
 dependencies = [
  "arrayvec",
 ]
 
 [[package]]
 name = "obeli-sk-tag-ptr"
-version = "1.0.0-obeli-sk.7"
+version = "1.0.0-obeli-sk.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ece24ad8393257ced609693a3acc6f68d1b09da2a99b0ace33592031d7fc05c"
+checksum = "eb921a71a005b72170a16da7e5b9f11faa6447e989107585736b695eb2c57576"
 
 [[package]]
 name = "obeli-sk-utils"
@@ -3316,7 +3356,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap 2.14.0",
  "insta",
- "itertools",
+ "itertools 0.14.0",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -3347,7 +3387,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.14.0",
  "insta",
- "itertools",
+ "itertools 0.14.0",
  "libc",
  "obeli-db-tests",
  "obeli-sk-boa-engine",
@@ -3429,7 +3469,7 @@ dependencies = [
  "http",
  "indexmap 2.14.0",
  "insta",
- "itertools",
+ "itertools 0.14.0",
  "jsonwebtoken",
  "obeli-sk-concepts",
  "obeli-sk-db-postgres",
@@ -3794,29 +3834,38 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
 dependencies = [
- "phf_macros",
- "phf_shared",
+ "phf_shared 0.13.1",
  "serde",
 ]
 
 [[package]]
-name = "phf_generator"
-version = "0.13.1"
+name = "phf"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135ace3a761e564ec88c03a77317a7c6b80bb7f7135ef2544dbe054243b89737"
+checksum = "010378780309880b08997fae13be7834dba947d36393bd372f2b1556deb2a2f6"
+dependencies = [
+ "phf_macros",
+ "phf_shared 0.14.0",
+]
+
+[[package]]
+name = "phf_generator"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aeb62e0959d5a1bebc965f4d15d9e2b7cea002b6b0f5ba8cde6cc26738467100"
 dependencies = [
  "fastrand 2.4.1",
- "phf_shared",
+ "phf_shared 0.14.0",
 ]
 
 [[package]]
 name = "phf_macros"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
+checksum = "5fa8d0ca26d424d27630da600c6624696e7dec8bf7b3b492b383c5dc49e5e085"
 dependencies = [
  "phf_generator",
- "phf_shared",
+ "phf_shared 0.14.0",
  "proc-macro2",
  "quote",
  "syn",
@@ -3827,6 +3876,15 @@ name = "phf_shared"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
+dependencies = [
+ "siphasher",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6fd9027e2d9319be6349febd1db4e8d02aa544921200c9b777720ac34a3aa89"
 dependencies = [
  "siphasher",
 ]
@@ -3982,7 +4040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -4003,7 +4061,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn",
@@ -5632,7 +5690,7 @@ dependencies = [
  "log",
  "parking_lot",
  "percent-encoding",
- "phf",
+ "phf 0.13.1",
  "pin-project-lite",
  "postgres-protocol",
  "postgres-types",
@@ -6658,7 +6716,7 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-native",
  "gimli",
- "itertools",
+ "itertools 0.14.0",
  "log",
  "object",
  "pulley-interpreter",
