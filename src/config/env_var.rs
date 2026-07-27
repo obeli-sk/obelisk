@@ -18,6 +18,44 @@ pub(crate) fn interpolate_env_vars_secret(input: &str) -> Result<SecretString, E
 }
 
 fn interpolate_env_vars_inner(input: &str) -> Result<String, EnvVarMissing> {
+    interpolate_core(input, &|key| std::env::var(key).ok(), &|key| {
+        EnvVarMissing(key)
+    })
+}
+
+/// Interpolate a path template, resolving synthetic path variables (e.g. `DATA_DIR`) before
+/// process environment variables. `synthetics` maps each recognized synthetic name to its value,
+/// or `None` when that directory is unavailable in the current context. Synthetic names take
+/// precedence over same-named process environment variables. A reference to an unset variable
+/// (no `${VAR:-default}` fallback) is an error rather than a literal `${VAR}`.
+pub(crate) fn interpolate_path_template(
+    input: &str,
+    synthetics: &[(&'static str, Option<String>)],
+) -> Result<String, anyhow::Error> {
+    let lookup = |key: &str| -> Option<String> {
+        match synthetics.iter().find(|(name, _)| *name == key) {
+            Some((_, val)) => val.clone(),
+            None => std::env::var(key).ok(),
+        }
+    };
+    let on_missing = |key: String| -> anyhow::Error {
+        if synthetics.iter().any(|(name, _)| *name == key) {
+            anyhow::anyhow!("path variable `${{{key}}}` is not available in this context")
+        } else {
+            anyhow::anyhow!("environment variable not set: `{key}`")
+        }
+    };
+    interpolate_core(input, &lookup, &on_missing)
+}
+
+/// Shared `${VAR}` / `${VAR:-default}` / `${VAR-default}` parser. `lookup` returns the value of a
+/// variable (`Some`) or reports it as unset (`None`); `on_missing` builds the error for a reference
+/// to an unset variable that has no default.
+fn interpolate_core<E>(
+    input: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
+    on_missing: &dyn Fn(String) -> E,
+) -> Result<String, E> {
     let mut out = String::new();
     let mut chars = input.chars().peekable();
 
@@ -68,17 +106,17 @@ fn interpolate_env_vars_inner(input: &str) -> Result<String, EnvVarMissing> {
                 out.push_str(&key);
             } else {
                 match default_mode {
-                    None => {
-                        let val = std::env::var(&key).map_err(|_| EnvVarMissing(key))?;
-                        out.push_str(&val);
-                    }
+                    None => match lookup(&key) {
+                        Some(val) => out.push_str(&val),
+                        None => return Err(on_missing(key)),
+                    },
                     Some(colon_dash) => {
-                        let val = std::env::var(&key).ok();
+                        let val = lookup(&key);
                         let use_default =
                             val.is_none() || (colon_dash && val.as_deref() == Some(""));
                         if use_default {
                             // Recursively interpolate the default value
-                            out.push_str(&interpolate_env_vars_inner(&default_str)?);
+                            out.push_str(&interpolate_core(&default_str, lookup, on_missing)?);
                         } else {
                             out.push_str(val.as_deref().unwrap());
                         }
@@ -228,6 +266,63 @@ mod tests {
             interpolate_env_vars_inner("${NONEXISTENT_NESTED_XYZ:-${TEST_ENV_NESTED_FALLBACK}}")
                 .unwrap(),
             "nested_val"
+        );
+    }
+
+    // --- path templates: synthetic path variables + env interpolation ---
+
+    #[test]
+    fn path_template_synthetic_resolves() {
+        let synthetics = [("DATA_DIR", Some("/data".to_string()))];
+        assert_eq!(
+            interpolate_path_template("${DATA_DIR}/obelisk-sqlite", &synthetics).unwrap(),
+            "/data/obelisk-sqlite"
+        );
+    }
+
+    #[test]
+    fn path_template_synthetic_wins_over_env() {
+        // SAFETY: test-only, no concurrent access to this env var.
+        unsafe { std::env::set_var("TEMP_DIR", "/env-temp") };
+        let synthetics = [("TEMP_DIR", Some("/synthetic-temp".to_string()))];
+        assert_eq!(
+            interpolate_path_template("${TEMP_DIR}/x", &synthetics).unwrap(),
+            "/synthetic-temp/x"
+        );
+    }
+
+    #[test]
+    fn path_template_falls_back_to_env() {
+        // SAFETY: test-only, no concurrent access to this env var.
+        unsafe { std::env::set_var("TEST_PATH_ENV_VAR", "/from-env") };
+        let synthetics = [("DATA_DIR", Some("/data".to_string()))];
+        assert_eq!(
+            interpolate_path_template("${TEST_PATH_ENV_VAR}/x", &synthetics).unwrap(),
+            "/from-env/x"
+        );
+    }
+
+    #[test]
+    fn path_template_unknown_var_errors() {
+        let synthetics = [("DATA_DIR", Some("/data".to_string()))];
+        let err = interpolate_path_template("${NONEXISTENT_PATH_XYZ}/x", &synthetics).unwrap_err();
+        assert!(err.to_string().contains("NONEXISTENT_PATH_XYZ"));
+    }
+
+    #[test]
+    fn path_template_unavailable_synthetic_errors_clearly() {
+        let synthetics = [("SERVER_CONFIG_DIR", None)];
+        let err = interpolate_path_template("${SERVER_CONFIG_DIR}/x", &synthetics).unwrap_err();
+        assert!(err.to_string().contains("not available"));
+        assert!(err.to_string().contains("SERVER_CONFIG_DIR"));
+    }
+
+    #[test]
+    fn path_template_unavailable_synthetic_uses_default() {
+        let synthetics = [("DATA_DIR", None)];
+        assert_eq!(
+            interpolate_path_template("${DATA_DIR:-./local}/x", &synthetics).unwrap(),
+            "./local/x"
         );
     }
 }

@@ -1,7 +1,7 @@
+use super::env_var::interpolate_path_template;
+use super::toml::{DeploymentToml, ServerConfigToml};
 use crate::config::toml::DeploymentResolved;
 use crate::config::toml::DeploymentTomlValidated;
-
-use super::toml::{DeploymentToml, ServerConfigToml};
 use anyhow::{Context as _, bail};
 use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
@@ -9,19 +9,16 @@ use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tracing::info;
-use tracing::warn;
 
 pub(crate) const OBELISK_HELP_SERVER_TOML: &str = include_str!("../../obelisk-help-server.toml");
 pub(crate) const OBELISK_HELP_DEPLOYMENT_TOML: &str =
     include_str!("../../obelisk-help-deployment.toml");
 
-// Path prefixes
+/// Leading `~/`, expanded to the user's home directory. Not `${}` interpolation syntax.
 const HOME_DIR_PREFIX: &str = "~/";
+// Default-path building blocks referencing the synthetic `${DATA_DIR}` / `${CACHE_DIR}` variables.
 pub(crate) const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 pub(crate) const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
-const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
-const SERVER_CONFIG_DIR_PREFIX: &str = "${SERVER_CONFIG_DIR}/";
-const TEMP_DIR_PREFIX: &str = "${TEMP_DIR}/";
 
 #[derive(Clone)]
 pub(crate) struct PathPrefixes {
@@ -36,44 +33,47 @@ impl PathPrefixes {
         &self,
         dir: &str,
     ) -> Result<PathBuf, anyhow::Error> {
-        let path =
-            if let (Some(project_dirs), Some(base_dirs)) = (&self.project_dirs, &self.base_dirs) {
-                if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
-                    base_dirs.home_dir().join(suffix)
-                } else if let Some(suffix) = dir.strip_prefix(DATA_DIR_PREFIX) {
-                    project_dirs.data_dir().join(suffix)
-                } else if let Some(suffix) = dir.strip_prefix(CACHE_DIR_PREFIX) {
-                    project_dirs.cache_dir().join(suffix)
-                } else if let Some(suffix) = dir.strip_prefix(CONFIG_DIR_PREFIX) {
-                    project_dirs.config_dir().join(suffix)
-                } else if let Some(suffix) = dir.strip_prefix(SERVER_CONFIG_DIR_PREFIX) {
-                    if let Some(config_dir) = &self.server_config_dir {
-                        config_dir.join(suffix)
-                    } else {
-                        warn!("Not expanding prefix of `{dir}`: no server config file");
-                        PathBuf::from(dir)
-                    }
-                } else if let Some(suffix) = dir.strip_prefix(TEMP_DIR_PREFIX) {
-                    std::env::temp_dir().join(suffix)
-                } else {
-                    PathBuf::from(dir)
-                }
-            } else {
-                if dir.starts_with(HOME_DIR_PREFIX)
-                    || dir.starts_with(DATA_DIR_PREFIX)
-                    || dir.starts_with(CACHE_DIR_PREFIX)
-                    || dir.starts_with(CONFIG_DIR_PREFIX)
-                    || dir.starts_with(SERVER_CONFIG_DIR_PREFIX)
-                {
-                    warn!("Not expanding prefix of `{dir}`");
-                }
-
-                PathBuf::from(dir)
-            };
+        let path = PathBuf::from(self.interpolate_path(dir)?);
         tokio::fs::create_dir_all(&path)
             .await
             .with_context(|| format!("cannot create directory {path:?}"))?;
         Ok(path)
+    }
+
+    /// Resolve a server-config path field: a leading `~/` becomes the home directory, then
+    /// synthetic path variables (`${DATA_DIR}` etc.) and process environment variables are
+    /// interpolated, with synthetic names taking precedence.
+    fn interpolate_path(&self, dir: &str) -> Result<String, anyhow::Error> {
+        let dir = if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
+            let home = self
+                .base_dirs
+                .as_ref()
+                .context("cannot expand `~/`: home directory is unavailable")?
+                .home_dir();
+            home.join(suffix).to_string_lossy().into_owned()
+        } else {
+            dir.to_owned()
+        };
+        interpolate_path_template(&dir, &self.synthetic_dirs())
+    }
+
+    /// Synthetic path variables and their values, or `None` when unavailable in this context.
+    fn synthetic_dirs(&self) -> Vec<(&'static str, Option<String>)> {
+        let to_string = |p: &Path| p.to_string_lossy().into_owned();
+        let project_dirs = self.project_dirs.as_ref();
+        vec![
+            ("DATA_DIR", project_dirs.map(|p| to_string(p.data_dir()))),
+            ("CACHE_DIR", project_dirs.map(|p| to_string(p.cache_dir()))),
+            (
+                "CONFIG_DIR",
+                project_dirs.map(|p| to_string(p.config_dir())),
+            ),
+            (
+                "SERVER_CONFIG_DIR",
+                self.server_config_dir.as_deref().map(to_string),
+            ),
+            ("TEMP_DIR", Some(to_string(&std::env::temp_dir()))),
+        ]
     }
 }
 
