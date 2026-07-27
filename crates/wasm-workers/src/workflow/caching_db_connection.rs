@@ -470,6 +470,13 @@ impl WorkflowDbConnection for CachingDbConnection {
         _wasm_backtrace: Option<storage::WasmBacktrace>,
         _component_id: &ComponentId,
     ) -> Result<(), UpsertStubOrReplayInterrupt> {
+        // This write bypasses the cache (it must return the conflict result
+        // immediately), so flush first to keep it ordered after any buffered write.
+        // Without this a self-fulfilled stub, whose child `submit` is still buffered,
+        // creates the child here and again when the buffer flushes.
+        self.flush_non_blocking_event_cache(current_time)
+            .await
+            .map_err(UpsertStubOrReplayInterrupt::DbError)?;
         self.db_connection
             .upsert_stub_response(execution_id, version, req, response, current_time)
             .await

@@ -1465,7 +1465,8 @@ impl EventHistory {
                 wasm_backtrace,
             }) => {
                 // `WorkflowDbConnection::get_stub_create_request` already called when creating `intent`.
-                // Cannot be cacheable, we need the result of response write imediately.
+                // The response write cannot be cached: we need its conflict result
+                // immediately, so it flushes the non-blocking cache first.
                 // Idempotently attempt to write to target_execution_id.
                 // The idempotent write is needed to avoid race with stub requests originating from remote systems.
                 debug!(target_execution_id = %params.target_execution_id, "StubRequest: first write");
@@ -1481,7 +1482,6 @@ impl EventHistory {
                             created_at: called_at,
                             event: ExecutionRequest::HistoryEvent { event },
                         };
-                        // Replay interruption correctness: asserted that flush is noop.
                         db_connection
                             .append_batch(
                                 called_at,

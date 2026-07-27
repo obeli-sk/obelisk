@@ -593,7 +593,9 @@ mod tests {
     use crate::cancellation_driver;
     use crate::engines::{EngineConfig, Engines};
     use crate::testing_fn_registry::TestingFnRegistry;
-    use crate::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
+    use crate::workflow::deadline_tracker::{
+        DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
+    };
     use crate::workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig};
     use assert_matches::assert_matches;
     use chrono::DateTime;
@@ -1114,21 +1116,26 @@ mod tests {
             js_source,
             user_ffqn,
             db_pool,
-            clock_fn,
+            clock_fn.clone_box().as_ref(),
             fn_registry,
             workflow_engine,
             DEPLOYMENT_ID_DUMMY,
+            JoinNextBlockingStrategy::Interrupt,
+            Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn)),
         )
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn compile_js_workflow_worker_with_deployment_id(
         js_source: &str,
         user_ffqn: &FunctionFqn,
         db_pool: Arc<dyn DbPool>,
-        clock_fn: Box<dyn ClockFn>,
+        clock_fn: &dyn ClockFn,
         fn_registry: Arc<dyn FunctionRegistry>,
         workflow_engine: Arc<Engine>,
         deployment_id: DeploymentId,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let params = default_js_params();
@@ -1146,7 +1153,7 @@ mod tests {
 
         let config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+            join_next_blocking_strategy,
             backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
@@ -1173,8 +1180,6 @@ mod tests {
         .unwrap();
 
         let linked = js_compiled.link(fn_registry).unwrap();
-
-        let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn));
 
         (
             linked.into_worker(
@@ -1659,22 +1664,53 @@ mod tests {
     }
 
     impl JsWorkflowTestHarness {
-        /// Create harness with stub activity registered.
+        /// Create harness with stub activity registered, interrupt blocking strategy.
         async fn with_stub_activity(
             db_pool: Arc<dyn DbPool>,
             js_source: &str,
             fn_name: &'static str,
         ) -> Self {
-            Self::new(db_pool, js_source, fn_name, TestActivities::Stub).await
+            Self::new(
+                db_pool,
+                js_source,
+                fn_name,
+                TestActivities::Stub,
+                JoinNextBlockingStrategy::Interrupt,
+            )
+            .await
         }
 
-        /// Create harness with no activities registered.
+        /// Create harness with stub activity registered and a given blocking strategy.
+        async fn with_stub_activity_strategy(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+            join_next_blocking_strategy: JoinNextBlockingStrategy,
+        ) -> Self {
+            Self::new(
+                db_pool,
+                js_source,
+                fn_name,
+                TestActivities::Stub,
+                join_next_blocking_strategy,
+            )
+            .await
+        }
+
+        /// Create harness with no activities registered, interrupt blocking strategy.
         async fn with_no_activities(
             db_pool: Arc<dyn DbPool>,
             js_source: &str,
             fn_name: &'static str,
         ) -> Self {
-            Self::new(db_pool, js_source, fn_name, TestActivities::None).await
+            Self::new(
+                db_pool,
+                js_source,
+                fn_name,
+                TestActivities::None,
+                JoinNextBlockingStrategy::Interrupt,
+            )
+            .await
         }
 
         async fn new(
@@ -1682,6 +1718,7 @@ mod tests {
             js_source: &str,
             fn_name: &'static str,
             activities: TestActivities,
+            join_next_blocking_strategy: JoinNextBlockingStrategy,
         ) -> Self {
             use crate::activity::activity_worker::test::compile_activity_stub;
 
@@ -1700,16 +1737,31 @@ mod tests {
             let fn_registry: Arc<dyn FunctionRegistry> =
                 TestingFnRegistry::new_from_components(components);
 
+            // `Await` needs the SimClock deadline tracker for determinism; `Interrupt` never calls `track`.
+            let deadline_factory: Arc<dyn DeadlineTrackerFactory> =
+                match join_next_blocking_strategy {
+                    JoinNextBlockingStrategy::Await { .. } => {
+                        deadline_tracker_factory_test(&sim_clock)
+                    }
+                    JoinNextBlockingStrategy::Interrupt => Arc::new(
+                        DeadlineTrackerFactoryTokio::new(Duration::ZERO, sim_clock.clone_box()),
+                    ),
+                };
+
             let workflow_engine =
                 Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
-            let (worker, component_id, _runnable_component) = compile_js_workflow_worker(
-                js_source,
-                &user_ffqn,
-                db_pool.clone(),
-                sim_clock.clone_box(),
-                fn_registry,
-                workflow_engine,
-            );
+            let (worker, component_id, _runnable_component) =
+                compile_js_workflow_worker_with_deployment_id(
+                    js_source,
+                    &user_ffqn,
+                    db_pool.clone(),
+                    sim_clock.clone_box().as_ref(),
+                    fn_registry,
+                    workflow_engine,
+                    DEPLOYMENT_ID_DUMMY,
+                    join_next_blocking_strategy,
+                    deadline_factory,
+                );
 
             let (workflow_exec, workflow_close_tx) =
                 new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
@@ -1811,6 +1863,78 @@ mod tests {
             "lastId should be a child execution id, got {result}"
         );
         assert_eq!(json!("stubbed-result-42"), result["result"]);
+        drop(harness);
+        db_close.close().await;
+    }
+
+    /// The public docs' "self-fulfilled stub events" pattern under `Await`: submit
+    /// a stub child, fulfil it via `obelisk.stub`, then consume it either by an
+    /// explicit `joinNext` or by draining it through `joinSet.close()`. The response
+    /// is durable before the consume, so one tick with no sim-time advance must
+    /// reach `Finished` rather than fall back to lock-expiry recovery.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_self_fulfilled_stub_await_is_fast(
+        database: Database,
+        #[values(0, 10)] non_blocking_event_batching: u32,
+        #[values(false, true)] drain_via_close: bool,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        // The consumers differ only in how the fulfilled stub is drained; the JS
+        // validates the joinNext response inline, so `Finished(Ok)` covers both.
+        let consume = if drain_via_close {
+            "events.close();"
+        } else {
+            "const published = events.joinNext();
+             if (events.lastId !== executionId || published !== valueJson) {
+                 throw new Error('unexpected event response: ' + events.lastId);
+             }
+             events.close();"
+        };
+        let js_source = format!(
+            r"
+        export default function session(params) {{
+            const events = obelisk.createJoinSet({{ name: 'events' }});
+            const valueJson = JSON.stringify({{ stdout: 'hello\n', exit_code: 0 }});
+            const executionId = events.submit('testing:stub-activity/activity.foo', ['command-1']);
+            obelisk.stub(executionId, {{ ok: valueJson }});
+            {consume}
+            return JSON.stringify({{ done: true }});
+        }}"
+        );
+
+        let harness = JsWorkflowTestHarness::with_stub_activity_strategy(
+            db_pool,
+            &js_source,
+            "session",
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching,
+            },
+        )
+        .await;
+
+        harness.tick().await;
+
+        let pending_state = harness
+            .db_connection
+            .get_pending_state(&harness.execution_id)
+            .await
+            .unwrap()
+            .pending_state;
+        assert_matches!(
+            pending_state,
+            PendingState::Finished(PendingStateFinished {
+                result_kind: PendingStateFinishedResultKind::Ok,
+                ..
+            }),
+            "one Await tick must finish the workflow, got {pending_state:?}"
+        );
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["done"]);
         drop(harness);
         db_close.close().await;
     }
@@ -2799,20 +2923,30 @@ mod tests {
                 original_js_source,
                 &user_ffqn,
                 db_pool.clone(),
-                sim_clock.clone_box(),
+                sim_clock.clone_box().as_ref(),
                 fn_registry.clone(),
                 workflow_engine.clone(),
                 original_deployment_id,
+                JoinNextBlockingStrategy::Interrupt,
+                Arc::new(DeadlineTrackerFactoryTokio::new(
+                    Duration::ZERO,
+                    sim_clock.clone_box(),
+                )),
             );
         let (upgrade_worker, upgrade_component_id, _upgrade_runnable) =
             compile_js_workflow_worker_with_deployment_id(
                 failing_upgrade_js_source,
                 &user_ffqn,
                 db_pool.clone(),
-                sim_clock.clone_box(),
+                sim_clock.clone_box().as_ref(),
                 fn_registry,
                 workflow_engine,
                 upgrade_deployment_id,
+                JoinNextBlockingStrategy::Interrupt,
+                Arc::new(DeadlineTrackerFactoryTokio::new(
+                    Duration::ZERO,
+                    sim_clock.clone_box(),
+                )),
             );
         assert_ne!(
             original_component_id.component_digest,
