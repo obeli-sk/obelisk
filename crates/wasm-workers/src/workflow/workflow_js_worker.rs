@@ -933,7 +933,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_fn_should_fail() {
+    async fn workflow_js_async_fn() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
         let js_source = r#"
@@ -945,21 +945,39 @@ mod tests {
         let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
         let ctx = make_worker_context(ffqn, &[]);
 
-        let err = worker.run(ctx).await.unwrap_err();
-        assert_matches!(
-            err,
-            WorkerError::FatalError(
-                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
-                    ResultParsingErrorFromVal::TypeCheckError(reason),
-                )),
-                _version,
-            ) => {
-                assert_eq!(
-                    "failed to type check the ok variant value `{}` as type string - invalid type: map, expected value matching \"string\" at line 1 column 2",
-                    reason,
-                );
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "hello world");
+    }
+
+    #[tokio::test]
+    async fn workflow_js_async_fn_drains_nested_awaits() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "hello");
+        let js_source = r"
+            async function increment(value) {
+                return await Promise.resolve(value + 1);
             }
-        );
+
+            export default async function hello() {
+                let value = 0;
+                for (let i = 0; i < 128; i += 1) {
+                    value = await increment(value);
+                }
+                return String(value);
+            }
+        ";
+
+        let (worker, _guard, _db_close) = new_js_workflow_worker(js_source, &ffqn).await;
+        let ctx = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "128");
     }
 
     #[tokio::test]

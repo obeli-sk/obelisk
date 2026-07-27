@@ -7,7 +7,7 @@
 //!
 //! Unlike activity-js-runtime, this runtime:
 //! - Does NOT provide `fetch()` (HTTP is not deterministic)
-//! - Uses synchronous execution only (no async/promises)
+//! - Resolves a Promise returned by the workflow entry point
 //! - Runs on `wasm32-unknown-unknown` target
 //!
 //! # JS API Reference
@@ -155,7 +155,7 @@ use boa_engine::{
     Source,
     builtins::promise::PromiseState,
     js_string,
-    object::builtins::{JsDate, JsFunction},
+    object::builtins::{JsDate, JsFunction, JsPromise},
     property::{Attribute, PropertyDescriptor},
 };
 use std::cell::RefCell;
@@ -763,7 +763,18 @@ pub fn execute(
         .collect();
 
     // Call the default export function with the params
-    let result = default_fn.call(&JsValue::undefined(), &args, &mut context);
+    let result = default_fn
+        .call(&JsValue::undefined(), &args, &mut context)
+        .and_then(|value| {
+            let Some(object) = value.as_object() else {
+                return Ok(value);
+            };
+            let Ok(promise) = JsPromise::from_object(object) else {
+                return Ok(value);
+            };
+
+            promise.await_blocking(&mut context)
+        });
 
     // JSON-serialize the return value so the worker can deserialize it as any configured type.
     match result {
@@ -836,8 +847,7 @@ impl EsmErrorWorkflow {
 
 /// Parse an ES module and extract its default export as a callable function.
 ///
-/// This is a workflow-specific version that uses synchronous execution
-/// (no job executor) since workflows don't use async/promises.
+/// The deterministic job executor also resolves workflow entry point Promises.
 ///
 /// IMPORTANT: `obelisk.*` globals must be set up BEFORE calling this function
 /// so they're available during module evaluation.
