@@ -2439,13 +2439,12 @@ async fn execution_persist_backtraces(
             message: format!("Replay error: {err}"),
             accept,
         })?;
-    let persisted_backtrace_count = u32::try_from(persisted_backtrace_count).map_err(|_| {
-        HttpResponse {
+    let persisted_backtrace_count =
+        u32::try_from(persisted_backtrace_count).map_err(|_| HttpResponse {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: "too many backtraces persisted".to_string(),
             accept,
-        }
-    })?;
+        })?;
     let ser = PersistBacktracesResponseSer {
         persisted_backtrace_count,
     };

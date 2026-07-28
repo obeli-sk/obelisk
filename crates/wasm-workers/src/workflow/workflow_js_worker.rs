@@ -215,15 +215,13 @@ impl WorkflowJsWorker {
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?
             .next_version;
-        Ok(
-            WorkflowWorker::trim_and_persist_backtraces(
-                db_conn.as_ref(),
-                &execution_id,
-                &next_version,
-                captured,
-            )
-            .await?,
+        Ok(WorkflowWorker::trim_and_persist_backtraces(
+            db_conn.as_ref(),
+            &execution_id,
+            &next_version,
+            captured,
         )
+        .await?)
     }
 
     fn boa_invocation(

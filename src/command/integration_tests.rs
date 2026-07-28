@@ -71,9 +71,9 @@ use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
     ExecutionId as GrpcExecutionId, GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest,
-    GetStatusRequest, ListComponentsRequest,
-    ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest, SubmitRequest,
-    SwitchDeploymentRequest, cancel_execution_response::CancelExecutionOutcome,
+    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck,
+    SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
+    cancel_execution_response::CancelExecutionOutcome,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,

@@ -1240,13 +1240,23 @@ impl WorkflowWorker {
         execution_id: ExecutionId,
     ) -> Result<usize, ReplayError> {
         let captured = self.capture_backtraces(execution_id.clone()).await?;
-        let db_conn = self.db_pool.connection().await.map_err(DbErrorWrite::from)?;
+        let db_conn = self
+            .db_pool
+            .connection()
+            .await
+            .map_err(DbErrorWrite::from)?;
         let next_version = db_conn
             .get(&execution_id)
             .await
             .map_err(DbErrorWrite::from)?
             .next_version;
-        Ok(Self::trim_and_persist_backtraces(db_conn.as_ref(), &execution_id, &next_version, captured).await?)
+        Ok(Self::trim_and_persist_backtraces(
+            db_conn.as_ref(),
+            &execution_id,
+            &next_version,
+            captured,
+        )
+        .await?)
     }
 
     /// Keep only backtraces whose range lies fully within the already-written log
