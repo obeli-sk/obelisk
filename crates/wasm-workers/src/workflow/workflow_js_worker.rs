@@ -14,7 +14,7 @@ use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::storage::{CapturedDbWrite, DbPool, Version};
+use concepts::storage::{BacktraceInfo, CapturedDbWrite, DbPool, Version};
 use concepts::{
     ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn,
     FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterType, Params,
@@ -166,11 +166,44 @@ pub struct WorkflowJsWorker {
 use crate::js_imports::{NamedFnImport, resolve_js_imports};
 
 impl WorkflowJsWorker {
+    pub async fn capture_backtraces(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<Vec<BacktraceInfo>, ReplayError> {
+        assert!(
+            self.inner.deadline_factory.is_for_replay(),
+            "capture_backtraces() requires DeadlineTrackerFactoryForReplay"
+        );
+        let db_conn = self
+            .inner
+            .db_pool
+            .connection()
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        let log = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        let (ffqn, params) = Self::boa_invocation(
+            log.params(),
+            self.js_source.clone(),
+            Some(self.js_file_name.clone()),
+            &self.resolved_imports,
+            true,
+        );
+        let (writes, backtraces, _fatal_error, _db_conn) = self
+            .inner
+            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn, true)
+            .await?;
+        Ok(WorkflowWorker::collect_write_backtraces(writes, backtraces))
+    }
+
     fn boa_invocation(
         params: &Params,
         js_source: String,
         js_file_name: Option<String>,
         resolved_imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
+        backtrace_enabled: bool,
     ) -> (FunctionFqn, Params) {
         let json_params = params
             .as_json_values()
@@ -210,7 +243,11 @@ impl WorkflowJsWorker {
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
             serde_json::Value::String(js_source),
             serde_json::Value::Array(params_json_list),
-            js_file_name.map_or(serde_json::Value::Null, serde_json::Value::String),
+            if backtrace_enabled {
+                js_file_name.map_or(serde_json::Value::Null, serde_json::Value::String)
+            } else {
+                serde_json::Value::Null
+            },
             serde_json::Value::Array(imports_json),
         ]);
         let named_fn_import_ty = TypeWrapper::Record(IndexMap::from([
@@ -259,6 +296,7 @@ impl Worker for WorkflowJsWorker {
             self.js_source.clone(),
             Some(self.js_file_name.clone()),
             &self.resolved_imports,
+            false, // backtrace is disabled for regular run
         );
 
         let inner_worker_ok = self.inner.run(ctx).await?;
@@ -445,7 +483,11 @@ impl WorkflowJsWorker {
     /// This function recreates the workflow execution from the database log,
     /// transforming the context to call the workflow-js-runtime just like the
     /// regular `run` method does.
-    pub async fn replay(&self, execution_id: ExecutionId) -> Result<ReplayResponse, ReplayError> {
+    pub async fn replay(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: bool,
+    ) -> Result<ReplayResponse, ReplayError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
             "replay() requires DeadlineTrackerFactoryForReplay"
@@ -466,13 +508,21 @@ impl WorkflowJsWorker {
             self.js_source.clone(),
             Some(self.js_file_name.clone()),
             &self.resolved_imports,
+            backtrace_capture,
         );
 
-        let (captured_writes, mut fatal_error, _db_conn) = self
+        let (captured_writes, _backtraces, mut fatal_error, _db_conn) = self
             .inner
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
+            .capture_replay_writes_from_log(
+                execution_id,
+                log,
+                ffqn,
+                params,
+                db_conn,
+                backtrace_capture,
+            )
             .await?;
-        // Remove side effects, unwrapping user retval or fatal error.
+        // Drop replay-only metadata, unwrapping user retval or fatal error.
         let captured_writes: Vec<_> = captured_writes
             .into_iter()
             .map(|internal_write| {
@@ -516,6 +566,7 @@ impl WorkflowJsWorker {
         &self,
         execution_id: ExecutionId,
         requested: ReplayAdvanceable,
+        backtrace_capture: bool,
     ) -> Result<AdvanceResponse, AdvanceError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
@@ -549,15 +600,23 @@ impl WorkflowJsWorker {
             self.js_source.clone(),
             Some(self.js_file_name.clone()),
             &self.resolved_imports,
+            backtrace_capture,
         );
         let log_forwarder_sender = self
             .inner
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (mut fresh_replay, _fatal_error, db_conn) = self
+        let (mut fresh_replay, _backtraces, _fatal_error, db_conn) = self
             .inner
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn)
+            .capture_replay_writes_from_log(
+                execution_id,
+                log,
+                ffqn,
+                params,
+                db_conn,
+                backtrace_capture,
+            )
             .await
             .map_err(AdvanceError::from)?;
         if let Some(InternalCapturedWrite {
@@ -708,7 +767,6 @@ mod tests {
         let config = WorkflowConfig {
             component_id,
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: true,
             stub_wasi: true,
             fuel: None,
             lock_extension: None,
@@ -769,7 +827,6 @@ mod tests {
         let config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
             lock_extension: Some(Duration::from_secs(1)),
@@ -847,7 +904,6 @@ mod tests {
         let config = WorkflowConfig {
             component_id,
             join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-            backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
             lock_extension: None,
@@ -1154,7 +1210,6 @@ mod tests {
         let config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy,
-            backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
             lock_extension: None,
@@ -1636,7 +1691,7 @@ mod tests {
             js_source.to_string(),
             default_return_type(),
         );
-        replay_worker.replay(execution_id).await.unwrap();
+        replay_worker.replay(execution_id, false).await.unwrap();
         // Drop the worker so the log_sender is closed; otherwise `recv_many` blocks indefinitely.
         drop(replay_worker);
         let mut buffer = Vec::new();
@@ -3277,7 +3332,10 @@ mod tests {
             js_source.to_string(),
             default_return_type(),
         );
-        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         info!("Stage 1 replay: {replay:?}");
@@ -3311,7 +3369,10 @@ mod tests {
             .await
             .unwrap();
 
-        let replay2 = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay2 = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
 
         let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
         info!("Stage 2 replay: {replay2:?}");
@@ -3349,7 +3410,10 @@ mod tests {
             "unexpected result: {result_str}"
         );
 
-        let replay3 = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay3 = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
 
         let result = assert_matches!(replay3, ReplayResponse::Finished { result } => result);
         info!("Stage 3 replay result: {result:?}");
@@ -3434,7 +3498,10 @@ mod tests {
             js_source.to_string(),
             default_return_type(),
         );
-        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         // With FlushedCache interruption, replay stops after the first cache flush.
@@ -3457,7 +3524,10 @@ mod tests {
                 .len()
         );
         // Replay should return the return value
-        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let retval = replay
@@ -3749,14 +3819,20 @@ mod tests {
             js_source.to_string(),
             default_return_type(),
         );
-        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         assert_matches!(
             log_recv.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
         );
 
-        replay_worker.advance(execution_id, replay).await.unwrap();
+        replay_worker
+            .advance(execution_id, replay, false)
+            .await
+            .unwrap();
 
         assert_matches!(
             log_recv.try_recv(),
@@ -3844,12 +3920,15 @@ mod tests {
         );
         let mut forwarded = Vec::new();
         for expected_len in [3_usize, 2, 1] {
-            let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
+            let replay = replay_worker
+                .replay(execution_id.clone(), false)
+                .await
+                .unwrap();
             let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
             assert_eq!(replay.captured_writes.len(), expected_len);
 
             replay_worker
-                .advance(execution_id.clone(), replay.truncate_to(1))
+                .advance(execution_id.clone(), replay.truncate_to(1), false)
                 .await
                 .unwrap();
 
@@ -3860,7 +3939,7 @@ mod tests {
             forwarded,
             vec!["before create", "before delay", "before join"]
         );
-        let replay = replay_worker.replay(execution_id).await.unwrap();
+        let replay = replay_worker.replay(execution_id, false).await.unwrap();
         assert_matches!(replay, ReplayResponse::Blocked);
     }
 
@@ -3900,7 +3979,7 @@ mod tests {
             .await;
             let replay = harness
                 .replay_worker
-                .replay(harness.execution_id.clone())
+                .replay(harness.execution_id.clone(), false)
                 .await
                 .unwrap();
             let replay = match replay {
@@ -3962,7 +4041,7 @@ mod tests {
 
             let advance = harness
                 .replay_worker
-                .advance(harness.execution_id.clone(), requested.clone())
+                .advance(harness.execution_id.clone(), requested.clone(), false)
                 .await
                 .unwrap();
             assert_eq!(advance.finished, requested.get_return_value().cloned());
@@ -4078,7 +4157,10 @@ mod tests {
             js_source.to_string(),
             default_return_type(),
         );
-        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
@@ -4120,7 +4202,7 @@ mod tests {
         sim_clock.move_time_forward(Duration::from_millis(100));
 
         let advance = replay_worker
-            .advance(execution_id, requested)
+            .advance(execution_id, requested, false)
             .await
             .unwrap();
 
@@ -4215,7 +4297,10 @@ mod tests {
             js_source.to_string(),
             default_return_type(),
         );
-        let replay = replay_worker.replay(execution_id.clone()).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
@@ -4259,7 +4344,7 @@ mod tests {
         sim_clock.move_time_forward(Duration::from_millis(100));
 
         let advance = replay_worker
-            .advance(execution_id, requested)
+            .advance(execution_id, requested, false)
             .await
             .unwrap();
 

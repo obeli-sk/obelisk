@@ -22,63 +22,7 @@ expression: redact_replay(&replay)
             }
           }
         },
-        "backtraces": [
-          {
-            "execution_id": "E_00000000000000000000000001",
-            "component_id": {
-              "component_type": "workflow",
-              "name": "",
-              "component_digest": "sha256:<REDACTED>"
-            },
-            "version_min_including": 4,
-            "version_max_excluding": 5,
-            "wasm_backtrace": {
-              "frames": [
-                {
-                  "module": "<unknown>",
-                  "func_name": "<wasm function 6>",
-                  "symbols": []
-                },
-                {
-                  "module": "test_programs_fibo_workflow.wasm",
-                  "func_name": "test_programs_fibo_workflow::generated::testing::fibo_obelisk_ext::fibo::fibo_await_next::h<REDACTED>",
-                  "symbols": [
-                    {
-                      "func_name": "fibo_await_next",
-                      "file": "<REDACTED>/any.rs",
-                      "line": 2167,
-                      "col": 11
-                    }
-                  ]
-                },
-                {
-                  "module": "test_programs_fibo_workflow.wasm",
-                  "func_name": "testing:fibo-workflow/workflow#fiboa-concurrent",
-                  "symbols": [
-                    {
-                      "func_name": "fiboa_concurrent",
-                      "file": "<REDACTED>/lib.rs",
-                      "line": 57,
-                      "col": 20
-                    },
-                    {
-                      "func_name": "_export_fiboa_concurrent_cabi<test_programs_fibo_workflow::Component>",
-                      "file": "<REDACTED>/any.rs",
-                      "line": 2486,
-                      "col": 7
-                    },
-                    {
-                      "func_name": "export_fiboa_concurrent",
-                      "file": "<REDACTED>/any.rs",
-                      "line": 2744,
-                      "col": 83
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        ]
+        "backtraces": []
       }
     }
   ]

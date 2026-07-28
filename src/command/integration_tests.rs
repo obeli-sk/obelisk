@@ -71,9 +71,9 @@ use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
     ExecutionId as GrpcExecutionId, GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest,
-    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck,
-    SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
-    cancel_execution_response::CancelExecutionOutcome,
+    GetStatusRequest, ListComponentsRequest, PersistExecutionBacktracesRequest,
+    ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest, SubmitRequest,
+    SwitchDeploymentRequest, cancel_execution_response::CancelExecutionOutcome,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -877,6 +877,22 @@ impl TestServer {
             .send()
             .await
             .expect("replay request failed")
+    }
+
+    async fn persist_backtraces(&self, execution_id: &str) -> u32 {
+        let mut client = ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+            .await
+            .unwrap();
+        client
+            .persist_execution_backtraces(PersistExecutionBacktracesRequest {
+                execution_id: Some(GrpcExecutionId {
+                    id: execution_id.to_string(),
+                }),
+            })
+            .await
+            .unwrap()
+            .into_inner()
+            .persisted_backtrace_count
     }
 
     async fn list_functions(&self) -> Value {
@@ -1817,6 +1833,7 @@ impl TestServer {
                         id: exec_id.clone(),
                     }),
                     captured_writes,
+                    persist_backtrace: true,
                 })
                 .await
                 .unwrap()
@@ -1898,7 +1915,10 @@ impl TestServer {
                 .client
                 .put(format!("{}/v1/executions/{exec_id}/advance", self.base_url))
                 .header("Accept", "application/json")
-                .json(&json!({ "captured_writes": captured_writes }))
+                .json(&json!({
+                    "captured_writes": captured_writes,
+                    "persist_backtrace": true,
+                }))
                 .send()
                 .await
                 .expect("advance request failed");
@@ -3180,6 +3200,12 @@ async fn replaying_paused_workflow_should_return_preview_events(
         replay.captured_writes_len > 0,
         "captured_writes must not be empty for a paused workflow: {client:?}"
     );
+    assert_eq!(
+        server.persist_backtraces(&exec_id).await,
+        0,
+        "backtraces for replay-produced future events must be omitted"
+    );
+    assert_eq!(server.get_backtrace(&exec_id, None).await.status(), 404);
 
     server.shutdown().await;
 }
@@ -3963,16 +3989,40 @@ async fn backtrace_workflow_calling_activity() {
     let server = TestServer::start(test_addr!(35)).await;
     let exec_id = server.generate_execution_id().await;
 
-    // Run a workflow that calls a child activity — backtrace is captured at the join-set call site.
+    // Run a workflow that calls a child activity.
     let resp = server
         .submit_follow_with_id(
             &exec_id,
-            "testing:integration/workflow-add-via-activity.add-via-activity",
+            "testing:integration/workflow-call-activity.call-activity",
             vec![json!(3), json!(4)],
         )
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let _: Value = resp.json().await.unwrap(); // consume body
+
+    let resp = server.get_backtrace(&exec_id, None).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "regular execution must not persist backtraces"
+    );
+
+    let replay = server.replay(&exec_id).await;
+    assert_eq!(replay.status().as_u16(), 200);
+    let _: Value = replay.json().await.unwrap();
+    let resp = server.get_backtrace(&exec_id, None).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "replay must not persist backtraces"
+    );
+
+    assert!(server.persist_backtraces(&exec_id).await > 0);
+    assert_eq!(
+        server.persist_backtraces(&exec_id).await,
+        0,
+        "persisting the same backtraces again must be idempotent"
+    );
 
     // Default (last) filter.
     let resp = server.get_backtrace(&exec_id, None).await;
@@ -3990,6 +4040,12 @@ async fn backtrace_workflow_calling_activity() {
     assert!(
         body["version_max_excluding"].is_number(),
         "version_max_excluding must be a number"
+    );
+    assert_eq!(
+        body["version_max_excluding"].as_u64().unwrap()
+            - body["version_min_including"].as_u64().unwrap(),
+        3,
+        "a direct call backtrace must cover its three history events"
     );
     assert!(
         body["wasm_backtrace"]["frames"].is_array(),
@@ -4043,7 +4099,7 @@ async fn backtrace_source_workflow_calling_activity() {
     let server = TestServer::start(test_addr!(36)).await;
     let exec_id = server.generate_execution_id().await;
 
-    // Run the workflow to ensure it has an associated component digest in the backtrace table.
+    // Run and replay the workflow to populate lazy backtraces.
     let resp = server
         .submit_follow_with_id(
             &exec_id,
@@ -4053,6 +4109,7 @@ async fn backtrace_source_workflow_calling_activity() {
         .await;
     assert_eq!(resp.status().as_u16(), 201);
     let _: Value = resp.json().await.unwrap();
+    assert!(server.persist_backtraces(&exec_id).await > 0);
 
     // The deployment config registers "add_via_activity.js" as an exact-key source for this
     // workflow component.  The endpoint resolves source by component digest (from the backtrace)

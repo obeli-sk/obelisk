@@ -6,8 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(api, cli)* Added the idempotent `PersistExecutionBacktraces` RPC and
+  `obelisk execution persist-backtraces` command. They replay a workflow and persist only newly
+  eligible call-site backtraces in one transaction.
+
 ### Changed
 
+- **Breaking:** *(server)* Workflow backtraces are now captured lazily by user-issued replay and
+  advance operations instead of during normal execution or internal component-upgrade replay. The
+  global `wasm.backtrace.persist` setting was removed. Webhook components can opt in independently
+  with `backtrace_persist = true`, which defaults to `false`.
 - *(cli)* `obelisk generate token` now prints only the token to stdout, so it composes with env
   injection: `OBELISK__API__TOKEN=$(obelisk generate token)`. When stdout is a terminal, the
   ready-to-paste `api.token_hashes` entry is still printed, on stderr. The `sha256:` hash is also

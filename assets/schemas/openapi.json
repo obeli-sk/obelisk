@@ -1608,6 +1608,10 @@
             "items": {
               "$ref": "#/components/schemas/CapturedWriteSer"
             }
+          },
+          "persist_backtrace": {
+            "type": "boolean",
+            "description": "Capture and persist call-site backtraces while advancing."
           }
         }
       },

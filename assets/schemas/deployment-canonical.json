@@ -1075,6 +1075,10 @@
             "frame_files_to_sources": {}
           }
         },
+        "backtrace_persist": {
+          "type": "boolean",
+          "default": false
+        },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
           "default": "debug"
@@ -1168,6 +1172,10 @@
             "$ref": "#/$defs/EnvVarConfig"
           },
           "default": []
+        },
+        "backtrace_persist": {
+          "type": "boolean",
+          "default": false
         },
         "allowed_host": {
           "type": "array",

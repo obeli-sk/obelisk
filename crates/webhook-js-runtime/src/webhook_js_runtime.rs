@@ -430,12 +430,11 @@ fn setup_fetch(context: &mut Context) -> JsResult<()> {
     boa_runtime::register(FetchExtension(WasiFetcher), None, context)
 }
 
-/// Capture the current Boa JS stack trace as a `WasmBacktrace`.
-///
-/// The `module` and `file` fields are populated from the `__OBELISK_JS_FILE_NAME__`
-/// environment variable, since JS source is loaded from memory and Boa does not
-/// track a file path for in-memory sources.
+/// Capture the current Boa JS stack trace when enabled by the webhook configuration.
 fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
+    if std::env::var_os("__OBELISK_BACKTRACE_ENABLED__").is_none() {
+        return WasmBacktrace { frames: Vec::new() };
+    }
     use boa_engine::vm::SourcePath;
     let js_file_name = std::env::var("__OBELISK_JS_FILE_NAME__").ok();
     let frames = ctx

@@ -1,9 +1,13 @@
 //! Component registry for a single deployment.
 //!
+use crate::workflow::replay_advance::AdvanceResponse;
 use crate::workflow::workflow_js_worker::WorkflowJsWorker;
-use crate::workflow::workflow_worker::WorkflowWorker;
+use crate::workflow::workflow_worker::{
+    AdvanceError, ReplayAdvanceable, ReplayError, ReplayResponse, WorkflowWorker,
+};
 use concepts::ComponentId;
 use concepts::ComponentType;
+use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
@@ -11,6 +15,7 @@ use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
+use concepts::storage::BacktraceInfo;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::fmt::Debug;
@@ -51,6 +56,49 @@ impl Debug for ReplayWorker {
         match self {
             ReplayWorker::Wasm(_) => f.write_str("ReplayWorker::Wasm(..)"),
             ReplayWorker::Js(_) => f.write_str("ReplayWorker::Js(..)"),
+        }
+    }
+}
+
+impl ReplayWorker {
+    pub async fn replay(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: bool,
+    ) -> Result<ReplayResponse, ReplayError> {
+        match self {
+            Self::Wasm(worker) => worker.replay(execution_id, backtrace_capture).await,
+            Self::Js(worker) => worker.replay(execution_id, backtrace_capture).await,
+        }
+    }
+
+    pub async fn capture_backtraces(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<Vec<BacktraceInfo>, ReplayError> {
+        match self {
+            Self::Wasm(worker) => worker.capture_backtraces(execution_id).await,
+            Self::Js(worker) => worker.capture_backtraces(execution_id).await,
+        }
+    }
+
+    pub async fn advance(
+        &self,
+        execution_id: ExecutionId,
+        requested: ReplayAdvanceable,
+        backtrace_capture: bool,
+    ) -> Result<AdvanceResponse, AdvanceError> {
+        match self {
+            Self::Wasm(worker) => {
+                worker
+                    .advance(execution_id, requested, backtrace_capture)
+                    .await
+            }
+            Self::Js(worker) => {
+                worker
+                    .advance(execution_id, requested, backtrace_capture)
+                    .await
+            }
         }
     }
 }

@@ -158,7 +158,7 @@ use boa_engine::{
     object::builtins::{JsDate, JsFunction, JsPromise},
     property::{Attribute, PropertyDescriptor},
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -188,6 +188,7 @@ impl ObeliskLogger for Logger {
 thread_local! {
     static JOIN_SETS: RefCell<Vec<Option<JoinSet>>> = const { RefCell::new(Vec::new()) };
     static JS_FILE_NAME: RefCell<String> = const { RefCell::new(String::new()) };
+    static BACKTRACE_ENABLED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn store_join_set(js: JoinSet) -> usize {
@@ -221,6 +222,9 @@ fn take_join_set(idx: usize) -> Option<JoinSet> {
 /// the `js-file-name` parameter passed to `execute`), since JS source is loaded
 /// from memory and Boa does not track a file path for in-memory sources.
 fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
+    if !BACKTRACE_ENABLED.get() {
+        return WasmBacktrace { frames: Vec::new() };
+    }
     use boa_engine::vm::SourcePath;
     let js_file_name = JS_FILE_NAME.with(|s| s.borrow().clone());
     let js_file_name_opt: Option<&str> = if js_file_name.is_empty() {
@@ -687,6 +691,7 @@ pub fn execute(
     js_file_name: Option<String>,
     resolved_imports: Vec<ResolvedInterfaceImports>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
+    BACKTRACE_ENABLED.set(js_file_name.is_some());
     if let Some(js_file_name) = js_file_name {
         JS_FILE_NAME.with(|s| *s.borrow_mut() = js_file_name);
     }

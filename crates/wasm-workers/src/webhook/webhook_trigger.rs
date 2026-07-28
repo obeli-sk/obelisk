@@ -640,6 +640,7 @@ struct WebhookEndpointCtx {
     http_hooks: HttpHooks,
     // Execution id of the last `call-json`, for `last-direct-call-id`.
     last_direct_call_id: Option<ExecutionIdDerived>,
+    backtrace_persist: bool,
 }
 
 impl HostJoinSet for WebhookEndpointCtx {
@@ -877,14 +878,13 @@ impl types::obelisk::webhook::webhook_support_backtrace::Host for WebhookEndpoin
         params: String,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<(), ScheduleJsonErrorTrappable> {
-        self.schedule_json_inner(
-            execution_id,
-            schedule_at,
-            function,
-            params,
-            backtrace.map(wit_backtrace_to_storage),
-        )
-        .await
+        let backtrace = if self.backtrace_persist {
+            backtrace.map(wit_backtrace_to_storage)
+        } else {
+            None
+        };
+        self.schedule_json_inner(execution_id, schedule_at, function, params, backtrace)
+            .await
     }
 
     async fn call_json(
@@ -893,8 +893,12 @@ impl types::obelisk::webhook::webhook_support_backtrace::Host for WebhookEndpoin
         params: String,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
-        self.call_json_inner(function, params, backtrace.map(wit_backtrace_to_storage))
-            .await
+        let backtrace = if self.backtrace_persist {
+            backtrace.map(wit_backtrace_to_storage)
+        } else {
+            None
+        };
+        self.call_json_inner(function, params, backtrace).await
     }
 }
 
@@ -1804,6 +1808,9 @@ impl WebhookEndpointCtx {
         if let Some(js_config) = &config.js_config {
             wasi_ctx.env("__OBELISK_JS_SOURCE__", &js_config.source);
             wasi_ctx.env("__OBELISK_JS_FILE_NAME__", &js_config.file_name);
+            if config.backtrace_persist {
+                wasi_ctx.env("__OBELISK_BACKTRACE_ENABLED__", "true");
+            }
             if let Some(resolved_imports_json) = resolved_imports_json {
                 wasi_ctx.env("__OBELISK_RESOLVED_IMPORTS__", resolved_imports_json);
             }
@@ -1849,6 +1856,7 @@ impl WebhookEndpointCtx {
                 config_section_hint: config.config_section_hint,
             },
             last_direct_call_id: None,
+            backtrace_persist: config.backtrace_persist,
         };
         let mut store = Store::new(engine, ctx);
 
@@ -3420,6 +3428,10 @@ pub(crate) mod tests {
 
         impl JsWebhookWithActivitiesHarness {
             async fn new(js_source: &str) -> Self {
+                Self::new_with_backtrace(js_source, false).await
+            }
+
+            async fn new_with_backtrace(js_source: &str, backtrace_persist: bool) -> Self {
                 use crate::activity::activity_worker::test::compile_activity;
                 use crate::activity::activity_worker::tests::new_activity_fibo;
                 use concepts::time::TokioSleep;
@@ -3466,7 +3478,7 @@ pub(crate) mod tests {
                             forward_stderr: Some(StdOutputConfig::Stdout),
                             env_vars: Arc::from([]),
                             fuel: None,
-                            backtrace_persist: false,
+                            backtrace_persist,
                             subscription_interruption: None,
                             logs_store_min_level: None,
                             allowed_hosts: Arc::from([]),
@@ -3609,6 +3621,56 @@ pub(crate) mod tests {
                 "testing:fibo/fibo.fibo",
                 create_req.ffqn.to_string().as_str()
             );
+        }
+
+        #[tokio::test]
+        async fn webhook_js_backtrace_persistence_is_opt_in() {
+            use concepts::storage::BacktraceFilter;
+            use std::str::FromStr as _;
+
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle(request) {
+                    const execId = obelisk.executionIdGenerate();
+                    obelisk.schedule(execId, "testing:fibo/fibo.fibo", [10]);
+                    return Response.json({ execId });
+                }
+            "#;
+
+            for backtrace_persist in [false, true] {
+                let harness = JsWebhookWithActivitiesHarness::new_with_backtrace(
+                    js_source,
+                    backtrace_persist,
+                )
+                .await;
+                let resp = reqwest::get(format!("http://{}/", harness.server_addr))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status().as_u16(), 200);
+                let body: serde_json::Value = resp.json().await.unwrap();
+                let exec_id =
+                    concepts::ExecutionId::from_str(body["execId"].as_str().unwrap()).unwrap();
+
+                let conn = harness.db_pool.connection().await.unwrap();
+                let create_req = conn.get_create_request(&exec_id).await.unwrap();
+                let webhook_execution_id = create_req.scheduled_by.unwrap();
+                let conn = harness.db_pool.external_api_conn().await.unwrap();
+                let backtrace = conn
+                    .get_backtrace(&webhook_execution_id, BacktraceFilter::Last)
+                    .await;
+
+                if backtrace_persist {
+                    assert!(
+                        !backtrace.unwrap().wasm_backtrace.frames.is_empty(),
+                        "enabled webhook must persist a captured backtrace"
+                    );
+                } else {
+                    assert!(
+                        backtrace.is_err(),
+                        "webhook must not persist a backtrace by default"
+                    );
+                }
+            }
         }
 
         #[tokio::test]

@@ -2894,7 +2894,7 @@ async fn append_response(
 async fn append_backtrace(
     tx: &Transaction<'_>,
     backtrace_info: &BacktraceInfo,
-) -> Result<(), DbErrorWrite> {
+) -> Result<u64, DbErrorWrite> {
     // Compute hash for deduplication
     let backtrace_hash = backtrace_info.wasm_backtrace.hash();
 
@@ -2914,7 +2914,8 @@ async fn append_backtrace(
     tx.execute(
         "INSERT INTO t_execution_backtrace \
          (execution_id, component_id, version_min_including, version_max_excluding, backtrace_hash) \
-         VALUES ($1, $2, $3, $4, $5)",
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (execution_id, version_min_including, version_max_excluding) DO NOTHING",
         &[
             &backtrace_info.execution_id.to_string(),
             &Json(&backtrace_info.component_id),
@@ -2923,9 +2924,8 @@ async fn append_backtrace(
             &backtrace_hash.as_slice(),
         ],
     )
-    .await?;
-
-    Ok(())
+    .await
+    .map_err(DbErrorWrite::from)
 }
 
 async fn append_log(tx: &Transaction<'_>, row: &LogInfoAppendRow) -> Result<(), DbErrorWrite> {
@@ -4432,17 +4432,28 @@ impl DbConnection for PostgresConnection {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
+    async fn append_backtrace_batch(
+        &self,
+        batch: Vec<BacktraceInfo>,
+    ) -> Result<usize, DbErrorWrite> {
         debug!("append_backtrace_batch");
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        let mut inserted = 0_u64;
         for append in batch {
-            append_backtrace(&tx, &append).await?;
+            inserted += append_backtrace(&tx, &append).await?;
         }
 
         tx.commit().await?;
-        Ok(())
+        usize::try_from(inserted).map_err(|_| {
+            DbErrorWrite::Generic(DbErrorGeneric::Uncategorized {
+                reason: "inserted backtrace count does not fit usize".into(),
+                context: SpanTrace::capture(),
+                source: None,
+                loc: Location::caller(),
+            })
+        })
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]

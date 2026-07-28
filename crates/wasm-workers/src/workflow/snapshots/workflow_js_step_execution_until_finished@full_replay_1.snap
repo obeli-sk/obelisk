@@ -19,34 +19,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
             }
           }
         },
-        "backtraces": [
-          {
-            "execution_id": "E_00000000000000000000000000",
-            "component_id": {
-              "component_type": "workflow",
-              "name": "test_js_workflow",
-              "component_digest": "sha256:<REDACTED>"
-            },
-            "version_min_including": 2,
-            "version_max_excluding": 3,
-            "wasm_backtrace": {
-              "frames": [
-                {
-                  "module": "unknown",
-                  "func_name": "call_stub",
-                  "symbols": [
-                    {
-                      "func_name": null,
-                      "file": null,
-                      "line": 3,
-                      "col": 45
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        ]
+        "backtraces": []
       }
     },
     {
@@ -102,34 +75,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
             "paused": false
           }
         ],
-        "backtraces": [
-          {
-            "execution_id": "E_00000000000000000000000000",
-            "component_id": {
-              "component_type": "workflow",
-              "name": "test_js_workflow",
-              "component_digest": "sha256:<REDACTED>"
-            },
-            "version_min_including": 3,
-            "version_max_excluding": 4,
-            "wasm_backtrace": {
-              "frames": [
-                {
-                  "module": "unknown",
-                  "func_name": "call_stub",
-                  "symbols": [
-                    {
-                      "func_name": null,
-                      "file": null,
-                      "line": 4,
-                      "col": 37
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        ]
+        "backtraces": []
       }
     },
     {
@@ -168,34 +114,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
           }
         },
         "current_time": "1970-01-01T00:00:00.100Z",
-        "backtraces": [
-          {
-            "execution_id": "E_00000000000000000000000000",
-            "component_id": {
-              "component_type": "workflow",
-              "name": "test_js_workflow",
-              "component_digest": "sha256:<REDACTED>"
-            },
-            "version_min_including": 4,
-            "version_max_excluding": 2,
-            "wasm_backtrace": {
-              "frames": [
-                {
-                  "module": "unknown",
-                  "func_name": "call_stub",
-                  "symbols": [
-                    {
-                      "func_name": null,
-                      "file": null,
-                      "line": 5,
-                      "col": 25
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        ]
+        "backtraces": []
       }
     }
   ]

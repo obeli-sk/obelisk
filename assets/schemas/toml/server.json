@@ -376,9 +376,6 @@
         "codegen_cache": {
           "$ref": "#/$defs/CodegenCache"
         },
-        "backtrace": {
-          "$ref": "#/$defs/WasmGlobalBacktrace"
-        },
         "cache_directory": {
           "type": [
             "string",
@@ -430,16 +427,6 @@
             "null"
           ],
           "default": null
-        }
-      },
-      "additionalProperties": false
-    },
-    "WasmGlobalBacktrace": {
-      "type": "object",
-      "properties": {
-        "persist": {
-          "type": "boolean",
-          "default": true
         }
       },
       "additionalProperties": false
