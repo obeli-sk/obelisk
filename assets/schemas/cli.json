@@ -111,7 +111,7 @@
     },
     {
       "name": "execution",
-      "about": "Submit, inspect, stub, cancel, pause, unpause, replay, or upgrade executions against a running server",
+      "about": "Submit, inspect, stub, cancel, pause, replay, persist backtraces, or upgrade executions",
       "subcommands": [
         {
           "name": "list",
@@ -472,6 +472,24 @@
             {
               "name": "execution_id",
               "help": "Execution ID to replay",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "persist-backtraces",
+          "about": "Replay a workflow and persist its call-site backtraces",
+          "options": [
+            {
+              "name": "--api-url",
+              "short": "a",
+              "help": "Address of the obelisk server"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "execution_id",
+              "help": "Execution ID whose backtraces should be persisted",
               "required": true
             }
           ]
