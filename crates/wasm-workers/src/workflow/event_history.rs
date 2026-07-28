@@ -1636,6 +1636,15 @@ impl EventHistory {
                                 http_client_traces: None,
                             },
                         };
+                        // Display-only backtrace keyed to the parent's stub-event version (`version`), where the HistoryEvent::Stub below lands.
+                        let stub_backtrace =
+                            wasm_backtrace.clone().map(|wasm_backtrace| BacktraceInfo {
+                                execution_id: db_connection.execution_id().clone(),
+                                component_id: self.locked_event.component_id.clone(),
+                                version_min_including: version.clone(),
+                                version_max_excluding: Version::new(version.0 + 1),
+                                wasm_backtrace,
+                            });
                         let result = match db_connection
                             .upsert_stub_response(
                                 params.target_execution_id.clone(),
@@ -1650,8 +1659,7 @@ impl EventHistory {
                                     result: retval_intent.clone(),
                                 },
                                 called_at,
-                                wasm_backtrace.clone(),
-                                &self.locked_event.component_id,
+                                stub_backtrace,
                             )
                             .await
                         {

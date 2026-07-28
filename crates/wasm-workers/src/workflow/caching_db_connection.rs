@@ -82,7 +82,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
 
-    #[expect(clippy::too_many_arguments)]
+    // `stub_backtrace` is display-only, keyed to the parent's future stub-event version so persist skips it.
     async fn upsert_stub_response(
         &mut self,
         execution_id: ExecutionIdDerived,
@@ -90,8 +90,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-        component_id: &ComponentId,
+        stub_backtrace: Option<BacktraceInfo>,
     ) -> Result<(), UpsertStubOrReplayInterrupt>;
 
     // Part of writing stub response: start with this read, then attempt to write the response in `EventHistory::append_to_db_non_blocking`.
@@ -442,8 +441,7 @@ impl WorkflowDbConnection for CachingDbConnection {
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-        _wasm_backtrace: Option<storage::WasmBacktrace>,
-        _component_id: &ComponentId,
+        _stub_backtrace: Option<BacktraceInfo>,
     ) -> Result<(), UpsertStubOrReplayInterrupt> {
         // This write bypasses the cache (it must return the conflict result
         // immediately), so flush first to keep it ordered after any buffered write.
