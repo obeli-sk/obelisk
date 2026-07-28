@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/workflow-js-runtime:2026-07-27@sha256:06c8b90eb7da20cd1a6bcf6ac2a1429f544ed4b25482cb950274f68b198e4de1
+oci://docker.io/getobelisk/workflow-js-runtime:2026-07-28@sha256:31e8c57f970981b72e77de88a0c29cc61d26256a16184901e2b970f6793c895f
