@@ -470,7 +470,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         &self.execution_id
     }
 
-    fn capture_application_log(&mut self, row: LogInfoAppendRow) -> bool {
+    fn try_defer_application_log(&mut self, row: LogInfoAppendRow) -> bool {
         self.push_log(row);
         true
     }

@@ -2960,7 +2960,7 @@ fn emit_application_log_to_tracing_only(ctx: &WorkflowCtx, level: LogLevel, mess
     });
 }
 
-fn capture_replay_application_log(ctx: &mut WorkflowCtx, level: LogLevel, message: &str) -> bool {
+fn try_defer_replay_application_log(ctx: &mut WorkflowCtx, level: LogLevel, message: &str) -> bool {
     if ctx.is_replay != Some(ReplayKind::Unfinished) {
         return false;
     }
@@ -2972,22 +2972,24 @@ fn capture_replay_application_log(ctx: &mut WorkflowCtx, level: LogLevel, messag
         return false;
     }
     if level >= logs_storage_config.min_level {
-        return ctx.db_connection.capture_application_log(LogInfoAppendRow {
-            execution_id: ctx.component_logger.execution_id.clone(),
-            run_id: ctx.component_logger.run_id,
-            log_entry: LogEntry::Log {
-                created_at: ctx.clock_fn.now(),
-                level,
-                message: message.to_owned(),
-            },
-        });
+        return ctx
+            .db_connection
+            .try_defer_application_log(LogInfoAppendRow {
+                execution_id: ctx.component_logger.execution_id.clone(),
+                run_id: ctx.component_logger.run_id,
+                log_entry: LogEntry::Log {
+                    created_at: ctx.clock_fn.now(),
+                    level,
+                    message: message.to_owned(),
+                },
+            });
     }
     false
 }
 
 impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     async fn trace(&mut self, message: String) {
-        if capture_replay_application_log(self, LogLevel::Trace, &message) {
+        if try_defer_replay_application_log(self, LogLevel::Trace, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Trace, &message);
         } else {
             trace_on_replay(self, LogLevel::Trace, message);
@@ -2995,7 +2997,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     }
 
     async fn debug(&mut self, message: String) {
-        if capture_replay_application_log(self, LogLevel::Debug, &message) {
+        if try_defer_replay_application_log(self, LogLevel::Debug, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Debug, &message);
         } else {
             trace_on_replay(self, LogLevel::Debug, message);
@@ -3003,7 +3005,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     }
 
     async fn info(&mut self, message: String) {
-        if capture_replay_application_log(self, LogLevel::Info, &message) {
+        if try_defer_replay_application_log(self, LogLevel::Info, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Info, &message);
         } else {
             trace_on_replay(self, LogLevel::Info, message);
@@ -3011,7 +3013,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     }
 
     async fn warn(&mut self, message: String) {
-        if capture_replay_application_log(self, LogLevel::Warn, &message) {
+        if try_defer_replay_application_log(self, LogLevel::Warn, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Warn, &message);
         } else {
             trace_on_replay(self, LogLevel::Warn, message);
@@ -3019,7 +3021,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
     }
 
     async fn error(&mut self, message: String) {
-        if capture_replay_application_log(self, LogLevel::Error, &message) {
+        if try_defer_replay_application_log(self, LogLevel::Error, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Error, &message);
         } else {
             trace_on_replay(self, LogLevel::Error, message);

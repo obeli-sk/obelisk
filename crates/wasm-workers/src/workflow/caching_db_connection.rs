@@ -28,9 +28,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
 
     fn execution_id(&self) -> &ExecutionId;
 
-    fn capture_application_log(&mut self, _row: LogInfoAppendRow) -> bool {
-        false
-    }
+    fn try_defer_application_log(&mut self, row: LogInfoAppendRow) -> bool;
 
     async fn append_backtrace(&mut self, backtrace: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
@@ -216,6 +214,10 @@ impl WorkflowDbConnection for CachingDbConnection {
 
     fn execution_id(&self) -> &ExecutionId {
         &self.execution_id
+    }
+
+    fn try_defer_application_log(&mut self, _row: LogInfoAppendRow) -> bool {
+        false
     }
 
     async fn append_backtrace(&mut self, _backtrace: BacktraceInfo) -> Result<(), DbErrorWrite> {
