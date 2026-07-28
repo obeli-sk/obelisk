@@ -98,6 +98,7 @@ pub(crate) struct WebApiState {
         execution_submit_post,
         execution_replay,
         execution_advance,
+        execution_persist_backtraces,
         execution_upgrade,
         backtrace::execution_backtrace,
         backtrace::execution_backtrace_source,
@@ -123,6 +124,7 @@ pub(crate) struct WebApiState {
         ReplayResponseSer,
         AdvanceRequestSer,
         AdvanceResponseSer,
+        PersistBacktracesResponseSer,
         ExecutionSubmitPayload,
         ExecutionUpgradePayload,
         logs::LogEntryRowSer,
@@ -213,6 +215,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route(
             "/executions/{execution-id}/advance",
             routing::put(execution_advance),
+        )
+        .route(
+            "/executions/{execution-id}/backtrace/persist",
+            routing::put(execution_persist_backtraces),
         )
         .route(
             "/executions/{execution-id}/responses",
@@ -1958,6 +1964,12 @@ enum AdvanceErrorSer {
     Transient(String),
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct PersistBacktracesResponseSer {
+    /// Number of newly persisted backtraces (already-persisted ones are skipped).
+    pub(crate) persisted_backtrace_count: u32,
+}
+
 /// Get execution return value
 #[utoipa::path(
     get,
@@ -2396,6 +2408,53 @@ async fn execution_advance(
             }
         }),
     }
+}
+
+/// Replay an execution and persist its call-site backtraces (idempotent).
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/backtrace/persist",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID whose backtraces to persist")
+    ),
+    responses(
+        (status = 200, description = "Backtraces persisted", body = PersistBacktracesResponseSer),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Replay failed")
+    )
+)]
+#[instrument(skip_all, fields(execution_id))]
+async fn execution_persist_backtraces(
+    Path(execution_id): Path<ExecutionId>,
+    state: State<Arc<WebApiState>>,
+    accept: AcceptHeader,
+) -> Result<Response, HttpResponse> {
+    let replay_worker = get_replay_target(&state, &execution_id, accept).await?;
+    let persisted_backtrace_count = replay_worker
+        .persist_backtraces(execution_id.clone())
+        .await
+        .map_err(|err| HttpResponse {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: format!("Replay error: {err}"),
+            accept,
+        })?;
+    let persisted_backtrace_count = u32::try_from(persisted_backtrace_count).map_err(|_| {
+        HttpResponse {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "too many backtraces persisted".to_string(),
+            accept,
+        }
+    })?;
+    let ser = PersistBacktracesResponseSer {
+        persisted_backtrace_count,
+    };
+    Ok(match accept {
+        AcceptHeader::Json => pretty_json_response(StatusCode::OK, &ser),
+        AcceptHeader::Text => {
+            format!("persisted {persisted_backtrace_count} backtraces").into_response()
+        }
+    })
 }
 
 async fn get_replay_target(

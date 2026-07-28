@@ -71,7 +71,7 @@ use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
     ExecutionId as GrpcExecutionId, GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest,
-    GetStatusRequest, ListComponentsRequest, PersistExecutionBacktracesRequest,
+    GetStatusRequest, ListComponentsRequest,
     ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest, SubmitRequest,
     SwitchDeploymentRequest, cancel_execution_response::CancelExecutionOutcome,
     deployment_repository_client::DeploymentRepositoryClient,
@@ -880,19 +880,24 @@ impl TestServer {
     }
 
     async fn persist_backtraces(&self, execution_id: &str) -> u32 {
-        let mut client = ExecutionRepositoryClient::connect(format!("http://{}", self.api_addr()))
+        let body: Value = self
+            .client
+            .put(format!(
+                "{}/v1/executions/{execution_id}/backtrace/persist",
+                self.base_url
+            ))
+            .header("Accept", "application/json")
+            .send()
             .await
-            .unwrap();
-        client
-            .persist_execution_backtraces(PersistExecutionBacktracesRequest {
-                execution_id: Some(GrpcExecutionId {
-                    id: execution_id.to_string(),
-                }),
-            })
+            .expect("persist-backtraces request failed")
+            .json()
             .await
-            .unwrap()
-            .into_inner()
-            .persisted_backtrace_count
+            .expect("persist-backtraces parse failed");
+        body["persisted_backtrace_count"]
+            .as_u64()
+            .expect("persisted_backtrace_count must be a number")
+            .try_into()
+            .expect("persisted_backtrace_count must fit u32")
     }
 
     async fn list_functions(&self) -> Value {
