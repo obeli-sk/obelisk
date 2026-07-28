@@ -751,7 +751,7 @@
         "tags": [
           "executions"
         ],
-        "summary": "Advance a paused execution using replay-captured writes.",
+        "summary": "Advance a paused execution by applying captured writes from a prior replay; set `persist_backtrace` to persist fresh backtraces.",
         "operationId": "execution_advance",
         "parameters": [
           {
@@ -1222,7 +1222,7 @@
         "tags": [
           "executions"
         ],
-        "summary": "Replay an execution (re-run from execution log)",
+        "summary": "Replay an execution. An advanceable (unfinished and unblocked) execution produces captured writes for the advance endpoint; backtraces on captured writes are display-only.",
         "operationId": "execution_replay",
         "parameters": [
           {
@@ -1649,7 +1649,7 @@
           },
           "persist_backtrace": {
             "type": "boolean",
-            "description": "Capture and persist call-site backtraces while advancing."
+            "description": "Capture and persist fresh call-site backtraces while advancing."
           }
         }
       },
@@ -1921,7 +1921,7 @@
             }
           }
         ],
-        "description": "A serializable captured database write operation."
+        "description": "A write captured during replay, produced by the replay endpoint and applied by the advance endpoint."
       },
       "ComponentConfig": {
         "type": "object",

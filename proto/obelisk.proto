@@ -29,6 +29,8 @@ service ExecutionRepository {
     rpc CancelDelay(CancelDelayRequest) returns (CancelDelayResponse);
     rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
 
+    // Replays the execution. An advancable (unfinished and unblocked) execution produces captured writes that can be passed to the AdvanceExecution RPC.
+    // Backtraces on captured writes are display-only.
     rpc ReplayExecution(ReplayExecutionRequest) returns (ReplayExecutionResponse);
     rpc PersistExecutionBacktraces(PersistExecutionBacktracesRequest) returns (PersistExecutionBacktracesResponse);
     rpc AdvanceExecution(AdvanceExecutionRequest) returns (AdvanceExecutionResponse);
@@ -777,6 +779,7 @@ message WasmBacktrace {
     uint32 version_max_excluding = 3;
 }
 
+// Display-only call-site backtrace attached to a captured write.
 message CapturedBacktrace {
     ExecutionId execution_id = 1;
     ComponentId component_id = 2;
@@ -854,7 +857,7 @@ message ReplayExecutionRequest {
   ExecutionId execution_id = 1;
 }
 
-// A database write operation captured during replay.
+// A write captured during replay, produced by ReplayExecution and applied by AdvanceExecution.
 message CapturedWrite {
   message Append {
     ExecutionId execution_id = 1;
@@ -957,7 +960,7 @@ message PersistExecutionBacktracesResponse {
 message AdvanceExecutionRequest {
   ExecutionId execution_id = 1;
   repeated CapturedWrite captured_writes = 2;
-  // Capture and persist call-site backtraces while verifying and applying the writes.
+  // Capture and persist fresh call-site backtraces while verifying and applying the writes.
   bool persist_backtrace = 3;
 }
 

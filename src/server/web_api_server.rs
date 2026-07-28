@@ -1647,7 +1647,7 @@ impl TryFrom<StubResponseSer> for concepts::storage::AppendResponseToExecution {
     }
 }
 
-/// A serializable captured database write operation.
+/// A write captured during replay, produced by the replay endpoint and applied by the advance endpoint.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum CapturedWriteSer {
@@ -1939,7 +1939,7 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct AdvanceRequestSer {
     pub(crate) captured_writes: Vec<CapturedWriteSer>,
-    /// Capture and persist call-site backtraces while advancing.
+    /// Capture and persist fresh call-site backtraces while advancing.
     #[serde(default)]
     pub(crate) persist_backtrace: bool,
 }
@@ -2232,7 +2232,7 @@ async fn stream_execution_response_task(
     }
 }
 
-/// Replay an execution (re-run from execution log)
+/// Replay an execution. An advanceable (unfinished and unblocked) execution produces captured writes for the advance endpoint; backtraces on captured writes are display-only.
 #[utoipa::path(
     put,
     path = "/v1/executions/{execution_id}/replay",
@@ -2284,7 +2284,7 @@ async fn execution_replay(
     })
 }
 
-/// Advance a paused execution using replay-captured writes.
+/// Advance a paused execution by applying captured writes from a prior replay; set `persist_backtrace` to persist fresh backtraces.
 #[utoipa::path(
     put,
     path = "/v1/executions/{execution_id}/advance",
