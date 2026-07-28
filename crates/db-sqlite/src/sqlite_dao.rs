@@ -2607,7 +2607,7 @@ impl SqlitePool {
     fn append_backtrace(
         tx: &Transaction,
         backtrace_info: &BacktraceInfo,
-    ) -> Result<(), DbErrorWrite> {
+    ) -> Result<usize, DbErrorWrite> {
         let backtrace_hash = backtrace_info.wasm_backtrace.hash();
 
         tx.prepare("INSERT OR IGNORE INTO t_wasm_backtrace (backtrace_hash, wasm_backtrace) VALUES (:backtrace_hash, :wasm_backtrace)")?
@@ -2617,7 +2617,7 @@ impl SqlitePool {
         })?;
 
         tx.prepare(
-                "INSERT INTO t_execution_backtrace (execution_id, component_id, version_min_including, version_max_excluding, backtrace_hash) \
+                "INSERT OR IGNORE INTO t_execution_backtrace (execution_id, component_id, version_min_including, version_max_excluding, backtrace_hash) \
                     VALUES (:execution_id, :component_id, :version_min_including, :version_max_excluding, :backtrace_hash)",
         )?
         .execute(named_params! {
@@ -2626,9 +2626,8 @@ impl SqlitePool {
             ":version_min_including": backtrace_info.version_min_including.0,
             ":version_max_excluding": backtrace_info.version_max_excluding.0,
             ":backtrace_hash": backtrace_hash,
-        })?;
-
-        Ok(())
+        })
+        .map_err(DbErrorWrite::from)
     }
 
     fn append_log(tx: &Transaction, row: &LogInfoAppendRow) -> Result<(), DbErrorWrite> {
@@ -5619,7 +5618,7 @@ impl DbConnection for SqlitePool {
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite> {
         trace!("append_backtrace");
         self.transaction_fire_forget(
-            move |tx| Self::append_backtrace(tx, &append),
+            move |tx| Self::append_backtrace(tx, &append).map(drop),
             "append_backtrace",
         )
         .await;
@@ -5627,19 +5626,23 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]
-    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite> {
+    async fn append_backtrace_batch(
+        &self,
+        batch: Vec<BacktraceInfo>,
+    ) -> Result<usize, DbErrorWrite> {
         trace!("append_backtrace_batch");
-        self.transaction_fire_forget(
+        self.transaction(
             move |tx| {
+                let mut inserted = 0;
                 for append in &batch {
-                    Self::append_backtrace(tx, append)?;
+                    inserted += Self::append_backtrace(tx, append)?;
                 }
-                Ok::<_, DbErrorWrite>(())
+                Ok::<_, DbErrorWrite>(inserted)
             },
+            TxType::MultipleWrites,
             "append_backtrace_batch",
         )
-        .await;
-        Ok(())
+        .await
     }
 
     #[instrument(level = Level::DEBUG, skip_all)]

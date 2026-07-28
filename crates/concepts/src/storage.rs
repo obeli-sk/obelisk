@@ -2041,7 +2041,10 @@ pub trait DbConnection: DbExecutor {
 
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
-    async fn append_backtrace_batch(&self, batch: Vec<BacktraceInfo>) -> Result<(), DbErrorWrite>;
+    async fn append_backtrace_batch(
+        &self,
+        batch: Vec<BacktraceInfo>,
+    ) -> Result<usize, DbErrorWrite>;
 
     async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite>;
 

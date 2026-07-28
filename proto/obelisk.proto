@@ -30,6 +30,7 @@ service ExecutionRepository {
     rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
 
     rpc ReplayExecution(ReplayExecutionRequest) returns (ReplayExecutionResponse);
+    rpc PersistExecutionBacktraces(PersistExecutionBacktracesRequest) returns (PersistExecutionBacktracesResponse);
     rpc AdvanceExecution(AdvanceExecutionRequest) returns (AdvanceExecutionResponse);
     rpc UpgradeExecutionComponent(UpgradeExecutionComponentRequest) returns (UpgradeExecutionComponentResponse);
 
@@ -945,9 +946,19 @@ message ReplayExecutionResponse {
   }
 }
 
+message PersistExecutionBacktracesRequest {
+  ExecutionId execution_id = 1;
+}
+
+message PersistExecutionBacktracesResponse {
+  uint32 persisted_backtrace_count = 1;
+}
+
 message AdvanceExecutionRequest {
   ExecutionId execution_id = 1;
   repeated CapturedWrite captured_writes = 2;
+  // Capture and persist call-site backtraces while verifying and applying the writes.
+  bool persist_backtrace = 3;
 }
 
 message AdvanceExecutionResponse {

@@ -3941,10 +3941,16 @@ async fn test_backtrace(database: Database) {
             }],
         },
     };
-    db_connection
-        .append_backtrace(backtrace_info_2.clone())
+    let inserted = db_connection
+        .append_backtrace_batch(vec![backtrace_info_1.clone(), backtrace_info_2.clone()])
         .await
         .unwrap();
+    assert_eq!(inserted, 1, "only the new backtrace should be inserted");
+    let inserted = db_connection
+        .append_backtrace_batch(vec![backtrace_info_1.clone(), backtrace_info_2.clone()])
+        .await
+        .unwrap();
+    assert_eq!(inserted, 0, "repeated backtrace batches must be idempotent");
 
     let api_conn = db_pool.external_api_conn().await.unwrap();
     let found = api_conn

@@ -79,7 +79,6 @@ use tracing::info_span;
 use tracing::instrument;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
-use wasm_workers::registry::ReplayWorker;
 use wasm_workers::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
 
 pub(crate) struct GrpcServer {
@@ -899,10 +898,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 ))
             })?;
 
-        let replay_res = match replay_worker {
-            ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
-            ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
-        };
+        // Always capture backtrace so that advance can persist it
+        let replay_res = replay_worker.replay(execution_id.clone(), true).await;
         let outcome = match replay_res {
             Ok(ReplayResponse::Advanceable(replay)) => {
                 grpc_gen::replay_execution_response::Outcome::Advanceable(
@@ -948,6 +945,70 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {
             outcome: Some(outcome),
         }))
+    }
+
+    #[instrument(skip_all, fields(execution_id))]
+    async fn persist_execution_backtraces(
+        &self,
+        request: tonic::Request<grpc_gen::PersistExecutionBacktracesRequest>,
+    ) -> Result<tonic::Response<grpc_gen::PersistExecutionBacktracesResponse>, tonic::Status> {
+        let execution_id: ExecutionId = request
+            .into_inner()
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let (component_registry_ro, replay_workers) = {
+            let ctx = self.deployment_ctx.read().await;
+            (
+                ctx.component_registry_ro.clone(),
+                ctx.replay_workers.clone(),
+            )
+        };
+        let conn = self.db_pool.connection().await.map_err(map_to_status)?;
+        let create_req = conn.get_create_request(&execution_id).await.to_status()?;
+        let (component_id, _fn_metadata) = component_registry_ro
+            .find_by_exported_ffqn_submittable(&create_req.ffqn)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "component for function '{}' not found",
+                    create_req.ffqn
+                ))
+            })?;
+        let (_component_id, replay_worker) = replay_workers
+            .get(&component_id.component_digest)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "replay worker for component '{component_id}' not found"
+                ))
+            })?;
+
+        let captured_backtraces = match replay_worker.capture_backtraces(execution_id.clone()).await
+        {
+            Ok(backtraces) => backtraces,
+            Err(err) => {
+                return Err(tonic::Status::internal(format!("replay error: {err}")));
+            }
+        };
+
+        let persisted_next_version = conn.get(&execution_id).await.to_status()?.next_version;
+        let backtraces: Vec<_> = captured_backtraces
+            .into_iter()
+            .filter(|backtrace| {
+                backtrace.execution_id == execution_id
+                    && backtrace.version_max_excluding <= persisted_next_version
+            })
+            .collect();
+        let persisted_backtrace_count =
+            conn.append_backtrace_batch(backtraces).await.to_status()?;
+        let persisted_backtrace_count = u32::try_from(persisted_backtrace_count)
+            .map_err(|_| tonic::Status::resource_exhausted("too many backtraces persisted"))?;
+
+        Ok(tonic::Response::new(
+            grpc_gen::PersistExecutionBacktracesResponse {
+                persisted_backtrace_count,
+            },
+        ))
     }
 
     #[instrument(skip_all, fields(execution_id))]
@@ -1001,10 +1062,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .collect::<Result<Vec<_>, _>>()?,
         };
 
-        let advance_res = match replay_worker {
-            ReplayWorker::Js(worker) => worker.advance(execution_id.clone(), expected).await,
-            ReplayWorker::Wasm(worker) => worker.advance(execution_id.clone(), expected).await,
-        };
+        let advance_res = replay_worker
+            .advance(execution_id.clone(), expected, request.persist_backtrace)
+            .await;
 
         let result = match advance_res {
             Ok(advance_response) => grpc_gen::advance_execution_response::Result::Success(
@@ -1079,10 +1139,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             let (_component_id, replay_worker) = replay_workers.get(&new).ok_or_else(|| {
                 tonic::Status::not_found(format!("new component '{new}' not found in registry"))
             })?;
-            let replay_res = match replay_worker {
-                ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
-                ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
-            };
+            // no backtrace capture on upgrade
+            let replay_res = replay_worker.replay(execution_id.clone(), false).await;
             if let Err(err) = replay_res {
                 info!("Replay failed: {err:?}");
                 return Err(tonic::Status::internal(format!("replay failed: {err}")));

@@ -48,13 +48,14 @@ impl InternalCapturedWrite {
 #[derive(Debug, Default)]
 struct ReplayEventCollector {
     preview: Vec<InternalCapturedWrite>,
+    backtraces: Vec<BacktraceInfo>,
     // Logs emitted during replay belong to the next captured write, which
     // corresponds to the next user-code step that would be persisted.
     pending_logs: Vec<LogInfoAppendRow>,
 }
 
 impl ReplayEventCollector {
-    fn into_writes(self) -> Vec<InternalCapturedWrite> {
+    fn into_parts(self) -> (Vec<InternalCapturedWrite>, Vec<BacktraceInfo>) {
         if !self.pending_logs.is_empty() {
             let pending_messages: Vec<_> = self
                 .pending_logs
@@ -72,7 +73,7 @@ impl ReplayEventCollector {
             "replay must not finish with unattached application logs: {:?}",
             self.pending_logs
         );
-        self.preview
+        (self.preview, self.backtraces)
     }
 
     fn push_write(&mut self, write: CapturedDbWrite) {
@@ -97,6 +98,10 @@ impl ReplayEventCollector {
 
     fn push_log(&mut self, row: LogInfoAppendRow) {
         self.pending_logs.push(row);
+    }
+
+    fn push_backtrace(&mut self, backtrace: BacktraceInfo) {
+        self.backtraces.push(backtrace);
     }
 }
 
@@ -323,7 +328,6 @@ async fn apply_captured_write(
 pub(crate) struct ReplayWorkflowDbConnection {
     execution_id: ExecutionId,
     collector: ReplayEventCollector,
-    version: Version,
     real_connection: Box<dyn DbConnection>,
     parent: Option<(ExecutionId, JoinSetId)>,
 }
@@ -331,23 +335,28 @@ pub(crate) struct ReplayWorkflowDbConnection {
 impl ReplayWorkflowDbConnection {
     pub(crate) fn new(
         execution_id: ExecutionId,
-        version: Version,
         real_connection: Box<dyn DbConnection>,
         parent: Option<(ExecutionId, JoinSetId)>,
     ) -> Self {
         Self {
             execution_id,
             collector: ReplayEventCollector::default(),
-            version,
             real_connection,
             parent,
         }
     }
-    pub(crate) fn into_parts(self) -> (Vec<InternalCapturedWrite>, Box<dyn DbConnection>) {
-        (self.collector.into_writes(), self.real_connection)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Vec<InternalCapturedWrite>,
+        Vec<BacktraceInfo>,
+        Box<dyn DbConnection>,
+    ) {
+        let (writes, backtraces) = self.collector.into_parts();
+        (writes, backtraces, self.real_connection)
     }
 
-    /// Push a captured write and advance the version.
+    /// Push a captured write.
     pub(crate) fn push_write(&mut self, write: CapturedDbWrite) {
         self.collector.push_write(write);
     }
@@ -356,8 +365,8 @@ impl ReplayWorkflowDbConnection {
         self.collector.push_log(row);
     }
 
-    pub(crate) fn version(&self) -> &Version {
-        &self.version
+    pub(crate) fn push_backtrace(&mut self, backtrace: BacktraceInfo) {
+        self.collector.push_backtrace(backtrace);
     }
 
     pub(crate) fn execution_id(&self) -> &ExecutionId {
@@ -461,13 +470,14 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         &self.execution_id
     }
 
-    fn version(&self) -> &Version {
-        &self.version
-    }
-
     fn capture_application_log(&mut self, row: LogInfoAppendRow) -> bool {
         self.push_log(row);
         true
+    }
+
+    async fn append_backtrace(&mut self, backtrace: BacktraceInfo) -> Result<(), DbErrorWrite> {
+        self.push_backtrace(backtrace);
+        Ok(())
     }
 
     async fn append_non_blocking(
@@ -499,19 +509,18 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 backtraces: backtrace.into_iter().collect(),
             });
         }
-        self.version = Version::new(version.0 + 1);
         Ok(())
     }
 
     async fn append_blocking(
         &mut self,
+        version: Version,
         execution_id: ExecutionId,
         req: AppendRequest,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        let version = self.version.clone();
         let next_version = Version::new(version.0 + 1);
         let backtraces = make_backtrace(
             &execution_id,
@@ -526,12 +535,12 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             req,
             backtraces,
         });
-        self.version = next_version;
         Ok(())
     }
 
     async fn append_join_set_close(
         &mut self,
+        version: Version,
         _cancel_registry: &CancelRegistry,
         execution_id: ExecutionId,
         req: AppendRequest,
@@ -545,7 +554,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             "append_join_set_close must append JoinNext(closing=true)"
         );
         // only CachingDbConnection can assert the flush outcome as here `flush_non_blocking_event_cache` is stateless.
-        let version = self.version.clone();
         let next_version = Version::new(version.0 + 1);
         let backtraces = make_backtrace(
             &execution_id,
@@ -564,12 +572,12 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             },
             cancellations,
         );
-        self.version = next_version;
         Ok(())
     }
 
     async fn append_batch(
         &mut self,
+        version: Version,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
@@ -577,7 +585,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        let version = self.version.clone();
         let next = next_version(&version, batch.len());
         for request in &batch {
             assert!(
@@ -594,12 +601,12 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             version,
             backtraces,
         });
-        self.version = next;
         Ok(())
     }
 
     async fn append_batch_create_new_execution(
         &mut self,
+        version: Version,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
@@ -608,7 +615,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
-        let version = self.version.clone();
         let next = next_version(&version, batch.len());
         for request in &batch {
             assert!(
@@ -627,7 +633,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 child_req,
                 backtraces,
             });
-        self.version = next;
         Ok(())
     }
 
@@ -671,7 +676,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         let backtraces = make_backtrace(
             &self.execution_id,
             component_id,
-            &self.version,
+            &version,
             &next,
             wasm_backtrace,
         );
@@ -801,17 +806,16 @@ mod tests {
                 CachingBuffer::new(JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 100,
                 }),
-                parent_version,
             )),
             ConnectionMode::Replay => Box::new(ReplayWorkflowDbConnection::new(
                 parent_execution_id.clone(),
-                parent_version,
                 real_connection,
                 None, // test helper, no parent
             )),
         };
         connection
             .append_batch_create_new_execution(
+                parent_version,
                 created_at,
                 vec![AppendRequest {
                     created_at,

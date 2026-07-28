@@ -217,6 +217,10 @@ impl args::Execution {
                 execution_id,
                 json,
             } => replay(&api_url, execution_id, json).await,
+            args::Execution::PersistBacktraces {
+                api_url,
+                execution_id,
+            } => persist_backtraces(&api_url, execution_id).await,
             args::Execution::Advance {
                 api_url,
                 execution_id,
@@ -865,6 +869,24 @@ async fn replay(api_url: &str, execution_id: ExecutionId, json: bool) -> anyhow:
     send_and_print(req).await
 }
 
+async fn persist_backtraces(api_url: &str, execution_id: ExecutionId) -> anyhow::Result<()> {
+    let channel = to_channel(api_url).await?;
+    let mut client = get_execution_repository_client(channel).await?;
+    let response = client
+        .persist_execution_backtraces(tonic::Request::new(
+            grpc_gen::PersistExecutionBacktracesRequest {
+                execution_id: Some(grpc_gen::ExecutionId::from(execution_id)),
+            },
+        ))
+        .await?
+        .into_inner();
+    println!(
+        "Persisted {} backtraces",
+        response.persisted_backtrace_count
+    );
+    Ok(())
+}
+
 /// Fetch replay response as JSON. Accepts both 200 (success) and 422 (replay failed with body).
 async fn replay_json(
     api_url: &str,
@@ -945,9 +967,10 @@ fn replay_to_advanceable_request(
     let replay: ReplayResponseSer = serde_json::from_value(replay.clone())
         .context("failed to decode replay response as ReplayResponseSer")?;
     match replay {
-        ReplayResponseSer::Advanceable { captured_writes } => {
-            Ok(AdvanceRequestSer { captured_writes })
-        }
+        ReplayResponseSer::Advanceable { captured_writes } => Ok(AdvanceRequestSer {
+            captured_writes,
+            persist_backtrace: true,
+        }),
         ReplayResponseSer::Finished { .. } => {
             bail!("execution is already finished")
         }
@@ -962,7 +985,10 @@ fn replay_to_advanceable_request(
                 eprintln!(
                     "Replay failed: {error}. Advancing with --force to persist execution failure."
                 );
-                Ok(AdvanceRequestSer { captured_writes })
+                Ok(AdvanceRequestSer {
+                    captured_writes,
+                    persist_backtrace: true,
+                })
             } else {
                 bail!(
                     "replay failed: {error}, {} captured writes available (use --force to advance with execution failure)",
@@ -1160,6 +1186,7 @@ mod tests {
         let delay_id = concepts::prefixed_ulid::DelayId::new(&execution_id, &delay_join_set_id);
         let child_execution_id = execution_id.next_level(&child_join_set_id);
         let mut advance_request = AdvanceRequestSer {
+            persist_backtrace: true,
             captured_writes: vec![
                 CapturedWriteSer::Append {
                     execution_id: execution_id.to_string(),

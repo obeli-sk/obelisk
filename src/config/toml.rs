@@ -704,8 +704,6 @@ pub(crate) struct WasmGlobalConfigToml {
     #[serde(default)]
     pub(crate) codegen_cache: CodegenCache,
     #[serde(default)]
-    pub(crate) backtrace: WasmGlobalBacktrace,
-    #[serde(default)]
     cache_directory: Option<String>,
     #[serde(default)]
     pub(crate) allocator_config: WasmtimeAllocatorConfig,
@@ -728,7 +726,6 @@ impl Default for WasmGlobalConfigToml {
     fn default() -> Self {
         WasmGlobalConfigToml {
             codegen_cache: CodegenCache::default(),
-            backtrace: WasmGlobalBacktrace::default(),
             cache_directory: Option::default(),
             allocator_config: WasmtimeAllocatorConfig::default(),
             global_executor_instance_limiter: InflightSemaphore::default(),
@@ -757,21 +754,6 @@ impl WasmGlobalConfigToml {
         path_prefixes
             .server_config_replace_path_prefix_mkdir(wasm_directory)
             .await
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WasmGlobalBacktrace {
-    #[serde(default = "default_global_backtrace_persist")]
-    pub(crate) persist: bool,
-}
-
-impl Default for WasmGlobalBacktrace {
-    fn default() -> Self {
-        Self {
-            persist: default_global_backtrace_persist(),
-        }
     }
 }
 
@@ -2202,7 +2184,6 @@ pub(crate) trait WorkflowWasmComponentConfigResolvedExt {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        global_backtrace_persist: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
@@ -2215,7 +2196,6 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        global_backtrace_persist: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
@@ -2253,7 +2233,6 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
-            backtrace_persist: global_backtrace_persist,
             stub_wasi: self.stub_wasi,
             fuel,
             lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
@@ -2350,7 +2329,6 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
             join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
-            backtrace_persist: false,
             stub_wasi: false,
             fuel: None,
             lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
@@ -2469,6 +2447,7 @@ async fn resolve_local_refs_to_canonical(
             env_vars: w.env_vars,
             backtrace: resolve_backtrace_to_canonical(&w.backtrace, &deployment_dir, provider)
                 .await?,
+            backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts,
         });
@@ -2494,6 +2473,7 @@ async fn resolve_local_refs_to_canonical(
             forward_stderr: w.forward_stderr,
             logs_store_min_level: w.logs_store_min_level,
             env_vars: w.env_vars,
+            backtrace_persist: w.backtrace_persist,
             allowed_hosts: w.allowed_hosts,
         });
     }
@@ -3091,6 +3071,9 @@ pub(crate) mod webhook {
         pub(crate) env_vars: Vec<EnvVarConfig>,
         #[serde(default)]
         pub(crate) backtrace: ComponentBacktraceConfig,
+        /// Capture and persist backtraces for requests handled by this webhook.
+        #[serde(default)]
+        pub(crate) backtrace_persist: bool,
         #[serde(default)]
         pub(crate) logs_store_min_level: LogLevelToml,
         /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
@@ -3107,6 +3090,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stderr: Option<StdOutputConfig>,
         pub(crate) env_vars: Arc<[EnvVar]>,
         pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
+        pub(crate) backtrace_persist: bool,
         pub(crate) subscription_interruption: Option<Duration>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
@@ -3172,6 +3156,9 @@ pub(crate) mod webhook {
         pub(crate) logs_store_min_level: LogLevelToml,
         #[serde(default)]
         pub(crate) env_vars: Vec<EnvVarConfig>,
+        /// Capture and persist backtraces for requests handled by this webhook.
+        #[serde(default)]
+        pub(crate) backtrace_persist: bool,
         /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
         #[serde(default, rename = "allowed_host")]
         pub(crate) allowed_hosts: Vec<AllowedHostToml>,
@@ -3187,6 +3174,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
         pub(crate) env_vars: Arc<[EnvVar]>,
+        pub(crate) backtrace_persist: bool,
         pub(crate) logs_store_min_level: Option<LogLevel>,
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
         /// The TOML config section type for error messages
@@ -3249,6 +3237,7 @@ pub(crate) mod webhook {
                     forward_stderr: self.forward_stderr.into_std_output_config(),
                     env_vars,
                     frame_files_to_sources,
+                    backtrace_persist: self.backtrace_persist,
                     subscription_interruption,
                     logs_store_min_level: self.logs_store_min_level.into_log_level(),
                     allowed_hosts,
@@ -3309,6 +3298,7 @@ pub(crate) mod webhook {
                     forward_stdout: self.forward_stdout.into_std_output_config(),
                     forward_stderr: self.forward_stderr.into_std_output_config(),
                     env_vars,
+                    backtrace_persist: self.backtrace_persist,
                     logs_store_min_level: self.logs_store_min_level.into_log_level(),
                     allowed_hosts,
                     config_section_hint: ConfigSectionHint::WebhookEndpointJs,
@@ -3594,10 +3584,6 @@ const fn default_parallel_compilation() -> bool {
 const fn default_debug() -> bool {
     false
 }
-const fn default_global_backtrace_persist() -> bool {
-    true
-}
-
 const fn default_codegen_enabled() -> bool {
     true
 }

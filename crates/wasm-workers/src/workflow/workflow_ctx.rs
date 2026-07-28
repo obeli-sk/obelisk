@@ -1,7 +1,7 @@
 use super::caching_db_connection::WorkflowDbConnection;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
-    ApplyError, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
+    ApplyError, EventCallCursor, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
     OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::latest::ScheduleAtTypes;
@@ -143,13 +143,14 @@ impl From<ApplyError> for WorkflowFunctionError {
 
 pub(crate) struct WorkflowCtx {
     pub(crate) execution_id: ExecutionId,
+    event_call_cursor: EventCallCursor,
     event_history: EventHistory,
     rng: StdRng,
     pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) db_connection: Box<dyn WorkflowDbConnection>,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
-    backtrace_persist: bool,
+    backtrace_capture: bool,
     wasi_ctx: WasiCtx,
     is_replay: Option<ReplayKind>,
 }
@@ -190,6 +191,7 @@ impl DirectFnCall<'_> {
             Params::from_wasmtime(Arc::from(params)),
             wasm_backtrace,
             &mut ctx.event_history,
+            &mut ctx.event_call_cursor,
             &mut *ctx.db_connection,
             called_at,
         )
@@ -294,7 +296,12 @@ impl ScheduleFnCall<'_> {
             },
             wasm_backtrace,
         }
-        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
+        .apply(
+            &mut ctx.event_history,
+            &mut ctx.event_call_cursor,
+            &mut *ctx.db_connection,
+            called_at,
+        )
         .await?
         .map(|()| execution_id_val)
         .expect("Ok intent cannot produce ScheduleRequestError"))
@@ -362,7 +369,12 @@ impl SubmitExecutionFnCall<'_> {
             child_execution_id,
             wasm_backtrace,
         }
-        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
+        .apply(
+            &mut ctx.event_history,
+            &mut ctx.event_call_cursor,
+            &mut *ctx.db_connection,
+            called_at,
+        )
         .await?
         .map(|()| child_execution_id_val)
         .expect("Ok intent cannot produce ChildExecutionRequestError"))
@@ -427,7 +439,12 @@ impl AwaitNextFnCall {
             wasm_backtrace,
             requested_ffqn: target_ffqn,
         }
-        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
+        .apply(
+            &mut ctx.event_history,
+            &mut ctx.event_call_cursor,
+            &mut *ctx.db_connection,
+            called_at,
+        )
         .await
     }
 }
@@ -549,7 +566,12 @@ impl StubFnCall<'_> {
             params,
             wasm_backtrace,
         }
-        .apply(&mut ctx.event_history, &mut *ctx.db_connection, called_at)
+        .apply(
+            &mut ctx.event_history,
+            &mut ctx.event_call_cursor,
+            &mut *ctx.db_connection,
+            called_at,
+        )
         .await?;
 
         Ok(stub_result_to_wast_val(stub_result).as_val())
@@ -661,10 +683,9 @@ impl<'a> ImportedFnCall<'a> {
         called_ffqn: FunctionFqn,
         store_ctx: &'ctx mut wasmtime::StoreContextMut<'a, WorkflowCtx>,
         params: &'a [Val],
-        backtrace_persist: bool,
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
-        let wasm_backtrace = if backtrace_persist {
+        let wasm_backtrace = if store_ctx.data().backtrace_capture {
             let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
             concepts::storage::WasmBacktrace::maybe_from(&wasm_backtrace)
         } else {
@@ -853,17 +874,22 @@ pub(crate) enum ReplayKind {
 }
 
 impl WorkflowCtx {
+    pub(crate) fn version(&self) -> &Version {
+        self.event_call_cursor.version()
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
         db_connection: Box<dyn WorkflowDbConnection>,
+        version: Version,
         event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<ResponseWithCursor>,
         seed: u64,
         clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         worker_span: Span,
-        backtrace_persist: bool,
+        backtrace_capture: bool,
         deadline_tracker: Box<dyn DeadlineTracker>,
         fn_registry: Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
@@ -879,8 +905,10 @@ impl WorkflowCtx {
         wasi_ctx_builder.insecure_random_seed(0);
         let run_id = locked_event.run_id;
         let execution_id = db_connection.execution_id().clone();
+        let event_call_cursor = EventCallCursor::new(version, &event_history);
         Self {
             execution_id: execution_id.clone(),
+            event_call_cursor,
             db_connection,
             event_history: EventHistory::new(
                 deployment_id,
@@ -905,7 +933,7 @@ impl WorkflowCtx {
                 logs_storage_config,
             },
             resource_table: wasmtime::component::ResourceTable::default(),
-            backtrace_persist,
+            backtrace_capture,
             wasi_ctx: wasi_ctx_builder.build(),
             is_replay,
         }
@@ -945,6 +973,7 @@ impl WorkflowCtx {
             expires_at_if_new,
             wasm_backtrace,
             &mut self.event_history,
+            &mut self.event_call_cursor,
             &mut *self.db_connection,
             self.clock_fn.now(),
         )
@@ -980,6 +1009,7 @@ impl WorkflowCtx {
             }
             .apply(
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 self.clock_fn.now(),
             )
@@ -999,16 +1029,16 @@ impl WorkflowCtx {
         caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
         wit_backtrace: Option<typesTypes::backtrace::WasmBacktrace>,
     ) -> (&'a mut WorkflowCtx, Option<storage::WasmBacktrace>) {
-        let backtrace = wit_backtrace
-            .map(Self::wit_wasm_backtrace_to_storage)
-            .or_else(|| {
-                if caller.data().backtrace_persist {
+        let backtrace = if caller.data().backtrace_capture {
+            wit_backtrace
+                .and_then(Self::wit_wasm_backtrace_to_storage)
+                .or_else(|| {
                     let backtrace = wasmtime::WasmBacktrace::capture(&caller);
                     WasmBacktrace::maybe_from(&backtrace)
-                } else {
-                    None
-                }
-            });
+                })
+        } else {
+            None
+        };
         let host = caller.data_mut();
         (host, backtrace)
     }
@@ -1098,8 +1128,11 @@ impl WorkflowCtx {
 
     fn wit_wasm_backtrace_to_storage(
         bt: typesTypes::backtrace::WasmBacktrace,
-    ) -> storage::WasmBacktrace {
-        storage::WasmBacktrace {
+    ) -> Option<storage::WasmBacktrace> {
+        if bt.frames.is_empty() {
+            return None;
+        }
+        Some(storage::WasmBacktrace {
             frames: bt
                 .frames
                 .into_iter()
@@ -1118,12 +1151,12 @@ impl WorkflowCtx {
                         .collect(),
                 })
                 .collect(),
-        }
+        })
     }
 
     /// Register the plain `workflow-support` functions for 6.0.0. Native components
     /// import these; they carry no `backtrace` param. Any host-side backtrace is still
-    /// captured when `backtrace_persist` is enabled (`get_host_maybe_capture_backtrace`
+    /// captured when `backtrace_capture` is enabled (`get_host_maybe_capture_backtrace`
     /// with `None`). The backtrace-carrying variants live on
     /// `workflow-support-backtrace` for interpreted (JS) runtimes.
     fn add_to_linker_workflow_support(
@@ -1946,7 +1979,11 @@ impl WorkflowCtx {
     pub(crate) async fn join_sets_close_on_finish(&mut self) -> Result<(), ApplyError> {
         debug!("Closing opened join sets");
         self.event_history
-            .finalize(&mut *self.db_connection, self.clock_fn.now())
+            .finalize(
+                &mut self.event_call_cursor,
+                &mut *self.db_connection,
+                self.clock_fn.now(),
+            )
             .await?;
         Ok(())
     }
@@ -2056,6 +2093,7 @@ pub(crate) mod workflow_support {
             self.event_history
                 .join_set_close(
                     join_set_id,
+                    &mut self.event_call_cursor,
                     &mut *self.db_connection,
                     self.clock_fn.now(),
                     wasm_backtrace,
@@ -2096,6 +2134,7 @@ pub(crate) mod workflow_support {
                 max_inclusive,
                 wasm_backtrace,
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 self.clock_fn.now(),
             )
@@ -2115,6 +2154,7 @@ pub(crate) mod workflow_support {
                 &execution_id,
                 wasm_backtrace,
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 self.clock_fn.now(),
             )
@@ -2162,6 +2202,7 @@ pub(crate) mod workflow_support {
                 u64::from(max_length_exclusive),
                 wasm_backtrace,
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 self.clock_fn.now(),
             )
@@ -2200,6 +2241,7 @@ pub(crate) mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 self.clock_fn.now(),
             )
@@ -2324,6 +2366,7 @@ pub(crate) mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 self.clock_fn.now(),
             )
@@ -2350,6 +2393,7 @@ pub(crate) mod workflow_support {
             }
             .apply(
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 self.clock_fn.now(),
             )
@@ -2448,7 +2492,12 @@ pub(crate) mod workflow_support {
             };
 
             let result = submit
-                .apply(&mut self.event_history, &mut *self.db_connection, called_at)
+                .apply(
+                    &mut self.event_history,
+                    &mut self.event_call_cursor,
+                    &mut *self.db_connection,
+                    called_at,
+                )
                 .await
                 .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
 
@@ -2554,7 +2603,12 @@ pub(crate) mod workflow_support {
                 intent,
                 wasm_backtrace,
             }
-            .apply(&mut self.event_history, &mut *self.db_connection, called_at)
+            .apply(
+                &mut self.event_history,
+                &mut self.event_call_cursor,
+                &mut *self.db_connection,
+                called_at,
+            )
             .await
             .map_err(wasmtime::Error::new)?; // Wraps `WorkflowFunctionError` with anyhow to be unwrapped by workflow_worker
 
@@ -2771,7 +2825,12 @@ pub(crate) mod workflow_support {
                 params,
                 wasm_backtrace,
             }
-            .apply(&mut self.event_history, &mut *self.db_connection, called_at)
+            .apply(
+                &mut self.event_history,
+                &mut self.event_call_cursor,
+                &mut *self.db_connection,
+                called_at,
+            )
             .await?;
 
             match stub_result {
@@ -2846,6 +2905,7 @@ pub(crate) mod workflow_support {
                 params,
                 wasm_backtrace,
                 &mut self.event_history,
+                &mut self.event_call_cursor,
                 &mut *self.db_connection,
                 called_at,
             )
@@ -3165,13 +3225,13 @@ pub(crate) mod tests {
                 self.db_pool.connection().await.unwrap(),
                 ctx.execution_id.clone(),
                 CachingBuffer::new(join_next_blocking_strategy),
-                ctx.version,
             );
 
             let cancel_registry = CancelRegistry::new();
             let mut workflow_ctx = WorkflowCtx::new(
                 DEPLOYMENT_ID_DUMMY,
                 Box::new(caching_db_connection),
+                ctx.version,
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -3315,7 +3375,7 @@ pub(crate) mod tests {
                 if let Err(err) = res {
                     info!("Sending {err:?}");
                     return err
-                        .into_worker_partial_result(workflow_ctx.db_connection.version().clone())
+                        .into_worker_partial_result(workflow_ctx.version().clone())
                         .into();
                 }
             }
@@ -3324,7 +3384,7 @@ pub(crate) mod tests {
                     info!("Finishing");
                     WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
                         retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
-                        version: workflow_ctx.db_connection.version().clone(),
+                        version: workflow_ctx.version().clone(),
                         http_client_traces: None,
                     }))
                 }

@@ -1933,6 +1933,9 @@ impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayRes
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct AdvanceRequestSer {
     pub(crate) captured_writes: Vec<CapturedWriteSer>,
+    /// Capture and persist call-site backtraces while advancing.
+    #[serde(default)]
+    pub(crate) persist_backtrace: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -2313,10 +2316,13 @@ async fn execution_advance(
         ));
     }
 
-    let advance_res = match &replay_worker {
-        ReplayWorker::Js(worker) => worker.advance(execution_id.clone(), captured_writes).await,
-        ReplayWorker::Wasm(worker) => worker.advance(execution_id.clone(), captured_writes).await,
-    };
+    let advance_res = replay_worker
+        .advance(
+            execution_id.clone(),
+            captured_writes,
+            payload.persist_backtrace,
+        )
+        .await;
 
     let advance_response = match advance_res {
         Ok(ok) => ok,
@@ -2463,10 +2469,8 @@ async fn replay_execution_internal(
             }
         };
 
-    let replay_res = match &replay_worker {
-        ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
-        ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
-    };
+    // Always capture backtrace so that advance can persist it
+    let replay_res = replay_worker.replay(execution_id.clone(), true).await;
     match replay_res {
         Ok(response) => Ok(ReplayResponseSer::from(response)),
         Err(err) => map_replay_err(err),
@@ -2517,10 +2521,8 @@ async fn execution_upgrade(
         let (_component_id, replay_worker) = replay_workers
             .get(&payload.new)
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
-        let replay_res = match replay_worker {
-            ReplayWorker::Js(worker) => worker.replay(execution_id.clone()).await,
-            ReplayWorker::Wasm(worker) => worker.replay(execution_id.clone()).await,
-        };
+        // no backtrace capture on upgrade
+        let replay_res = replay_worker.replay(execution_id.clone(), false).await;
         if let Err(err) = replay_res {
             info!("Replay failed: {err:?}");
             return Err(HttpResponse {

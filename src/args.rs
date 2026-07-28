@@ -93,7 +93,7 @@ pub(crate) enum Subcommand {
     /// Run or verify the Obelisk server.
     #[command(subcommand)]
     Server(Server),
-    /// Submit, inspect, stub, cancel, pause, unpause, replay, or upgrade executions against a running server.
+    /// Submit, inspect, stub, cancel, pause, replay, persist backtraces, or upgrade executions.
     #[command(subcommand)]
     Execution(Execution),
     /// Inspect components or add/push them to an OCI registry.
@@ -784,6 +784,14 @@ pub(crate) enum Execution {
         /// Output as JSON instead of human-readable text.
         #[arg(short, long)]
         json: bool,
+    },
+    /// Replay a workflow and persist its call-site backtraces.
+    PersistBacktraces {
+        /// Address of the obelisk server
+        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        api_url: String,
+        /// Execution ID whose backtraces should be persisted.
+        execution_id: ExecutionId,
     },
     /// Advance a paused workflow execution by replaying it and applying the next captured writes.
     Advance {

@@ -1019,7 +1019,6 @@ pub(crate) async fn deployment_verify_config(
         prepared_dirs.wasm_cache_dir.clone(),
         prepared_dirs.metadata_dir.clone(),
         params.runtime_config_availability,
-        server_verified.global_backtrace_persist,
         server_verified.global_executor_instance_limiter.clone(),
         server_verified.fuel,
         termination_watcher,
@@ -1760,7 +1759,7 @@ pub(crate) async fn run_internal(
         // Normally Axum blocks before this point until all clients are disconnected.
         debug!("Server {api_listening_addr} has been closed");
     } else {
-        info!("Obeliskg is ready");
+        info!("Obelisk is ready");
         let _: Result<_, _> = termination_watcher.changed().await;
         server_init.close().await;
     }
@@ -1785,7 +1784,6 @@ pub(crate) struct ServerVerified {
     allow_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
     fuel: Option<u64>,
-    global_backtrace_persist: bool,
     global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     database_subscription_interruption: Option<Duration>,
     api_addr_if_webui_enabled: Option<String>,
@@ -1829,7 +1827,6 @@ impl ServerVerified {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_lock_extension_leeway =
             config.workflows_global_config.lock_extension_leeway.into();
-        let global_backtrace_persist = config.wasm_global_config.backtrace.persist;
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
         let global_executor_instance_limiter = config
             .wasm_global_config
@@ -1852,7 +1849,6 @@ impl ServerVerified {
             allow_exec_activities: config.allow_exec_activities,
             http_servers,
             fuel,
-            global_backtrace_persist,
             global_executor_instance_limiter,
             database_subscription_interruption,
             api_addr_if_webui_enabled: if config.webui.enabled {
@@ -1907,7 +1903,6 @@ impl ServerCompiledLinked {
             webhooks_js_by_names,
             crons,
             http_servers_to_webhook_names,
-            global_backtrace_persist,
             fuel,
         } = deployment_verified;
         let linked = compile_and_link(
@@ -1922,7 +1917,6 @@ impl ServerCompiledLinked {
             webhooks_wasm_by_names,
             webhooks_js_by_names,
             crons,
-            global_backtrace_persist,
             fuel,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
@@ -3156,7 +3150,6 @@ pub(crate) struct DeploymentVerified {
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     crons: Vec<CronConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
-    global_backtrace_persist: bool,
     fuel: Option<u64>,
 }
 
@@ -3280,7 +3273,6 @@ impl DeploymentVerified {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         runtime_config_availability: RuntimeConfigAvailability,
-        global_backtrace_persist: bool,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
         termination_watcher: &mut watch::Receiver<()>,
@@ -3323,6 +3315,7 @@ impl DeploymentVerified {
                         value: target_url.clone(),
                     }],
                     backtrace: crate::config::toml::ComponentBacktraceConfigResolved::default(),
+                    backtrace_persist: false,
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
                         pattern: target_url,
@@ -3428,7 +3421,6 @@ impl DeploymentVerified {
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
-                            global_backtrace_persist,
                             global_executor_instance_limiter.clone(),
                             fuel,
                             subscription_interruption,
@@ -3621,7 +3613,6 @@ impl DeploymentVerified {
                     webhooks_js_by_names,
                     crons,
                     http_servers_to_webhook_names,
-                    global_backtrace_persist,
                     fuel
                 };
                 deployment_verified.validate_component_digests()?;
@@ -3675,7 +3666,6 @@ async fn compile_and_link(
     webhooks_wasm_by_names: IndexMap<ConfigName, WebhookWasmComponentConfigVerified>,
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     crons: Vec<CronConfigVerified>,
-    global_backtrace_persist: bool,
     fuel: Option<u64>,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
@@ -3905,7 +3895,7 @@ async fn compile_and_link(
                                 forward_stderr: webhook.forward_stderr,
                                 env_vars: webhook.env_vars,
                                 fuel,
-                                backtrace_persist: global_backtrace_persist,
+                                backtrace_persist: webhook.backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
                                 logs_store_min_level: webhook.logs_store_min_level,
                                 allowed_hosts: webhook.allowed_hosts,
@@ -3946,7 +3936,7 @@ async fn compile_and_link(
                                 forward_stderr: webhook_js.forward_stderr,
                                 env_vars: webhook_js.env_vars,
                                 fuel,
-                                backtrace_persist: false,
+                                backtrace_persist: webhook_js.backtrace_persist,
                                 subscription_interruption: None,
                                 logs_store_min_level: webhook_js.logs_store_min_level,
                                 allowed_hosts: webhook_js.allowed_hosts,
@@ -4499,13 +4489,12 @@ fn prespawn_workflow_js(
     ))
 }
 
-/// Replay-purposed [`WorkflowConfig`]: Interrupt strategy, persisted backtraces, stubbed WASI,
-/// no lock extension, no subscription interruption, no fuel limit.
+/// Replay-purposed [`WorkflowConfig`]: Interrupt strategy, stubbed WASI, no lock
+/// extension, no subscription interruption, no fuel limit.
 fn replay_workflow_config(component_id: &ComponentId) -> WorkflowConfig {
     WorkflowConfig {
         component_id: component_id.clone(),
         join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-        backtrace_persist: true,
         stub_wasi: true,
         fuel: None,
         lock_extension: None, // does not matter for the `Interrupt` strategy.
@@ -4516,7 +4505,7 @@ fn replay_workflow_config(component_id: &ComponentId) -> WorkflowConfig {
 struct WorkflowWorkerCompiledWithConfig {
     worker: WorkflowWorkerCompiled,
     workflows_lock_extension_leeway: Duration,
-    /// Replay-purposed compiled worker (Interrupt strategy, stubbed WASI, persisted backtraces).
+    /// Replay-purposed compiled worker (Interrupt strategy and stubbed WASI).
     /// Linked alongside the production worker; spawned into a long-lived [`ReplayWorker`].
     replay_compiled: WorkflowWorkerCompiled,
 }
@@ -5027,7 +5016,6 @@ mod tests {
             prepared_dirs.wasm_cache_dir.clone(),
             prepared_dirs.metadata_dir.clone(),
             params.runtime_config_availability,
-            server_verified.global_backtrace_persist,
             server_verified.global_executor_instance_limiter,
             server_verified.fuel,
             &mut termination_watcher,

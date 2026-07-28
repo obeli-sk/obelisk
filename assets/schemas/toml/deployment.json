@@ -1199,6 +1199,11 @@
             "sources": {}
           }
         },
+        "backtrace_persist": {
+          "description": "Capture and persist backtraces for requests handled by this webhook.",
+          "type": "boolean",
+          "default": false
+        },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
           "default": "debug"
@@ -1312,6 +1317,11 @@
             "$ref": "#/$defs/EnvVarConfig"
           },
           "default": []
+        },
+        "backtrace_persist": {
+          "description": "Capture and persist backtraces for requests handled by this webhook.",
+          "type": "boolean",
+          "default": false
         },
         "allowed_host": {
           "description": "Allowed outgoing HTTP hosts with optional method restrictions and secrets.",

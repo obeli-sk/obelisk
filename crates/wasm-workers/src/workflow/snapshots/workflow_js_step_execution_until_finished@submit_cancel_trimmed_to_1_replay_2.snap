@@ -57,34 +57,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
             "paused": false
           }
         ],
-        "backtraces": [
-          {
-            "execution_id": "E_0000000000000000000000000B",
-            "component_id": {
-              "component_type": "workflow",
-              "name": "test_js_workflow",
-              "component_digest": "sha256:<REDACTED>"
-            },
-            "version_min_including": 3,
-            "version_max_excluding": 4,
-            "wasm_backtrace": {
-              "frames": [
-                {
-                  "module": "unknown",
-                  "func_name": "submit_and_return",
-                  "symbols": [
-                    {
-                      "func_name": null,
-                      "file": null,
-                      "line": 4,
-                      "col": 22
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        ]
+        "backtraces": []
       }
     },
     {

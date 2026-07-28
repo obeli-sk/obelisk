@@ -28,11 +28,11 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
 
     fn execution_id(&self) -> &ExecutionId;
 
-    fn version(&self) -> &Version;
-
     fn capture_application_log(&mut self, _row: LogInfoAppendRow) -> bool {
         false
     }
+
+    async fn append_backtrace(&mut self, backtrace: BacktraceInfo) -> Result<(), DbErrorWrite>;
 
     async fn append_non_blocking(
         &mut self,
@@ -43,14 +43,17 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     // Caller must trigger flushing before this call.
     async fn append_blocking(
         &mut self,
+        version: Version,
         execution_id: ExecutionId,
         req: AppendRequest,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
 
+    #[expect(clippy::too_many_arguments)]
     async fn append_join_set_close(
         &mut self,
+        version: Version,
         cancel_registry: &CancelRegistry,
         execution_id: ExecutionId,
         req: AppendRequest,
@@ -61,6 +64,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
 
     async fn append_batch(
         &mut self,
+        version: Version,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
@@ -68,8 +72,10 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
 
+    #[expect(clippy::too_many_arguments)]
     async fn append_batch_create_new_execution(
         &mut self,
+        version: Version,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
@@ -113,20 +119,17 @@ pub(crate) struct CachingDbConnection {
     db_connection: Box<dyn DbConnection>,
     execution_id: ExecutionId,
     pub(crate) caching_buffer: Option<CachingBuffer>,
-    version: Version,
 }
 impl CachingDbConnection {
     pub(crate) fn new(
         db_connection: Box<dyn DbConnection>,
         execution_id: ExecutionId,
         caching_buffer: Option<CachingBuffer>,
-        version: Version,
     ) -> CachingDbConnection {
         CachingDbConnection {
             db_connection,
             execution_id,
             caching_buffer,
-            version,
         }
     }
 }
@@ -215,8 +218,8 @@ impl WorkflowDbConnection for CachingDbConnection {
         &self.execution_id
     }
 
-    fn version(&self) -> &Version {
-        &self.version
+    async fn append_backtrace(&mut self, backtrace: BacktraceInfo) -> Result<(), DbErrorWrite> {
+        self.db_connection.append_backtrace(backtrace).await
     }
 
     async fn append_non_blocking(
@@ -224,14 +227,12 @@ impl WorkflowDbConnection for CachingDbConnection {
         non_blocking_event: CacheableDbEvent,
         called_at: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
-        self.version = if let Some(caching_buffer) = &mut self.caching_buffer {
-            let next_version = Version::new(self.version.0 + 1);
+        if let Some(caching_buffer) = &mut self.caching_buffer {
             caching_buffer
                 .non_blocking_event_batch
                 .push(non_blocking_event);
             self.flush_non_blocking_event_cache_if_full(called_at)
                 .await?;
-            next_version
         } else {
             // No caching_buffer here, so no flushing before the write.
             match non_blocking_event {
@@ -247,7 +248,8 @@ impl WorkflowDbConnection for CachingDbConnection {
                     child_req,
                     backtrace,
                 } => {
-                    self.db_connection
+                    let next_version = self
+                        .db_connection
                         .append_batch_create_new_execution(
                             called_at,
                             vec![request],
@@ -256,7 +258,8 @@ impl WorkflowDbConnection for CachingDbConnection {
                             vec![child_req],
                             backtrace.into_iter().collect(),
                         )
-                        .await?
+                        .await?;
+                    assert_eq!(version.increment(), next_version);
                 }
                 CacheableDbEvent::JoinSetCreate {
                     request,
@@ -302,16 +305,17 @@ impl WorkflowDbConnection for CachingDbConnection {
                                 debug!("Ignoring error while appending backtrace: {err:?}");
                             });
                     }
-                    next_version
+                    assert_eq!(version.increment(), next_version);
                 }
             }
-        };
+        }
         Ok(())
     }
 
     // Caller must trigger flushing before this call.
     async fn append_blocking(
         &mut self,
+        version: Version,
         execution_id: ExecutionId,
         req: AppendRequest,
         wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -320,21 +324,17 @@ impl WorkflowDbConnection for CachingDbConnection {
         self.flush_non_blocking_event_cache(req.created_at).await?;
         let next_version = self
             .db_connection
-            .append(execution_id, self.version.clone(), req)
+            .append(execution_id, version.clone(), req)
             .await?;
-        self.persist_backtrace_blocking(
-            &self.version.clone(),
-            &next_version,
-            wasm_backtrace,
-            component_id,
-        )
-        .await;
-        self.version = next_version;
+        self.persist_backtrace_blocking(&version, &next_version, wasm_backtrace, component_id)
+            .await;
+        assert_eq!(version.increment(), next_version);
         Ok(())
     }
 
     async fn append_batch(
         &mut self,
+        version: Version,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
@@ -344,21 +344,16 @@ impl WorkflowDbConnection for CachingDbConnection {
         self.flush_non_blocking_event_cache(current_time).await?;
         let next_version = self
             .db_connection
-            .append_batch(current_time, batch, execution_id, self.version.clone())
+            .append_batch(current_time, batch, execution_id, version.clone())
             .await?;
-        self.persist_backtrace_blocking(
-            &self.version.clone(),
-            &next_version,
-            wasm_backtrace,
-            component_id,
-        )
-        .await;
-        self.version = next_version;
+        self.persist_backtrace_blocking(&version, &next_version, wasm_backtrace, component_id)
+            .await;
         Ok(())
     }
 
     async fn append_join_set_close(
         &mut self,
+        version: Version,
         cancel_registry: &CancelRegistry,
         execution_id: ExecutionId,
         req: AppendRequest,
@@ -420,12 +415,13 @@ impl WorkflowDbConnection for CachingDbConnection {
             }
         }
 
-        self.append_blocking(execution_id, req, wasm_backtrace, component_id)
+        self.append_blocking(version, execution_id, req, wasm_backtrace, component_id)
             .await
     }
 
     async fn append_batch_create_new_execution(
         &mut self,
+        version: Version,
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
@@ -435,11 +431,11 @@ impl WorkflowDbConnection for CachingDbConnection {
     ) -> Result<(), DbErrorWrite> {
         self.flush_non_blocking_event_cache(current_time).await?;
         let expected_next_version =
-            Version(self.version.0 + u32::try_from(batch.len()).expect("max 3 won't overflow"));
+            Version(version.0 + u32::try_from(batch.len()).expect("max 3 won't overflow"));
         let backtrace_info = wasm_backtrace.map(|wasm_backtrace| BacktraceInfo {
             execution_id: execution_id.clone(),
             component_id: component_id.clone(),
-            version_min_including: self.version.clone(),
+            version_min_including: version.clone(),
             version_max_excluding: expected_next_version.clone(),
             wasm_backtrace,
         });
@@ -449,14 +445,13 @@ impl WorkflowDbConnection for CachingDbConnection {
                 current_time,
                 batch,
                 execution_id,
-                self.version.clone(),
+                version,
                 child_req,
                 backtrace_info.into_iter().collect(),
             )
             .await?;
         assert_eq!(next_version, expected_next_version); // must hold, assumed when creating the backtrace `version_max_excluding`
 
-        self.version = next_version;
         Ok(())
     }
 

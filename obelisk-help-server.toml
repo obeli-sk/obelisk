@@ -54,7 +54,6 @@
 ## Path to directory where downloaded or transformed WASM files are stored. Supports path prefixes.
 ## By default "${CACHE_DIR}/wasm" or "./cache/wasm" if no valid home directory path could be retrieved from the operating system.
 # cache_directory = "${CACHE_DIR}/wasm"
-# backtrace.persist = true                       # Persist backtraces on effect calls for all workflows and webhook endpoints.
 # allocator_config = "auto"                      # One of "auto"|"on_demand"|"pooling"
 # global_executor_instance_limiter = "unlimited" # If set to an integer, limits the number of concurrent workflow and activity executions.
 # global_webhook_instance_limiter = "unlimited"  # If set to an integer, limits the number of concurrent webhook requests.

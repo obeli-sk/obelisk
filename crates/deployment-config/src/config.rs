@@ -702,6 +702,8 @@ pub mod webhook {
         #[serde(default)]
         pub backtrace: ComponentBacktraceConfigResolved,
         #[serde(default)]
+        pub backtrace_persist: bool,
+        #[serde(default)]
         pub logs_store_min_level: LogLevelToml,
         #[serde(default, rename = "allowed_host")]
         pub allowed_hosts: Vec<AllowedHostToml>,
@@ -726,6 +728,8 @@ pub mod webhook {
         pub logs_store_min_level: LogLevelToml,
         #[serde(default)]
         pub env_vars: Vec<EnvVarConfig>,
+        #[serde(default)]
+        pub backtrace_persist: bool,
         #[serde(default, rename = "allowed_host")]
         pub allowed_hosts: Vec<AllowedHostToml>,
     }
