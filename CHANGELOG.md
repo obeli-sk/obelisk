@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(js)* A delay cancelled inside a join set now also sets `failureKind: "cancelled"` on the
   `ChildError` thrown by `joinNext`/`joinNextTry` (previously only `cancelled: true` was set).
 
+### Fixed
+
+- *(deployment)* `--allow-unavailable-runtime-config` now tolerates missing environment variable
+  interpolations in plain key/value `env_vars` entries, including entries that rename a variable.
+
 ### Deprecated
 
 - *(js)* Renamed `obelisk.ChildExecutionError` to `obelisk.ChildError`, which now also covers

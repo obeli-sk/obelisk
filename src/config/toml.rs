@@ -3360,10 +3360,14 @@ fn resolve_env_vars_plaintext(
     env_vars
         .into_iter()
         .map(|env_var| match env_var {
-            EnvVarConfig::KeyValue { key, value } => Ok(EnvVar {
-                key,
-                val: interpolate_env_vars_plaintext(&value)?,
-            }),
+            EnvVarConfig::KeyValue { key, value } => match interpolate_env_vars_plaintext(&value) {
+                Ok(val) => Ok(EnvVar { key, val }),
+                Err(_) if ignore_missing => Ok(EnvVar {
+                    key,
+                    val: String::new(),
+                }),
+                Err(err) => Err(err),
+            },
             EnvVarConfig::Key(key) => match std::env::var(&key) {
                 Ok(val) => Ok(EnvVar { key, val }),
                 Err(_err) => {
@@ -3948,6 +3952,28 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
             )
             .unwrap();
             assert!(hosts.is_empty());
+        }
+    }
+
+    mod env_vars {
+        use super::super::*;
+
+        #[test]
+        fn missing_key_value_interpolation_honors_ignore_missing() {
+            const VAR: &str = "OBELISK_TEST_MISSING_KEY_VALUE_ENV_VAR_1C5D78B2";
+            let env_vars = vec![EnvVarConfig::KeyValue {
+                key: "RENAMED_ENV_VAR".to_string(),
+                value: format!("${{{VAR}}}"),
+            }];
+
+            let error = resolve_env_vars_plaintext(env_vars.clone(), false)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(VAR), "unexpected error: {error}");
+
+            let resolved = resolve_env_vars_plaintext(env_vars, true).unwrap();
+            assert_eq!(resolved[0].key, "RENAMED_ENV_VAR");
+            assert_eq!(resolved[0].val, "");
         }
     }
 
