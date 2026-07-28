@@ -983,24 +983,13 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 ))
             })?;
 
-        let captured_backtraces = match replay_worker.capture_backtraces(execution_id.clone()).await
-        {
-            Ok(backtraces) => backtraces,
-            Err(err) => {
-                return Err(tonic::Status::internal(format!("replay error: {err}")));
-            }
-        };
-
-        let persisted_next_version = conn.get(&execution_id).await.to_status()?.next_version;
-        let backtraces: Vec<_> = captured_backtraces
-            .into_iter()
-            .filter(|backtrace| {
-                backtrace.execution_id == execution_id
-                    && backtrace.version_max_excluding <= persisted_next_version
-            })
-            .collect();
         let persisted_backtrace_count =
-            conn.append_backtrace_batch(backtraces).await.to_status()?;
+            match replay_worker.persist_backtraces(execution_id.clone()).await {
+                Ok(count) => count,
+                Err(err) => {
+                    return Err(tonic::Status::internal(format!("replay error: {err}")));
+                }
+            };
         let persisted_backtrace_count = u32::try_from(persisted_backtrace_count)
             .map_err(|_| tonic::Status::resource_exhausted("too many backtraces persisted"))?;
 

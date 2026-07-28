@@ -848,6 +848,44 @@
         }
       }
     },
+    "/v1/executions/{execution_id}/backtrace/persist": {
+      "put": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Replay an execution and persist its call-site backtraces (idempotent).",
+        "operationId": "execution_persist_backtraces",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "description": "Execution ID whose backtraces to persist",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Backtraces persisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersistBacktracesResponseSer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Replay failed"
+          }
+        }
+      }
+    },
     "/v1/executions/{execution_id}/backtrace/source": {
       "get": {
         "tags": [
@@ -2677,6 +2715,20 @@
           "wit_type": {
             "type": "string",
             "description": "WIT type representation"
+          }
+        }
+      },
+      "PersistBacktracesResponseSer": {
+        "type": "object",
+        "required": [
+          "persisted_backtrace_count"
+        ],
+        "properties": {
+          "persisted_backtrace_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of newly persisted backtraces (already-persisted ones are skipped).",
+            "minimum": 0
           }
         }
       },

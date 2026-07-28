@@ -15,7 +15,6 @@ use concepts::IfcFqnName;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
 use concepts::component_id::ComponentDigest;
-use concepts::storage::BacktraceInfo;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::fmt::Debug;
@@ -72,13 +71,13 @@ impl ReplayWorker {
         }
     }
 
-    pub async fn capture_backtraces(
+    pub async fn persist_backtraces(
         &self,
         execution_id: ExecutionId,
-    ) -> Result<Vec<BacktraceInfo>, ReplayError> {
+    ) -> Result<usize, ReplayError> {
         match self {
-            Self::Wasm(worker) => worker.capture_backtraces(execution_id).await,
-            Self::Js(worker) => worker.capture_backtraces(execution_id).await,
+            Self::Wasm(worker) => worker.persist_backtraces(execution_id).await,
+            Self::Js(worker) => worker.persist_backtraces(execution_id).await,
         }
     }
 

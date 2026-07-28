@@ -1231,6 +1231,51 @@ impl WorkflowWorker {
         Ok(Self::collect_write_backtraces(writes, backtraces))
     }
 
+    /// Replay the execution and persist the captured backtraces, returning how many were stored.
+    /// Backtraces keyed to a future (not-yet-written) log entry are trimmed, so a stub's
+    /// display-only backtrace (keyed to its future `HistoryEvent::Stub`) is never persisted.
+    #[instrument(skip_all, fields(%execution_id))]
+    pub async fn persist_backtraces(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<usize, ReplayError> {
+        let captured = self.capture_backtraces(execution_id.clone()).await?;
+        let db_conn = self
+            .db_pool
+            .connection()
+            .await
+            .map_err(DbErrorWrite::from)?;
+        let next_version = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?
+            .next_version;
+        Ok(Self::trim_and_persist_backtraces(
+            db_conn.as_ref(),
+            &execution_id,
+            &next_version,
+            captured,
+        )
+        .await?)
+    }
+
+    /// Keep only backtraces whose range lies fully within the already-written log
+    /// (`version_max_excluding <= next_version`) for this execution, then persist them.
+    pub(crate) async fn trim_and_persist_backtraces(
+        db_conn: &dyn DbConnection,
+        execution_id: &ExecutionId,
+        next_version: &Version,
+        captured: Vec<BacktraceInfo>,
+    ) -> Result<usize, DbErrorWrite> {
+        let persistable = captured
+            .into_iter()
+            .filter(|bt| {
+                bt.execution_id == *execution_id && bt.version_max_excluding <= *next_version
+            })
+            .collect();
+        db_conn.append_backtrace_batch(persistable).await
+    }
+
     #[instrument(skip_all, fields(%execution_id))]
     pub async fn replay(
         &self,
