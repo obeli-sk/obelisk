@@ -643,8 +643,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
-        wasm_backtrace: Option<storage::WasmBacktrace>,
-        component_id: &ComponentId,
+        stub_backtrace: Option<BacktraceInfo>,
     ) -> Result<(), UpsertStubOrReplayInterrupt> {
         let execution_id = ExecutionId::Derived(execution_id);
         // Query the database first.
@@ -672,14 +671,6 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             }
         }
 
-        let next = next_version(&version, 1);
-        let backtraces = make_backtrace(
-            &self.execution_id,
-            component_id,
-            &version,
-            &next,
-            wasm_backtrace,
-        );
         self.collector
             .push_write(CapturedDbWrite::AppendStubResponse {
                 events: AppendEventsToExecution {
@@ -689,7 +680,8 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                 },
                 response,
                 current_time,
-                backtraces,
+                // Display-only; the caller keys it to the parent's stub-event version, not `version` (the child's).
+                backtraces: stub_backtrace.into_iter().collect(),
             });
         // no idea about the response
         Err(UpsertStubOrReplayInterrupt::ReplayInterrupt)

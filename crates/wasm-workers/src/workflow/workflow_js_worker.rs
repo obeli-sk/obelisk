@@ -3673,6 +3673,112 @@ mod tests {
         db_close.close().await;
     }
 
+    /// The stub call site backtrace must be keyed to the parent's future `HistoryEvent::Stub`
+    /// version, not the stub child's `1..2` domain, so `persist_execution_backtraces` skips it while
+    /// the event is unpersisted instead of storing it against the parent.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn capture_backtraces_keys_stub_to_future_history_event(database: Database) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function call_stub() {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            obelisk.stub(execId, { 'ok': 'hello' });
+            return js.joinNext();
+        }";
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "call-stub");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        );
+
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::from_parts(0, 0);
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let (log_sender, _log_recv) = mpsc::channel(100);
+        let replay_worker = build_js_replay_worker(
+            DeploymentId::from_parts(0, 0),
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool.clone(),
+            Some(LogStrageConfig {
+                min_level: concepts::storage::LogLevel::Debug,
+                log_sender,
+            }),
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            default_return_type(),
+        );
+
+        // The paused workflow has not executed, so every backtrace the replay captures belongs to a
+        // future log entry (at or after `next_version`), including the stub's display backtrace.
+        let next_version = db_connection.get(&execution_id).await.unwrap().next_version;
+        let captured = replay_worker
+            .capture_backtraces(execution_id.clone())
+            .await
+            .unwrap();
+        assert!(!captured.is_empty(), "replay must capture backtraces");
+        assert!(
+            captured
+                .iter()
+                .all(|bt| bt.version_min_including >= next_version),
+            "paused workflow: every captured backtrace targets a future log entry",
+        );
+
+        // Persisting must trim those future backtraces. The stub used to key its backtrace to the
+        // child's `1..2` range, which persist would treat as already-written and store against the
+        // parent; the fix keys it to the future `HistoryEvent::Stub`, so nothing is persisted here.
+        let persisted = replay_worker
+            .persist_backtraces(execution_id.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            persisted, 0,
+            "future backtraces must be trimmed, not persisted"
+        );
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
     #[expand_enum_database]
     #[rstest]
     #[case::full(None, "submit_cancel_full", 10)]
