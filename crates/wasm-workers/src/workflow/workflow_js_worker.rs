@@ -198,6 +198,34 @@ impl WorkflowJsWorker {
         Ok(WorkflowWorker::collect_write_backtraces(writes, backtraces))
     }
 
+    /// See [`WorkflowWorker::persist_backtraces`].
+    pub async fn persist_backtraces(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<usize, ReplayError> {
+        let captured = self.capture_backtraces(execution_id.clone()).await?;
+        let db_conn = self
+            .inner
+            .db_pool
+            .connection()
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?;
+        let next_version = db_conn
+            .get(&execution_id)
+            .await
+            .map_err(concepts::storage::DbErrorWrite::from)?
+            .next_version;
+        Ok(
+            WorkflowWorker::trim_and_persist_backtraces(
+                db_conn.as_ref(),
+                &execution_id,
+                &next_version,
+                captured,
+            )
+            .await?,
+        )
+    }
+
     fn boa_invocation(
         params: &Params,
         js_source: String,
