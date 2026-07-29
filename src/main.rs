@@ -59,9 +59,10 @@ fn prepare_server_startup(command: &Subcommand) -> anyhow::Result<Option<ServerS
         ) => server_config.clone(),
         _ => return Ok(None),
     };
-    let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
+    let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
     let config = config_holder.load_config_sync()?;
     let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(config.secrets.clone())?);
+    config_holder.set_secret_registry(secret_registry.clone());
     Ok(Some(ServerStartup {
         config_holder,
         config,

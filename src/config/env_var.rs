@@ -52,15 +52,15 @@ fn interpolate_env_vars_inner(
 pub(crate) fn interpolate_path_template(
     input: &str,
     synthetics: &[(&'static str, Option<String>)],
+    secret_registry: &SecretRegistry,
 ) -> Result<String, anyhow::Error> {
-    // Path templates are operator-owned (`server.toml`) and are not registry-aware:
-    // they never carry a deployment-referenced secret, so they read the process
-    // environment directly.
     let lookup = |key: &str| -> Result<Option<String>, anyhow::Error> {
-        Ok(match synthetics.iter().find(|(name, _)| *name == key) {
-            Some((_, val)) => val.clone(),
-            None => std::env::var(key).ok(),
-        })
+        match synthetics.iter().find(|(name, _)| *name == key) {
+            Some((_, val)) => Ok(val.clone()),
+            None => secret_registry
+                .public_env_lookup(key)
+                .map_err(anyhow::Error::from),
+        }
     };
     let on_missing = |key: String| -> anyhow::Error {
         if synthetics.iter().any(|(name, _)| *name == key) {
@@ -303,11 +303,18 @@ mod tests {
 
     // --- path templates: synthetic path variables + env interpolation ---
 
+    fn interp_path(
+        input: &str,
+        synthetics: &[(&'static str, Option<String>)],
+    ) -> Result<String, anyhow::Error> {
+        interpolate_path_template(input, synthetics, &SecretRegistry::empty())
+    }
+
     #[test]
     fn path_template_synthetic_resolves() {
         let synthetics = [("DATA_DIR", Some("/data".to_string()))];
         assert_eq!(
-            interpolate_path_template("${DATA_DIR}/obelisk-sqlite", &synthetics).unwrap(),
+            interp_path("${DATA_DIR}/obelisk-sqlite", &synthetics).unwrap(),
             "/data/obelisk-sqlite"
         );
     }
@@ -318,7 +325,7 @@ mod tests {
         unsafe { std::env::set_var("TEMP_DIR", "/env-temp") };
         let synthetics = [("TEMP_DIR", Some("/synthetic-temp".to_string()))];
         assert_eq!(
-            interpolate_path_template("${TEMP_DIR}/x", &synthetics).unwrap(),
+            interp_path("${TEMP_DIR}/x", &synthetics).unwrap(),
             "/synthetic-temp/x"
         );
     }
@@ -329,22 +336,32 @@ mod tests {
         unsafe { std::env::set_var("TEST_PATH_ENV_VAR", "/from-env") };
         let synthetics = [("DATA_DIR", Some("/data".to_string()))];
         assert_eq!(
-            interpolate_path_template("${TEST_PATH_ENV_VAR}/x", &synthetics).unwrap(),
+            interp_path("${TEST_PATH_ENV_VAR}/x", &synthetics).unwrap(),
             "/from-env/x"
         );
     }
 
     #[test]
+    fn path_template_rejects_registered_secret_name() {
+        let registry = SecretRegistry::from_test_values([(
+            "PATH_SECRET".to_string(),
+            SecretString::from("/secret"),
+        )]);
+        let err = interpolate_path_template("${PATH_SECRET}/x", &[], &registry).unwrap_err();
+        assert!(err.to_string().contains("PATH_SECRET"));
+    }
+
+    #[test]
     fn path_template_unknown_var_errors() {
         let synthetics = [("DATA_DIR", Some("/data".to_string()))];
-        let err = interpolate_path_template("${NONEXISTENT_PATH_XYZ}/x", &synthetics).unwrap_err();
+        let err = interp_path("${NONEXISTENT_PATH_XYZ}/x", &synthetics).unwrap_err();
         assert!(err.to_string().contains("NONEXISTENT_PATH_XYZ"));
     }
 
     #[test]
     fn path_template_unavailable_synthetic_errors_clearly() {
         let synthetics = [("SERVER_CONFIG_DIR", None)];
-        let err = interpolate_path_template("${SERVER_CONFIG_DIR}/x", &synthetics).unwrap_err();
+        let err = interp_path("${SERVER_CONFIG_DIR}/x", &synthetics).unwrap_err();
         assert!(err.to_string().contains("not available"));
         assert!(err.to_string().contains("SERVER_CONFIG_DIR"));
     }
@@ -353,7 +370,7 @@ mod tests {
     fn path_template_unavailable_synthetic_uses_default() {
         let synthetics = [("DATA_DIR", None)];
         assert_eq!(
-            interpolate_path_template("${DATA_DIR:-./local}/x", &synthetics).unwrap(),
+            interp_path("${DATA_DIR:-./local}/x", &synthetics).unwrap(),
             "./local/x"
         );
     }
