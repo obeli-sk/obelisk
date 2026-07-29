@@ -4855,9 +4855,11 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
     let now = sim_clock.now();
     let file_content = b"hello deployment file";
     let file_digest = DeploymentRecord::compute_digest("hello deployment file");
+    // Before the blob is uploaded to the CAS, its size is not yet known (0).
     let file = DeploymentFileRecord {
         path: "scripts/a.js".to_string(),
         digest: file_digest.clone(),
+        size: 0,
     };
     api_conn
         .insert_deployment(DeploymentRecord {
@@ -4908,8 +4910,13 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
             .unwrap()
             .is_empty()
     );
+    // After the blob is uploaded, the listed file reports its byte size.
+    let file_with_size = DeploymentFileRecord {
+        size: u64::try_from(file_content.len()).unwrap(),
+        ..file
+    };
     assert_eq!(
-        vec![file],
+        vec![file_with_size],
         api_conn
             .get_deployment(deployment_id)
             .await

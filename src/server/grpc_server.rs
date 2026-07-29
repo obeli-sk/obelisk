@@ -2032,6 +2032,7 @@ fn file_refs_to_grpc(
         .map(|file| grpc_gen::FileRef {
             path: file.path,
             digest: file.digest.to_string(),
+            size: file.size,
         })
         .collect()
 }

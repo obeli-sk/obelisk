@@ -3743,17 +3743,27 @@ impl SqlitePool {
         deployment_id: DeploymentId,
     ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
         tx.prepare(
-            "SELECT path, digest FROM t_deployment_file \
-             WHERE deployment_id = :deployment_id \
-             ORDER BY path, digest",
+            // LEFT JOIN: no FK ties t_deployment_file to t_file, so report every referenced file
+            // rather than silently dropping one whose metadata row is (unexpectedly) absent.
+            "SELECT df.path, df.digest, f.size FROM t_deployment_file df \
+             LEFT JOIN t_file f ON f.digest = df.digest \
+             WHERE df.deployment_id = :deployment_id \
+             ORDER BY df.path, df.digest",
         )?
         .query_map(
             rusqlite::named_params! { ":deployment_id": deployment_id.to_string() },
             |row| {
-                Ok(DeploymentFileRecord {
-                    path: row.get("path")?,
-                    digest: row.get("digest")?,
-                })
+                let path: String = row.get("path")?;
+                let digest: ContentDigest = row.get("digest")?;
+                let size = if let Some(size) = row.get::<_, Option<i64>>("size")? {
+                    // size is stored as content.len(); a negative value means DB corruption.
+                    u64::try_from(size)
+                        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, size))?
+                } else {
+                    warn!(%path, %digest, "deployment file metadata missing from t_file, reporting size 0");
+                    0
+                };
+                Ok(DeploymentFileRecord { path, digest, size })
             },
         )?
         .collect::<Result<Vec<_>, rusqlite::Error>>()

@@ -1191,6 +1191,7 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
                 .push(concepts::storage::DeploymentFileRecord {
                     path: path.to_string(),
                     digest: digest.clone(),
+                    size: u64::try_from(bytes.len()).expect("file length fits u64"),
                 });
         }
         Ok(bytes)
@@ -1390,6 +1391,7 @@ async fn prepare_new_deployment_record(
         file_records.push(DeploymentFileRecord {
             path: file.path,
             digest: file.digest,
+            size: u64::try_from(file.bytes.len()).expect("file length fits u64"),
         });
     }
 
@@ -1787,6 +1789,7 @@ pub(crate) struct ServerVerified {
     global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     database_subscription_interruption: Option<Duration>,
     api_addr_if_webui_enabled: Option<String>,
+    max_deployment_file_bytes: u32,
 }
 
 #[derive(Clone)]
@@ -1856,6 +1859,7 @@ impl ServerVerified {
             } else {
                 None
             },
+            max_deployment_file_bytes: config.max_deployment_file_bytes.0,
         })
     }
 }
@@ -2123,9 +2127,6 @@ fn build_component_metadata_records(
     )
 }
 
-/// Per-file size limit for deployment-owned blobs attached to a submit request.
-const MAX_DEPLOYMENT_FILE_BYTES: usize = 512 * 1024 * 1024;
-
 /// A deployment-owned blob attached to a submit request.
 pub(crate) struct SuppliedFile {
     pub(crate) path: String,
@@ -2219,7 +2220,7 @@ fn validate_submit_package(
     expected: &[crate::config::manifest::DeploymentFileRef],
     supplied: Vec<SuppliedFile>,
     cas_present: &hashbrown::HashSet<ContentDigest>,
-    max_bytes: usize,
+    max_bytes: u32,
 ) -> Result<Vec<DeploymentManifestFile>, SubmitPackageError> {
     use DeploymentManifestFile;
 
@@ -2231,6 +2232,7 @@ fn validate_submit_package(
         .collect();
 
     let mut provided: HashMap<ContentDigest, Vec<u8>> = HashMap::new();
+    let max_bytes = max_bytes as usize; // widening, lossless on all supported targets
     for file in supplied {
         let actual = compute_content_digest(&file.content);
         if let Some(supplied_digest) = &file.supplied_digest
@@ -2366,7 +2368,7 @@ pub(crate) async fn submit_deployment(
         &manifest.files,
         supplied_files,
         &cas_present,
-        MAX_DEPLOYMENT_FILE_BYTES,
+        server_verified.max_deployment_file_bytes,
     )
     .map_err(SubmitDeploymentError::Package)?;
 
@@ -5263,10 +5265,10 @@ mod tests {
 
     mod submit_package {
         use crate::command::server::{
-            MAX_DEPLOYMENT_FILE_BYTES, SuppliedFile, compute_content_digest,
-            validate_submit_package,
+            SuppliedFile, compute_content_digest, validate_submit_package,
         };
         use crate::config::manifest::{DeploymentFileRef, ManifestFieldRef};
+        use crate::config::toml::MAX_DEPLOYMENT_FILE_BYTES;
         use concepts::ContentDigest;
         use hashbrown::HashSet;
 

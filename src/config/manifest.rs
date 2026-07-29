@@ -233,6 +233,8 @@ impl DeploymentManifest {
             .map(|file| DeploymentFileRecord {
                 path: file.path.clone(),
                 digest: file.digest.clone(),
+                // Size is not carried at this stage; it is read back from t_file on listing.
+                size: 0,
             })
             .collect()
     }

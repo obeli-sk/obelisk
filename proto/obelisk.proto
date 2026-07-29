@@ -1152,6 +1152,8 @@ message Deployment {
 message FileRef {
     string path = 1;
     string digest = 2;
+    // Byte length of the referenced blob.
+    uint64 size = 3;
 }
 
 message DeploymentSummary {

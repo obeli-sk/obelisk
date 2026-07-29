@@ -77,6 +77,7 @@ const DEFAULT_WASM_DIRECTORY: &str = "cache/wasm";
 const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
+pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 
 #[derive(Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -421,6 +422,9 @@ pub(crate) struct ServerConfigToml {
     /// content digests allows only the listed exec scripts.
     #[serde(default)]
     pub(crate) allow_exec_activities: AllowExecActivities,
+    /// Per-file size limit for deployment-owned blobs attached to a submit request.
+    #[serde(default)]
+    pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
     #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]
@@ -444,6 +448,16 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+/// Per-file size limit (in bytes) for deployment-owned blobs, defaulting to 20 MiB.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(transparent)]
+pub(crate) struct MaxDeploymentFileBytes(pub(crate) u32);
+impl Default for MaxDeploymentFileBytes {
+    fn default() -> Self {
+        Self(MAX_DEPLOYMENT_FILE_BYTES)
+    }
 }
 
 /// Exec activity policy: deny all, allow any, or allow only scripts whose
