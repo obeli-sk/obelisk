@@ -4958,6 +4958,15 @@ mod tests {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
     }
 
+    /// Registry holding the `MY_SECRET` referenced by `obelisk-testing-wasm-local.toml`,
+    /// matching the value the integration test server registers.
+    fn test_secret_registry() -> Arc<SecretRegistry> {
+        Arc::new(SecretRegistry::from_test_values([(
+            "MY_SECRET".to_string(),
+            secrecy::SecretString::from("s3cret_value"),
+        )]))
+    }
+
     #[test]
     fn wit_includes_obelisk_extension_packages() {
         let component_id = ComponentId::new(
@@ -5034,12 +5043,8 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(
-            engines,
-            config,
-            Arc::new(SecretRegistry::empty()),
-        ))
-        .await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         let params = VerifyParams {
             dir_params: PrepareDirsParams {
                 clean_cache: false,
@@ -5123,12 +5128,8 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(
-            engines,
-            config,
-            Arc::new(SecretRegistry::empty()),
-        ))
-        .await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         let err = deployment_verify_config(
             &server_verified,
             &prepared_dirs,
@@ -5177,12 +5178,8 @@ mod tests {
         )
         .await?;
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(
-            engines,
-            config,
-            Arc::new(SecretRegistry::empty()),
-        ))
-        .await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
         let err = deployment_verify_config(
@@ -5308,12 +5305,8 @@ mod tests {
 
         // The full allowlist must pass strict verification.
         config.allow_exec_activities = AllowExecActivities::Allowlist(digests);
-        let server_verified = Box::pin(ServerVerified::new(
-            engines,
-            config,
-            Arc::new(SecretRegistry::empty()),
-        ))
-        .await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         deployment_verify_config(
             &server_verified,
             &prepared_dirs,
