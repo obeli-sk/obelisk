@@ -312,7 +312,8 @@ pub struct AllowedHostToml {
     /// - `headers` searches textual header values, including placeholders within larger values.
     /// - `params` searches URL query parameter values.
     /// - `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.
-    /// Default: empty (no replacement — deny by default).
+    ///
+    /// Default: empty (no replacement, deny by default).
     #[serde(default)]
     pub replace_in: Vec<ReplaceIn>,
 }
