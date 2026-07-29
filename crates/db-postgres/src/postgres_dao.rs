@@ -350,10 +350,20 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
 }
 
 fn deployment_file_record_from_pg_row(row: &Row) -> Result<DeploymentFileRecord, DbErrorRead> {
-    Ok(DeploymentFileRecord {
-        path: get(row, "path")?,
-        digest: get(row, "digest")?,
-    })
+    let path: String = get(row, "path")?;
+    let digest: ContentDigest = get(row, "digest")?;
+    let size = if let Some(size) = get::<Option<i64>, _>(row, "size")? {
+        // size is stored as content.len(); a negative value means DB corruption.
+        u64::try_from(size).map_err(|_| {
+            DbErrorRead::Generic(consistency_db_err(format!(
+                "negative deployment file size {size}"
+            )))
+        })?
+    } else {
+        warn!(%path, %digest, "deployment file metadata missing from t_file, reporting size 0");
+        0
+    };
+    Ok(DeploymentFileRecord { path, digest, size })
 }
 
 fn compute_file_digest(content: &[u8]) -> ContentDigest {
@@ -367,9 +377,12 @@ async fn list_deployment_files_tx(
 ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead> {
     let rows = tx
         .query(
-            "SELECT path, digest FROM t_deployment_file \
-             WHERE deployment_id = $1 \
-             ORDER BY path, digest",
+            // LEFT JOIN: no FK ties t_deployment_file to t_file, so report every referenced file
+            // rather than silently dropping one whose metadata row is (unexpectedly) absent.
+            "SELECT df.path, df.digest, f.size FROM t_deployment_file df \
+             LEFT JOIN t_file f ON f.digest = df.digest \
+             WHERE df.deployment_id = $1 \
+             ORDER BY df.path, df.digest",
             &[&deployment_id.to_string()],
         )
         .await?;
@@ -5100,9 +5113,12 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         let rows = tx
             .query(
-                "SELECT path, digest FROM t_deployment_file \
-                 WHERE deployment_id = $1 \
-                 ORDER BY path, digest",
+                // LEFT JOIN: no FK ties t_deployment_file to t_file, so report every referenced file
+                // rather than silently dropping one whose metadata row is (unexpectedly) absent.
+                "SELECT df.path, df.digest, f.size FROM t_deployment_file df \
+                 LEFT JOIN t_file f ON f.digest = df.digest \
+                 WHERE df.deployment_id = $1 \
+                 ORDER BY df.path, df.digest",
                 &[&deployment_id.to_string()],
             )
             .await?;

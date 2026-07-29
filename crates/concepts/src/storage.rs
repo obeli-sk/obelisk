@@ -1731,6 +1731,7 @@ impl DeploymentRecord {
 pub struct DeploymentFileRecord {
     pub path: String,
     pub digest: ContentDigest,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone)]

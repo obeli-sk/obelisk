@@ -3111,8 +3111,8 @@ mod deployment {
     use concepts::prefixed_ulid::DeploymentId;
     use concepts::storage::Pagination;
     use concepts::storage::{
-        DeploymentExecutionCounts, DeploymentRecord, DeploymentState, DeploymentStatus,
-        LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
+        DeploymentExecutionCounts, DeploymentFileRecord, DeploymentRecord, DeploymentState,
+        DeploymentStatus, LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
     };
     use http::StatusCode;
     use serde::{Deserialize, Serialize};
@@ -3319,6 +3319,27 @@ mod deployment {
         })
     }
 
+    /// A deployment-owned file the manifest references.
+    #[derive(Debug, Serialize, ToSchema)]
+    pub struct FileRefSer {
+        /// Deployment-relative path.
+        pub path: String,
+        /// Content digest ("sha256:...").
+        pub digest: String,
+        /// Byte length of the referenced blob.
+        pub size: u64,
+    }
+
+    impl From<&DeploymentFileRecord> for FileRefSer {
+        fn from(f: &DeploymentFileRecord) -> Self {
+            Self {
+                path: f.path.clone(),
+                digest: f.digest.to_string(),
+                size: f.size,
+            }
+        }
+    }
+
     /// Deployment details with config
     #[derive(Debug, Serialize, ToSchema)]
     pub struct DeploymentRecordSer {
@@ -3332,6 +3353,8 @@ mod deployment {
         pub last_active_at: Option<DateTime<Utc>>,
         /// Verbatim deployment manifest (`deployment.toml`)
         pub deployment_toml: String,
+        /// Files the manifest references.
+        pub files: Vec<FileRefSer>,
     }
 
     impl From<&DeploymentRecord> for DeploymentRecordSer {
@@ -3344,6 +3367,7 @@ mod deployment {
                 created_at: r.created_at,
                 last_active_at: r.last_active_at,
                 deployment_toml: r.deployment_toml.clone(),
+                files: r.files.iter().map(FileRefSer::from).collect(),
             }
         }
     }
@@ -3401,6 +3425,14 @@ mod deployment {
                     ser.deployment_toml,
                 )
                 .expect("writing to string");
+                for file in &ser.files {
+                    writeln!(
+                        &mut output,
+                        "file path={} digest={} size={}",
+                        file.path, file.digest, file.size,
+                    )
+                    .expect("writing to string");
+                }
                 output.into_response()
             }
         })

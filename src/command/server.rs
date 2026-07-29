@@ -1191,6 +1191,7 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
                 .push(concepts::storage::DeploymentFileRecord {
                     path: path.to_string(),
                     digest: digest.clone(),
+                    size: u64::try_from(bytes.len()).expect("file length fits u64"),
                 });
         }
         Ok(bytes)
@@ -1390,6 +1391,7 @@ async fn prepare_new_deployment_record(
         file_records.push(DeploymentFileRecord {
             path: file.path,
             digest: file.digest,
+            size: u64::try_from(file.bytes.len()).expect("file length fits u64"),
         });
     }
 

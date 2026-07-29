@@ -2077,7 +2077,8 @@
           "digest",
           "status",
           "created_at",
-          "deployment_toml"
+          "deployment_toml",
+          "files"
         ],
         "properties": {
           "created_at": {
@@ -2100,6 +2101,13 @@
           "digest": {
             "type": "string",
             "description": "Content digest = `sha256(deployment_toml)`"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileRefSer"
+            },
+            "description": "Files the manifest references."
           },
           "last_active_at": {
             "type": [
@@ -2498,6 +2506,31 @@
           },
           "section": {
             "type": "string"
+          }
+        }
+      },
+      "FileRefSer": {
+        "type": "object",
+        "description": "A deployment-owned file the manifest references.",
+        "required": [
+          "path",
+          "digest",
+          "size"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "Content digest (\"sha256:...\")."
+          },
+          "path": {
+            "type": "string",
+            "description": "Deployment-relative path."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Byte length of the referenced blob.",
+            "minimum": 0
           }
         }
       },
