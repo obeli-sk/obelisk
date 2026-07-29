@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `instanceof` checks against either name keep working; instances now report
   `name: "ChildError"`.
 
+### Removed
+
+- **Breaking:** *(api)* Removed the deprecated `CancelActivity` gRPC endpoint. Use
+  `CancelExecution`, which also supports cancellable workflows.
+- **Breaking:** *(api)* Removed the `allow_missing_runtime_config` REST field alias. Use
+  `allow_unavailable_runtime_config`.
+
 ## [0.40.0](https://github.com/obeli-sk/obelisk/compare/v0.39.5...v0.40.0)
 
 This release secures access to host executable activities and the Obelisk API. Exec activities are

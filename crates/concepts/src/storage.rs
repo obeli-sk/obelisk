@@ -485,7 +485,8 @@ pub enum ComponentUpgradeReason {
 #[display("{reason}, pending at {unlocked_at}")]
 pub struct Unlocked {
     /// Instant used when releasing a currently locked execution back to [`PendingState::PendingAt`].
-    #[serde(rename = "backoff_expires_at")] // backcompat
+    // The field was renamed only in Rust; keep its serialized name stable.
+    #[serde(rename = "backoff_expires_at")]
     pub unlocked_at: DateTime<Utc>,
     #[cfg_attr(any(test, feature = "test"), arbitrary(value = StrVariant::Static("reason")))]
     pub reason: StrVariant,

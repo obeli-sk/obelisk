@@ -797,40 +797,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         }))
     }
 
-    #[instrument(skip_all, fields(execution_id))]
-    async fn cancel_activity(
-        &self,
-        request: tonic::Request<grpc_gen::CancelActivityRequest>,
-    ) -> std::result::Result<tonic::Response<grpc_gen::CancelActivityResponse>, tonic::Status> {
-        let request = request.into_inner();
-        let executed_at = Now.now();
-        let child_execution_id = request.execution_id.argument_must_exist("execution_id")?;
-        let execution_id = ExecutionId::try_from(child_execution_id)?;
-        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-
-        let conn = self
-            .db_pool
-            .external_api_conn()
-            .await
-            .map_err(map_to_status)?;
-        let child_create_req = conn.get_create_request(&execution_id).await.to_status()?;
-        if !child_create_req.component_id.component_type.is_activity() {
-            return Err(tonic::Status::invalid_argument(
-                "cancelled execution must be an activity",
-            ));
-        }
-        let outcome = self
-            .cancel_registry
-            .cancel_activity(conn.as_ref(), &execution_id, executed_at)
-            .await
-            .to_status()?;
-
-        Ok(tonic::Response::new(grpc_gen::CancelActivityResponse {
-            outcome: grpc_gen::cancel_activity_response::CancelActivityOutcome::from(outcome)
-                .into(),
-        }))
-    }
-
     #[instrument(skip_all, fields(delay_id))]
     async fn cancel_delay(
         &self,
