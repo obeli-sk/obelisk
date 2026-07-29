@@ -4,7 +4,7 @@
 //! (currently only an environment variable). At startup, before the tokio runtime
 //! is constructed and while the process is still single-threaded, env-backed
 //! secrets are resolved into `SecretString` and their source variables are removed
-//! from the process environment (see [`SecretRegistry::load_and_wipe`]).
+//! from the process environment (see [`SecretRegistry::resolve_and_wipe`]).
 //!
 //! The resulting [`SecretRegistry`] is a plain value (not a global) that is passed
 //! by ownership into the server code. It exposes:
@@ -22,7 +22,6 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 /// Source of a secret in the `[secrets]` table. Untagged so `{ env = "VAR" }`
 /// parses directly; more variants (`{ file = "..." }`, Vault, ...) are added later.
@@ -77,11 +76,6 @@ impl SecretRegistry {
         self.values.get(name).cloned()
     }
 
-    /// Whether a logical secret name was resolved into this registry.
-    pub(crate) fn is_registered(&self, name: &str) -> bool {
-        self.values.contains_key(name)
-    }
-
     /// Build a registry directly from name -> value pairs, without touching the process
     /// environment. Every provided name is treated as sensitive. Test-only.
     #[cfg(test)]
@@ -93,39 +87,15 @@ impl SecretRegistry {
         Self { values, sensitive }
     }
 
-    /// Build the registry from `server.toml` and wipe env-backed source variables.
+    /// Build the registry from the resolved server configuration and wipe env-backed
+    /// source variables.
     ///
     /// MUST run during early, single-threaded startup, before the tokio runtime is
     /// constructed: it calls `std::env::remove_var`, which is only sound without
     /// concurrent readers.
-    ///
-    /// When no server config is supplied (or the file does not exist yet), an empty
-    /// registry is returned; the regular config loader reports a missing file with a
-    /// friendlier error afterwards.
-    pub(crate) fn load_and_wipe(server_config: Option<&Path>) -> anyhow::Result<Self> {
-        let Some(path) = server_config else {
-            return Ok(Self::empty());
-        };
-        if !path.try_exists().unwrap_or(false) {
-            return Ok(Self::empty());
-        }
-        let contents = std::fs::read_to_string(path)
-            .with_context(|| format!("cannot read server config {path:?} for secret registry"))?;
-        // Permissive parse: only the `secrets` table, ignoring every other field, so this
-        // does not duplicate `ServerConfigToml`'s `deny_unknown_fields` validation.
-        #[derive(Deserialize)]
-        struct SecretsOnly {
-            #[serde(default)]
-            secrets: SecretsToml,
-        }
-        let parsed: SecretsOnly = toml::from_str(&contents)
-            .with_context(|| format!("cannot parse `[secrets]` in {path:?}"))?;
-        Self::resolve_and_wipe(parsed.secrets)
-    }
-
-    /// Resolve every entry into a `SecretString` first, then wipe all source variables.
-    /// Resolving before wiping lets several secrets share one source variable.
-    fn resolve_and_wipe(secrets: SecretsToml) -> anyhow::Result<Self> {
+    /// Every entry is resolved before any source is wiped, so several secrets may
+    /// safely share one source variable.
+    pub(crate) fn resolve_and_wipe(secrets: SecretsToml) -> anyhow::Result<Self> {
         let mut values = HashMap::new();
         let mut sensitive = HashSet::new();
         let mut sources = Vec::new();
@@ -143,7 +113,7 @@ impl SecretRegistry {
             }
         }
         for src in sources {
-            // SAFETY: `load_and_wipe` runs during single-threaded startup, before the
+            // SAFETY: `resolve_and_wipe` runs during single-threaded startup, before the
             // tokio runtime is constructed, so there are no concurrent environment readers.
             unsafe { std::env::remove_var(&src) };
         }

@@ -57,7 +57,6 @@ use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
-use crate::project_dirs;
 use crate::server::grpc_server::GrpcServer;
 use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
@@ -98,8 +97,6 @@ use concepts::time::Now;
 use concepts::time::TokioSleep;
 use db_postgres::postgres_dao::PostgresPool;
 use db_sqlite::sqlite_dao::SqlitePool;
-use directories::BaseDirs;
-use directories::ProjectDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::WorkerTasksHandle;
@@ -402,6 +399,8 @@ const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
 impl Server {
     pub(crate) async fn run(
         self,
+        config_holder: ConfigHolder,
+        config: ServerConfigToml,
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
@@ -409,7 +408,7 @@ impl Server {
                 clean_sqlite_directory,
                 clean_cache,
                 clean_codegen_cache,
-                server_config,
+                server_config: _,
                 deployment,
                 empty: deployment_empty,
                 description,
@@ -417,9 +416,8 @@ impl Server {
                 allow_unauthenticated_api,
             } => {
                 Box::pin(run(
-                    project_dirs(),
-                    BaseDirs::new(),
-                    server_config,
+                    config_holder,
+                    config,
                     deployment,
                     deployment_empty,
                     description,
@@ -439,16 +437,15 @@ impl Server {
             Server::Verify {
                 clean_cache,
                 clean_codegen_cache,
-                server_config,
+                server_config: _,
                 deployment,
                 allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
                 skip_db,
             } => {
                 verify(
-                    project_dirs(),
-                    BaseDirs::new(),
-                    server_config,
+                    config_holder,
+                    config,
                     deployment,
                     VerifyParams {
                         dir_params: PrepareDirsParams {
@@ -638,17 +635,14 @@ pub(crate) struct RunParams {
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn run(
-    project_dirs: Option<ProjectDirs>,
-    base_dirs: Option<BaseDirs>,
-    server_config: Option<PathBuf>,
+    config_holder: ConfigHolder,
+    config: ServerConfigToml,
     deployment: Option<PathBuf>,
     deployment_empty: bool,
     description: Option<String>,
     params: RunParams,
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
-    let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
     let deployment = if let Some(deployment_path) = deployment {
         Some(LocalDeployment::from_path(&deployment_path).await?)
@@ -707,16 +701,13 @@ pub(crate) struct VerifyParams {
 }
 
 pub(crate) async fn verify(
-    project_dirs: Option<ProjectDirs>,
-    base_dirs: Option<BaseDirs>,
-    server_config: Option<PathBuf>,
+    config_holder: ConfigHolder,
+    config: ServerConfigToml,
     deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
-    let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
         Some(load_deployment_canonical(&deployment_path).await?)
@@ -1833,15 +1824,6 @@ impl ServerVerified {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<ServerVerified, anyhow::Error> {
         trace!("Using server toml: {config:#?}");
-        // The registry was resolved from `[secrets]` before the runtime started; ensure the
-        // config the server runs with names the same secrets (defense against a mismatched
-        // pre-runtime parse). Every `[secrets]` entry must be present in the registry.
-        for name in config.secrets.keys() {
-            anyhow::ensure!(
-                secret_registry.is_registered(name),
-                "secret `{name}` declared in `[secrets]` was not resolved at startup"
-            );
-        }
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;

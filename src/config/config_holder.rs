@@ -3,7 +3,7 @@ use super::toml::{DeploymentToml, ServerConfigToml};
 use crate::config::toml::DeploymentResolved;
 use crate::config::toml::DeploymentTomlValidated;
 use anyhow::{Context as _, bail};
-use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
+use config::{Config, ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
@@ -137,7 +137,17 @@ impl ConfigHolder {
     }
 
     pub(crate) async fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
-        let mut builder = ConfigBuilder::<AsyncState>::default();
+        self.load_config_sync()
+    }
+
+    /// Load the complete server configuration before the async runtime starts.
+    ///
+    /// This uses the same file and `OBELISK__...` environment sources as
+    /// [`Self::load_config`]. Server startup uses this synchronous variant so the
+    /// exact config value that defines `[secrets]` is passed into the runtime after
+    /// its env-backed sources have been wiped.
+    pub(crate) fn load_config_sync(&self) -> Result<ServerConfigToml, anyhow::Error> {
+        let mut builder = Config::builder();
         if let Some(path) = &self.config_source {
             builder = builder.add_source(
                 File::from(path.as_path())
@@ -146,7 +156,7 @@ impl ConfigHolder {
             );
         }
         builder = builder.add_source(Environment::with_prefix("obelisk").separator("__"));
-        let settings = builder.build().await?;
+        let settings = builder.build()?;
         Ok(settings.try_deserialize()?)
     }
 }
