@@ -81,8 +81,7 @@ async fn run_command(
                 config,
                 secret_registry,
             } = server_startup.expect("server startup must be prepared");
-            server
-                .run(config_holder, config, secret_registry)
+            Box::pin(server.run(config_holder, config, secret_registry))
                 .await
                 .inspect_err(|err| error!("Server error: {err:#?}"))
         }

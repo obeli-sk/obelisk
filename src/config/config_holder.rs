@@ -144,7 +144,7 @@ impl ConfigHolder {
         self.path_prefixes.secret_registry = secret_registry;
     }
 
-    pub(crate) async fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
+    pub(crate) fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
         self.load_config_sync()
     }
 

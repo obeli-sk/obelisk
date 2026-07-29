@@ -443,7 +443,7 @@ impl Server {
                 suppress_type_checking_errors,
                 skip_db,
             } => {
-                verify(
+                Box::pin(verify(
                     config_holder,
                     config,
                     deployment,
@@ -462,7 +462,7 @@ impl Server {
                     },
                     skip_db,
                     secret_registry,
-                )
+                ))
                 .await
             }
         }
@@ -633,7 +633,6 @@ pub(crate) struct RunParams {
     pub(crate) allow_unauthenticated_api: bool,
 }
 
-#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run(
     config_holder: ConfigHolder,
     config: ServerConfigToml,
@@ -5014,7 +5013,7 @@ mod tests {
         let base_dirs = BaseDirs::new();
         let config_holder =
             ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?;
-        let config = config_holder.load_config().await?;
+        let config = config_holder.load_config()?;
 
         let fixture = crate::command::test_support::target_aware_deployment_fixture(
             &workspace,
@@ -5097,7 +5096,7 @@ mod tests {
             base_dirs,
             Some(workspace.join("server-sqlite.toml")),
         )?;
-        let config = config_holder.load_config().await?;
+        let config = config_holder.load_config()?;
 
         let fixture = crate::command::test_support::target_aware_deployment_fixture(
             &workspace,
@@ -5164,7 +5163,7 @@ mod tests {
             BaseDirs::new(),
             Some(workspace.join("server-sqlite.toml")),
         )?;
-        let config = config_holder.load_config().await?;
+        let config = config_holder.load_config()?;
         assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
         let deployment =
             load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
@@ -5245,7 +5244,7 @@ mod tests {
             BaseDirs::new(),
             Some(workspace.join("server-sqlite.toml")),
         )?;
-        let mut config = config_holder.load_config().await?;
+        let mut config = config_holder.load_config()?;
         let deployment =
             load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
         let digests = deployment

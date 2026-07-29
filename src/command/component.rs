@@ -343,7 +343,7 @@ async fn add_component_from_oci(
         let project_dirs = project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
-        let config = config_holder.load_config().await?;
+        let config = config_holder.load_config()?;
         let wasm_cache_dir = config
             .wasm_global_config
             .get_wasm_cache_directory(&config_holder.path_prefixes)

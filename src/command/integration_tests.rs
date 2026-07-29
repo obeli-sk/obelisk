@@ -695,7 +695,7 @@ impl TestServer {
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
-        let config = config_holder.load_config().await.unwrap();
+        let config = config_holder.load_config().unwrap();
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
