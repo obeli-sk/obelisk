@@ -35,6 +35,7 @@
             },
             {
               "name": "--server-config",
+              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
@@ -80,6 +81,7 @@
             },
             {
               "name": "--server-config",
+              "short": "s",
               "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
               "accepts": {
                 "path": true
@@ -1132,6 +1134,7 @@
             },
             {
               "name": "--server-config",
+              "short": "s",
               "help": "Append the token's hash to `api.token_hashes` in this server.toml file",
               "accepts": {
                 "path": true
