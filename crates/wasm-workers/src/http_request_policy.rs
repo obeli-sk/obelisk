@@ -392,22 +392,38 @@ impl HttpRequestPolicy {
             }
         }
 
-        // 4. Replace in URI query params
+        // 4. Replace in URI query parameter values
         let param_secrets: Vec<_> = applicable
             .iter()
             .filter(|s| s.replace_in.contains(&ReplacementLocation::Params))
             .collect();
-        if !param_secrets.is_empty() {
-            let uri_str = request.uri().to_string();
-            let mut uri_replaced = uri_str.clone();
-            for secret in &param_secrets {
-                uri_replaced =
-                    uri_replaced.replace(&secret.placeholder, secret.real_value.expose_secret());
-            }
-            if uri_replaced != uri_str
-                && let Ok(new_uri) = uri_replaced.parse::<hyper::Uri>()
-            {
-                *request.uri_mut() = new_uri;
+        if !param_secrets.is_empty()
+            && let Some(query) = request.uri().query()
+        {
+            let mut changed = false;
+            let pairs = url::form_urlencoded::parse(query.as_bytes())
+                .map(|(name, value)| {
+                    let mut replaced = value.to_string();
+                    for secret in &param_secrets {
+                        replaced = replaced
+                            .replace(&secret.placeholder, secret.real_value.expose_secret());
+                    }
+                    changed |= replaced != value.as_ref();
+                    (name.into_owned(), replaced)
+                })
+                .collect::<Vec<_>>();
+            if changed {
+                let query = url::form_urlencoded::Serializer::new(String::new())
+                    .extend_pairs(pairs)
+                    .finish();
+                let path_and_query = format!("{}?{query}", request.uri().path());
+                let mut parts = request.uri().clone().into_parts();
+                if let Ok(path_and_query) = path_and_query.parse() {
+                    parts.path_and_query = Some(path_and_query);
+                    if let Ok(uri) = hyper::Uri::from_parts(parts) {
+                        *request.uri_mut() = uri;
+                    }
+                }
             }
         }
 
@@ -520,6 +536,13 @@ pub struct AllowedHostConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_body() -> wasmtime_wasi_http::p2::body::HyperOutgoingBody {
+        http_body_util::combinators::UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
+            http_body_util::Empty::<hyper::body::Bytes>::new(),
+            |_| unreachable!(),
+        ))
+    }
 
     #[test]
     fn parse_host_pattern_bare_hostname() {
@@ -782,6 +805,46 @@ mod tests {
             &Method::POST,
             "POST https://api.example.com/v1/items"
         ));
+    }
+
+    #[test]
+    fn params_replace_only_query_parameter_values() {
+        const PLACEHOLDER: &str = "OBELISK_SECRET_TEST_PLACEHOLDER";
+        let policy = HttpRequestPolicy {
+            hosts: vec![AllowedHostPolicy {
+                pattern: HostPattern::parse("api.example.com").unwrap(),
+                request_url_regex: None,
+                secrets: vec![PlaceholderSecret {
+                    placeholder: PLACEHOLDER.to_string(),
+                    real_value: SecretString::from("real/value? with space"),
+                    replace_in: hashbrown::HashSet::from([ReplacementLocation::Params]),
+                }],
+            }],
+        };
+        let uri = format!(
+            "https://api.example.com/{PLACEHOLDER}?{PLACEHOLDER}=unchanged&token=Bearer-{PLACEHOLDER}"
+        );
+        let mut request = hyper::Request::builder()
+            .uri(uri)
+            .body(empty_body())
+            .unwrap();
+
+        policy.apply(&mut request).unwrap();
+
+        assert_eq!(request.uri().path(), format!("/{PLACEHOLDER}"));
+        let params = url::form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
+            .into_owned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            params,
+            vec![
+                (PLACEHOLDER.to_string(), "unchanged".to_string()),
+                (
+                    "token".to_string(),
+                    "Bearer-real/value? with space".to_string()
+                ),
+            ]
+        );
     }
 
     #[test]

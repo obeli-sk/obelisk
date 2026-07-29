@@ -83,8 +83,7 @@
 ## `replace_in` controls where substitution happens:
 ## - "headers" searches textual header values and replaces every placeholder occurrence,
 ##   including placeholders embedded in a larger value such as `Bearer <placeholder>`.
-## - "params" searches the raw request URI and replaces every placeholder occurrence.
-##   This currently includes both the path and query string.
+## - "params" searches URL query parameter values and replaces every placeholder occurrence.
 ## - "body" replaces every placeholder occurrence only when the body is valid UTF-8 and
 ##   `Content-Type` is textual: `text/*`, JSON, or `application/x-www-form-urlencoded`.
 ## Default is empty (no replacement).

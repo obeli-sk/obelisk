@@ -46,6 +46,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-error.workspace = true
 ulid.workspace = true
+url.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi-io.workspace = true
 wasmtime-wasi.workspace = true

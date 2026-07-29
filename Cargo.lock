@@ -3429,6 +3429,7 @@ dependencies = [
  "tracing",
  "tracing-error",
  "ulid",
+ "url",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",

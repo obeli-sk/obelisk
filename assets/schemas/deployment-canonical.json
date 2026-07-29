@@ -385,7 +385,7 @@
           "default": []
         },
         "replace_in": {
-          "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches the raw request URI, currently including its path and query string.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\nDefault: empty (no replacement — deny by default).",
+          "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\nDefault: empty (no replacement — deny by default).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ReplaceIn"
