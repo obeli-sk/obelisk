@@ -308,7 +308,10 @@ pub struct AllowedHostToml {
     /// swapped for the real value in `replace_in` locations before the request leaves.
     #[serde(default)]
     pub secrets: Vec<String>,
-    /// Where in the request to perform placeholder replacement.
+    /// Where in the request to perform placeholder replacement:
+    /// - `headers` searches textual header values, including placeholders within larger values.
+    /// - `params` searches the raw request URI, currently including its path and query string.
+    /// - `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.
     /// Default: empty (no replacement — deny by default).
     #[serde(default)]
     pub replace_in: Vec<ReplaceIn>,

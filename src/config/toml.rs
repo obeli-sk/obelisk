@@ -422,7 +422,7 @@ pub(crate) struct ServerConfigToml {
     /// (currently only `{ env = "VAR" }`). Env-backed secrets are resolved and
     /// their source variables wiped from the process environment at startup, before
     /// the tokio runtime starts. Deployments reference these names in `activity_exec`
-    /// `secrets` and `allowed_hosts[].secrets`; they cannot interpolate them.
+    /// `secrets` and `allowed_host[].secrets`; they cannot interpolate them.
     #[serde(default)]
     pub(crate) secrets: SecretsToml,
     /// Permit deployments to run host processes through `activity_exec`.
@@ -1618,7 +1618,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// table) to expose to the script in the stdin JSON `secrets` object.
     #[serde(default)]
     pub(crate) secrets: Vec<String>,
-    /// Pass parameters to the program via the stdin JSON `parameters` array instead
+    /// Pass parameters to the program via the stdin JSON `params` array instead
     /// of argv. Use this for large payloads that would exceed the `execve` argument-size
     /// limit. Defaults to `false` (parameters passed as command-line arguments).
     #[serde(default)]

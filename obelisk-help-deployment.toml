@@ -77,9 +77,16 @@
 # request_url_regex = "^GET https://api\\.github\\.com/repos/"
 ## Optional secrets: injected via placeholder replacement in outgoing HTTP requests.
 ## `secrets` lists operator-owned secret names from the server.toml `[secrets]` table.
-## WASM receives an opaque placeholder instead of the real value; the runtime replaces
-## placeholders with real values only for requests to this host.
-## `replace_in` controls where substitution happens: "headers", "body", "params".
+## Each logical secret name is exposed to WASM as an env var containing an opaque
+## placeholder instead of the real value; the runtime replaces placeholders with
+## real values only for requests to this host.
+## `replace_in` controls where substitution happens:
+## - "headers" searches textual header values and replaces every placeholder occurrence,
+##   including placeholders embedded in a larger value such as `Bearer <placeholder>`.
+## - "params" searches the raw request URI and replaces every placeholder occurrence.
+##   This currently includes both the path and query string.
+## - "body" replaces every placeholder occurrence only when the body is valid UTF-8 and
+##   `Content-Type` is textual: `text/*`, JSON, or `application/x-www-form-urlencoded`.
 ## Default is empty (no replacement).
 # secrets = ["OPENAI_API_KEY"]
 # replace_in = ["headers"]

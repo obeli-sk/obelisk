@@ -33,7 +33,7 @@
 ## names (never the raw env var) in `activity_exec.secrets` and `allowed_host.secrets`;
 ## they cannot interpolate a registered secret via `${...}`.
 # [secrets]
-# OPENAI_API_KEY = { env = "OPENAI_API_KEY" }   # logical name may differ from the source
+# OPENAI_KEY     = { env = "OPENAI_API_KEY" }   # logical name may differ from the source
 # DB_PASSWORD    = { env = "DB_PASSWORD" }
 
 ## Per-file size limit (in bytes) for deployment-owned blobs attached to a submit request.
