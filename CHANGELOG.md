@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Breaking:** *(http)* Secret placeholder replacement with `replace_in = ["params"]` now searches
+  only URL query parameter values, leaving the URL path and parameter names unchanged. Previously,
+  it searched and replaced across the entire raw request URI.
 - *(deployment)* `--allow-unavailable-runtime-config` now tolerates missing environment variable
   interpolations in plain key/value `env_vars` entries, including entries that rename a variable.
 
