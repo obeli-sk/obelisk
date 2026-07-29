@@ -14,6 +14,10 @@
       "description": "Permit deployments to run host processes through `activity_exec`.\n`false` denies all (default), `true` allows any, a list of `sha256:...`\ncontent digests allows only the listed exec scripts.",
       "$ref": "#/$defs/AllowExecActivities"
     },
+    "max_deployment_file_bytes": {
+      "description": "Per-file size limit for deployment-owned blobs attached to a submit request.",
+      "$ref": "#/$defs/MaxDeploymentFileBytes"
+    },
     "api": {
       "$ref": "#/$defs/ApiConfig"
     },
@@ -72,6 +76,12 @@
           }
         }
       ]
+    },
+    "MaxDeploymentFileBytes": {
+      "description": "Per-file size limit (in bytes) for deployment-owned blobs, defaulting to 20 MiB.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
     },
     "ApiConfig": {
       "type": "object",
