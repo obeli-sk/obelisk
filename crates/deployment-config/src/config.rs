@@ -302,18 +302,13 @@ pub struct AllowedHostToml {
     /// Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
     /// Omit to allow all paths accepted by the host and method restrictions.
     pub request_url_regex: Option<String>,
-    /// Optional secrets for this host.
+    /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
+    /// table) to make available for placeholder injection into requests to this host.
+    /// Each name is exposed to the guest as an env var holding a random placeholder,
+    /// swapped for the real value in `replace_in` locations before the request leaves.
     #[serde(default)]
-    pub secrets: Option<AllowedHostSecretsToml>,
-}
-
-/// Secrets configuration for an allowed host.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct AllowedHostSecretsToml {
-    /// Env vars using the same syntax as top-level `env_vars`.
-    pub env_vars: Vec<EnvVarConfig>,
-    /// Where in the request to perform replacement.
+    pub secrets: Vec<String>,
+    /// Where in the request to perform placeholder replacement.
     /// Default: empty (no replacement — deny by default).
     #[serde(default)]
     pub replace_in: Vec<ReplaceIn>,
@@ -531,26 +526,6 @@ pub struct ActivityJsComponentConfigResolved {
     pub return_type: Option<String>,
 }
 
-/// Secret entry: resolved from environment variables at startup.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct SecretEnvVarToml {
-    /// Name used to reference this secret in the `secrets.stdin` function.
-    pub name: String,
-    /// Value supporting `${VAR}` interpolation from host environment.
-    #[serde(default)]
-    pub value: String,
-}
-
-/// Secrets configuration for exec activities.
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ExecSecretsToml {
-    /// Secret entries resolved from environment variables.
-    #[serde(default)]
-    pub env_vars: Vec<SecretEnvVarToml>,
-}
-
 /// Resolved form of `ActivityExecComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -570,7 +545,10 @@ pub struct ActivityExecComponentConfigResolved {
     pub logs_store_min_level: LogLevelToml,
     pub env_vars: Vec<EnvVarConfig>,
     pub max_output_bytes: u64,
-    pub secrets: Option<ExecSecretsToml>,
+    /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
+    /// table) to expose to the script in the stdin JSON `secrets` object.
+    #[serde(default)]
+    pub secrets: Vec<String>,
     #[serde(default)]
     pub params_via_stdin: bool,
 }

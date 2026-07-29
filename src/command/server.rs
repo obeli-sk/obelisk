@@ -9,6 +9,7 @@ use crate::config::env_var::EnvVarConfig;
 use crate::config::file_provider::CasFileProvider;
 use crate::config::manifest::DeploymentManifest;
 use crate::config::manifest::DeploymentManifestFile;
+use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
 use crate::config::toml::ActivityExternalComponentConfigResolved;
@@ -399,7 +400,10 @@ const HTTP_SERVER_NAME_WEBUI: &str = "webui";
 const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
 
 impl Server {
-    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(
+        self,
+        secret_registry: Arc<SecretRegistry>,
+    ) -> Result<(), anyhow::Error> {
         match self {
             Server::Run {
                 clean_sqlite_directory,
@@ -428,6 +432,7 @@ impl Server {
                         suppress_type_checking_errors,
                         allow_unauthenticated_api,
                     },
+                    secret_registry,
                 ))
                 .await
             }
@@ -459,6 +464,7 @@ impl Server {
                         suppress_linking_errors: false,
                     },
                     skip_db,
+                    secret_registry,
                 )
                 .await
             }
@@ -630,6 +636,7 @@ pub(crate) struct RunParams {
     pub(crate) allow_unauthenticated_api: bool,
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
@@ -638,6 +645,7 @@ pub(crate) async fn run(
     deployment_empty: bool,
     description: Option<String>,
     params: RunParams,
+    secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
@@ -666,6 +674,7 @@ pub(crate) async fn run(
         params,
         prepared_dirs,
         termination_watcher,
+        secret_registry,
     ))
     .await?;
     Ok(())
@@ -704,6 +713,7 @@ pub(crate) async fn verify(
     deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
+    secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
     let config = config_holder.load_config().await?;
@@ -724,7 +734,12 @@ pub(crate) async fn verify(
     let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let mut db_pool = if !skip_db {
-        verify_db_schema(&config.database, &config_holder.path_prefixes).await?
+        verify_db_schema(
+            &config.database,
+            &config_holder.path_prefixes,
+            &secret_registry,
+        )
+        .await?
     } else {
         None
     };
@@ -735,10 +750,11 @@ pub(crate) async fn verify(
             &config.database,
             &config_holder.path_prefixes,
             &mut db_pool,
+            &secret_registry,
         )
         .await?
     };
-    let server_verified = Box::pin(server_verify(config, engines)).await?;
+    let server_verified = Box::pin(server_verify(config, engines, secret_registry)).await?;
     let cas: Option<Arc<dyn concepts::cas::Cas>> = if let Some((pool, _)) = db_pool.as_ref() {
         Some(pool.cas_conn().await?.into())
     } else {
@@ -773,6 +789,7 @@ type DbPoolCloseableContainer = Option<(Arc<dyn DbPool>, Pin<Box<dyn Future<Outp
 async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
+    secret_registry: &SecretRegistry,
 ) -> Result<DbPoolCloseableContainer, anyhow::Error> {
     let result: DbPoolCloseableContainer = match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
@@ -799,7 +816,7 @@ async fn verify_db_schema(
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
                 PostgresPool::new(
-                    postgres_config_toml.as_config()?,
+                    postgres_config_toml.as_config(secret_registry)?,
                     postgres_config_toml.as_provision_policy(),
                 )
                 .await
@@ -882,6 +899,7 @@ pub(crate) struct PreparedDirs {
 pub(crate) async fn server_verify(
     config: ServerConfigToml,
     engines: Engines,
+    secret_registry: Arc<SecretRegistry>,
 ) -> Result<ServerVerified, anyhow::Error> {
     info!("Verifying server configuration");
     // Check obelisk-version compatibility if specified
@@ -898,7 +916,7 @@ pub(crate) async fn server_verify(
         info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
     }
     // Verify server
-    Box::pin(ServerVerified::new(engines, config)).await
+    Box::pin(ServerVerified::new(engines, config, secret_registry)).await
 }
 
 /// Verifies configuration without database schema check.
@@ -1024,6 +1042,7 @@ pub(crate) async fn deployment_verify_config(
         termination_watcher,
         server_verified.database_subscription_interruption,
         server_verified.api_addr_if_webui_enabled.clone(),
+        server_verified.secret_registry.clone(),
     ))
     .await?;
     trace!("Verified deployment: {deployment_verified:#?}");
@@ -1056,6 +1075,7 @@ async fn get_deployment_canonical_from_db(
     database: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
     db_pool_container: &mut DbPoolCloseableContainer,
+    secret_registry: &SecretRegistry,
 ) -> anyhow::Result<(DeploymentResolved, DeploymentId)> {
     let conn = if let Some((pool, _)) = db_pool_container.as_ref() {
         pool.external_api_conn()
@@ -1086,7 +1106,7 @@ async fn get_deployment_canonical_from_db(
             DatabaseConfigToml::Postgres(postgres_config_toml) => {
                 let db_pool = Arc::new(
                     PostgresPool::new(
-                        postgres_config_toml.as_config()?,
+                        postgres_config_toml.as_config(secret_registry)?,
                         postgres_config_toml.as_provision_policy(),
                     )
                     .await
@@ -1438,6 +1458,7 @@ pub(crate) fn create_engines(
 }
 
 #[instrument(skip_all, name = "init", fields(deployment_id))]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
     deployment: Option<LocalDeployment>,
@@ -1446,6 +1467,7 @@ pub(crate) async fn run_internal(
     params: RunParams,
     prepared_dirs: PreparedDirs,
     mut termination_watcher: watch::Receiver<()>,
+    secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
     // `config` is moved into `server_verify` below; keep the API auth config.
@@ -1490,7 +1512,7 @@ pub(crate) async fn run_internal(
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
                 PostgresPool::new(
-                    postgres_config_toml.as_config()?,
+                    postgres_config_toml.as_config(&secret_registry)?,
                     postgres_config_toml.as_provision_policy(),
                 )
                 .await
@@ -1569,7 +1591,7 @@ pub(crate) async fn run_internal(
             }
         };
     let engines = create_engines(&config, &prepared_dirs)?;
-    let server_verified = server_verify(config, engines).await?;
+    let server_verified = server_verify(config, engines, secret_registry).await?;
     let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
@@ -1790,6 +1812,10 @@ pub(crate) struct ServerVerified {
     database_subscription_interruption: Option<Duration>,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
+    /// Operator-owned secret registry, resolved before the runtime started. Carried
+    /// here so runtime redeploys/submits resolve deployment secret references without
+    /// re-reading the (already wiped) process environment.
+    secret_registry: Arc<SecretRegistry>,
 }
 
 #[derive(Clone)]
@@ -1804,8 +1830,18 @@ impl ServerVerified {
     async fn new(
         engines: Engines,
         config: ServerConfigToml,
+        secret_registry: Arc<SecretRegistry>,
     ) -> Result<ServerVerified, anyhow::Error> {
         trace!("Using server toml: {config:#?}");
+        // The registry was resolved from `[secrets]` before the runtime started; ensure the
+        // config the server runs with names the same secrets (defense against a mismatched
+        // pre-runtime parse). Every `[secrets]` entry must be present in the registry.
+        for name in config.secrets.keys() {
+            anyhow::ensure!(
+                secret_registry.is_registered(name),
+                "secret `{name}` declared in `[secrets]` was not resolved at startup"
+            );
+        }
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -1860,6 +1896,7 @@ impl ServerVerified {
                 None
             },
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
+            secret_registry,
         })
     }
 }
@@ -3280,6 +3317,7 @@ impl DeploymentVerified {
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
         api_addr_if_webui_enabled: Option<String>,
+        secret_registry: Arc<SecretRegistry>,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_canonical();
@@ -3323,7 +3361,8 @@ impl DeploymentVerified {
                         pattern: target_url,
                         methods: Some(MethodsInput::Star(MethodsInputStar::default())),
                         request_url_regex: None,
-                        secrets: None,
+                        secrets: Vec::new(),
+                        replace_in: Vec::new(),
                     }],
                 });
         }
@@ -3377,16 +3416,24 @@ impl DeploymentVerified {
             .activities_wasm
             .into_iter()
             .map(|activity_wasm| {
+                let wasm_cache_dir = wasm_cache_dir.clone();
+                let metadata_dir = metadata_dir.clone();
+                let global_executor_instance_limiter = global_executor_instance_limiter.clone();
+                let secret_registry = secret_registry.clone();
                 tokio::spawn(
-                    activity_wasm
-                        .fetch_and_verify(
-                            wasm_cache_dir.clone(),
-                            metadata_dir.clone(),
-                            ignore_missing_env_vars,
-                            global_executor_instance_limiter.clone(),
-                            fuel,
-                        )
-                        .in_current_span(),
+                    async move {
+                        activity_wasm
+                            .fetch_and_verify(
+                                wasm_cache_dir,
+                                metadata_dir,
+                                ignore_missing_env_vars,
+                                &secret_registry,
+                                global_executor_instance_limiter,
+                                fuel,
+                            )
+                            .await
+                    }
+                    .in_current_span(),
                 )
             })
             .collect::<Vec<_>>();
@@ -3435,18 +3482,23 @@ impl DeploymentVerified {
             .webhooks_wasm
             .into_iter()
             .map(|webhook| {
-                tokio::spawn({
-                    let wasm_cache_dir = wasm_cache_dir.clone();
-                    let metadata_dir = metadata_dir.clone();
-                    webhook
-                        .fetch_and_verify(
-                            wasm_cache_dir,
-                            metadata_dir,
-                            ignore_missing_env_vars,
-                            subscription_interruption,
-                        )
-                        .in_current_span()
-                })
+                let wasm_cache_dir = wasm_cache_dir.clone();
+                let metadata_dir = metadata_dir.clone();
+                let secret_registry = secret_registry.clone();
+                tokio::spawn(
+                    async move {
+                        webhook
+                            .fetch_and_verify(
+                                wasm_cache_dir,
+                                metadata_dir,
+                                ignore_missing_env_vars,
+                                &secret_registry,
+                                subscription_interruption,
+                            )
+                            .await
+                    }
+                    .in_current_span(),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -3538,6 +3590,7 @@ impl DeploymentVerified {
                                 activity_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
                                 ignore_missing_env_vars,
+                                &secret_registry,
                                 global_executor_instance_limiter.clone(),
                                 fuel,
                             ).await?
@@ -3577,6 +3630,7 @@ impl DeploymentVerified {
                             webhook_js_wasm_path.clone(),
                             wasm_cache_dir.clone(),
                             ignore_missing_env_vars,
+                            &secret_registry,
                         ).await?;
                         webhooks_js_by_names.insert(k, v);
                     }
@@ -3589,6 +3643,7 @@ impl DeploymentVerified {
                         exec.fetch_and_verify(
                             resolved_program,
                             ignore_missing_env_vars,
+                            &secret_registry,
                             global_executor_instance_limiter.clone(),
                         )?
                     );
@@ -4903,6 +4958,7 @@ mod tests {
         },
         config::{
             config_holder::{ConfigHolder, load_deployment_canonical},
+            secret_registry::SecretRegistry,
             toml::{AllowExecActivities, ScriptLocationResolved},
         },
     };
@@ -4914,6 +4970,7 @@ mod tests {
     use directories::BaseDirs;
     use rstest::rstest;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tokio::sync::watch;
 
     fn get_workspace_dir() -> PathBuf {
@@ -4996,7 +5053,12 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines,
+            config,
+            Arc::new(SecretRegistry::empty()),
+        ))
+        .await?;
         let params = VerifyParams {
             dir_params: PrepareDirsParams {
                 clean_cache: false,
@@ -5023,6 +5085,7 @@ mod tests {
             &mut termination_watcher,
             server_verified.database_subscription_interruption,
             webui_enabled,
+            server_verified.secret_registry,
         ))
         .await?;
 
@@ -5079,7 +5142,12 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines,
+            config,
+            Arc::new(SecretRegistry::empty()),
+        ))
+        .await?;
         let err = deployment_verify_config(
             &server_verified,
             &prepared_dirs,
@@ -5128,7 +5196,12 @@ mod tests {
         )
         .await?;
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines,
+            config,
+            Arc::new(SecretRegistry::empty()),
+        ))
+        .await?;
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
         let err = deployment_verify_config(
@@ -5229,8 +5302,12 @@ mod tests {
         // An allowlist missing the first digest must reject the deployment,
         // printing the missing digest so it can be copy-pasted after review.
         config.allow_exec_activities = AllowExecActivities::Allowlist(digests[1..].to_vec());
-        let server_verified =
-            Box::pin(ServerVerified::new(engines.clone(), config.clone())).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines.clone(),
+            config.clone(),
+            Arc::new(SecretRegistry::empty()),
+        ))
+        .await?;
         let err = deployment_verify_config(
             &server_verified,
             &prepared_dirs,
@@ -5250,7 +5327,12 @@ mod tests {
 
         // The full allowlist must pass strict verification.
         config.allow_exec_activities = AllowExecActivities::Allowlist(digests);
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines,
+            config,
+            Arc::new(SecretRegistry::empty()),
+        ))
+        .await?;
         deployment_verify_config(
             &server_verified,
             &prepared_dirs,

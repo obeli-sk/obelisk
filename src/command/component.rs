@@ -510,19 +510,12 @@ fn build_component_table(
         if *params_via_stdin {
             t["params_via_stdin"] = value(true);
         }
-        if let Some(secrets) = secrets
-            && !secrets.env_vars.is_empty()
-        {
-            let mut secrets_tbl = Table::new();
+        if !secrets.is_empty() {
             let mut arr = toml_edit::Array::new();
-            for s in &secrets.env_vars {
-                let mut inline = toml_edit::InlineTable::new();
-                inline.insert("name", s.name.clone().into());
-                inline.insert("value", s.value.clone().into());
-                arr.push(toml_edit::Value::InlineTable(inline));
+            for s in secrets {
+                arr.push(s.clone());
             }
-            secrets_tbl["env_vars"] = Item::Value(toml_edit::Value::Array(arr));
-            t.insert("secrets", Item::Table(secrets_tbl));
+            t["secrets"] = Item::Value(toml_edit::Value::Array(arr));
         }
         if let Some(duration) = lock_duration {
             write_lock_expiry(&mut t, *duration);
@@ -617,43 +610,24 @@ fn build_component_table(
             if let Some(ref request_url_regex) = host.request_url_regex {
                 host_table["request_url_regex"] = value(request_url_regex);
             }
-            if let Some(ref secrets) = host.secrets {
-                let mut secrets_table = Table::new();
-                if !secrets.env_vars.is_empty() {
-                    let mut secret_env_array = toml_edit::Array::new();
-                    for ev in &secrets.env_vars {
-                        let ev_val = match ev {
-                            EnvVarConfig::Key(k) => {
-                                toml_edit::Value::String(toml_edit::Formatted::new(k.clone()))
-                            }
-                            EnvVarConfig::KeyValue { key, value: v } => {
-                                let mut ev_inline = toml_edit::InlineTable::new();
-                                ev_inline.insert("key", key.clone().into());
-                                ev_inline.insert("value", v.clone().into());
-                                toml_edit::Value::InlineTable(ev_inline)
-                            }
-                        };
-                        secret_env_array.push(ev_val);
-                    }
-                    secrets_table["env_vars"] =
-                        Item::Value(toml_edit::Value::Array(secret_env_array));
+            if !host.secrets.is_empty() {
+                let mut secret_array = toml_edit::Array::new();
+                for s in &host.secrets {
+                    secret_array.push(s.clone());
                 }
-                if !secrets.replace_in.is_empty() {
-                    let mut replace_array = toml_edit::Array::new();
-                    for r in &secrets.replace_in {
-                        let name = match r {
-                            crate::config::toml::ReplaceIn::Headers => "headers",
-                            crate::config::toml::ReplaceIn::Body => "body",
-                            crate::config::toml::ReplaceIn::Params => "params",
-                        };
-                        replace_array.push(name);
-                    }
-                    secrets_table["replace_in"] =
-                        Item::Value(toml_edit::Value::Array(replace_array));
+                host_table["secrets"] = Item::Value(toml_edit::Value::Array(secret_array));
+            }
+            if !host.replace_in.is_empty() {
+                let mut replace_array = toml_edit::Array::new();
+                for r in &host.replace_in {
+                    let name = match r {
+                        crate::config::toml::ReplaceIn::Headers => "headers",
+                        crate::config::toml::ReplaceIn::Body => "body",
+                        crate::config::toml::ReplaceIn::Params => "params",
+                    };
+                    replace_array.push(name);
                 }
-                host_table["secrets"] = Item::Value(toml_edit::Value::InlineTable(
-                    secrets_table.into_inline_table(),
-                ));
+                host_table["replace_in"] = Item::Value(toml_edit::Value::Array(replace_array));
             }
             host_array.push(host_table);
         }
@@ -799,7 +773,6 @@ mod tests {
     use super::*;
     use crate::config::toml::{AllowedHostToml, MethodsInput, ReplaceIn};
     use crate::oci::ComponentMetadataAnnotation;
-    use deployment_config::config::AllowedHostSecretsToml;
 
     fn make_metadata_activity() -> ComponentMetadataAnnotation {
         ComponentMetadataAnnotation::ActivityWasm {
@@ -811,10 +784,8 @@ mod tests {
                     "POST".to_string(),
                 ])),
                 request_url_regex: Some("^GET https://api\\.example\\.com/v1".to_string()),
-                secrets: Some(AllowedHostSecretsToml {
-                    env_vars: vec![EnvVarConfig::Key("API_KEY".to_string())],
-                    replace_in: vec![ReplaceIn::Headers],
-                }),
+                secrets: vec!["API_KEY".to_string()],
+                replace_in: vec![ReplaceIn::Headers],
             }],
             lock_duration: Some(DurationConfig::Seconds(5)),
         }
@@ -850,7 +821,7 @@ mod tests {
         assert_eq!(act.env_vars.len(), 2);
         assert_eq!(act.allowed_hosts.len(), 1);
         assert_eq!(act.allowed_hosts[0].pattern, "api.example.com");
-        assert!(act.allowed_hosts[0].secrets.is_some());
+        assert_eq!(act.allowed_hosts[0].secrets, vec!["API_KEY".to_string()]);
         // exec.lock_expiry.seconds = 5
         assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(5)));
     }
@@ -956,7 +927,7 @@ mod tests {
             }],
             return_type: Some("result<string>".to_string()),
             max_output_bytes: 1024,
-            secrets: None,
+            secrets: Vec::new(),
             params_via_stdin: false,
         };
         let content_digest: ContentDigest =

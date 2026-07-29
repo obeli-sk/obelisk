@@ -516,8 +516,7 @@ ffqn = "testing:integration/exec-stdin.expose-secrets"
 location = "{ws}/crates/testing/test-programs/exec/expose-secrets.sh"
 return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
-[activity_exec.secrets]
-env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
+secrets = ["MY_SECRET"]
 
 [[activity_exec]]
 content = '''#!/bin/sh
@@ -735,6 +734,12 @@ impl TestServer {
                 params,
                 prepared_dirs,
                 termination_watcher,
+                std::sync::Arc::new(
+                    crate::config::secret_registry::SecretRegistry::from_test_values([(
+                        "MY_SECRET".to_string(),
+                        secrecy::SecretString::from("s3cret_value"),
+                    )]),
+                ),
             ))
             .await
         });

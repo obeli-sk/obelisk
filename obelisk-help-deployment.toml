@@ -76,13 +76,12 @@
 # methods = "*"
 # request_url_regex = "^GET https://api\\.github\\.com/repos/"
 ## Optional secrets: injected via placeholder replacement in outgoing HTTP requests.
-## WASM receives an opaque placeholder instead of the real value.
-## The runtime replaces placeholders with real values only for requests to this host.
-## `secrets.env_vars` uses the same syntax as the top-level `env_vars` field.
-## `secrets.replace_in` controls where substitution happens: "headers", "body", "params".
+## `secrets` lists operator-owned secret names from the server.toml `[secrets]` table.
+## WASM receives an opaque placeholder instead of the real value; the runtime replaces
+## placeholders with real values only for requests to this host.
+## `replace_in` controls where substitution happens: "headers", "body", "params".
 ## Default is empty (no replacement).
-# [activity_wasm.allowed_host.secrets]
-# env_vars = ["OPENAI_API_KEY"]
+# secrets = ["OPENAI_API_KEY"]
 # replace_in = ["headers"]
 
 ### JavaScript Activity components configuration
@@ -127,8 +126,7 @@
 # pattern = "api.example.com"
 # methods = ["GET", "POST"]
 # request_url_regex = "^(GET|POST) https://api\\.example\\.com/v1/"
-# [activity_js.allowed_host.secrets]
-# env_vars = ["API_KEY"]
+# secrets = ["API_KEY"]
 # replace_in = ["headers"]
 
 ### Exec Activity components configuration — run native executables as activities
@@ -180,10 +178,9 @@
 ## The child receives `{"params":[...]}` on stdin (alongside `secrets`, if configured).
 ## Default: false.
 # params_via_stdin = false
-## Secrets: resolved from host environment variables at startup and piped to the child's stdin as JSON.
-## The child receives `{"secrets":{"KEY":"value",...}}` on stdin. Use `jq .secrets.KEY /dev/stdin` or equivalent to parse.
-# [activity_exec.secrets]
-# env_vars = [{name = "MY_SECRET", value = "${HOST_SECRET_VAR}"}] # Values support interpolation.
+## Secrets: operator-owned secret names from the server.toml `[secrets]` table, piped to the child's stdin as JSON.
+## The child receives `{"secrets":{"NAME":"value",...}}` on stdin. Use `jq .secrets.NAME /dev/stdin` or equivalent to parse.
+# secrets = ["MY_SECRET"]
 
 ### External Activity components configuration - only WIT schema is loaded
 ### An external activity declares callable activity functions whose implementation
@@ -340,8 +337,7 @@
 # pattern = "api.example.com"
 # methods = ["GET", "POST"]
 # request_url_regex = "^(GET|POST) https://api\\.example\\.com/v1/"
-# [webhook_endpoint_wasm.allowed_host.secrets]
-# env_vars = ["API_KEY"]
+# secrets = ["API_KEY"]
 # replace_in = ["headers"]
 
 ### JavaScript Webhook Endpoint components configuration
@@ -377,8 +373,7 @@
 # pattern = "api.example.com"
 # methods = ["GET", "POST"]
 # request_url_regex = "^(GET|POST) https://api\\.example\\.com/v1/"
-# [webhook_endpoint_js.allowed_host.secrets]
-# env_vars = ["API_KEY"]
+# secrets = ["API_KEY"]
 # replace_in = ["headers"]
 
 ### Cron components configuration

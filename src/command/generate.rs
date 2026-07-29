@@ -675,7 +675,13 @@ async fn generate_wit_deps(
     .await?;
     let engines = create_engines(&server_config, &prepared_dirs)?;
 
-    let server_verified = Box::pin(server_verify(server_config, engines)).await?;
+    // Config generation resolves no secrets; use an empty registry.
+    let server_verified = Box::pin(server_verify(
+        server_config,
+        engines,
+        std::sync::Arc::new(crate::config::secret_registry::SecretRegistry::empty()),
+    ))
+    .await?;
     // Disk-authored canonical: only absolute paths, so it resolves without a CAS.
     let deployment_verified = deployment_verify_config(
         &server_verified,
