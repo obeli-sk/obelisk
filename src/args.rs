@@ -398,7 +398,7 @@ pub(crate) enum Generate {
         #[arg(short, long)]
         json: bool,
         /// Append the token's hash to `api.token_hashes` in this server.toml file.
-        #[arg(long)]
+        #[arg(short, long)]
         server_config: Option<PathBuf>,
     },
     /// Print a prompt context for authoring an Obelisk application with a coding agent.
@@ -429,7 +429,7 @@ pub(crate) enum Server {
         #[arg(long)]
         clean_codegen_cache: bool,
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
-        #[arg(long)]
+        #[arg(short, long)]
         server_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If provided, the deployment is inserted and activated on startup,
         /// overriding any existing Enqueued or Active deployment in the database.
@@ -458,7 +458,7 @@ pub(crate) enum Server {
         #[arg(long)]
         clean_codegen_cache: bool,
         /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
-        #[arg(long)]
+        #[arg(short, long)]
         server_config: Option<PathBuf>,
         /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
         /// falling back to the Active deployment. Errors if neither is found.

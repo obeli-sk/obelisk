@@ -21,11 +21,6 @@ service ExecutionRepository {
     rpc Stub(StubRequest) returns (StubResponse);
     // Cancel an activity or a cancellable workflow. Cancellation is best effort.
     rpc CancelExecution(CancelExecutionRequest) returns (CancelExecutionResponse);
-    // backcompat: Deprecated since 0.39.4 and will be removed; use
-    // CancelExecution, which also covers cancellable workflows.
-    rpc CancelActivity(CancelActivityRequest) returns (CancelActivityResponse) {
-        option deprecated = true;
-    }
     rpc CancelDelay(CancelDelayRequest) returns (CancelDelayResponse);
     rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
 
@@ -808,10 +803,6 @@ message GetBacktraceSourceResponse {
     string content = 1;
 }
 
-message CancelActivityRequest {
-    ExecutionId execution_id = 1;
-}
-
 message CancelExecutionRequest {
     ExecutionId execution_id = 1;
 }
@@ -827,17 +818,6 @@ message CancelExecutionResponse {
         CANCEL_EXECUTION_OUTCOME_ALREADY_CANCELLING = 3;
     }
     CancelExecutionOutcome outcome = 1;
-}
-
-message CancelActivityResponse {
-    enum CancelActivityOutcome {
-        CANCEL_ACTIVITY_OUTCOME_UNSPECIFIED = 0;
-        // Cancel successfully requested, activity termination is best effort.
-        // The activity may still be running.
-        CANCEL_ACTIVITY_OUTCOME_CANCELLED = 1;
-        CANCEL_ACTIVITY_OUTCOME_ALREADY_FINISHED = 2;
-    }
-    CancelActivityOutcome outcome = 1;
 }
 
 message CancelDelayRequest {

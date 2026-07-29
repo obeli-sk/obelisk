@@ -3448,8 +3448,7 @@ mod deployment {
         pub description: Option<String>,
         /// Tolerate runtime requirements unavailable on this server while verifying
         /// the deployment before persisting it.
-        // backcompat: 0.39.x accepted `allow_missing_runtime_config`; drop the alias after a couple of majors.
-        #[serde(default, alias = "allow_missing_runtime_config")]
+        #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
         /// Optional client-supplied deployment ID for idempotent submission.
         /// If a deployment with this ID already exists and its content digest
@@ -3575,8 +3574,7 @@ mod deployment {
                             .map_err(|err| bad(format!("invalid `description` field: {err}")))?,
                     );
                 }
-                // backcompat: 0.39.x accepted `allow_missing_runtime_config`; drop the alias after a couple of majors.
-                "allow_unavailable_runtime_config" | "allow_missing_runtime_config" => {
+                "allow_unavailable_runtime_config" => {
                     let value = field.text().await.map_err(|err| {
                         bad(format!(
                             "invalid `allow_unavailable_runtime_config` field: {err}"
@@ -3792,8 +3790,7 @@ mod deployment {
     pub struct DeploymentSwitchPayload {
         /// Tolerate runtime requirements unavailable on this server while verifying.
         /// Rejected for a hot redeploy.
-        // backcompat: 0.39.x accepted `allow_missing_runtime_config`; drop the alias after a couple of majors.
-        #[serde(default, alias = "allow_missing_runtime_config")]
+        #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
         /// Hot redeploy without restart
         #[serde(default)]
