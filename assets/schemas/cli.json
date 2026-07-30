@@ -3,10 +3,6 @@
   "about": "Obelisk: deterministic workflow engine",
   "options": [
     {
-      "name": "--api-token",
-      "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
-    },
-    {
       "name": "--version",
       "short": "v",
       "help": "Print version"
@@ -114,6 +110,12 @@
     {
       "name": "execution",
       "about": "Submit, inspect, stub, cancel, pause, replay, persist backtraces, or upgrade executions",
+      "options": [
+        {
+          "name": "--api-token",
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+        }
+      ],
       "subcommands": [
         {
           "name": "list",
@@ -567,6 +569,12 @@
     {
       "name": "component",
       "about": "Inspect components or add/push them to an OCI registry",
+      "options": [
+        {
+          "name": "--api-token",
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+        }
+      ],
       "subcommands": [
         {
           "name": "list",
@@ -652,6 +660,12 @@
     {
       "name": "deployment",
       "about": "Manage deployments",
+      "options": [
+        {
+          "name": "--api-token",
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+        }
+      ],
       "subcommands": [
         {
           "name": "submit",
