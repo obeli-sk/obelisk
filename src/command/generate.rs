@@ -679,7 +679,7 @@ async fn generate_wit_deps(
     let server_verified = Box::pin(server_verify(
         server_config,
         engines,
-        std::sync::Arc::new(crate::config::secret_registry::SecretRegistry::empty()),
+        std::sync::Arc::new(crate::config::secret_registry::SecretRegistry::default()),
     ))
     .await?;
     // Disk-authored canonical: only absolute paths, so it resolves without a CAS.

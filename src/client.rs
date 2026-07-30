@@ -2,14 +2,91 @@ use grpc::{grpc_gen, injector::TracingInjector};
 use secrecy::{ExposeSecret as _, SecretString};
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
-/// Token this CLI invocation presents to the server, resolved once from
-/// `--api-token` > `OBELISK_API_TOKEN` > `OBELISK__API__TOKEN`.
-static API_TOKEN: std::sync::OnceLock<Option<SecretString>> = std::sync::OnceLock::new();
+/// Resolved client-side startup state, threaded through client subcommands instead of
+/// a process global. Holds the token this CLI invocation presents to the server,
+/// resolved once from `--api-token` > `OBELISK_API_TOKEN` > `OBELISK__API__TOKEN`, and
+/// builds gRPC and web-API clients that inject it.
+#[derive(Clone, Default)]
+pub(crate) struct ClientStartup {
+    api_token: Option<SecretString>,
+}
 
-pub(crate) fn init_api_token(flag: Option<SecretString>) {
-    API_TOKEN
-        .set(resolve_api_token(flag))
-        .expect("API_TOKEN is only set here");
+impl ClientStartup {
+    pub(crate) fn new(flag: Option<SecretString>) -> Self {
+        Self {
+            api_token: resolve_api_token(flag),
+        }
+    }
+
+    fn interceptor(&self) -> Result<ClientInterceptor, anyhow::Error> {
+        ClientInterceptor::new(self.api_token.as_ref())
+    }
+
+    /// HTTP client for web-API calls, presenting the API token as a default header.
+    pub(crate) fn web_api_client(&self) -> Result<reqwest::Client, anyhow::Error> {
+        Ok(self.web_api_client_builder()?.build()?)
+    }
+
+    pub(crate) fn web_api_client_builder(&self) -> Result<reqwest::ClientBuilder, anyhow::Error> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(token) = &self.api_token {
+            let mut value = reqwest::header::HeaderValue::from_str(&format!(
+                "Bearer {}",
+                token.expose_secret()
+            ))
+            .map_err(|_| anyhow::anyhow!("API token contains invalid header characters"))?;
+            value.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
+        Ok(reqwest::Client::builder().default_headers(headers))
+    }
+
+    pub(crate) fn execution_repository_client(
+        &self,
+        channel: Channel,
+    ) -> Result<ExecutionRepositoryClient, anyhow::Error> {
+        Ok(
+            grpc_gen::execution_repository_client::ExecutionRepositoryClient::with_interceptor(
+                channel,
+                self.interceptor()?,
+            )
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Gzip),
+        )
+    }
+
+    pub(crate) fn deployment_repository_client(
+        &self,
+        channel: Channel,
+    ) -> Result<DeploymentRepositoryClient, anyhow::Error> {
+        Ok(
+            grpc_gen::deployment_repository_client::DeploymentRepositoryClient::with_interceptor(
+                channel,
+                self.interceptor()?,
+            )
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Gzip)
+            .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+            .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE),
+        )
+    }
+
+    pub(crate) fn fn_repository_client(
+        &self,
+        channel: Channel,
+    ) -> Result<FunctionRepositoryClient, anyhow::Error> {
+        Ok(
+            grpc_gen::function_repository_client::FunctionRepositoryClient::with_interceptor(
+                channel,
+                self.interceptor()?,
+            )
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Gzip),
+        )
+    }
 }
 
 fn resolve_api_token(flag: Option<SecretString>) -> Option<SecretString> {
@@ -26,10 +103,6 @@ fn resolve_api_token(flag: Option<SecretString>) -> Option<SecretString> {
     .filter(|token| !token.expose_secret().is_empty())
 }
 
-fn api_token() -> Option<&'static SecretString> {
-    API_TOKEN.get_or_init(|| None).as_ref()
-}
-
 /// Client interceptor for all gRPC calls: injects tracing metadata and, if a
 /// token is configured, the `authorization` header.
 #[derive(Clone)]
@@ -38,8 +111,8 @@ pub(crate) struct ClientInterceptor {
 }
 
 impl ClientInterceptor {
-    fn new() -> Result<Self, anyhow::Error> {
-        let authorization = if let Some(token) = api_token() {
+    fn new(token: Option<&SecretString>) -> Result<Self, anyhow::Error> {
+        let authorization = if let Some(token) = token {
             let mut authorization: tonic::metadata::MetadataValue<tonic::metadata::Ascii> =
                 format!("Bearer {}", token.expose_secret())
                     .parse()
@@ -65,78 +138,17 @@ impl tonic::service::Interceptor for ClientInterceptor {
     }
 }
 
-/// HTTP client for web-API calls, presenting the API token as a default header.
-pub(crate) fn web_api_client() -> Result<reqwest::Client, anyhow::Error> {
-    Ok(web_api_client_builder()?.build()?)
-}
-
-pub(crate) fn web_api_client_builder() -> Result<reqwest::ClientBuilder, anyhow::Error> {
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(token) = api_token() {
-        let mut value =
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.expose_secret()))
-                .map_err(|_| anyhow::anyhow!("API token contains invalid header characters"))?;
-        value.set_sensitive(true);
-        headers.insert(reqwest::header::AUTHORIZATION, value);
-    }
-    Ok(reqwest::Client::builder().default_headers(headers))
-}
-
 pub(crate) type ExecutionRepositoryClient =
     grpc_gen::execution_repository_client::ExecutionRepositoryClient<
         tonic::service::interceptor::InterceptedService<Channel, ClientInterceptor>,
     >;
-
-pub(crate) async fn get_execution_repository_client(
-    channel: Channel,
-) -> Result<ExecutionRepositoryClient, anyhow::Error> {
-    Ok(
-        grpc_gen::execution_repository_client::ExecutionRepositoryClient::with_interceptor(
-            channel,
-            ClientInterceptor::new()?,
-        )
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Gzip),
-    )
-}
 
 type DeploymentRepositoryClient =
     grpc_gen::deployment_repository_client::DeploymentRepositoryClient<
         tonic::service::interceptor::InterceptedService<Channel, ClientInterceptor>,
     >;
 
-pub(crate) async fn get_deployment_repository_client(
-    channel: Channel,
-) -> Result<DeploymentRepositoryClient, anyhow::Error> {
-    Ok(
-        grpc_gen::deployment_repository_client::DeploymentRepositoryClient::with_interceptor(
-            channel,
-            ClientInterceptor::new()?,
-        )
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Gzip)
-        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE),
-    )
-}
-
 pub(crate) type FunctionRepositoryClient =
     grpc_gen::function_repository_client::FunctionRepositoryClient<
         tonic::service::interceptor::InterceptedService<Channel, ClientInterceptor>,
     >;
-
-pub(crate) async fn get_fn_repository_client(
-    channel: Channel,
-) -> Result<FunctionRepositoryClient, anyhow::Error> {
-    Ok(
-        grpc_gen::function_repository_client::FunctionRepositoryClient::with_interceptor(
-            channel,
-            ClientInterceptor::new()?,
-        )
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Gzip),
-    )
-}

@@ -1,5 +1,5 @@
 use crate::args::{self, DeploymentSource};
-use crate::client::get_deployment_repository_client;
+use crate::client::ClientStartup;
 use crate::config::manifest::{PreparedDeploymentManifest, prepare_deployment_manifest_from_disk};
 use crate::config::toml::sanitize_deployment_relative_path;
 use anyhow::{Context as _, bail};
@@ -21,7 +21,7 @@ fn runtime_config_check_from_bool(allow_unavailable: bool) -> grpc_gen::RuntimeC
 }
 
 impl args::Deployment {
-    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
         match self {
             args::Deployment::Submit {
                 file,
@@ -33,7 +33,7 @@ impl args::Deployment {
             } => {
                 let prepared = prepare_manifest_from_file_or_empty(file, empty).await?;
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let id = upload_and_submit_manifest(
                     &mut client,
                     prepared,
@@ -57,7 +57,7 @@ impl args::Deployment {
                 let runtime_config_check =
                     runtime_config_check_from_bool(allow_unavailable_runtime_config);
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let id = submit_deployment(
                     &mut client,
                     source,
@@ -86,7 +86,7 @@ impl args::Deployment {
                 // A hot redeploy always requires runtime config to be available.
                 let runtime_config_check = grpc_gen::RuntimeConfigCheck::Strict;
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let id = submit_deployment(
                     &mut client,
                     source,
@@ -101,7 +101,7 @@ impl args::Deployment {
 
             args::Deployment::List { api_url } => {
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let resp = client
                     .list_deployments(grpc_gen::ListDeploymentsRequest {
                         pagination: None,
@@ -150,7 +150,7 @@ impl args::Deployment {
 
             args::Deployment::Gc { api_url } => {
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let resp = client
                     .gc_orphan_files(grpc_gen::GcOrphanFilesRequest {})
                     .await?
@@ -161,7 +161,7 @@ impl args::Deployment {
 
             args::Deployment::Active { api_url, json } => {
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let resp = client
                     .get_current_deployment_id(grpc_gen::GetCurrentDeploymentIdRequest {})
                     .await?
@@ -182,7 +182,7 @@ impl args::Deployment {
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let resp = client
                     .get_deployment(grpc_gen::GetDeploymentRequest {
                         deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),
@@ -226,7 +226,7 @@ impl args::Deployment {
                 api_url,
             } => {
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_deployment_repository_client(channel).await?;
+                let mut client = client_startup.deployment_repository_client(channel)?;
                 let resp = client
                     .get_deployment(grpc_gen::GetDeploymentRequest {
                         deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),

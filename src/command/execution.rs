@@ -2,9 +2,8 @@ use crate::args;
 use crate::args::CancelCommand;
 use crate::args::FunctionFqnOrShort;
 use crate::args::params::parse_params;
+use crate::client::ClientStartup;
 use crate::client::ExecutionRepositoryClient;
-use crate::client::get_execution_repository_client;
-use crate::client::get_fn_repository_client;
 use crate::server::web_api_server::{AdvanceRequestSer, ExecutionSubmitPayload, ReplayResponseSer};
 use anyhow::Context as _;
 use anyhow::bail;
@@ -31,7 +30,7 @@ use std::time::Duration;
 use tracing::instrument;
 
 impl args::Execution {
-    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
         match self {
             args::Execution::List {
                 api_url,
@@ -43,6 +42,7 @@ impl args::Execution {
                 json,
             } => {
                 execution_list(
+                    &client_startup,
                     &api_url,
                     ffqn,
                     execution_id_prefix,
@@ -68,9 +68,10 @@ impl args::Execution {
                 let opts =
                     LogsOpts::from_args(level, stream_type, show_derived, show_run_id, limit)?;
                 if follow {
-                    follow_logs(&api_url, &execution_id, &opts, after, json).await
+                    follow_logs(&client_startup, &api_url, &execution_id, &opts, after, json).await
                 } else {
-                    execution_logs_cmd(&api_url, execution_id, &opts, after, json).await
+                    execution_logs_cmd(&client_startup, &api_url, execution_id, &opts, after, json)
+                        .await
                 }
             }
             args::Execution::Events {
@@ -79,14 +80,20 @@ impl args::Execution {
                 from,
                 limit,
                 json,
-            } => execution_events_cmd(&api_url, execution_id, from, limit, json).await,
+            } => {
+                execution_events_cmd(&client_startup, &api_url, execution_id, from, limit, json)
+                    .await
+            }
             args::Execution::Responses {
                 api_url,
                 execution_id,
                 from,
                 limit,
                 json,
-            } => execution_responses_cmd(&api_url, execution_id, from, limit, json).await,
+            } => {
+                execution_responses_cmd(&client_startup, &api_url, execution_id, from, limit, json)
+                    .await
+            }
             args::Execution::Submit {
                 api_url,
                 execution_id,
@@ -109,6 +116,7 @@ impl args::Execution {
                     }
                 };
                 submit(
+                    &client_startup,
                     &api_url,
                     execution_id,
                     ffqn,
@@ -124,7 +132,7 @@ impl args::Execution {
                 return_value,
             }) => {
                 let channel = to_channel(&api_url).await?;
-                let client = get_execution_repository_client(channel).await?;
+                let client = client_startup.execution_repository_client(channel)?;
                 stub(client, execution_id, return_value).await
             }
             args::Execution::Status {
@@ -135,10 +143,17 @@ impl args::Execution {
                 json,
             } => {
                 if json {
-                    get_execution_status_json(&api_url, execution_id, follow, no_reconnect).await
+                    get_execution_status_json(
+                        &client_startup,
+                        &api_url,
+                        execution_id,
+                        follow,
+                        no_reconnect,
+                    )
+                    .await
                 } else {
                     let channel = to_channel(&api_url).await?;
-                    let client = get_execution_repository_client(channel).await?;
+                    let client = client_startup.execution_repository_client(channel)?;
                     let opts = GetStatusOptions {
                         follow,
                         no_reconnect,
@@ -154,10 +169,17 @@ impl args::Execution {
                 json,
             } => {
                 if json {
-                    get_execution_result_json(&api_url, execution_id, follow, no_reconnect).await
+                    get_execution_result_json(
+                        &client_startup,
+                        &api_url,
+                        execution_id,
+                        follow,
+                        no_reconnect,
+                    )
+                    .await
                 } else {
                     let channel = to_channel(&api_url).await?;
-                    let client = get_execution_repository_client(channel).await?;
+                    let client = client_startup.execution_repository_client(channel)?;
                     let opts = GetStatusOptions {
                         follow,
                         no_reconnect,
@@ -165,10 +187,10 @@ impl args::Execution {
                     get_execution_result(client, execution_id, opts).await
                 }
             }
-            args::Execution::Cancel(cancel_request) => cancel_request.execute().await,
+            args::Execution::Cancel(cancel_request) => cancel_request.execute(&client_startup).await,
             args::Execution::Pause { api_url, id } => {
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_execution_repository_client(channel).await?;
+                let mut client = client_startup.execution_repository_client(channel)?;
                 match id {
                     args::ExecutionIdOrDelayId::Execution(execution_id) => {
                         client
@@ -190,7 +212,7 @@ impl args::Execution {
             }
             args::Execution::Unpause { api_url, id } => {
                 let channel = to_channel(&api_url).await?;
-                let mut client = get_execution_repository_client(channel).await?;
+                let mut client = client_startup.execution_repository_client(channel)?;
                 match id {
                     args::ExecutionIdOrDelayId::Execution(execution_id) => {
                         client
@@ -216,11 +238,11 @@ impl args::Execution {
                 api_url,
                 execution_id,
                 json,
-            } => replay(&api_url, execution_id, json).await,
+            } => replay(&client_startup, &api_url, execution_id, json).await,
             args::Execution::PersistBacktraces {
                 api_url,
                 execution_id,
-            } => persist_backtraces(&api_url, execution_id).await,
+            } => persist_backtraces(&client_startup, &api_url, execution_id).await,
             args::Execution::Advance {
                 api_url,
                 execution_id,
@@ -234,6 +256,7 @@ impl args::Execution {
                 let pause_submitted_executions = pause_all || pause_submitted_executions;
                 let pause_delays = pause_all || pause_delays;
                 advance(
+                    &client_startup,
                     &api_url,
                     execution_id,
                     AdvanceOpts {
@@ -250,7 +273,15 @@ impl args::Execution {
                 api_url,
                 execution_id,
                 skip_determinism_check,
-            } => upgrade(&api_url, execution_id, skip_determinism_check).await,
+            } => {
+                upgrade(
+                    &client_startup,
+                    &api_url,
+                    execution_id,
+                    skip_determinism_check,
+                )
+                .await
+            }
         }
     }
 }
@@ -263,6 +294,7 @@ pub(crate) enum SubmitOutputOpts {
 
 #[instrument(skip_all)]
 pub(crate) async fn submit(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: Option<ExecutionId>,
     ffqn: FunctionFqnOrShort,
@@ -271,8 +303,8 @@ pub(crate) async fn submit(
     opts: SubmitOutputOpts,
 ) -> anyhow::Result<()> {
     let channel = to_channel(api_url).await?;
-    let mut client = get_execution_repository_client(channel.clone()).await?;
-    let mut component_client = get_fn_repository_client(channel).await?;
+    let mut client = client_startup.execution_repository_client(channel.clone())?;
+    let mut component_client = client_startup.fn_repository_client(channel)?;
     let ffqn = match ffqn {
         FunctionFqnOrShort::Short {
             ifc_name,
@@ -345,7 +377,8 @@ pub(crate) async fn submit(
             follow,
             no_reconnect,
         } => {
-            let client = crate::client::web_api_client_builder()?
+            let client = client_startup
+                .web_api_client_builder()?
                 .build()
                 .context("failed to build HTTP client")?;
 
@@ -772,12 +805,13 @@ async fn fetch_execution_result_json(
 }
 
 async fn get_execution_status_json(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: ExecutionId,
     follow: bool,
     no_reconnect: bool,
 ) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let reconnect = !no_reconnect;
     let mut last_status: Option<serde_json::Value> = None;
 
@@ -811,12 +845,13 @@ async fn get_execution_status_json(
 }
 
 async fn get_execution_result_json(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: ExecutionId,
     follow: bool,
     no_reconnect: bool,
 ) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let reconnect = follow && !no_reconnect;
 
     loop {
@@ -856,8 +891,13 @@ async fn send_and_print(req: reqwest::RequestBuilder) -> anyhow::Result<()> {
     }
 }
 
-async fn replay(api_url: &str, execution_id: ExecutionId, json: bool) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+async fn replay(
+    client_startup: &ClientStartup,
+    api_url: &str,
+    execution_id: ExecutionId,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = client_startup.web_api_client()?;
     let accept = if json {
         "application/json"
     } else {
@@ -869,9 +909,13 @@ async fn replay(api_url: &str, execution_id: ExecutionId, json: bool) -> anyhow:
     send_and_print(req).await
 }
 
-async fn persist_backtraces(api_url: &str, execution_id: ExecutionId) -> anyhow::Result<()> {
+async fn persist_backtraces(
+    client_startup: &ClientStartup,
+    api_url: &str,
+    execution_id: ExecutionId,
+) -> anyhow::Result<()> {
     let channel = to_channel(api_url).await?;
-    let mut client = get_execution_repository_client(channel).await?;
+    let mut client = client_startup.execution_repository_client(channel)?;
     let response = client
         .persist_execution_backtraces(tonic::Request::new(
             grpc_gen::PersistExecutionBacktracesRequest {
@@ -889,10 +933,11 @@ async fn persist_backtraces(api_url: &str, execution_id: ExecutionId) -> anyhow:
 
 /// Fetch replay response as JSON. Accepts both 200 (success) and 422 (replay failed with body).
 async fn replay_json(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: &ExecutionId,
 ) -> anyhow::Result<serde_json::Value> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let resp = client
         .put(format!("{api_url}/v1/executions/{execution_id}/replay"))
         .header(ACCEPT, "application/json")
@@ -1010,11 +1055,12 @@ struct AdvanceOpts {
 }
 
 async fn advance(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: ExecutionId,
     opts: AdvanceOpts,
 ) -> anyhow::Result<()> {
-    let replay = replay_json(api_url, &execution_id).await?;
+    let replay = replay_json(client_startup, api_url, &execution_id).await?;
     let mut advance_request = replay_to_advanceable_request(&replay, opts.force)?;
     if let Some(trim) = opts.trim {
         trim_replay(&mut advance_request, trim);
@@ -1025,7 +1071,7 @@ async fn advance(
     if opts.pause_delays {
         pause_delays_in_replay(&mut advance_request);
     }
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let accept = if opts.json {
         "application/json"
     } else {
@@ -1266,7 +1312,9 @@ mod tests {
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn execution_list(
+    client_startup: &ClientStartup,
     api_url: &str,
     ffqn: Option<String>,
     execution_id_prefix: Option<String>,
@@ -1275,7 +1323,7 @@ async fn execution_list(
     limit: u16,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let accept = if json {
         "application/json"
     } else {
@@ -1494,13 +1542,14 @@ async fn fetch_logs(
 }
 
 async fn execution_logs_cmd(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: ExecutionId,
     opts: &LogsOpts,
     after: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
     let body = fetch_logs(&client, &logs_url, opts, None, after.as_deref(), "newer").await?;
     print_log_items(&body, json, opts.show_run_id, opts.show_derived)?;
@@ -1508,13 +1557,14 @@ async fn execution_logs_cmd(
 }
 
 async fn follow_logs(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: &ExecutionId,
     opts: &LogsOpts,
     initial_after: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let logs_url = format!("{api_url}/v1/executions/{execution_id}/logs");
     let status_url = format!("{api_url}/v1/executions/{execution_id}/status");
     let mut cursor: Option<String> = None;
@@ -1568,13 +1618,14 @@ async fn follow_logs(
 }
 
 async fn execution_events_cmd(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: ExecutionId,
     from: Option<u32>,
     limit: u16,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let accept = if json {
         "application/json"
     } else {
@@ -1596,13 +1647,14 @@ async fn execution_events_cmd(
 }
 
 async fn execution_responses_cmd(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: ExecutionId,
     from: Option<u32>,
     limit: u16,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = crate::client::web_api_client()?;
+    let client = client_startup.web_api_client()?;
     let accept = if json {
         "application/json"
     } else {
@@ -1625,9 +1677,9 @@ async fn execution_responses_cmd(
 
 impl CancelCommand {
     #[instrument(skip_all)]
-    pub(crate) async fn execute(self) -> anyhow::Result<()> {
+    pub(crate) async fn execute(self, client_startup: &ClientStartup) -> anyhow::Result<()> {
         let channel = to_channel(&self.api_url).await?;
-        let mut client = get_execution_repository_client(channel).await?;
+        let mut client = client_startup.execution_repository_client(channel)?;
         match self.id {
             args::ExecutionIdOrDelayId::Execution(execution_id) => {
                 let resp = client
@@ -1672,6 +1724,7 @@ impl CancelCommand {
 }
 
 async fn upgrade(
+    client_startup: &ClientStartup,
     api_url: &str,
     execution_id: ExecutionId,
     skip_determinism_check: bool,
@@ -1679,7 +1732,7 @@ async fn upgrade(
     let channel = to_channel(api_url).await?;
 
     // Step 1: fetch the execution summary to get current component digest and ffqn.
-    let mut exec_client = get_execution_repository_client(channel.clone()).await?;
+    let mut exec_client = client_startup.execution_repository_client(channel.clone())?;
     let summary = exec_client
         .get_status(tonic::Request::new(grpc_gen::GetStatusRequest {
             execution_id: Some(grpc_gen::ExecutionId::from(execution_id.clone())),
@@ -1715,7 +1768,7 @@ async fn upgrade(
         .digest;
 
     // Step 2: find the component that currently exports this ffqn.
-    let mut fn_client = get_fn_repository_client(channel.clone()).await?;
+    let mut fn_client = client_startup.fn_repository_client(channel.clone())?;
     let components = fn_client
         .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
             function_name: Some(grpc_gen::FunctionName::from(&ffqn)),

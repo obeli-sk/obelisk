@@ -7,7 +7,6 @@ use anyhow::{Context as _, bail};
 use config::{Config, ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tracing::info;
@@ -28,15 +27,15 @@ pub(crate) struct PathPrefixes {
     pub(crate) server_config_dir: Option<PathBuf>,
     pub(crate) project_dirs: Option<ProjectDirs>,
     pub(crate) base_dirs: Option<BaseDirs>,
-    secret_registry: Arc<SecretRegistry>,
 }
 
 impl PathPrefixes {
     pub(crate) async fn server_config_replace_path_prefix_mkdir(
         &self,
         dir: &str,
+        secret_registry: &SecretRegistry,
     ) -> Result<PathBuf, anyhow::Error> {
-        let path = PathBuf::from(self.interpolate_path(dir)?);
+        let path = PathBuf::from(self.interpolate_path(dir, secret_registry)?);
         tokio::fs::create_dir_all(&path)
             .await
             .with_context(|| format!("cannot create directory {path:?}"))?;
@@ -46,7 +45,11 @@ impl PathPrefixes {
     /// Resolve a server-config path field: a leading `~/` becomes the home directory, then
     /// synthetic path variables (`${DATA_DIR}` etc.) and process environment variables are
     /// interpolated, with synthetic names taking precedence.
-    fn interpolate_path(&self, dir: &str) -> Result<String, anyhow::Error> {
+    fn interpolate_path(
+        &self,
+        dir: &str,
+        secret_registry: &SecretRegistry,
+    ) -> Result<String, anyhow::Error> {
         let dir = if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
             let home = self
                 .base_dirs
@@ -57,7 +60,7 @@ impl PathPrefixes {
         } else {
             dir.to_owned()
         };
-        interpolate_path_template(&dir, &self.synthetic_dirs(), self.secret_registry.as_ref())
+        interpolate_path_template(&dir, &self.synthetic_dirs(), secret_registry)
     }
 
     /// Synthetic path variables and their values, or `None` when unavailable in this context.
@@ -135,13 +138,8 @@ impl ConfigHolder {
                 server_config_dir,
                 project_dirs,
                 base_dirs,
-                secret_registry: Arc::new(SecretRegistry::empty()),
             },
         })
-    }
-
-    pub(crate) fn set_secret_registry(&mut self, secret_registry: Arc<SecretRegistry>) {
-        self.path_prefixes.secret_registry = secret_registry;
     }
 
     pub(crate) fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {

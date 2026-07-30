@@ -44,20 +44,21 @@ pub(crate) type SecretsToml = IndexMap<String, SecretSourceToml>;
 )]
 pub(crate) struct SecretViolation(pub(crate) String);
 
-/// Resolved secret registry: sensitive-name set plus a name -> value getter.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct SecretRegistry {
     /// Logical secret name -> resolved value.
     values: HashMap<String, SecretString>,
-    /// Every name treated as sensitive: logical names plus env source names.
+    /// Used to reject `public_env_lookup`.
     sensitive: HashSet<String>,
 }
 
 impl SecretRegistry {
-    /// A registry with no secrets. Used by client-side subcommands and tests, where
-    /// every environment variable is non-secret and interpolation behaves as before.
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
-        Self::default()
+        SecretRegistry {
+            values: HashMap::default(),
+            sensitive: HashSet::default(),
+        }
     }
 
     /// Public (non-secret) environment lookup. Rejects the name when it is sensitive
@@ -93,12 +94,16 @@ impl SecretRegistry {
     /// MUST run during early, single-threaded startup, before the tokio runtime is
     /// constructed: it calls `std::env::remove_var`, which is only sound without
     /// concurrent readers.
-    /// Every entry is resolved before any source is wiped, so several secrets may
-    /// safely share one source variable.
     pub(crate) fn resolve_and_wipe(secrets: SecretsToml) -> anyhow::Result<Self> {
         let mut values = HashMap::new();
-        let mut sensitive = HashSet::new();
-        let mut sources = Vec::new();
+
+        // Seed the sensitive set with the API-token env vars so a deployment can neither
+        // interpolate nor read them, even if the operator forgot to register them.
+        let mut sensitive = HashSet::from([
+            "OBELISK__API__TOKEN".to_string(),
+            "OBELISK_API_TOKEN".to_string(),
+        ]);
+
         for (name, source) in secrets {
             match source {
                 SecretSourceToml::Env { env } => {
@@ -106,17 +111,18 @@ impl SecretRegistry {
                         format!("secret `{name}` source environment variable `{env}` is not set")
                     })?;
                     values.insert(name.clone(), SecretString::from(value));
-                    sensitive.insert(env.clone());
+                    sensitive.insert(env);
+                    // A logical name is sensitive too, so it cannot be interpolated as plaintext.
                     sensitive.insert(name);
-                    sources.push(env);
                 }
             }
         }
-        for src in sources {
+        for src in &sensitive {
             // SAFETY: `resolve_and_wipe` runs during single-threaded startup, before the
             // tokio runtime is constructed, so there are no concurrent environment readers.
-            unsafe { std::env::remove_var(&src) };
+            unsafe { std::env::remove_var(src) };
         }
+
         Ok(Self { values, sensitive })
     }
 }

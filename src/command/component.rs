@@ -1,8 +1,8 @@
 use crate::FunctionMetadataVerbosity;
 use crate::args;
 use crate::args::TomlComponentType;
+use crate::client::ClientStartup;
 use crate::client::FunctionRepositoryClient;
-use crate::client::get_fn_repository_client;
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ComponentLocationToml;
@@ -28,7 +28,7 @@ use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 
 impl args::Component {
-    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
         match self {
             args::Component::List {
                 api_url,
@@ -36,7 +36,7 @@ impl args::Component {
                 extensions,
             } => {
                 let channel = to_channel(&api_url).await?;
-                let client = get_fn_repository_client(channel).await?;
+                let client = client_startup.fn_repository_client(channel)?;
                 list_components(
                     client,
                     if imports {
