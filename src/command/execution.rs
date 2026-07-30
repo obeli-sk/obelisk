@@ -187,7 +187,9 @@ impl args::Execution {
                     get_execution_result(client, execution_id, opts).await
                 }
             }
-            args::Execution::Cancel(cancel_request) => cancel_request.execute(&client_startup).await,
+            args::Execution::Cancel(cancel_request) => {
+                cancel_request.execute(&client_startup).await
+            }
             args::Execution::Pause { api_url, id } => {
                 let channel = to_channel(&api_url).await?;
                 let mut client = client_startup.execution_repository_client(channel)?;

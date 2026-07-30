@@ -657,8 +657,13 @@ pub(crate) async fn run(
     let (termination_sender, termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
 
-    let prepared_dirs =
-        prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes, &secret_registry).await?;
+    let prepared_dirs = prepare_dirs(
+        &config,
+        &params.dir_params,
+        &config_holder.path_prefixes,
+        &secret_registry,
+    )
+    .await?;
     Box::pin(run_internal(
         config,
         deployment,
@@ -784,7 +789,9 @@ async fn verify_db_schema(
 ) -> Result<DbPoolCloseableContainer, anyhow::Error> {
     let result: DbPoolCloseableContainer = match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-            let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes, secret_registry).await?;
+            let db_dir = sqlite_config_toml
+                .get_sqlite_dir(path_prefixes, secret_registry)
+                .await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if sqlite_file.exists() {
@@ -1076,7 +1083,9 @@ async fn get_deployment_canonical_from_db(
     } else {
         match database {
             DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-                let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes, secret_registry).await?;
+                let db_dir = sqlite_config_toml
+                    .get_sqlite_dir(path_prefixes, secret_registry)
+                    .await?;
                 let sqlite_config = sqlite_config_toml.as_sqlite_config();
                 let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
                 let db_pool = Arc::new(
@@ -1477,7 +1486,9 @@ pub(crate) async fn run_internal(
     // we can read the active/enqueued deployment from it.
     let (db_pool, db_close): (Arc<dyn DbPool>, DbClose) = match &database {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-            let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes, &secret_registry).await?;
+            let db_dir = sqlite_config_toml
+                .get_sqlite_dir(&path_prefixes, &secret_registry)
+                .await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if params.clean_sqlite_directory {
