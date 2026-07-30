@@ -1,11 +1,10 @@
+use crate::config::secret_registry::{API_TOKEN_CLIENT, API_TOKEN_SERVER};
 use grpc::{grpc_gen, injector::TracingInjector};
 use secrecy::{ExposeSecret as _, SecretString};
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
-/// Resolved client-side startup state, threaded through client subcommands instead of
-/// a process global. Holds the token this CLI invocation presents to the server,
-/// resolved once from `--api-token` > `OBELISK_API_TOKEN` > `OBELISK__API__TOKEN`, and
-/// builds gRPC and web-API clients that inject it.
+/// Holds the API token (resolved from `--api-token` > `OBELISK_API_TOKEN` >
+/// `OBELISK__API__TOKEN`) and builds gRPC and web-API clients that inject it.
 #[derive(Clone, Default)]
 pub(crate) struct ClientStartup {
     api_token: Option<SecretString>,
@@ -13,9 +12,12 @@ pub(crate) struct ClientStartup {
 
 impl ClientStartup {
     pub(crate) fn new(flag: Option<SecretString>) -> Self {
-        Self {
-            api_token: resolve_api_token(flag),
-        }
+        let api_token = flag
+            .or_else(|| std::env::var(API_TOKEN_CLIENT).ok().map(SecretString::from))
+            .or_else(|| std::env::var(API_TOKEN_SERVER).ok().map(SecretString::from))
+            .filter(|token| !token.expose_secret().is_empty());
+
+        Self { api_token }
     }
 
     fn interceptor(&self) -> Result<ClientInterceptor, anyhow::Error> {
@@ -87,20 +89,6 @@ impl ClientStartup {
             .accept_compressed(CompressionEncoding::Gzip),
         )
     }
-}
-
-fn resolve_api_token(flag: Option<SecretString>) -> Option<SecretString> {
-    flag.or_else(|| {
-        std::env::var("OBELISK_API_TOKEN")
-            .ok()
-            .map(SecretString::from)
-    })
-    .or_else(|| {
-        std::env::var("OBELISK__API__TOKEN")
-            .ok()
-            .map(SecretString::from)
-    })
-    .filter(|token| !token.expose_secret().is_empty())
 }
 
 /// Client interceptor for all gRPC calls: injects tracing metadata and, if a

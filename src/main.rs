@@ -11,7 +11,7 @@ mod oci;
 mod server;
 mod wit_printer;
 
-use args::{Args, Server, Subcommand};
+use args::{Args, ComponentArgs, DeploymentArgs, ExecutionArgs, Server, Subcommand};
 use clap::Parser;
 use client::ClientStartup;
 use config::config_holder::ConfigHolder;
@@ -45,22 +45,19 @@ fn main() -> Result<(), anyhow::Error> {
             } = prepare_server_startup(server_config.clone())?;
             Box::pin(server.run(config_holder, config, secret_registry))
         }
-        Subcommand::Component(component) => {
-            // Resolve the client token before wiping, then build a no-secrets registry
-            // (single-threaded, so `resolve_and_wipe` is sound) for local path interpolation.
-            let client_startup = ClientStartup::new(args.api_token);
+        Subcommand::Component(ComponentArgs { command, token }) => {
+            // Resolve the client token before the wipe in `resolve_and_wipe`.
+            let client_startup = ClientStartup::new(token.api_token);
             let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(SecretsToml::new())?);
-            Box::pin(component.run(client_startup, secret_registry))
+            Box::pin(command.run(client_startup, secret_registry))
         }
-        Subcommand::Execution(execution) => {
-            Box::pin(execution.run(ClientStartup::new(args.api_token)))
+        Subcommand::Execution(ExecutionArgs { command, token }) => {
+            Box::pin(command.run(ClientStartup::new(token.api_token)))
         }
-        Subcommand::Deployment(deployment) => {
-            Box::pin(deployment.run(ClientStartup::new(args.api_token)))
+        Subcommand::Deployment(DeploymentArgs { command, token }) => {
+            Box::pin(command.run(ClientStartup::new(token.api_token)))
         }
         Subcommand::Generate(generate) => {
-            // No `[secrets]`: a no-secrets registry, built single-threaded here so the
-            // `resolve_and_wipe` env wipe is sound, satisfies the WIT-extraction path.
             let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(SecretsToml::new())?);
             Box::pin(generate.run(secret_registry))
         }

@@ -73,6 +73,15 @@ pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Subcommand,
 
+    /// Print version
+    #[arg(short, long, action = clap::ArgAction::Version)]
+    version: Option<bool>,
+}
+
+/// Flattened only into client subcommand groups: the token is meaningless for
+/// `server` and `generate`, so it does not live on the top-level `Args`.
+#[derive(Debug, clap::Args)]
+pub(crate) struct ClientToken {
     /// API token presented to the server as `Authorization: Bearer <token>`.
     /// Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`.
     #[arg(
@@ -82,10 +91,6 @@ pub(crate) struct Args {
         value_parser = parse_secret_string
     )]
     pub(crate) api_token: Option<SecretString>,
-
-    /// Print version
-    #[arg(short, long, action = clap::ArgAction::Version)]
-    version: Option<bool>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -94,17 +99,38 @@ pub(crate) enum Subcommand {
     #[command(subcommand)]
     Server(Server),
     /// Submit, inspect, stub, cancel, pause, replay, persist backtraces, or upgrade executions.
-    #[command(subcommand)]
-    Execution(Execution),
+    Execution(ExecutionArgs),
     /// Inspect components or add/push them to an OCI registry.
-    #[command(subcommand)]
-    Component(Component),
+    Component(ComponentArgs),
     /// Manage deployments.
-    #[command(subcommand)]
-    Deployment(Deployment),
+    Deployment(DeploymentArgs),
     /// Generate configuration files and WIT artifacts.
     #[command(subcommand)]
     Generate(Generate),
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct ExecutionArgs {
+    #[command(subcommand)]
+    pub(crate) command: Execution,
+    #[command(flatten)]
+    pub(crate) token: ClientToken,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct ComponentArgs {
+    #[command(subcommand)]
+    pub(crate) command: Component,
+    #[command(flatten)]
+    pub(crate) token: ClientToken,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct DeploymentArgs {
+    #[command(subcommand)]
+    pub(crate) command: Deployment,
+    #[command(flatten)]
+    pub(crate) token: ClientToken,
 }
 
 #[derive(Debug, clap::Subcommand)]
