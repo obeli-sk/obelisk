@@ -727,15 +727,22 @@ fn allowed_host_snippet(
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
-fn validate_outbound_http_secret_replacements(
-    component_section: &str,
-    component_name: &ConfigName,
-    entries: &[AllowedHostToml],
+/// A secret replacement a component requests that the operator global bound does
+/// not authorize. Collected across the whole deployment so every missing outer
+/// bound is reported at once, letting the operator add all allowances in one pass.
+struct MissingSecretReplacement {
+    component_section: &'static str,
+    component_name: ConfigName,
+    entry: AllowedHostToml,
+    secret: String,
+    replace_in: ReplaceIn,
+}
+
+/// The `(secret name, replacement target)` pairs the operator global bound authorizes.
+fn global_secret_replacements(
     global_http_config: &GlobalHttpConfig,
-    secret_registry: &SecretRegistry,
-    availability: RuntimeConfigAvailability,
-) -> Result<(), anyhow::Error> {
-    let server_replacements = global_http_config
+) -> hashbrown::HashSet<(&str, ReplacementLocation)> {
+    global_http_config
         .entries()
         .iter()
         .flat_map(|entry| {
@@ -747,8 +754,20 @@ fn validate_outbound_http_secret_replacements(
                     .map(move |target| (name.as_str(), target))
             })
         })
-        .collect::<hashbrown::HashSet<_>>();
+        .collect()
+}
 
+/// Append every secret replacement `entries` requests that `server_replacements`
+/// does not authorize onto `missing`. Registered-only secrets are checked (an
+/// unregistered secret name cannot be injected, so it is skipped here).
+fn collect_outbound_http_secret_replacements(
+    component_section: &'static str,
+    component_name: &ConfigName,
+    entries: &[AllowedHostToml],
+    server_replacements: &hashbrown::HashSet<(&str, ReplacementLocation)>,
+    secret_registry: &SecretRegistry,
+    missing: &mut Vec<MissingSecretReplacement>,
+) {
     for entry in entries {
         if entry.methods.is_none()
             || matches!(&entry.methods, Some(MethodsInput::List(methods)) if methods.is_empty())
@@ -764,33 +783,181 @@ fn validate_outbound_http_secret_replacements(
                 if server_replacements.contains(&requested_replacement) {
                     continue;
                 }
-                let server_snippet =
-                    allowed_host_snippet("outbound_http", entry, secret, *replace_in);
-                let deployment_snippet =
-                    allowed_host_snippet(component_section, entry, secret, *replace_in);
-                let message = format!(
-                    "deployment.toml `[[{component_section}.allowed_host]]` for component \
-                     `{component_name}` requests replacing secret `{secret}` in `{target}`, \
-                     but no server.toml `[[outbound_http.allowed_host]]` entry authorizes that \
-                     replacement.\n\
-                     After review, add this outer bound to server.toml:\n\n\
-                     {server_snippet}\n\
-                     The corresponding deployment.toml entry is:\n\n\
-                     {deployment_snippet}",
-                    target = replacement_target_name(*replace_in),
-                );
-                if availability.allows_unavailable() {
-                    warn!(
-                        "{message}\nSkipping this load-time secret replacement check because unavailable \
-                         runtime configuration is allowed; activation will enforce it strictly."
-                    );
-                } else {
-                    bail!("{message}");
-                }
+                missing.push(MissingSecretReplacement {
+                    component_section,
+                    component_name: component_name.clone(),
+                    entry: entry.clone(),
+                    secret: secret.clone(),
+                    replace_in: *replace_in,
+                });
             }
         }
     }
-    Ok(())
+}
+
+/// Emit a single report covering every collected missing secret replacement, so
+/// the operator can add all the required outer bounds to server.toml in one edit.
+/// Bails under strict availability; downgrades to a warning when unavailable
+/// runtime config is allowed (activation re-checks strictly).
+fn report_missing_outbound_http_secret_replacements(
+    missing: &[MissingSecretReplacement],
+    availability: RuntimeConfigAvailability,
+) -> Result<(), anyhow::Error> {
+    if missing.is_empty() {
+        return Ok(());
+    }
+    use std::fmt::Write as _;
+    let mut details = String::new();
+    let mut server_snippets: Vec<String> = Vec::new();
+    let mut deployment_snippets: Vec<String> = Vec::new();
+    for m in missing {
+        let _ = writeln!(
+            details,
+            "  - component `{name}` (`[[{section}.allowed_host]]`) requests replacing secret \
+             `{secret}` in `{target}`",
+            name = m.component_name,
+            section = m.component_section,
+            secret = m.secret,
+            target = replacement_target_name(m.replace_in),
+        );
+        // Multiple components may request the same outer bound; list each unique
+        // snippet once so the operator does not paste duplicates.
+        let server_snippet =
+            allowed_host_snippet("outbound_http", &m.entry, &m.secret, m.replace_in);
+        if !server_snippets.contains(&server_snippet) {
+            server_snippets.push(server_snippet);
+        }
+        let deployment_snippet =
+            allowed_host_snippet(m.component_section, &m.entry, &m.secret, m.replace_in);
+        if !deployment_snippets.contains(&deployment_snippet) {
+            deployment_snippets.push(deployment_snippet);
+        }
+    }
+    let message = format!(
+        "the deployment requests {count} outbound HTTP secret replacement(s) that no server.toml \
+         `[[outbound_http.allowed_host]]` entry authorizes:\n\
+         {details}\n\
+         After review, add these outer bounds to server.toml:\n\n\
+         {server}\n\
+         The corresponding deployment.toml entries are:\n\n\
+         {deployment}",
+        count = missing.len(),
+        server = server_snippets.join("\n"),
+        deployment = deployment_snippets.join("\n"),
+    );
+    if availability.allows_unavailable() {
+        warn!(
+            "{message}\nSkipping these load-time secret replacement checks because unavailable \
+             runtime configuration is allowed; activation will enforce them strictly."
+        );
+        Ok(())
+    } else {
+        bail!("{message}");
+    }
+}
+
+/// A component destination that no operator outer bound covers, collected across
+/// the deployment so every gap is reported at load time rather than one-by-one.
+struct UncoveredOutboundHost {
+    component_section: &'static str,
+    component_name: ConfigName,
+    entry: AllowedHostToml,
+}
+
+/// Render a destination-only `[[<section>.allowed_host]]` snippet, dropping secret fields.
+fn host_bound_snippet(section: &str, entry: &AllowedHostToml) -> String {
+    #[derive(serde::Serialize)]
+    struct DestinationBound {
+        pattern: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        methods: Option<MethodsInput>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_url_regex: Option<String>,
+    }
+    let body = toml::to_string(&DestinationBound {
+        pattern: entry.pattern.clone(),
+        methods: entry.methods.clone(),
+        request_url_regex: entry.request_url_regex.clone(),
+    })
+    .expect("destination bound must serialize to TOML");
+    format!("[[{section}.allowed_host]]\n{body}")
+}
+
+/// Append every destination in `entries` that no global bound covers onto
+/// `uncovered`. Allow-nothing entries need no bound; resolution failures are left
+/// for component preparation to report authoritatively.
+fn collect_uncovered_outbound_http_hosts(
+    component_section: &'static str,
+    component_name: &ConfigName,
+    entries: &[AllowedHostToml],
+    global_http_config: &GlobalHttpConfig,
+    secret_registry: &SecretRegistry,
+    ignore_missing_env_vars: bool,
+    uncovered: &mut Vec<UncoveredOutboundHost>,
+) {
+    for entry in entries {
+        if entry.methods.is_none()
+            || matches!(&entry.methods, Some(MethodsInput::List(methods)) if methods.is_empty())
+        {
+            continue;
+        }
+        // Resolve one entry at a time to keep the original TOML for the snippet.
+        let Ok(resolved) = resolve_allowed_hosts(
+            vec![entry.clone()],
+            ignore_missing_env_vars,
+            secret_registry,
+        ) else {
+            continue;
+        };
+        let Some(resolved) = resolved.first() else {
+            continue;
+        };
+        if !global_http_config
+            .entries()
+            .iter()
+            .any(|bound| bound.covers(resolved))
+        {
+            uncovered.push(UncoveredOutboundHost {
+                component_section,
+                component_name: component_name.clone(),
+                entry: entry.clone(),
+            });
+        }
+    }
+}
+
+/// Warn once, listing the outer bounds to add. A warning, not an error: coverage
+/// is conservative and a component may declare destinations it never calls.
+fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
+    if uncovered.is_empty() {
+        return;
+    }
+    use std::fmt::Write as _;
+    let mut details = String::new();
+    let mut snippets: Vec<String> = Vec::new();
+    for host in uncovered {
+        let _ = writeln!(
+            details,
+            "  - component `{name}` (`[[{section}.allowed_host]]`) allows `{pattern}`",
+            name = host.component_name,
+            section = host.component_section,
+            pattern = host.entry.pattern,
+        );
+        let snippet = host_bound_snippet("outbound_http", &host.entry);
+        if !snippets.contains(&snippet) {
+            snippets.push(snippet);
+        }
+    }
+    warn!(
+        "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
+         server.toml `[[outbound_http.allowed_host]]` outer bound; requests to them will be \
+         denied at runtime:\n\
+         {details}\n\
+         After review, add these outer bounds to server.toml:\n\n\
+         {snippets}",
+        count = uncovered.len(),
+        snippets = snippets.join("\n"),
+    );
 }
 
 #[derive(Debug, Clone)]
@@ -3435,46 +3602,61 @@ impl DeploymentVerified {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_canonical();
         trace!("Using deployment toml: {deployment:#?}");
-        for activity in &deployment.activities_wasm {
-            validate_outbound_http_secret_replacements(
-                "activity_wasm",
-                &activity.common.name,
-                &activity.allowed_hosts,
-                &global_http_config,
-                &secret_registry,
-                runtime_config_availability,
-            )?;
-        }
-        for activity in &deployment.activities_js {
-            validate_outbound_http_secret_replacements(
-                "activity_js",
-                &activity.name,
-                &activity.allowed_hosts,
-                &global_http_config,
-                &secret_registry,
-                runtime_config_availability,
-            )?;
-        }
-        for webhook in &deployment.webhooks_wasm {
-            validate_outbound_http_secret_replacements(
-                "webhook_endpoint_wasm",
-                &webhook.common.name,
-                &webhook.allowed_hosts,
-                &global_http_config,
-                &secret_registry,
-                runtime_config_availability,
-            )?;
-        }
-        for webhook in &deployment.webhooks_js {
-            validate_outbound_http_secret_replacements(
-                "webhook_endpoint_js",
-                &webhook.name,
-                &webhook.allowed_hosts,
-                &global_http_config,
-                &secret_registry,
-                runtime_config_availability,
-            )?;
-        }
+        // Scoped so the `server_replacements` borrow of `global_http_config` ends
+        // before the config is moved into the deployment below. Each component's
+        // outbound HTTP entries are checked against the operator global bound for
+        // both unauthorized secret replacements and uncovered destinations.
+        let (missing_replacements, uncovered_hosts) = {
+            let server_replacements = global_secret_replacements(&global_http_config);
+            let mut missing_replacements = Vec::new();
+            let mut uncovered_hosts = Vec::new();
+            let mut check =
+                |section: &'static str, name: &ConfigName, hosts: &[AllowedHostToml]| {
+                    collect_outbound_http_secret_replacements(
+                        section,
+                        name,
+                        hosts,
+                        &server_replacements,
+                        &secret_registry,
+                        &mut missing_replacements,
+                    );
+                    collect_uncovered_outbound_http_hosts(
+                        section,
+                        name,
+                        hosts,
+                        &global_http_config,
+                        &secret_registry,
+                        ignore_missing_env_vars,
+                        &mut uncovered_hosts,
+                    );
+                };
+            for activity in &deployment.activities_wasm {
+                check(
+                    "activity_wasm",
+                    &activity.common.name,
+                    &activity.allowed_hosts,
+                );
+            }
+            for activity in &deployment.activities_js {
+                check("activity_js", &activity.name, &activity.allowed_hosts);
+            }
+            for webhook in &deployment.webhooks_wasm {
+                check(
+                    "webhook_endpoint_wasm",
+                    &webhook.common.name,
+                    &webhook.allowed_hosts,
+                );
+            }
+            for webhook in &deployment.webhooks_js {
+                check("webhook_endpoint_js", &webhook.name, &webhook.allowed_hosts);
+            }
+            (missing_replacements, uncovered_hosts)
+        };
+        report_missing_outbound_http_secret_replacements(
+            &missing_replacements,
+            runtime_config_availability,
+        )?;
+        report_uncovered_outbound_http_hosts(&uncovered_hosts);
         // Check uniqueness of http_server names.
         if http_servers.len()
             > http_servers
@@ -5115,9 +5297,11 @@ mod tests {
     use crate::{
         command::server::{
             DeploymentRunnable, DeploymentVerified, PrepareDirsParams, RuntimeConfigAvailability,
-            ServerCompiledLinked, ServerVerified, VerifyParams, compile_activity_inline,
-            compute_content_digest, create_engines, deployment_verify_config, prepare_dirs,
-            validate_outbound_http_secret_replacements,
+            ServerCompiledLinked, ServerVerified, VerifyParams,
+            collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
+            compile_activity_inline, compute_content_digest, create_engines,
+            deployment_verify_config, global_secret_replacements, host_bound_snippet, prepare_dirs,
+            report_missing_outbound_http_secret_replacements,
         },
         config::{
             config_holder::{ConfigHolder, load_deployment_canonical},
@@ -5169,12 +5353,18 @@ mod tests {
         )]);
         let global_http_config = GlobalHttpConfig::default();
 
-        let err = validate_outbound_http_secret_replacements(
+        let server_replacements = global_secret_replacements(&global_http_config);
+        let mut missing = Vec::new();
+        collect_outbound_http_secret_replacements(
             "activity_wasm",
             &component_name,
             &[entry],
-            &global_http_config,
+            &server_replacements,
             &secret_registry,
+            &mut missing,
+        );
+        let err = report_missing_outbound_http_secret_replacements(
+            &missing,
             RuntimeConfigAvailability::Strict,
         )
         .unwrap_err()
@@ -5184,6 +5374,110 @@ mod tests {
         assert!(err.contains("[[activity_wasm.allowed_host]]"));
         assert!(err.contains("secrets = [\"API_KEY\"]"));
         assert!(err.contains("replace_in = [\"headers\"]"));
+    }
+
+    /// Missing replacements from several components are gathered into one report,
+    /// so the operator can add every outer bound to server.toml in a single edit.
+    #[test]
+    fn strict_outbound_http_replacement_error_collects_all_components() {
+        let entry = |secret: &str| AllowedHostToml {
+            pattern: "api.example.com".to_string(),
+            methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+            request_url_regex: None,
+            secrets: vec![secret.to_string()],
+            replace_in: vec![ReplaceIn::Headers],
+        };
+        let activity_name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
+        let webhook_name = crate::config::toml::ConfigName::new("hook".into()).unwrap();
+        let secret_registry = SecretRegistry::from_test_values([
+            (
+                "API_KEY".to_string(),
+                secrecy::SecretString::from("value-a"),
+            ),
+            (
+                "OTHER_KEY".to_string(),
+                secrecy::SecretString::from("value-b"),
+            ),
+        ]);
+        let global_http_config = GlobalHttpConfig::default();
+        let server_replacements = global_secret_replacements(&global_http_config);
+
+        let mut missing = Vec::new();
+        collect_outbound_http_secret_replacements(
+            "activity_wasm",
+            &activity_name,
+            &[entry("API_KEY")],
+            &server_replacements,
+            &secret_registry,
+            &mut missing,
+        );
+        collect_outbound_http_secret_replacements(
+            "webhook_endpoint_js",
+            &webhook_name,
+            &[entry("OTHER_KEY")],
+            &server_replacements,
+            &secret_registry,
+            &mut missing,
+        );
+        assert_eq!(missing.len(), 2);
+
+        let err = report_missing_outbound_http_secret_replacements(
+            &missing,
+            RuntimeConfigAvailability::Strict,
+        )
+        .unwrap_err()
+        .to_string();
+
+        // A single report names both offending components and both secrets.
+        assert!(
+            err.contains("`caller`"),
+            "missing activity component: {err}"
+        );
+        assert!(err.contains("`hook`"), "missing webhook component: {err}");
+        assert!(err.contains("secrets = [\"API_KEY\"]"));
+        assert!(err.contains("secrets = [\"OTHER_KEY\"]"));
+    }
+
+    /// A deployment destination the operator global bound covers is not flagged,
+    /// while an uncovered one is collected with a destination-only server snippet.
+    #[test]
+    fn uncovered_outbound_http_host_collected_covered_skipped() {
+        let host = |pattern: &str| AllowedHostToml {
+            pattern: pattern.to_string(),
+            methods: Some(MethodsInput::List(vec!["GET".to_string()])),
+            request_url_regex: None,
+            secrets: Vec::new(),
+            replace_in: Vec::new(),
+        };
+        let registry =
+            SecretRegistry::from_test_values(Vec::<(String, secrecy::SecretString)>::new());
+        let global = GlobalHttpConfig::from(
+            crate::config::toml::resolve_allowed_hosts(vec![host("obeli.sk")], false, &registry)
+                .unwrap(),
+        );
+        let name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
+
+        let mut uncovered = Vec::new();
+        collect_uncovered_outbound_http_hosts(
+            "activity_wasm",
+            &name,
+            &[host("obeli.sk"), host("example.com")],
+            &global,
+            &registry,
+            false,
+            &mut uncovered,
+        );
+
+        assert_eq!(uncovered.len(), 1, "only the uncovered host is collected");
+        assert_eq!(uncovered[0].entry.pattern, "example.com");
+
+        let snippet = host_bound_snippet("outbound_http", &uncovered[0].entry);
+        assert!(snippet.contains("[[outbound_http.allowed_host]]"));
+        assert!(snippet.contains("pattern = \"example.com\""));
+        assert!(snippet.contains("methods = [\"GET\"]"));
+        // Destination-only bound: no secret fields leak into the snippet.
+        assert!(!snippet.contains("secrets"), "snippet: {snippet}");
+        assert!(!snippet.contains("replace_in"), "snippet: {snippet}");
     }
 
     #[test]
