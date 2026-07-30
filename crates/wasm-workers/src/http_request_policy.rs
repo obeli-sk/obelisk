@@ -1124,6 +1124,55 @@ mod tests {
         assert!(matches!(err, PolicyError::RequestDenied { .. }));
     }
 
+    /// The global authorization is scoped to the entries that match the request
+    /// host. Guards against `effective_secrets` collecting authorized names
+    /// from every global entry instead of only the matching ones.
+    #[test]
+    fn global_bound_scopes_authorization_per_matching_host() {
+        const PLACEHOLDER: &str = "PH_S";
+        let header_secret = PlaceholderSecret {
+            name: "S".to_string(),
+            placeholder: PLACEHOLDER.to_string(),
+            real_value: SecretString::from("REAL_S"),
+            replace_in: hashbrown::HashSet::from([ReplacementLocation::Headers]),
+        };
+        let host_and_secrets_fn = |name: &str, secrets: Vec<PlaceholderSecret>| AllowedHostPolicy {
+            pattern: HostPattern::parse(name).unwrap(),
+            request_url_regex: None,
+            secrets,
+        };
+
+        let policy = HttpRequestPolicy {
+            hosts: vec![
+                host_and_secrets_fn("api.example.com", vec![header_secret.clone()]),
+                host_and_secrets_fn("other.example.com", vec![header_secret.clone()]),
+            ],
+            global_bound: Some(vec![
+                host_and_secrets_fn("api.example.com", vec![header_secret.clone()]),
+                host_and_secrets_fn("other.example.com", Vec::new()), // Note: missing header secrets
+            ]),
+        };
+
+        // Host api: both sides authorize S -> replaced.
+        let mut req_a = hyper::Request::builder()
+            .uri("https://api.example.com/path")
+            .header("h", format!("v-{PLACEHOLDER}"))
+            .body(empty_body())
+            .unwrap();
+        policy.apply(&mut req_a).unwrap();
+        assert_eq!(req_a.headers().get("h").unwrap(), "v-REAL_S");
+
+        // Host other: global bound authorizes no secret here -> left as placeholder,
+        // even though the operator grants S on host A and the component asks on B.
+        let mut req_b = hyper::Request::builder()
+            .uri("https://other.example.com/path")
+            .header("h", format!("v-{PLACEHOLDER}"))
+            .body(empty_body())
+            .unwrap();
+        policy.apply(&mut req_b).unwrap();
+        assert_eq!(req_b.headers().get("h").unwrap(), "v-PH_S");
+    }
+
     #[test]
     fn empty_global_bound_denies_every_destination() {
         let policy = HttpRequestPolicy {
