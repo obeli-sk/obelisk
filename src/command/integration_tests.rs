@@ -172,6 +172,16 @@ directory = "{codegen_cache}"
 
 [database.sqlite]
 directory = "{db_dir}"
+
+[[outbound_http.allowed_host]]
+pattern = "*"
+methods = "*"
+
+[[outbound_http.allowed_host]]
+pattern = "httpbin.org"
+methods = "*"
+secrets = ["MY_SECRET"]
+replace_in = ["headers", "params", "body"]
 "#,
         ip = ip,
         API_PORT = API_PORT,

@@ -67,7 +67,13 @@ fn generate_toml_snippet(
             toml_basic_string_escape(&format!("^{}$", regex::escape(request_url)));
         Some(format!(
             "{err}\n\
-             To allow this request, add the following to your configuration:\n\n\
+             Review and add the following entries as needed.\n\n\
+             # server.toml (operator-owned outer bound)\n\
+             [[outbound_http.allowed_host]]\n\
+             pattern = \"{pattern}\"\n\
+             methods = [\"{method}\"]\n\
+             request_url_regex = \"{request_url_regex}\"\n\n\
+             # deployment.toml (component policy)\n\
              [[{section}.allowed_host]]\n\
              pattern = \"{pattern}\"\n\
              methods = [\"{method}\"]\n\
@@ -142,5 +148,39 @@ impl WasiHttpHooks for HttpHooks {
             .instrument(span),
         );
         Ok(HostFutureIncomingResponse::pending(handle))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http_request_policy::PolicyLayer;
+    use hyper::Method;
+
+    #[test]
+    fn denial_guidance_includes_server_and_deployment_entries() {
+        let message = generate_toml_snippet(
+            &PolicyError::RequestDenied {
+                method: Method::POST,
+                scheme: "https".to_string(),
+                host: "api.example.com".to_string(),
+                port: 443,
+                path: "/v1/items".to_string(),
+                request_url: "POST https://api.example.com/v1/items".to_string(),
+                denied_by: PolicyLayer::GlobalBound,
+            },
+            ConfigSectionHint::ActivityWasm,
+        )
+        .unwrap();
+
+        assert!(message.contains("[[outbound_http.allowed_host]]"));
+        assert!(message.contains("[[activity_wasm.allowed_host]]"));
+        assert!(message.contains("methods = [\"POST\"]"));
+        assert!(
+            message.contains(
+                "request_url_regex = \"^POST https://api\\\\.example\\\\.com/v1/items$\""
+            ),
+            "unexpected guidance: {message}"
+        );
     }
 }

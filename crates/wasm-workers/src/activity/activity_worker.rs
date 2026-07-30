@@ -34,6 +34,7 @@ pub struct ActivityConfig {
     pub env_vars: Arc<[EnvVar]>,
     pub fuel: Option<u64>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
+    pub global_http_config: crate::http_request_policy::GlobalHttpConfig,
     /// The TOML config section type for error messages
     pub config_section_hint: ConfigSectionHint,
 }
@@ -597,6 +598,7 @@ pub(crate) mod tests {
 
             fuel: None,
             allowed_hosts: Arc::from([]),
+            global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
             config_section_hint: ConfigSectionHint::ActivityWasm,
         }
     }
@@ -605,6 +607,13 @@ pub(crate) mod tests {
         component_id: ComponentId,
         allowed_host: &str,
     ) -> ActivityConfig {
+        let allowed_hosts: Arc<[AllowedHostConfig]> = Arc::from(vec![AllowedHostConfig {
+            pattern: HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods)
+                .unwrap(),
+            request_url_regex: None,
+            secret_env_mappings: Vec::new(),
+            replace_in: hashbrown::HashSet::new(),
+        }]);
         ActivityConfig {
             component_id,
             forward_stdout: None,
@@ -612,13 +621,8 @@ pub(crate) mod tests {
             env_vars: Arc::from([]),
 
             fuel: None,
-            allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                pattern: HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods)
-                    .unwrap(),
-                request_url_regex: None,
-                secret_env_mappings: Vec::new(),
-                replace_in: hashbrown::HashSet::new(),
-            }]),
+            allowed_hosts: allowed_hosts.clone(),
+            global_http_config: allowed_hosts.into(),
             config_section_hint: ConfigSectionHint::ActivityWasm,
         }
     }
@@ -1757,27 +1761,31 @@ pub(crate) mod tests {
             TokioSleep,
             {
                 let host_pattern = host_pattern.clone();
-                move |component_id| ActivityConfig {
-                    component_id,
-                    forward_stdout: None,
-                    forward_stderr: None,
-                    env_vars: Arc::from([]),
-
-                    fuel: None,
-                    allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                        pattern: host_pattern,
-                        request_url_regex: None,
-                        secret_env_mappings: vec![(
-                            SECRET_ENV_VAR.to_string(),
-                            SecretString::from(SECRET_VALUE.to_string()),
-                        )],
-                        replace_in: HashSet::from_iter([
-                            ReplacementLocation::Headers,
-                            ReplacementLocation::Params,
-                            ReplacementLocation::Body,
-                        ]),
-                    }]),
-                    config_section_hint: ConfigSectionHint::ActivityWasm,
+                move |component_id| {
+                    let allowed_hosts: Arc<[AllowedHostConfig]> =
+                        Arc::from(vec![AllowedHostConfig {
+                            pattern: host_pattern,
+                            request_url_regex: None,
+                            secret_env_mappings: vec![(
+                                SECRET_ENV_VAR.to_string(),
+                                SecretString::from(SECRET_VALUE.to_string()),
+                            )],
+                            replace_in: HashSet::from_iter([
+                                ReplacementLocation::Headers,
+                                ReplacementLocation::Params,
+                                ReplacementLocation::Body,
+                            ]),
+                        }]);
+                    ActivityConfig {
+                        component_id,
+                        forward_stdout: None,
+                        forward_stderr: None,
+                        env_vars: Arc::from([]),
+                        fuel: None,
+                        allowed_hosts: allowed_hosts.clone(),
+                        global_http_config: allowed_hosts.into(),
+                        config_section_hint: ConfigSectionHint::ActivityWasm,
+                    }
                 }
             },
         )
@@ -1896,6 +1904,7 @@ pub(crate) mod tests {
 
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
@@ -1970,6 +1979,7 @@ pub(crate) mod tests {
 
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
@@ -2050,6 +2060,7 @@ pub(crate) mod tests {
 
                 fuel: None,
                 allowed_hosts: Arc::from([]),
+                global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             retry_config,

@@ -88,7 +88,11 @@ pub(crate) fn store(
     }
 
     // Generate fresh placeholders for this execution run
-    let http_policy = build_http_policy(&config.allowed_hosts, &mut wasi_ctx);
+    let http_policy = build_http_policy(
+        &config.allowed_hosts,
+        &config.global_http_config,
+        &mut wasi_ctx,
+    );
 
     let component_logger = ComponentLogger {
         span: ctx.worker_span,

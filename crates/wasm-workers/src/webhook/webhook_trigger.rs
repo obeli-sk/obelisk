@@ -609,6 +609,7 @@ pub struct WebhookEndpointConfig {
     pub subscription_interruption: Option<Duration>,
     pub logs_store_min_level: Option<LogLevel>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
+    pub global_http_config: crate::http_request_policy::GlobalHttpConfig,
     pub js_config: Option<WebhookEndpointJsConfig>,
     /// The TOML config section type for error messages
     pub config_section_hint: crate::http_hooks::ConfigSectionHint,
@@ -1817,8 +1818,11 @@ impl WebhookEndpointCtx {
         }
 
         // Generate fresh placeholders for this execution run
-        let http_policy =
-            crate::policy_builder::build_http_policy(&config.allowed_hosts, &mut wasi_ctx);
+        let http_policy = crate::policy_builder::build_http_policy(
+            &config.allowed_hosts,
+            &config.global_http_config,
+            &mut wasi_ctx,
+        );
 
         for (key, val) in params {
             wasi_ctx.env(key, val);
@@ -2366,6 +2370,8 @@ pub(crate) mod tests {
                             subscription_interruption: None,
                             logs_store_min_level: None,
                             allowed_hosts: Arc::from([]),
+                            global_http_config:
+                                crate::http_request_policy::GlobalHttpConfig::default(),
                             js_config: None,
                             config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                         },
@@ -2657,6 +2663,17 @@ pub(crate) mod tests {
                             secret_env_mappings: Vec::new(),
                             replace_in: hashbrown::HashSet::new(),
                         }]),
+                        global_http_config: vec![AllowedHostConfig {
+                            pattern: HostPattern::parse_with_methods(
+                                &mock_allowed_host,
+                                MethodsPattern::AllMethods,
+                            )
+                            .unwrap(),
+                            request_url_regex: None,
+                            secret_env_mappings: Vec::new(),
+                            replace_in: hashbrown::HashSet::new(),
+                        }]
+                        .into(),
                         js_config: None,
                         config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                     },
@@ -2832,6 +2849,7 @@ pub(crate) mod tests {
                         subscription_interruption: None,
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from([]), // NO allowed hosts - request should be denied
+                        global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
                         js_config: None,
                         config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                     },
@@ -2950,6 +2968,7 @@ pub(crate) mod tests {
                         subscription_interruption: None,
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from([]),
+                        global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
                             file_name: String::new(),
@@ -3096,11 +3115,18 @@ pub(crate) mod tests {
                         subscription_interruption: None,
                         logs_store_min_level: None,
                         allowed_hosts: Arc::from(vec![AllowedHostConfig {
-                            pattern: host_pattern,
+                            pattern: host_pattern.clone(),
                             request_url_regex: None,
                             secret_env_mappings: Vec::new(),
                             replace_in: hashbrown::HashSet::new(),
                         }]),
+                        global_http_config: vec![AllowedHostConfig {
+                            pattern: host_pattern,
+                            request_url_regex: None,
+                            secret_env_mappings: Vec::new(),
+                            replace_in: hashbrown::HashSet::new(),
+                        }]
+                        .into(),
                         js_config: Some(WebhookEndpointJsConfig {
                             source: source.to_string(),
                             file_name: String::new(),
@@ -3482,6 +3508,8 @@ pub(crate) mod tests {
                             subscription_interruption: None,
                             logs_store_min_level: None,
                             allowed_hosts: Arc::from([]),
+                            global_http_config:
+                                crate::http_request_policy::GlobalHttpConfig::default(),
                             js_config: Some(WebhookEndpointJsConfig {
                                 source: js_source.to_string(),
                                 file_name: String::new(),
