@@ -51,6 +51,10 @@ impl SchemePattern {
     pub fn allows_unencrypted(&self) -> bool {
         matches!(self, SchemePattern::Http | SchemePattern::Any)
     }
+
+    fn covers(&self, inner: &SchemePattern) -> bool {
+        matches!(self, SchemePattern::Any) || self == inner
+    }
 }
 
 /// Port pattern for matching requests.
@@ -64,6 +68,12 @@ pub enum PortPattern {
     Default,
 }
 
+impl PortPattern {
+    fn covers(&self, inner: &PortPattern) -> bool {
+        matches!(self, PortPattern::Any) || self == inner
+    }
+}
+
 /// Methods pattern for matching requests.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MethodsPattern {
@@ -71,6 +81,18 @@ pub enum MethodsPattern {
     AllMethods,
     /// Only specific methods are allowed.
     Specific(Vec<Method>),
+}
+
+impl MethodsPattern {
+    fn covers(&self, inner: &MethodsPattern) -> bool {
+        match (self, inner) {
+            (MethodsPattern::AllMethods, _) => true,
+            (MethodsPattern::Specific(_), MethodsPattern::AllMethods) => false,
+            (MethodsPattern::Specific(outer), MethodsPattern::Specific(inner)) => {
+                inner.iter().all(|m| outer.contains(m))
+            }
+        }
+    }
 }
 
 /// A parsed host pattern for matching outgoing requests.
@@ -214,6 +236,14 @@ impl HostPattern {
             MethodsPattern::Specific(methods) => methods.contains(method),
         }
     }
+
+    /// Whether `self` (outer bound) accepts every request `inner` accepts.
+    fn covers(&self, inner: &HostPattern) -> bool {
+        self.scheme.covers(&inner.scheme)
+            && self.port.covers(&inner.port)
+            && self.methods.covers(&inner.methods)
+            && host_pattern_covers(&self.host_pattern, &inner.host_pattern)
+    }
 }
 
 impl fmt::Display for HostPattern {
@@ -255,6 +285,30 @@ fn match_wildcard(pattern: &str, value: &str) -> bool {
         return value.starts_with(prefix);
     }
     pattern == value
+}
+
+/// Whether host wildcard `outer` matches every host `inner` matches, using the
+/// leading/trailing single-`*` grammar of [`HostPattern::parse`]. Unprovable
+/// relations (e.g. prefix wildcard vs suffix wildcard) return `false`.
+fn host_pattern_covers(outer: &str, inner: &str) -> bool {
+    if outer == inner || outer == "*" {
+        return true;
+    }
+    if let Some(suffix) = outer.strip_prefix('*') {
+        return match (inner.strip_prefix('*'), inner.strip_suffix('*')) {
+            (Some(inner_suffix), _) => inner_suffix.ends_with(suffix), // inner = *inner_suffix
+            (None, Some(_)) => false,                                  // inner = prefix*
+            (None, None) => inner.ends_with(suffix),                   // inner literal
+        };
+    }
+    if let Some(prefix) = outer.strip_suffix('*') {
+        return match (inner.strip_prefix('*'), inner.strip_suffix('*')) {
+            (Some(_), None) => false, // inner = *suffix
+            (_, Some(inner_prefix)) => inner_prefix.starts_with(prefix), // inner = inner_prefix*
+            (None, None) => inner.starts_with(prefix), // inner literal
+        };
+    }
+    false
 }
 
 /// Per-host policy entry: a host pattern with optional secrets.
@@ -631,6 +685,22 @@ pub struct AllowedHostConfig {
     pub replace_in: hashbrown::HashSet<ReplacementLocation>,
 }
 
+impl AllowedHostConfig {
+    /// Whether `self` (operator outer bound) authorizes every request `inner`
+    /// permits, across scheme, host, port, methods, and URL regex. Regex coverage
+    /// is conservative: a bound with no regex covers any inner; otherwise it covers
+    /// only a byte-identical regex, since regex containment is undecidable in general.
+    #[must_use]
+    pub fn covers(&self, inner: &AllowedHostConfig) -> bool {
+        self.pattern.covers(&inner.pattern)
+            && match (&self.request_url_regex, &inner.request_url_regex) {
+                (None, _) => true,
+                (Some(_), None) => false,
+                (Some(outer), Some(inner)) => outer.as_str() == inner.as_str(),
+            }
+    }
+}
+
 /// Resolved operator-owned outbound HTTP configuration from `server.toml`.
 ///
 /// This wrapper keeps the global outer bound distinct from component-owned
@@ -660,6 +730,62 @@ impl From<Vec<AllowedHostConfig>> for GlobalHttpConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a resolved host config from a pattern spec, method set, and optional regex.
+    fn cfg(spec: &str, methods: MethodsPattern, regex: Option<&str>) -> AllowedHostConfig {
+        AllowedHostConfig {
+            pattern: HostPattern::parse_with_methods(spec, methods).unwrap(),
+            request_url_regex: regex.map(|r| Regex::new(r).unwrap()),
+            secret_env_mappings: Vec::new(),
+            replace_in: hashbrown::HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn covers_exact_and_superset() {
+        let all = MethodsPattern::AllMethods;
+        let get = || MethodsPattern::Specific(vec![Method::GET]);
+        let get_post = || MethodsPattern::Specific(vec![Method::GET, Method::POST]);
+
+        // Exact match.
+        assert!(cfg("obeli.sk", get(), None).covers(&cfg("obeli.sk", get(), None)));
+        // A missing outer bound covers nothing narrower it does not list.
+        assert!(!cfg("other.example.com", all.clone(), None).covers(&cfg("obeli.sk", get(), None)));
+        // Wildcard host superset.
+        assert!(cfg("*.example.com", all.clone(), None).covers(&cfg(
+            "api.example.com",
+            get(),
+            None
+        )));
+        assert!(!cfg("api.example.com", all.clone(), None).covers(&cfg(
+            "*.example.com",
+            get(),
+            None
+        )));
+        // Method superset: `*` and a wider list cover a narrower list; a narrower list does not.
+        assert!(cfg("obeli.sk", all.clone(), None).covers(&cfg("obeli.sk", get(), None)));
+        assert!(cfg("obeli.sk", get_post(), None).covers(&cfg("obeli.sk", get(), None)));
+        assert!(!cfg("obeli.sk", get(), None).covers(&cfg("obeli.sk", get_post(), None)));
+        assert!(!cfg("obeli.sk", get(), None).covers(&cfg("obeli.sk", all.clone(), None)));
+    }
+
+    #[test]
+    fn covers_request_url_regex_is_conservative() {
+        let get = || MethodsPattern::Specific(vec![Method::GET]);
+        let re = r"^GET https://obeli\.sk/docs/$";
+        // Outer with no regex accepts all paths, covering any inner regex.
+        assert!(cfg("obeli.sk", get(), None).covers(&cfg("obeli.sk", get(), Some(re))));
+        // Identical regexes cover.
+        assert!(cfg("obeli.sk", get(), Some(re)).covers(&cfg("obeli.sk", get(), Some(re))));
+        // Outer restricts the path but inner does not: not covered.
+        assert!(!cfg("obeli.sk", get(), Some(re)).covers(&cfg("obeli.sk", get(), None)));
+        // Different regexes are treated as not covering even if broader in reality.
+        assert!(!cfg("obeli.sk", get(), Some(r"^GET .*$")).covers(&cfg(
+            "obeli.sk",
+            get(),
+            Some(re)
+        )));
+    }
 
     fn empty_body() -> wasmtime_wasi_http::p2::body::HyperOutgoingBody {
         http_body_util::combinators::UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
