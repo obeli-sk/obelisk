@@ -892,19 +892,6 @@
           ]
         },
         {
-          "name": "deployment-canonical-schema",
-          "about": "Generate the resolved deployment schema in JSON schema format",
-          "positionals": [
-            {
-              "name": "output",
-              "help": "Filename to write the schema to, defaults to <stdout>",
-              "accepts": {
-                "path": true
-              }
-            }
-          ]
-        },
-        {
           "name": "db-schema",
           "about": "Generate the database storage schema in JSON schema format",
           "positionals": [

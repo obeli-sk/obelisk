@@ -754,7 +754,7 @@ pub mod cron {
 /// and backtrace sources are inlined as content; deployment-owned WASM locations remain
 /// relative path + content digest until `DeploymentRunnable` materializes them from the
 /// CAS into a runnable cache path. OCI references remain external references.
-#[derive(Debug, Deserialize, Serialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Default, Clone)]
 pub struct DeploymentResolved {
     pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,
     pub activities_stub: Vec<ActivityStubComponentConfigResolved>,
@@ -765,7 +765,6 @@ pub struct DeploymentResolved {
     pub workflows_js: Vec<WorkflowJsComponentConfigResolved>,
     pub webhooks_wasm: Vec<webhook::WebhookWasmComponentConfigResolved>,
     pub webhooks_js: Vec<webhook::WebhookJsComponentConfigResolved>,
-    #[serde(default)]
     pub crons: Vec<cron::CronComponentConfigToml>,
 }
 
