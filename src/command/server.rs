@@ -154,7 +154,7 @@ use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
-use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
+use wasm_workers::http_request_policy::{AllowedHostConfig, GlobalHttpConfig, ReplacementLocation};
 use wasm_workers::log_db_forwarder;
 use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
@@ -397,6 +397,8 @@ pub(crate) const WEBHOOK_JS_LOCATION: &str =
 
 const HTTP_SERVER_NAME_WEBUI: &str = "webui";
 const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
+/// Component name of the operator-owned web UI webhook injected when the web UI is enabled.
+const COMPONENT_NAME_WEBUI: &str = "obelisk_webui";
 
 impl Server {
     pub(crate) async fn run(
@@ -862,6 +864,22 @@ struct UncoveredOutboundHost {
     component_section: &'static str,
     component_name: ConfigName,
     entry: AllowedHostToml,
+}
+
+/// The global allowlist to enforce for a webhook. A `self_authorize` webhook (only
+/// the framework-injected, operator-owned web UI) is bounded by its own component
+/// allowlist rather than requiring an explicit server.toml entry; every other
+/// webhook is bound by the operator global allowlist.
+fn webhook_global_http_allowlist(
+    self_authorize: bool,
+    allowed_hosts: &Arc<[AllowedHostConfig]>,
+    operator_global: &GlobalHttpConfig,
+) -> GlobalHttpConfig {
+    if self_authorize {
+        GlobalHttpConfig::from(allowed_hosts.clone())
+    } else {
+        operator_global.clone()
+    }
 }
 
 /// Render a destination-only `[[<section>.allowed_host]]` snippet, dropping secret fields.
@@ -3675,7 +3693,7 @@ impl DeploymentVerified {
                 .webhooks_wasm
                 .push(webhook::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
-                        name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
+                        name: ConfigName::new(StrVariant::Static(COMPONENT_NAME_WEBUI)).unwrap(),
                         location: WEBUI_LOCATION
                             .parse()
                             .expect("hard-coded webui reference must be parsed"),
@@ -3699,6 +3717,7 @@ impl DeploymentVerified {
                         secrets: Vec::new(),
                         replace_in: Vec::new(),
                     }],
+                    is_webui: true,
                 });
         }
 
@@ -4287,6 +4306,12 @@ async fn compile_and_link(
                         let span = info_span!(parent: parent_span, "webhook_compile", component_id = %webhook.component_id);
                         span.in_scope(|| {
                             let component_id = webhook.component_id;
+                            let allowed_hosts = webhook.allowed_hosts;
+                            let global_http_config = webhook_global_http_allowlist(
+                                webhook.is_webui,
+                                &allowed_hosts,
+                                &global_http_config,
+                            );
                             let config = WebhookEndpointConfig {
                                 component_id,
                                 forward_stdout: webhook.forward_stdout,
@@ -4296,8 +4321,8 @@ async fn compile_and_link(
                                 backtrace_persist: webhook.backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
                                 logs_store_min_level: webhook.logs_store_min_level,
-                                allowed_hosts: webhook.allowed_hosts,
-                                global_http_config: global_http_config.clone(),
+                                allowed_hosts,
+                                global_http_config,
                                 js_config: None,
                                 config_section_hint: webhook.config_section_hint,
                             };
@@ -5301,7 +5326,7 @@ mod tests {
             collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
             compile_activity_inline, compute_content_digest, create_engines,
             deployment_verify_config, global_secret_replacements, host_allowlist_snippet, prepare_dirs,
-            report_missing_outbound_http_secret_replacements,
+            report_missing_outbound_http_secret_replacements, webhook_global_http_allowlist,
         },
         config::{
             config_holder::{ConfigHolder, load_deployment_canonical},
@@ -5478,6 +5503,36 @@ mod tests {
         // Destination-only allowlist entry: no secret fields leak into the snippet.
         assert!(!snippet.contains("secrets"), "snippet: {snippet}");
         assert!(!snippet.contains("replace_in"), "snippet: {snippet}");
+    }
+
+    /// A self-authorizing webhook (the operator-owned web UI) is bounded by its own
+    /// component allowlist, so an empty operator allowlist does not deny its egress;
+    /// every other webhook stays bound by the operator allowlist.
+    #[test]
+    fn self_authorizing_webhook_uses_own_allowlist() {
+        use wasm_workers::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+        let target = AllowedHostConfig {
+            pattern: HostPattern::parse_with_methods(
+                "http://127.0.0.1:5005",
+                MethodsPattern::AllMethods,
+            )
+            .unwrap(),
+            request_url_regex: None,
+            secret_env_mappings: Vec::new(),
+            replace_in: hashbrown::HashSet::new(),
+        };
+        let allowed: Arc<[AllowedHostConfig]> = Arc::from(vec![target]);
+        // Empty operator allowlist denies every destination on its own.
+        let operator = GlobalHttpConfig::default();
+
+        let self_auth = webhook_global_http_allowlist(true, &allowed, &operator);
+        assert_eq!(self_auth.entries().len(), 1, "self-authorized from own allowlist");
+
+        let bound = webhook_global_http_allowlist(false, &allowed, &operator);
+        assert!(
+            bound.entries().is_empty(),
+            "other webhooks keep the operator allowlist"
+        );
     }
 
     #[test]

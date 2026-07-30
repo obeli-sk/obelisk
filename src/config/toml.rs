@@ -2502,6 +2502,7 @@ async fn resolve_local_refs_to_canonical(
             backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts,
+            is_webui: false,
         });
     }
 
@@ -3147,6 +3148,7 @@ pub(crate) mod webhook {
         pub(crate) subscription_interruption: Option<Duration>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
         pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
+        pub(crate) is_webui: bool,
         /// The TOML config section type for error messages
         pub(crate) config_section_hint: ConfigSectionHint,
     }
@@ -3304,6 +3306,7 @@ pub(crate) mod webhook {
                     subscription_interruption,
                     logs_store_min_level: self.logs_store_min_level.into_log_level(),
                     allowed_hosts,
+                    is_webui: self.is_webui,
                     config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
                 },
             ))

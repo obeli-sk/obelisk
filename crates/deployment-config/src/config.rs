@@ -689,6 +689,8 @@ pub mod webhook {
         pub logs_store_min_level: LogLevelToml,
         #[serde(default, rename = "allowed_host")]
         pub allowed_hosts: Vec<AllowedHostToml>,
+        #[serde(skip)]
+        pub is_webui: bool,
     }
 
     /// Resolved form of `WebhookJsComponentConfigToml`.
