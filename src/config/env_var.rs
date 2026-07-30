@@ -1,26 +1,47 @@
+use crate::config::secret_registry::{SecretRegistry, SecretViolation};
 use secrecy::SecretString;
 
 pub use deployment_config::env_var::EnvVarConfig;
 
+/// Error from `${VAR}` interpolation of an operator/deployment config value.
 #[derive(Debug, thiserror::Error)]
-#[error("environment variable not set: `{0}`")]
-pub(crate) struct EnvVarMissing(pub(crate) String);
+pub(crate) enum EnvVarError {
+    #[error("environment variable not set: `{0}`")]
+    Missing(String),
+    #[error(transparent)]
+    Secret(#[from] SecretViolation),
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("environment variables not set: `{0:?}`")]
 pub(crate) struct EnvVarsMissing(pub(crate) Vec<String>);
 
-pub(crate) fn interpolate_env_vars_plaintext(input: &str) -> Result<String, EnvVarMissing> {
-    interpolate_env_vars_inner(input)
+pub(crate) fn interpolate_env_vars_plaintext(
+    input: &str,
+    secret_registry: &SecretRegistry,
+) -> Result<String, EnvVarError> {
+    interpolate_env_vars_inner(input, secret_registry)
 }
-pub(crate) fn interpolate_env_vars_secret(input: &str) -> Result<SecretString, EnvVarMissing> {
-    interpolate_env_vars_inner(input).map(SecretString::from)
+pub(crate) fn interpolate_env_vars_secret(
+    input: &str,
+    secret_registry: &SecretRegistry,
+) -> Result<SecretString, EnvVarError> {
+    interpolate_env_vars_inner(input, secret_registry).map(SecretString::from)
 }
 
-fn interpolate_env_vars_inner(input: &str) -> Result<String, EnvVarMissing> {
-    interpolate_core(input, &|key| std::env::var(key).ok(), &|key| {
-        EnvVarMissing(key)
-    })
+fn interpolate_env_vars_inner(
+    input: &str,
+    secret_registry: &SecretRegistry,
+) -> Result<String, EnvVarError> {
+    interpolate_core(
+        input,
+        &|key| {
+            secret_registry
+                .public_env_lookup(key)
+                .map_err(EnvVarError::from)
+        },
+        &|key| EnvVarError::Missing(key),
+    )
 }
 
 /// Interpolate a path template, resolving synthetic path variables (e.g. `DATA_DIR`) before
@@ -31,11 +52,14 @@ fn interpolate_env_vars_inner(input: &str) -> Result<String, EnvVarMissing> {
 pub(crate) fn interpolate_path_template(
     input: &str,
     synthetics: &[(&'static str, Option<String>)],
+    secret_registry: &SecretRegistry,
 ) -> Result<String, anyhow::Error> {
-    let lookup = |key: &str| -> Option<String> {
+    let lookup = |key: &str| -> Result<Option<String>, anyhow::Error> {
         match synthetics.iter().find(|(name, _)| *name == key) {
-            Some((_, val)) => val.clone(),
-            None => std::env::var(key).ok(),
+            Some((_, val)) => Ok(val.clone()),
+            None => secret_registry
+                .public_env_lookup(key)
+                .map_err(anyhow::Error::from),
         }
     };
     let on_missing = |key: String| -> anyhow::Error {
@@ -53,7 +77,7 @@ pub(crate) fn interpolate_path_template(
 /// to an unset variable that has no default.
 fn interpolate_core<E>(
     input: &str,
-    lookup: &dyn Fn(&str) -> Option<String>,
+    lookup: &dyn Fn(&str) -> Result<Option<String>, E>,
     on_missing: &dyn Fn(String) -> E,
 ) -> Result<String, E> {
     let mut out = String::new();
@@ -106,12 +130,12 @@ fn interpolate_core<E>(
                 out.push_str(&key);
             } else {
                 match default_mode {
-                    None => match lookup(&key) {
+                    None => match lookup(&key)? {
                         Some(val) => out.push_str(&val),
                         None => return Err(on_missing(key)),
                     },
                     Some(colon_dash) => {
-                        let val = lookup(&key);
+                        let val = lookup(&key)?;
                         let use_default =
                             val.is_none() || (colon_dash && val.as_deref() == Some(""));
                         if use_default {
@@ -133,23 +157,35 @@ fn interpolate_core<E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::secret_registry::SecretRegistry;
+
+    /// Interpolate against an empty registry (no secrets, plain process-env lookup).
+    fn interp(input: &str) -> Result<String, EnvVarError> {
+        interpolate_env_vars_inner(input, &SecretRegistry::empty())
+    }
+
+    #[test]
+    fn registered_secret_interpolation_is_rejected() {
+        let registry = SecretRegistry::from_test_values([(
+            "OPENAI_API_KEY".to_string(),
+            SecretString::from("sk-test"),
+        )]);
+        // Even though the secret exists, interpolating it as plaintext is refused.
+        let err =
+            interpolate_env_vars_plaintext("Bearer ${OPENAI_API_KEY}", &registry).unwrap_err();
+        assert!(matches!(err, EnvVarError::Secret(_)), "got {err:?}");
+    }
 
     #[test]
     fn no_interpolation() {
-        assert_eq!(
-            interpolate_env_vars_inner("hello world").unwrap(),
-            "hello world"
-        );
+        assert_eq!(interp("hello world").unwrap(), "hello world");
     }
 
     #[test]
     fn single_interpolation() {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_VAR_1", "value1") };
-        assert_eq!(
-            interpolate_env_vars_inner("${TEST_ENV_VAR_1}").unwrap(),
-            "value1"
-        );
+        assert_eq!(interp("${TEST_ENV_VAR_1}").unwrap(), "value1");
     }
 
     #[test]
@@ -157,7 +193,7 @@ mod tests {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_VAR_2", "middle") };
         assert_eq!(
-            interpolate_env_vars_inner("prefix ${TEST_ENV_VAR_2} suffix").unwrap(),
+            interp("prefix ${TEST_ENV_VAR_2} suffix").unwrap(),
             "prefix middle suffix"
         );
     }
@@ -169,14 +205,14 @@ mod tests {
         // SAFETY: test-only, no concurrent access to these env vars.
         unsafe { std::env::set_var("TEST_ENV_VAR_B", "bbb") };
         assert_eq!(
-            interpolate_env_vars_inner("${TEST_ENV_VAR_A}-${TEST_ENV_VAR_B}").unwrap(),
+            interp("${TEST_ENV_VAR_A}-${TEST_ENV_VAR_B}").unwrap(),
             "aaa-bbb"
         );
     }
 
     #[test]
     fn missing_env_var() {
-        let result = interpolate_env_vars_inner("${NONEXISTENT_TEST_VAR_XYZ}");
+        let result = interp("${NONEXISTENT_TEST_VAR_XYZ}");
         assert!(result.is_err());
         assert!(
             result
@@ -188,12 +224,12 @@ mod tests {
 
     #[test]
     fn dollar_without_brace_is_literal() {
-        assert_eq!(interpolate_env_vars_inner("$hello").unwrap(), "$hello");
+        assert_eq!(interp("$hello").unwrap(), "$hello");
     }
 
     #[test]
     fn empty_string() {
-        assert_eq!(interpolate_env_vars_inner("").unwrap(), "");
+        assert_eq!(interp("").unwrap(), "");
     }
 
     // --- `${VAR:-default}`: use default when unset OR empty ---
@@ -201,7 +237,7 @@ mod tests {
     #[test]
     fn colon_dash_unset_uses_default() {
         assert_eq!(
-            interpolate_env_vars_inner("${NONEXISTENT_COLON_DASH_XYZ:-fallback}").unwrap(),
+            interp("${NONEXISTENT_COLON_DASH_XYZ:-fallback}").unwrap(),
             "fallback"
         );
     }
@@ -211,7 +247,7 @@ mod tests {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_COLON_DASH_EMPTY", "") };
         assert_eq!(
-            interpolate_env_vars_inner("${TEST_ENV_COLON_DASH_EMPTY:-fallback}").unwrap(),
+            interp("${TEST_ENV_COLON_DASH_EMPTY:-fallback}").unwrap(),
             "fallback"
         );
     }
@@ -221,7 +257,7 @@ mod tests {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_COLON_DASH_SET", "actual") };
         assert_eq!(
-            interpolate_env_vars_inner("${TEST_ENV_COLON_DASH_SET:-fallback}").unwrap(),
+            interp("${TEST_ENV_COLON_DASH_SET:-fallback}").unwrap(),
             "actual"
         );
     }
@@ -231,7 +267,7 @@ mod tests {
     #[test]
     fn bare_dash_unset_uses_default() {
         assert_eq!(
-            interpolate_env_vars_inner("${NONEXISTENT_BARE_DASH_XYZ-fallback}").unwrap(),
+            interp("${NONEXISTENT_BARE_DASH_XYZ-fallback}").unwrap(),
             "fallback"
         );
     }
@@ -240,10 +276,7 @@ mod tests {
     fn bare_dash_empty_keeps_empty() {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_BARE_DASH_EMPTY", "") };
-        assert_eq!(
-            interpolate_env_vars_inner("${TEST_ENV_BARE_DASH_EMPTY-fallback}").unwrap(),
-            ""
-        );
+        assert_eq!(interp("${TEST_ENV_BARE_DASH_EMPTY-fallback}").unwrap(), "");
     }
 
     #[test]
@@ -251,7 +284,7 @@ mod tests {
         // SAFETY: test-only, no concurrent access to this env var.
         unsafe { std::env::set_var("TEST_ENV_BARE_DASH_SET", "actual") };
         assert_eq!(
-            interpolate_env_vars_inner("${TEST_ENV_BARE_DASH_SET-fallback}").unwrap(),
+            interp("${TEST_ENV_BARE_DASH_SET-fallback}").unwrap(),
             "actual"
         );
     }
@@ -263,19 +296,25 @@ mod tests {
         // SAFETY: test-only, no concurrent access to these env vars.
         unsafe { std::env::set_var("TEST_ENV_NESTED_FALLBACK", "nested_val") };
         assert_eq!(
-            interpolate_env_vars_inner("${NONEXISTENT_NESTED_XYZ:-${TEST_ENV_NESTED_FALLBACK}}")
-                .unwrap(),
+            interp("${NONEXISTENT_NESTED_XYZ:-${TEST_ENV_NESTED_FALLBACK}}").unwrap(),
             "nested_val"
         );
     }
 
     // --- path templates: synthetic path variables + env interpolation ---
 
+    fn interp_path(
+        input: &str,
+        synthetics: &[(&'static str, Option<String>)],
+    ) -> Result<String, anyhow::Error> {
+        interpolate_path_template(input, synthetics, &SecretRegistry::empty())
+    }
+
     #[test]
     fn path_template_synthetic_resolves() {
         let synthetics = [("DATA_DIR", Some("/data".to_string()))];
         assert_eq!(
-            interpolate_path_template("${DATA_DIR}/obelisk-sqlite", &synthetics).unwrap(),
+            interp_path("${DATA_DIR}/obelisk-sqlite", &synthetics).unwrap(),
             "/data/obelisk-sqlite"
         );
     }
@@ -286,7 +325,7 @@ mod tests {
         unsafe { std::env::set_var("TEMP_DIR", "/env-temp") };
         let synthetics = [("TEMP_DIR", Some("/synthetic-temp".to_string()))];
         assert_eq!(
-            interpolate_path_template("${TEMP_DIR}/x", &synthetics).unwrap(),
+            interp_path("${TEMP_DIR}/x", &synthetics).unwrap(),
             "/synthetic-temp/x"
         );
     }
@@ -297,22 +336,32 @@ mod tests {
         unsafe { std::env::set_var("TEST_PATH_ENV_VAR", "/from-env") };
         let synthetics = [("DATA_DIR", Some("/data".to_string()))];
         assert_eq!(
-            interpolate_path_template("${TEST_PATH_ENV_VAR}/x", &synthetics).unwrap(),
+            interp_path("${TEST_PATH_ENV_VAR}/x", &synthetics).unwrap(),
             "/from-env/x"
         );
     }
 
     #[test]
+    fn path_template_rejects_registered_secret_name() {
+        let registry = SecretRegistry::from_test_values([(
+            "PATH_SECRET".to_string(),
+            SecretString::from("/secret"),
+        )]);
+        let err = interpolate_path_template("${PATH_SECRET}/x", &[], &registry).unwrap_err();
+        assert!(err.to_string().contains("PATH_SECRET"));
+    }
+
+    #[test]
     fn path_template_unknown_var_errors() {
         let synthetics = [("DATA_DIR", Some("/data".to_string()))];
-        let err = interpolate_path_template("${NONEXISTENT_PATH_XYZ}/x", &synthetics).unwrap_err();
+        let err = interp_path("${NONEXISTENT_PATH_XYZ}/x", &synthetics).unwrap_err();
         assert!(err.to_string().contains("NONEXISTENT_PATH_XYZ"));
     }
 
     #[test]
     fn path_template_unavailable_synthetic_errors_clearly() {
         let synthetics = [("SERVER_CONFIG_DIR", None)];
-        let err = interpolate_path_template("${SERVER_CONFIG_DIR}/x", &synthetics).unwrap_err();
+        let err = interp_path("${SERVER_CONFIG_DIR}/x", &synthetics).unwrap_err();
         assert!(err.to_string().contains("not available"));
         assert!(err.to_string().contains("SERVER_CONFIG_DIR"));
     }
@@ -321,7 +370,7 @@ mod tests {
     fn path_template_unavailable_synthetic_uses_default() {
         let synthetics = [("DATA_DIR", None)];
         assert_eq!(
-            interpolate_path_template("${DATA_DIR:-./local}/x", &synthetics).unwrap(),
+            interp_path("${DATA_DIR:-./local}/x", &synthetics).unwrap(),
             "./local/x"
         );
     }

@@ -516,8 +516,7 @@ ffqn = "testing:integration/exec-stdin.expose-secrets"
 location = "{ws}/crates/testing/test-programs/exec/expose-secrets.sh"
 return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
-[activity_exec.secrets]
-env_vars = [{{ name = "MY_SECRET", value = "s3cret_value" }}]
+secrets = ["MY_SECRET"]
 
 [[activity_exec]]
 content = '''#!/bin/sh
@@ -696,7 +695,7 @@ impl TestServer {
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
-        let config = config_holder.load_config().await.unwrap();
+        let config = config_holder.load_config().unwrap();
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
@@ -710,9 +709,14 @@ impl TestServer {
             allow_unauthenticated_api,
         };
 
-        let prepared_dirs = prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes)
-            .await
-            .unwrap();
+        let prepared_dirs = prepare_dirs(
+            &config,
+            &params.dir_params,
+            &config_holder.path_prefixes,
+            &crate::config::secret_registry::SecretRegistry::empty(),
+        )
+        .await
+        .unwrap();
 
         let base_url = format!("http://{ip}:{API_PORT}");
         let client = reqwest::Client::new();
@@ -735,6 +739,12 @@ impl TestServer {
                 params,
                 prepared_dirs,
                 termination_watcher,
+                std::sync::Arc::new(
+                    crate::config::secret_registry::SecretRegistry::from_test_values([(
+                        "MY_SECRET".to_string(),
+                        secrecy::SecretString::from("s3cret_value"),
+                    )]),
+                ),
             ))
             .await
         });

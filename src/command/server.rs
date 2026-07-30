@@ -9,6 +9,7 @@ use crate::config::env_var::EnvVarConfig;
 use crate::config::file_provider::CasFileProvider;
 use crate::config::manifest::DeploymentManifest;
 use crate::config::manifest::DeploymentManifestFile;
+use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
 use crate::config::toml::ActivityExternalComponentConfigResolved;
@@ -56,7 +57,6 @@ use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
-use crate::project_dirs;
 use crate::server::grpc_server::GrpcServer;
 use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
@@ -97,8 +97,6 @@ use concepts::time::Now;
 use concepts::time::TokioSleep;
 use db_postgres::postgres_dao::PostgresPool;
 use db_sqlite::sqlite_dao::SqlitePool;
-use directories::BaseDirs;
-use directories::ProjectDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::WorkerTasksHandle;
@@ -399,13 +397,18 @@ const HTTP_SERVER_NAME_WEBUI: &str = "webui";
 const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
 
 impl Server {
-    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(
+        self,
+        config_holder: ConfigHolder,
+        config: ServerConfigToml,
+        secret_registry: Arc<SecretRegistry>,
+    ) -> Result<(), anyhow::Error> {
         match self {
             Server::Run {
                 clean_sqlite_directory,
                 clean_cache,
                 clean_codegen_cache,
-                server_config,
+                server_config: _,
                 deployment,
                 empty: deployment_empty,
                 description,
@@ -413,9 +416,8 @@ impl Server {
                 allow_unauthenticated_api,
             } => {
                 Box::pin(run(
-                    project_dirs(),
-                    BaseDirs::new(),
-                    server_config,
+                    config_holder,
+                    config,
                     deployment,
                     deployment_empty,
                     description,
@@ -428,22 +430,22 @@ impl Server {
                         suppress_type_checking_errors,
                         allow_unauthenticated_api,
                     },
+                    secret_registry,
                 ))
                 .await
             }
             Server::Verify {
                 clean_cache,
                 clean_codegen_cache,
-                server_config,
+                server_config: _,
                 deployment,
                 allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
                 skip_db,
             } => {
-                verify(
-                    project_dirs(),
-                    BaseDirs::new(),
-                    server_config,
+                Box::pin(verify(
+                    config_holder,
+                    config,
                     deployment,
                     VerifyParams {
                         dir_params: PrepareDirsParams {
@@ -459,7 +461,8 @@ impl Server {
                         suppress_linking_errors: false,
                     },
                     skip_db,
-                )
+                    secret_registry,
+                ))
                 .await
             }
         }
@@ -631,16 +634,14 @@ pub(crate) struct RunParams {
 }
 
 pub(crate) async fn run(
-    project_dirs: Option<ProjectDirs>,
-    base_dirs: Option<BaseDirs>,
-    server_config: Option<PathBuf>,
+    config_holder: ConfigHolder,
+    config: ServerConfigToml,
     deployment: Option<PathBuf>,
     deployment_empty: bool,
     description: Option<String>,
     params: RunParams,
+    secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
-    let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
     let deployment = if let Some(deployment_path) = deployment {
         Some(LocalDeployment::from_path(&deployment_path).await?)
@@ -656,8 +657,13 @@ pub(crate) async fn run(
     let (termination_sender, termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
 
-    let prepared_dirs =
-        prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes).await?;
+    let prepared_dirs = prepare_dirs(
+        &config,
+        &params.dir_params,
+        &config_holder.path_prefixes,
+        &secret_registry,
+    )
+    .await?;
     Box::pin(run_internal(
         config,
         deployment,
@@ -666,6 +672,7 @@ pub(crate) async fn run(
         params,
         prepared_dirs,
         termination_watcher,
+        secret_registry,
     ))
     .await?;
     Ok(())
@@ -698,15 +705,13 @@ pub(crate) struct VerifyParams {
 }
 
 pub(crate) async fn verify(
-    project_dirs: Option<ProjectDirs>,
-    base_dirs: Option<BaseDirs>,
-    server_config: Option<PathBuf>,
+    config_holder: ConfigHolder,
+    config: ServerConfigToml,
     deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
+    secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new(project_dirs, base_dirs, server_config)?;
-    let config = config_holder.load_config().await?;
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
         Some(load_deployment_canonical(&deployment_path).await?)
@@ -719,12 +724,18 @@ pub(crate) async fn verify(
         &config,
         &verify_params.dir_params,
         &config_holder.path_prefixes,
+        &secret_registry,
     )
     .await?;
     let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let mut db_pool = if !skip_db {
-        verify_db_schema(&config.database, &config_holder.path_prefixes).await?
+        verify_db_schema(
+            &config.database,
+            &config_holder.path_prefixes,
+            &secret_registry,
+        )
+        .await?
     } else {
         None
     };
@@ -735,10 +746,11 @@ pub(crate) async fn verify(
             &config.database,
             &config_holder.path_prefixes,
             &mut db_pool,
+            &secret_registry,
         )
         .await?
     };
-    let server_verified = Box::pin(server_verify(config, engines)).await?;
+    let server_verified = Box::pin(server_verify(config, engines, secret_registry)).await?;
     let cas: Option<Arc<dyn concepts::cas::Cas>> = if let Some((pool, _)) = db_pool.as_ref() {
         Some(pool.cas_conn().await?.into())
     } else {
@@ -773,10 +785,13 @@ type DbPoolCloseableContainer = Option<(Arc<dyn DbPool>, Pin<Box<dyn Future<Outp
 async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
+    secret_registry: &SecretRegistry,
 ) -> Result<DbPoolCloseableContainer, anyhow::Error> {
     let result: DbPoolCloseableContainer = match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-            let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
+            let db_dir = sqlite_config_toml
+                .get_sqlite_dir(path_prefixes, secret_registry)
+                .await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if sqlite_file.exists() {
@@ -799,7 +814,7 @@ async fn verify_db_schema(
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
                 PostgresPool::new(
-                    postgres_config_toml.as_config()?,
+                    postgres_config_toml.as_config(secret_registry)?,
                     postgres_config_toml.as_provision_policy(),
                 )
                 .await
@@ -826,15 +841,16 @@ pub(crate) async fn prepare_dirs(
     config: &ServerConfigToml,
     params: &PrepareDirsParams,
     path_prefixes: &PathPrefixes,
+    secret_registry: &SecretRegistry,
 ) -> Result<PreparedDirs, anyhow::Error> {
     let wasm_cache_dir = config
         .wasm_global_config
-        .get_wasm_cache_directory(path_prefixes)
+        .get_wasm_cache_directory(path_prefixes, secret_registry)
         .await?;
     let codegen_cache_dir = config
         .wasm_global_config
         .codegen_cache
-        .get_directory(path_prefixes)
+        .get_directory(path_prefixes, secret_registry)
         .await?;
     debug!("Using codegen cache? {codegen_cache_dir:?}");
     if params.clean_cache {
@@ -882,6 +898,7 @@ pub(crate) struct PreparedDirs {
 pub(crate) async fn server_verify(
     config: ServerConfigToml,
     engines: Engines,
+    secret_registry: Arc<SecretRegistry>,
 ) -> Result<ServerVerified, anyhow::Error> {
     info!("Verifying server configuration");
     // Check obelisk-version compatibility if specified
@@ -898,7 +915,7 @@ pub(crate) async fn server_verify(
         info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
     }
     // Verify server
-    Box::pin(ServerVerified::new(engines, config)).await
+    Box::pin(ServerVerified::new(engines, config, secret_registry)).await
 }
 
 /// Verifies configuration without database schema check.
@@ -1024,6 +1041,7 @@ pub(crate) async fn deployment_verify_config(
         termination_watcher,
         server_verified.database_subscription_interruption,
         server_verified.api_addr_if_webui_enabled.clone(),
+        server_verified.secret_registry.clone(),
     ))
     .await?;
     trace!("Verified deployment: {deployment_verified:#?}");
@@ -1056,6 +1074,7 @@ async fn get_deployment_canonical_from_db(
     database: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
     db_pool_container: &mut DbPoolCloseableContainer,
+    secret_registry: &SecretRegistry,
 ) -> anyhow::Result<(DeploymentResolved, DeploymentId)> {
     let conn = if let Some((pool, _)) = db_pool_container.as_ref() {
         pool.external_api_conn()
@@ -1064,7 +1083,9 @@ async fn get_deployment_canonical_from_db(
     } else {
         match database {
             DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-                let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
+                let db_dir = sqlite_config_toml
+                    .get_sqlite_dir(path_prefixes, secret_registry)
+                    .await?;
                 let sqlite_config = sqlite_config_toml.as_sqlite_config();
                 let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
                 let db_pool = Arc::new(
@@ -1086,7 +1107,7 @@ async fn get_deployment_canonical_from_db(
             DatabaseConfigToml::Postgres(postgres_config_toml) => {
                 let db_pool = Arc::new(
                     PostgresPool::new(
-                        postgres_config_toml.as_config()?,
+                        postgres_config_toml.as_config(secret_registry)?,
                         postgres_config_toml.as_provision_policy(),
                     )
                     .await
@@ -1438,6 +1459,7 @@ pub(crate) fn create_engines(
 }
 
 #[instrument(skip_all, name = "init", fields(deployment_id))]
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_internal(
     config: ServerConfigToml,
     deployment: Option<LocalDeployment>,
@@ -1446,6 +1468,7 @@ pub(crate) async fn run_internal(
     params: RunParams,
     prepared_dirs: PreparedDirs,
     mut termination_watcher: watch::Receiver<()>,
+    secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api.enabled.then_some(config.api.listening_addr);
     // `config` is moved into `server_verify` below; keep the API auth config.
@@ -1463,7 +1486,9 @@ pub(crate) async fn run_internal(
     // we can read the active/enqueued deployment from it.
     let (db_pool, db_close): (Arc<dyn DbPool>, DbClose) = match &database {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-            let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
+            let db_dir = sqlite_config_toml
+                .get_sqlite_dir(&path_prefixes, &secret_registry)
+                .await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if params.clean_sqlite_directory {
@@ -1490,7 +1515,7 @@ pub(crate) async fn run_internal(
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
                 PostgresPool::new(
-                    postgres_config_toml.as_config()?,
+                    postgres_config_toml.as_config(&secret_registry)?,
                     postgres_config_toml.as_provision_policy(),
                 )
                 .await
@@ -1569,7 +1594,7 @@ pub(crate) async fn run_internal(
             }
         };
     let engines = create_engines(&config, &prepared_dirs)?;
-    let server_verified = server_verify(config, engines).await?;
+    let server_verified = server_verify(config, engines, secret_registry).await?;
     let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
@@ -1790,6 +1815,10 @@ pub(crate) struct ServerVerified {
     database_subscription_interruption: Option<Duration>,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
+    /// Operator-owned secret registry, resolved before the runtime started. Carried
+    /// here so runtime redeploys/submits resolve deployment secret references without
+    /// re-reading the (already wiped) process environment.
+    secret_registry: Arc<SecretRegistry>,
 }
 
 #[derive(Clone)]
@@ -1804,6 +1833,7 @@ impl ServerVerified {
     async fn new(
         engines: Engines,
         config: ServerConfigToml,
+        secret_registry: Arc<SecretRegistry>,
     ) -> Result<ServerVerified, anyhow::Error> {
         trace!("Using server toml: {config:#?}");
         let mut http_servers = config.http_servers;
@@ -1860,6 +1890,7 @@ impl ServerVerified {
                 None
             },
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
+            secret_registry,
         })
     }
 }
@@ -3280,6 +3311,7 @@ impl DeploymentVerified {
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
         api_addr_if_webui_enabled: Option<String>,
+        secret_registry: Arc<SecretRegistry>,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_canonical();
@@ -3323,7 +3355,8 @@ impl DeploymentVerified {
                         pattern: target_url,
                         methods: Some(MethodsInput::Star(MethodsInputStar::default())),
                         request_url_regex: None,
-                        secrets: None,
+                        secrets: Vec::new(),
+                        replace_in: Vec::new(),
                     }],
                 });
         }
@@ -3377,16 +3410,24 @@ impl DeploymentVerified {
             .activities_wasm
             .into_iter()
             .map(|activity_wasm| {
+                let wasm_cache_dir = wasm_cache_dir.clone();
+                let metadata_dir = metadata_dir.clone();
+                let global_executor_instance_limiter = global_executor_instance_limiter.clone();
+                let secret_registry = secret_registry.clone();
                 tokio::spawn(
-                    activity_wasm
-                        .fetch_and_verify(
-                            wasm_cache_dir.clone(),
-                            metadata_dir.clone(),
-                            ignore_missing_env_vars,
-                            global_executor_instance_limiter.clone(),
-                            fuel,
-                        )
-                        .in_current_span(),
+                    async move {
+                        activity_wasm
+                            .fetch_and_verify(
+                                wasm_cache_dir,
+                                metadata_dir,
+                                ignore_missing_env_vars,
+                                &secret_registry,
+                                global_executor_instance_limiter,
+                                fuel,
+                            )
+                            .await
+                    }
+                    .in_current_span(),
                 )
             })
             .collect::<Vec<_>>();
@@ -3435,18 +3476,23 @@ impl DeploymentVerified {
             .webhooks_wasm
             .into_iter()
             .map(|webhook| {
-                tokio::spawn({
-                    let wasm_cache_dir = wasm_cache_dir.clone();
-                    let metadata_dir = metadata_dir.clone();
-                    webhook
-                        .fetch_and_verify(
-                            wasm_cache_dir,
-                            metadata_dir,
-                            ignore_missing_env_vars,
-                            subscription_interruption,
-                        )
-                        .in_current_span()
-                })
+                let wasm_cache_dir = wasm_cache_dir.clone();
+                let metadata_dir = metadata_dir.clone();
+                let secret_registry = secret_registry.clone();
+                tokio::spawn(
+                    async move {
+                        webhook
+                            .fetch_and_verify(
+                                wasm_cache_dir,
+                                metadata_dir,
+                                ignore_missing_env_vars,
+                                &secret_registry,
+                                subscription_interruption,
+                            )
+                            .await
+                    }
+                    .in_current_span(),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -3538,6 +3584,7 @@ impl DeploymentVerified {
                                 activity_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
                                 ignore_missing_env_vars,
+                                &secret_registry,
                                 global_executor_instance_limiter.clone(),
                                 fuel,
                             ).await?
@@ -3577,6 +3624,7 @@ impl DeploymentVerified {
                             webhook_js_wasm_path.clone(),
                             wasm_cache_dir.clone(),
                             ignore_missing_env_vars,
+                            &secret_registry,
                         ).await?;
                         webhooks_js_by_names.insert(k, v);
                     }
@@ -3589,6 +3637,7 @@ impl DeploymentVerified {
                         exec.fetch_and_verify(
                             resolved_program,
                             ignore_missing_env_vars,
+                            &secret_registry,
                             global_executor_instance_limiter.clone(),
                         )?
                     );
@@ -4903,6 +4952,7 @@ mod tests {
         },
         config::{
             config_holder::{ConfigHolder, load_deployment_canonical},
+            secret_registry::SecretRegistry,
             toml::{AllowExecActivities, ScriptLocationResolved},
         },
     };
@@ -4914,10 +4964,20 @@ mod tests {
     use directories::BaseDirs;
     use rstest::rstest;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tokio::sync::watch;
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
+    }
+
+    /// Registry holding the `MY_SECRET` referenced by `obelisk-testing-wasm-local.toml`,
+    /// matching the value the integration test server registers.
+    fn test_secret_registry() -> Arc<SecretRegistry> {
+        Arc::new(SecretRegistry::from_test_values([(
+            "MY_SECRET".to_string(),
+            secrecy::SecretString::from("s3cret_value"),
+        )]))
     }
 
     #[test]
@@ -4975,7 +5035,7 @@ mod tests {
         let base_dirs = BaseDirs::new();
         let config_holder =
             ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?;
-        let config = config_holder.load_config().await?;
+        let config = config_holder.load_config()?;
 
         let fixture = crate::command::test_support::target_aware_deployment_fixture(
             &workspace,
@@ -4991,12 +5051,14 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         let params = VerifyParams {
             dir_params: PrepareDirsParams {
                 clean_cache: false,
@@ -5023,6 +5085,7 @@ mod tests {
             &mut termination_watcher,
             server_verified.database_subscription_interruption,
             webui_enabled,
+            server_verified.secret_registry,
         ))
         .await?;
 
@@ -5052,7 +5115,7 @@ mod tests {
             base_dirs,
             Some(workspace.join("server-sqlite.toml")),
         )?;
-        let config = config_holder.load_config().await?;
+        let config = config_holder.load_config()?;
 
         let fixture = crate::command::test_support::target_aware_deployment_fixture(
             &workspace,
@@ -5074,12 +5137,14 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         let err = deployment_verify_config(
             &server_verified,
             &prepared_dirs,
@@ -5114,7 +5179,7 @@ mod tests {
             BaseDirs::new(),
             Some(workspace.join("server-sqlite.toml")),
         )?;
-        let config = config_holder.load_config().await?;
+        let config = config_holder.load_config()?;
         assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
         let deployment =
             load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
@@ -5125,10 +5190,12 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
         let err = deployment_verify_config(
@@ -5190,7 +5257,7 @@ mod tests {
             BaseDirs::new(),
             Some(workspace.join("server-sqlite.toml")),
         )?;
-        let mut config = config_holder.load_config().await?;
+        let mut config = config_holder.load_config()?;
         let deployment =
             load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
         let digests = deployment
@@ -5212,6 +5279,7 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
         let engines = create_engines(&config, &prepared_dirs)?;
@@ -5229,8 +5297,12 @@ mod tests {
         // An allowlist missing the first digest must reject the deployment,
         // printing the missing digest so it can be copy-pasted after review.
         config.allow_exec_activities = AllowExecActivities::Allowlist(digests[1..].to_vec());
-        let server_verified =
-            Box::pin(ServerVerified::new(engines.clone(), config.clone())).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines.clone(),
+            config.clone(),
+            Arc::new(SecretRegistry::empty()),
+        ))
+        .await?;
         let err = deployment_verify_config(
             &server_verified,
             &prepared_dirs,
@@ -5250,7 +5322,8 @@ mod tests {
 
         // The full allowlist must pass strict verification.
         config.allow_exec_activities = AllowExecActivities::Allowlist(digests);
-        let server_verified = Box::pin(ServerVerified::new(engines, config)).await?;
+        let server_verified =
+            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         deployment_verify_config(
             &server_verified,
             &prepared_dirs,

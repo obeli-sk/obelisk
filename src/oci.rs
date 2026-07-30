@@ -1,7 +1,5 @@
 use crate::args::TomlComponentType;
-use crate::config::toml::{
-    AllowedHostToml, DurationConfig, ExecSecretsToml, JsParamToml, OCI_SCHEMA_PREFIX,
-};
+use crate::config::toml::{AllowedHostToml, DurationConfig, JsParamToml, OCI_SCHEMA_PREFIX};
 use crate::config::{content_digest_to_js_file, content_digest_to_wasm_file};
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, FunctionFqn, component_id::Digest};
@@ -82,7 +80,7 @@ pub enum ComponentMetadataAnnotation {
         return_type: Option<String>,
         max_output_bytes: u64,
         #[serde(default)]
-        secrets: Option<ExecSecretsToml>,
+        secrets: Vec<String>,
         #[serde(default)]
         params_via_stdin: bool,
     },

@@ -33,7 +33,8 @@ methods = "*"
 [[activity_wasm.allowed_host]]
 pattern = "httpbin.org"
 methods = "*"
-secrets = {env_vars = [{key = "API_KEY", value = "foo"}], replace_in = ["headers", "params", "body"] }
+secrets = ["MY_SECRET"]
+replace_in = ["headers", "params", "body"]
 
 [[workflow_wasm]]
 name = "test_programs_http_get_workflow"

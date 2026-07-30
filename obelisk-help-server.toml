@@ -26,6 +26,16 @@
 ## If set, the server will fail to start if the binary version doesn't match.
 # obelisk-version = 0.1
 
+## Operator-owned secret registry. Maps a logical secret name to a source.
+## Only `{ env = "VAR" }` is supported today. At startup, before the runtime starts, each
+## env-backed secret is read into memory and its source variable is removed from the process
+## environment, so no deployment or worker thread can read it. Deployments reference these
+## names (never the raw env var) in `activity_exec.secrets` and `allowed_host.secrets`;
+## they cannot interpolate a registered secret via `${...}`.
+# [secrets]
+# OPENAI_KEY     = { env = "OPENAI_API_KEY" }   # logical name may differ from the source
+# DB_PASSWORD    = { env = "DB_PASSWORD" }
+
 ## Per-file size limit (in bytes) for deployment-owned blobs attached to a submit request.
 ## Defaults to 20 MiB.
 # max_deployment_file_bytes = 20971520

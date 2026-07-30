@@ -8,12 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *(server)* Added an operator-owned secret registry. The `server.toml` `[secrets]` table maps a
+  logical secret name to a source, currently only `NAME = { env = "VAR" }` (the logical name may
+  differ from the source variable). Env-backed secrets are resolved and their source variables are
+  removed from the process environment during single-threaded startup, before the runtime starts, so
+  no deployment or worker thread can read them. Deployments reference these names in
+  `activity_exec.secrets` and `allowed_host.secrets`; a `${...}` interpolation of a registered
+  secret (logical or source name), or a reference to an unknown secret, is rejected.
 - *(api, cli)* Added the idempotent `PersistExecutionBacktraces` RPC and
   `obelisk execution persist-backtraces` command. They replay a workflow and persist only newly
   eligible call-site backtraces in one transaction.
 
 ### Changed
 
+- **Breaking:** *(deployment)* Deployment-owned secrets now reference operator-owned registry names
+  instead of carrying values. `activity_exec` takes `secrets = ["NAME", ...]` (replacing the
+  `[activity_exec.secrets] env_vars = [{ name, value }]` table), and `allowed_host` takes flattened
+  `secrets = ["NAME", ...]` plus `replace_in = [...]` (replacing the nested
+  `allowed_host.secrets.env_vars` table). Names must be declared in the `server.toml` `[secrets]`
+  table; `${VAR}` interpolation of secret values in deployments is no longer supported.
 - **Breaking:** *(server)* Workflow backtraces are now captured lazily by user-issued replay and
   advance operations instead of during normal execution or internal component-upgrade replay. The
   global `wasm.backtrace.persist` setting was removed. Webhook components can opt in independently
@@ -33,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Breaking:** *(http)* Secret placeholder replacement with `replace_in = ["params"]` now searches
+  only URL query parameter values, leaving the URL path and parameter names unchanged. Previously,
+  it searched and replaced across the entire raw request URI.
 - *(deployment)* `--allow-unavailable-runtime-config` now tolerates missing environment variable
   interpolations in plain key/value `env_vars` entries, including entries that rename a variable.
 

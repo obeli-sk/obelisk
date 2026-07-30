@@ -10,6 +10,14 @@
       ],
       "default": null
     },
+    "secrets": {
+      "description": "Operator-owned secret registry. Maps a logical secret name to a source\n(currently only `{ env = \"VAR\" }`). Env-backed secrets are resolved and\ntheir source variables wiped from the process environment at startup, before\nthe tokio runtime starts. Deployments reference these names in `activity_exec`\n`secrets` and `allowed_host[].secrets`; they cannot interpolate them.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/SecretSourceToml"
+      },
+      "default": {}
+    },
     "allow_exec_activities": {
       "description": "Permit deployments to run host processes through `activity_exec`.\n`false` denies all (default), `true` allows any, a list of `sha256:...`\ncontent digests allows only the listed exec scripts.",
       "$ref": "#/$defs/AllowExecActivities"
@@ -64,6 +72,24 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "SecretSourceToml": {
+      "description": "Source of a secret in the `[secrets]` table. Untagged so `{ env = \"VAR\" }`\nparses directly; more variants (`{ file = \"...\" }`, Vault, ...) are added later.",
+      "anyOf": [
+        {
+          "description": "Read the secret from a process environment variable at startup.",
+          "type": "object",
+          "properties": {
+            "env": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "env"
+          ]
+        }
+      ]
+    },
     "AllowExecActivities": {
       "anyOf": [
         {

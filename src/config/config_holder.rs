@@ -1,9 +1,10 @@
 use super::env_var::interpolate_path_template;
+use super::secret_registry::SecretRegistry;
 use super::toml::{DeploymentToml, ServerConfigToml};
 use crate::config::toml::DeploymentResolved;
 use crate::config::toml::DeploymentTomlValidated;
 use anyhow::{Context as _, bail};
-use config::{ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
+use config::{Config, ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
@@ -32,8 +33,9 @@ impl PathPrefixes {
     pub(crate) async fn server_config_replace_path_prefix_mkdir(
         &self,
         dir: &str,
+        secret_registry: &SecretRegistry,
     ) -> Result<PathBuf, anyhow::Error> {
-        let path = PathBuf::from(self.interpolate_path(dir)?);
+        let path = PathBuf::from(self.interpolate_path(dir, secret_registry)?);
         tokio::fs::create_dir_all(&path)
             .await
             .with_context(|| format!("cannot create directory {path:?}"))?;
@@ -43,7 +45,11 @@ impl PathPrefixes {
     /// Resolve a server-config path field: a leading `~/` becomes the home directory, then
     /// synthetic path variables (`${DATA_DIR}` etc.) and process environment variables are
     /// interpolated, with synthetic names taking precedence.
-    fn interpolate_path(&self, dir: &str) -> Result<String, anyhow::Error> {
+    fn interpolate_path(
+        &self,
+        dir: &str,
+        secret_registry: &SecretRegistry,
+    ) -> Result<String, anyhow::Error> {
         let dir = if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
             let home = self
                 .base_dirs
@@ -54,7 +60,7 @@ impl PathPrefixes {
         } else {
             dir.to_owned()
         };
-        interpolate_path_template(&dir, &self.synthetic_dirs())
+        interpolate_path_template(&dir, &self.synthetic_dirs(), secret_registry)
     }
 
     /// Synthetic path variables and their values, or `None` when unavailable in this context.
@@ -136,8 +142,18 @@ impl ConfigHolder {
         })
     }
 
-    pub(crate) async fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
-        let mut builder = ConfigBuilder::<AsyncState>::default();
+    pub(crate) fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
+        self.load_config_sync()
+    }
+
+    /// Load the complete server configuration before the async runtime starts.
+    ///
+    /// This uses the same file and `OBELISK__...` environment sources as
+    /// [`Self::load_config`]. Server startup uses this synchronous variant so the
+    /// exact config value that defines `[secrets]` is passed into the runtime after
+    /// its env-backed sources have been wiped.
+    pub(crate) fn load_config_sync(&self) -> Result<ServerConfigToml, anyhow::Error> {
+        let mut builder = Config::builder();
         if let Some(path) = &self.config_source {
             builder = builder.add_source(
                 File::from(path.as_path())
@@ -146,7 +162,7 @@ impl ConfigHolder {
             );
         }
         builder = builder.add_source(Environment::with_prefix("obelisk").separator("__"));
-        let settings = builder.build().await?;
+        let settings = builder.build()?;
         Ok(settings.try_deserialize()?)
     }
 }

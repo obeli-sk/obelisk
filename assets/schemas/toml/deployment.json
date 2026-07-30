@@ -375,16 +375,20 @@
           ]
         },
         "secrets": {
-          "description": "Optional secrets for this host.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AllowedHostSecretsToml"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
+          "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "replace_in": {
+          "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReplaceIn"
+          },
+          "default": []
         }
       },
       "additionalProperties": false,
@@ -410,31 +414,6 @@
     },
     "MethodsInputStar": {
       "type": "null"
-    },
-    "AllowedHostSecretsToml": {
-      "description": "Secrets configuration for an allowed host.",
-      "type": "object",
-      "properties": {
-        "env_vars": {
-          "description": "Env vars using the same syntax as top-level `env_vars`.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/EnvVarConfig"
-          }
-        },
-        "replace_in": {
-          "description": "Where in the request to perform replacement.\nDefault: empty (no replacement — deny by default).",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ReplaceIn"
-          },
-          "default": []
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "env_vars"
-      ]
     },
     "ReplaceIn": {
       "description": "Where in the outgoing request placeholders are replaced.",
@@ -835,19 +814,15 @@
           "default": 4096
         },
         "secrets": {
-          "description": "Secrets pushed to stdin. See `ExecSecretsToml`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ExecSecretsToml"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
+          "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to expose to the script in the stdin JSON `secrets` object.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
         },
         "params_via_stdin": {
-          "description": "Pass parameters to the program via the stdin JSON `parameters` array instead\nof argv. Use this for large payloads that would exceed the `execve` argument-size\nlimit. Defaults to `false` (parameters passed as command-line arguments).",
+          "description": "Pass parameters to the program via the stdin JSON `params` array instead\nof argv. Use this for large payloads that would exceed the `execve` argument-size\nlimit. Defaults to `false` (parameters passed as command-line arguments).",
           "type": "boolean",
           "default": false
         }
@@ -855,40 +830,6 @@
       "additionalProperties": false,
       "required": [
         "ffqn"
-      ]
-    },
-    "ExecSecretsToml": {
-      "description": "Secrets configuration for exec activities.",
-      "type": "object",
-      "properties": {
-        "env_vars": {
-          "description": "Secret entries resolved from environment variables.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SecretEnvVarToml"
-          },
-          "default": []
-        }
-      },
-      "additionalProperties": false
-    },
-    "SecretEnvVarToml": {
-      "description": "Secret entry: resolved from environment variables at startup.",
-      "type": "object",
-      "properties": {
-        "name": {
-          "description": "Name used to reference this secret in the `secrets.stdin` function.",
-          "type": "string"
-        },
-        "value": {
-          "description": "Value supporting `${VAR}` interpolation from host environment.",
-          "type": "string",
-          "default": ""
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name"
       ]
     },
     "WorkflowWasmComponentConfigToml": {
