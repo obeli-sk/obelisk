@@ -727,9 +727,9 @@ fn allowed_host_snippet(
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
-/// A secret replacement a component requests that the operator global bound does
-/// not authorize. Collected across the whole deployment so every missing outer
-/// bound is reported at once, letting the operator add all allowances in one pass.
+/// A secret replacement a component requests that the operator global allowlist
+/// does not authorize. Collected across the whole deployment so every missing
+/// allowance is reported at once, letting the operator add them all in one pass.
 struct MissingSecretReplacement {
     component_section: &'static str,
     component_name: ConfigName,
@@ -738,7 +738,7 @@ struct MissingSecretReplacement {
     replace_in: ReplaceIn,
 }
 
-/// The `(secret name, replacement target)` pairs the operator global bound authorizes.
+/// The `(secret name, replacement target)` pairs the operator global allowlist authorizes.
 fn global_secret_replacements(
     global_http_config: &GlobalHttpConfig,
 ) -> hashbrown::HashSet<(&str, ReplacementLocation)> {
@@ -796,7 +796,7 @@ fn collect_outbound_http_secret_replacements(
 }
 
 /// Emit a single report covering every collected missing secret replacement, so
-/// the operator can add all the required outer bounds to server.toml in one edit.
+/// the operator can add all the required allowlist entries to server.toml in one edit.
 /// Bails under strict availability; downgrades to a warning when unavailable
 /// runtime config is allowed (activation re-checks strictly).
 fn report_missing_outbound_http_secret_replacements(
@@ -820,7 +820,7 @@ fn report_missing_outbound_http_secret_replacements(
             secret = m.secret,
             target = replacement_target_name(m.replace_in),
         );
-        // Multiple components may request the same outer bound; list each unique
+        // Multiple components may request the same allowlist entry; list each unique
         // snippet once so the operator does not paste duplicates.
         let server_snippet =
             allowed_host_snippet("outbound_http", &m.entry, &m.secret, m.replace_in);
@@ -837,7 +837,7 @@ fn report_missing_outbound_http_secret_replacements(
         "the deployment requests {count} outbound HTTP secret replacement(s) that no server.toml \
          `[[outbound_http.allowed_host]]` entry authorizes:\n\
          {details}\n\
-         After review, add these outer bounds to server.toml:\n\n\
+         After review, add these allowlist entries to server.toml:\n\n\
          {server}\n\
          The corresponding deployment.toml entries are:\n\n\
          {deployment}",
@@ -856,8 +856,8 @@ fn report_missing_outbound_http_secret_replacements(
     }
 }
 
-/// A component destination that no operator outer bound covers, collected across
-/// the deployment so every gap is reported at load time rather than one-by-one.
+/// A component destination that no operator global allowlist entry covers, collected
+/// across the deployment so every gap is reported at load time rather than one-by-one.
 struct UncoveredOutboundHost {
     component_section: &'static str,
     component_name: ConfigName,
@@ -865,27 +865,27 @@ struct UncoveredOutboundHost {
 }
 
 /// Render a destination-only `[[<section>.allowed_host]]` snippet, dropping secret fields.
-fn host_bound_snippet(section: &str, entry: &AllowedHostToml) -> String {
+fn host_allowlist_snippet(section: &str, entry: &AllowedHostToml) -> String {
     #[derive(serde::Serialize)]
-    struct DestinationBound {
+    struct DestinationEntry {
         pattern: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         methods: Option<MethodsInput>,
         #[serde(skip_serializing_if = "Option::is_none")]
         request_url_regex: Option<String>,
     }
-    let body = toml::to_string(&DestinationBound {
+    let body = toml::to_string(&DestinationEntry {
         pattern: entry.pattern.clone(),
         methods: entry.methods.clone(),
         request_url_regex: entry.request_url_regex.clone(),
     })
-    .expect("destination bound must serialize to TOML");
+    .expect("destination allowlist entry must serialize to TOML");
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
-/// Append every destination in `entries` that no global bound covers onto
-/// `uncovered`. Allow-nothing entries need no bound; resolution failures are left
-/// for component preparation to report authoritatively.
+/// Append every destination in `entries` that no global allowlist entry covers onto
+/// `uncovered`. Allow-nothing entries need no allowlist entry; resolution failures are
+/// left for component preparation to report authoritatively.
 fn collect_uncovered_outbound_http_hosts(
     component_section: &'static str,
     component_name: &ConfigName,
@@ -915,7 +915,7 @@ fn collect_uncovered_outbound_http_hosts(
         if !global_http_config
             .entries()
             .iter()
-            .any(|bound| bound.covers(resolved))
+            .any(|allowed| allowed.covers(resolved))
         {
             uncovered.push(UncoveredOutboundHost {
                 component_section,
@@ -926,7 +926,7 @@ fn collect_uncovered_outbound_http_hosts(
     }
 }
 
-/// Warn once, listing the outer bounds to add. A warning, not an error: coverage
+/// Warn once, listing the allowlist entries to add. A warning, not an error: coverage
 /// is conservative and a component may declare destinations it never calls.
 fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
     if uncovered.is_empty() {
@@ -943,17 +943,17 @@ fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
             section = host.component_section,
             pattern = host.entry.pattern,
         );
-        let snippet = host_bound_snippet("outbound_http", &host.entry);
+        let snippet = host_allowlist_snippet("outbound_http", &host.entry);
         if !snippets.contains(&snippet) {
             snippets.push(snippet);
         }
     }
     warn!(
         "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
-         server.toml `[[outbound_http.allowed_host]]` outer bound; requests to them will be \
+         server.toml `[[outbound_http.allowed_host]]` allowlist entry; requests to them will be \
          denied at runtime:\n\
          {details}\n\
-         After review, add these outer bounds to server.toml:\n\n\
+         After review, add these allowlist entries to server.toml:\n\n\
          {snippets}",
         count = uncovered.len(),
         snippets = snippets.join("\n"),
@@ -3604,7 +3604,7 @@ impl DeploymentVerified {
         trace!("Using deployment toml: {deployment:#?}");
         // Scoped so the `server_replacements` borrow of `global_http_config` ends
         // before the config is moved into the deployment below. Each component's
-        // outbound HTTP entries are checked against the operator global bound for
+        // outbound HTTP entries are checked against the operator global allowlist for
         // both unauthorized secret replacements and uncovered destinations.
         let (missing_replacements, uncovered_hosts) = {
             let server_replacements = global_secret_replacements(&global_http_config);
@@ -5300,7 +5300,7 @@ mod tests {
             ServerCompiledLinked, ServerVerified, VerifyParams,
             collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
             compile_activity_inline, compute_content_digest, create_engines,
-            deployment_verify_config, global_secret_replacements, host_bound_snippet, prepare_dirs,
+            deployment_verify_config, global_secret_replacements, host_allowlist_snippet, prepare_dirs,
             report_missing_outbound_http_secret_replacements,
         },
         config::{
@@ -5377,7 +5377,7 @@ mod tests {
     }
 
     /// Missing replacements from several components are gathered into one report,
-    /// so the operator can add every outer bound to server.toml in a single edit.
+    /// so the operator can add every allowlist entry to server.toml in a single edit.
     #[test]
     fn strict_outbound_http_replacement_error_collects_all_components() {
         let entry = |secret: &str| AllowedHostToml {
@@ -5438,7 +5438,7 @@ mod tests {
         assert!(err.contains("secrets = [\"OTHER_KEY\"]"));
     }
 
-    /// A deployment destination the operator global bound covers is not flagged,
+    /// A deployment destination the operator global allowlist covers is not flagged,
     /// while an uncovered one is collected with a destination-only server snippet.
     #[test]
     fn uncovered_outbound_http_host_collected_covered_skipped() {
@@ -5471,11 +5471,11 @@ mod tests {
         assert_eq!(uncovered.len(), 1, "only the uncovered host is collected");
         assert_eq!(uncovered[0].entry.pattern, "example.com");
 
-        let snippet = host_bound_snippet("outbound_http", &uncovered[0].entry);
+        let snippet = host_allowlist_snippet("outbound_http", &uncovered[0].entry);
         assert!(snippet.contains("[[outbound_http.allowed_host]]"));
         assert!(snippet.contains("pattern = \"example.com\""));
         assert!(snippet.contains("methods = [\"GET\"]"));
-        // Destination-only bound: no secret fields leak into the snippet.
+        // Destination-only allowlist entry: no secret fields leak into the snippet.
         assert!(!snippet.contains("secrets"), "snippet: {snippet}");
         assert!(!snippet.contains("replace_in"), "snippet: {snippet}");
     }

@@ -22,13 +22,13 @@ pub enum ReplacementLocation {
 pub struct PlaceholderSecret {
     /// The logical secret name. This is the identity used to intersect a
     /// component's requested `(secret, replacement target)` pairs against the operator's
-    /// global bound: the placeholder differs per execution run, but the name is
+    /// global allowlist: the placeholder differs per execution run, but the name is
     /// stable on both sides.
     pub name: String,
-    /// The placeholder string exposed to WASM. Unused on global-bound entries,
+    /// The placeholder string exposed to WASM. Unused on global-allowlist entries,
     /// which contribute authorization only and mint no placeholders.
     pub placeholder: String,
-    /// The real secret value. Unused on global-bound entries.
+    /// The real secret value. Unused on global-allowlist entries.
     pub real_value: SecretString,
     /// Where in the request replacement is allowed.
     pub replace_in: hashbrown::HashSet<ReplacementLocation>,
@@ -237,7 +237,7 @@ impl HostPattern {
         }
     }
 
-    /// Whether `self` (outer bound) accepts every request `inner` accepts.
+    /// Whether `self` (allowlist) accepts every request `inner` accepts.
     fn covers(&self, inner: &HostPattern) -> bool {
         self.scheme.covers(&inner.scheme)
             && self.port.covers(&inner.port)
@@ -341,19 +341,19 @@ impl AllowedHostPolicy {
 /// Egress is gated by a symmetric two-pass intersection ([`Self::apply`]):
 ///
 /// - `hosts` is the deployment-owned component policy (agent-authored).
-/// - `global_bound` is the operator-owned outer bound from `server.toml`.
-///   `None` means no operator bound is enforced (component policy alone
-///   decides); `Some` means a request must additionally match the global bound,
+/// - `global_allowlist` is the operator-owned allowlist from `server.toml`.
+///   `None` means no operator allowlist is enforced (component policy alone
+///   decides); `Some` means a request must additionally match the global allowlist,
 ///   and a secret is injected at a target only when that `(secret, replacement target)`
 ///   pair is authorized on *both* sides.
 ///
-/// Global-bound entries carry authorization only: their `PlaceholderSecret`s
+/// Global-allowlist entries carry authorization only: their `PlaceholderSecret`s
 /// name the secret and its allowed replacement targets but mint no placeholder and hold no
 /// real value. Injection always uses the component side's placeholder.
 #[derive(Clone, Debug, Default)]
 pub struct HttpRequestPolicy {
     pub hosts: Vec<AllowedHostPolicy>,
-    pub global_bound: Option<Vec<AllowedHostPolicy>>,
+    pub global_allowlist: Option<Vec<AllowedHostPolicy>>,
 }
 
 /// Collect the entries in `hosts` that match the request target.
@@ -371,13 +371,13 @@ fn filter_matching<'a>(
         .collect()
 }
 
-/// Given the component entries and (optionally) the global-bound entries that
+/// Given the component entries and (optionally) the global-allowlist entries that
 /// matched a request, return the component-side placeholders to substitute at
 /// `location`.
 ///
-/// When a global bound is present, a component secret is kept only if a matching
+/// When a global allowlist is present, a component secret is kept only if a matching
 /// global entry authorizes that same `(secret name, replacement target)` pair; anything
-/// authorized on only one side is dropped. When no global bound is enforced, the
+/// authorized on only one side is dropped. When no global allowlist is enforced, the
 /// component's requested set is returned unfiltered.
 fn effective_secrets<'a>(
     matching_component: &[&'a AllowedHostPolicy],
@@ -450,8 +450,8 @@ pub(crate) enum PolicyError {
 pub(crate) enum PolicyLayer {
     #[display("deployment.toml component policy")]
     Component,
-    #[display("server.toml outbound HTTP bound")]
-    GlobalBound,
+    #[display("server.toml outbound HTTP allowlist")]
+    GlobalAllowlist,
 }
 impl From<PolicyError> for ErrorCode {
     fn from(_value: PolicyError) -> Self {
@@ -490,14 +490,14 @@ impl HttpRequestPolicy {
             return Err(deny(PolicyLayer::Component));
         }
 
-        // 2. Pass 2 (operator global bound): when enforced, the request must also
+        // 2. Pass 2 (operator global allowlist): when enforced, the request must also
         //    match a global entry, or the whole request is denied regardless of
         //    any secret placement.
-        let matching_global: Option<Vec<&AllowedHostPolicy>> = match &self.global_bound {
+        let matching_global: Option<Vec<&AllowedHostPolicy>> = match &self.global_allowlist {
             Some(global) => {
                 let m = filter_matching(global, &scheme, &host, port, &method, &request_match);
                 if m.is_empty() {
-                    return Err(deny(PolicyLayer::GlobalBound));
+                    return Err(deny(PolicyLayer::GlobalAllowlist));
                 }
                 Some(m)
             }
@@ -581,10 +581,10 @@ impl HttpRequestPolicy {
         if matching.is_empty() {
             return Vec::new();
         }
-        // A global bound that no entry satisfies denies the destination outright;
+        // A global allowlist that no entry satisfies denies the destination outright;
         // `apply` already rejected such requests before the body pass, so here we
         // simply inject nothing (deny-safe).
-        let matching_global = match &self.global_bound {
+        let matching_global = match &self.global_allowlist {
             Some(global) => {
                 let m = filter_matching(global, &scheme, &host, port, method, &request_match);
                 if m.is_empty() {
@@ -686,9 +686,9 @@ pub struct AllowedHostConfig {
 }
 
 impl AllowedHostConfig {
-    /// Whether `self` (operator outer bound) authorizes every request `inner`
+    /// Whether `self` (operator allowlist) authorizes every request `inner`
     /// permits, across scheme, host, port, methods, and URL regex. Regex coverage
-    /// is conservative: a bound with no regex covers any inner; otherwise it covers
+    /// is conservative: an allowlist entry with no regex covers any inner; otherwise it covers
     /// only a byte-identical regex, since regex containment is undecidable in general.
     #[must_use]
     pub fn covers(&self, inner: &AllowedHostConfig) -> bool {
@@ -703,7 +703,7 @@ impl AllowedHostConfig {
 
 /// Resolved operator-owned outbound HTTP configuration from `server.toml`.
 ///
-/// This wrapper keeps the global outer bound distinct from component-owned
+/// This wrapper keeps the global allowlist distinct from component-owned
 /// [`AllowedHostConfig`] entries when configuration is threaded into workers.
 #[derive(Clone, Debug, Default)]
 pub struct GlobalHttpConfig(Arc<[AllowedHostConfig]>);
@@ -749,7 +749,7 @@ mod tests {
 
         // Exact match.
         assert!(cfg("obeli.sk", get(), None).covers(&cfg("obeli.sk", get(), None)));
-        // A missing outer bound covers nothing narrower it does not list.
+        // An allowlist entry for a different host covers nothing it does not list.
         assert!(!cfg("other.example.com", all.clone(), None).covers(&cfg("obeli.sk", get(), None)));
         // Wildcard host superset.
         assert!(cfg("*.example.com", all.clone(), None).covers(&cfg(
@@ -1071,7 +1071,7 @@ mod tests {
                     replace_in: hashbrown::HashSet::from([ReplacementLocation::Params]),
                 }],
             }],
-            global_bound: None,
+            global_allowlist: None,
         };
         let uri = format!(
             "https://api.example.com/{PLACEHOLDER}?{PLACEHOLDER}=unchanged&token=Bearer-{PLACEHOLDER}"
@@ -1138,7 +1138,7 @@ mod tests {
                     ..host()
                 },
             ],
-            global_bound: None,
+            global_allowlist: None,
         };
 
         let mut request = hyper::Request::builder()
@@ -1170,12 +1170,12 @@ mod tests {
         );
     }
 
-    /// Double pass: the operator global bound and the component policy must both
+    /// Double pass: the operator global allowlist and the component policy must both
     /// authorize a `(secret, replacement target)` pair for injection. The component asks to
-    /// place S1 in headers and params and S2 in headers; the global bound
+    /// place S1 in headers and params and S2 in headers; the global allowlist
     /// authorizes only S1-in-headers. Only that one pair is substituted.
     #[test]
-    fn global_bound_intersects_secret_and_replacement_target() {
+    fn global_allowlist_intersects_secret_and_replacement_target() {
         let secret =
             |name: &str, ph: &str, real: &str, locs: &[ReplacementLocation]| PlaceholderSecret {
                 name: name.to_string(),
@@ -1198,9 +1198,9 @@ mod tests {
                 ),
                 secret("S2", "PH_S2", "REAL_2", &[ReplacementLocation::Headers]),
             ])],
-            // Global bound authorizes S1 in headers only; S2 not listed at all.
+            // Global allowlist authorizes S1 in headers only; S2 not listed at all.
             // Placeholder/real_value are unused on the authorization side.
-            global_bound: Some(vec![host(vec![secret(
+            global_allowlist: Some(vec![host(vec![secret(
                 "S1",
                 "",
                 "",
@@ -1219,19 +1219,19 @@ mod tests {
 
         // S1 in headers: authorized by both -> replaced.
         assert_eq!(request.headers().get("h1").unwrap(), "v-REAL_1");
-        // S2 in headers: not in global bound -> left as placeholder.
+        // S2 in headers: not in global allowlist -> left as placeholder.
         assert_eq!(request.headers().get("h2").unwrap(), "v-PH_S2");
-        // S1 in params: component asked, but global bound withheld Params -> left.
+        // S1 in params: component asked, but global allowlist withheld Params -> left.
         let params = url::form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
             .into_owned()
             .collect::<Vec<_>>();
         assert_eq!(params, vec![("a".to_string(), "PH_S1".to_string())]);
     }
 
-    /// Double pass: a destination the component allows but the global bound does
+    /// Double pass: a destination the component allows but the global allowlist does
     /// not is denied outright, before any secret handling.
     #[test]
-    fn global_bound_denies_destination_component_allows() {
+    fn global_allowlist_denies_destination_component_allows() {
         let host = |name: &str| AllowedHostPolicy {
             pattern: HostPattern::parse(name).unwrap(),
             request_url_regex: None,
@@ -1239,7 +1239,7 @@ mod tests {
         };
         let policy = HttpRequestPolicy {
             hosts: vec![host("api.example.com")],
-            global_bound: Some(vec![host("other.example.com")]),
+            global_allowlist: Some(vec![host("other.example.com")]),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")
@@ -1254,7 +1254,7 @@ mod tests {
     /// host. Guards against `effective_secrets` collecting authorized names
     /// from every global entry instead of only the matching ones.
     #[test]
-    fn global_bound_scopes_authorization_per_matching_host() {
+    fn global_allowlist_scopes_authorization_per_matching_host() {
         const PLACEHOLDER: &str = "PH_S";
         let header_secret = PlaceholderSecret {
             name: "S".to_string(),
@@ -1273,7 +1273,7 @@ mod tests {
                 host_and_secrets_fn("api.example.com", vec![header_secret.clone()]),
                 host_and_secrets_fn("other.example.com", vec![header_secret.clone()]),
             ],
-            global_bound: Some(vec![
+            global_allowlist: Some(vec![
                 host_and_secrets_fn("api.example.com", vec![header_secret.clone()]),
                 host_and_secrets_fn("other.example.com", Vec::new()), // Note: missing header secrets
             ]),
@@ -1288,7 +1288,7 @@ mod tests {
         policy.apply(&mut req_a).unwrap();
         assert_eq!(req_a.headers().get("h").unwrap(), "v-REAL_S");
 
-        // Host other: global bound authorizes no secret here -> left as placeholder,
+        // Host other: global allowlist authorizes no secret here -> left as placeholder,
         // even though the operator grants S on host A and the component asks on B.
         let mut req_b = hyper::Request::builder()
             .uri("https://other.example.com/path")
@@ -1300,14 +1300,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_global_bound_denies_every_destination() {
+    fn empty_global_allowlist_denies_every_destination() {
         let policy = HttpRequestPolicy {
             hosts: vec![AllowedHostPolicy {
                 pattern: HostPattern::parse("*://*:*").unwrap(),
                 request_url_regex: None,
                 secrets: Vec::new(),
             }],
-            global_bound: Some(Vec::new()),
+            global_allowlist: Some(Vec::new()),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")
@@ -1318,7 +1318,7 @@ mod tests {
         assert!(matches!(
             err,
             PolicyError::RequestDenied {
-                denied_by: PolicyLayer::GlobalBound,
+                denied_by: PolicyLayer::GlobalAllowlist,
                 ..
             }
         ));

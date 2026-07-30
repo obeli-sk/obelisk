@@ -432,8 +432,8 @@ pub(crate) struct ServerConfigToml {
     /// content digests allows only the listed exec scripts.
     #[serde(default)]
     pub(crate) allow_exec_activities: AllowExecActivities,
-    /// Operator-owned outer bound for component-originated HTTP requests.
-    /// An empty bound denies every outbound request.
+    /// Operator-owned allowlist for component-originated HTTP requests.
+    /// An empty allowlist denies every outbound request.
     #[serde(default)]
     pub(crate) outbound_http: OutboundHttpToml,
     /// Per-file size limit for deployment-owned blobs attached to a submit request.
@@ -3779,7 +3779,7 @@ mod tests {
         use super::super::*;
 
         #[test]
-        fn server_bound_uses_deployment_allowed_host_shape() {
+        fn server_allowlist_uses_deployment_allowed_host_shape() {
             let config: ServerConfigToml = toml::from_str(
                 r#"
                 [secrets]
@@ -3806,7 +3806,7 @@ mod tests {
         }
 
         #[test]
-        fn omitted_server_bound_is_empty() {
+        fn omitted_server_allowlist_is_empty() {
             let config: ServerConfigToml = toml::from_str("").unwrap();
             assert!(config.outbound_http.allowed_hosts.is_empty());
         }
