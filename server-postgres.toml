@@ -4,6 +4,16 @@ database.postgres.password = "${POSTGRES_PASSWORD}"
 database.postgres.db_name =  "${POSTGRES_DATABASE}"
 database.postgres.provision_policy = "auto"
 
+[[outbound_http.allowed_host]]
+pattern = "*"
+methods = "*"
+
+[[outbound_http.allowed_host]]
+pattern = "httpbin.org"
+methods = "*"
+secrets = ["MY_SECRET"]
+replace_in = ["headers", "params", "body"]
+
 [log.file]
 enabled = true
 target = true

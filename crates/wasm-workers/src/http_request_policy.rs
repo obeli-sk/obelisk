@@ -4,6 +4,7 @@ use rand::RngCore;
 use regex::Regex;
 use secrecy::{ExposeSecret, SecretString};
 use std::fmt;
+use std::sync::Arc;
 use tracing::{debug, trace};
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 
@@ -19,9 +20,15 @@ pub enum ReplacementLocation {
 /// Each execution run gets fresh placeholders.
 #[derive(Clone, Debug)]
 pub struct PlaceholderSecret {
-    /// The placeholder string exposed to WASM.
+    /// The logical secret name. This is the identity used to intersect a
+    /// component's requested `(secret, replacement target)` pairs against the operator's
+    /// global bound: the placeholder differs per execution run, but the name is
+    /// stable on both sides.
+    pub name: String,
+    /// The placeholder string exposed to WASM. Unused on global-bound entries,
+    /// which contribute authorization only and mint no placeholders.
     pub placeholder: String,
-    /// The real secret value.
+    /// The real secret value. Unused on global-bound entries.
     pub real_value: SecretString,
     /// Where in the request replacement is allowed.
     pub replace_in: hashbrown::HashSet<ReplacementLocation>,
@@ -276,9 +283,71 @@ impl AllowedHostPolicy {
 }
 
 /// Per-component HTTP outgoing request policy.
+///
+/// Egress is gated by a symmetric two-pass intersection ([`Self::apply`]):
+///
+/// - `hosts` is the deployment-owned component policy (agent-authored).
+/// - `global_bound` is the operator-owned outer bound from `server.toml`.
+///   `None` means no operator bound is enforced (component policy alone
+///   decides); `Some` means a request must additionally match the global bound,
+///   and a secret is injected at a target only when that `(secret, replacement target)`
+///   pair is authorized on *both* sides.
+///
+/// Global-bound entries carry authorization only: their `PlaceholderSecret`s
+/// name the secret and its allowed replacement targets but mint no placeholder and hold no
+/// real value. Injection always uses the component side's placeholder.
 #[derive(Clone, Debug, Default)]
 pub struct HttpRequestPolicy {
     pub hosts: Vec<AllowedHostPolicy>,
+    pub global_bound: Option<Vec<AllowedHostPolicy>>,
+}
+
+/// Collect the entries in `hosts` that match the request target.
+fn filter_matching<'a>(
+    hosts: &'a [AllowedHostPolicy],
+    scheme: &str,
+    host: &str,
+    port: u16,
+    method: &Method,
+    request_match: &str,
+) -> Vec<&'a AllowedHostPolicy> {
+    hosts
+        .iter()
+        .filter(|h| h.matches_request(scheme, host, port, method, request_match))
+        .collect()
+}
+
+/// Given the component entries and (optionally) the global-bound entries that
+/// matched a request, return the component-side placeholders to substitute at
+/// `location`.
+///
+/// When a global bound is present, a component secret is kept only if a matching
+/// global entry authorizes that same `(secret name, replacement target)` pair; anything
+/// authorized on only one side is dropped. When no global bound is enforced, the
+/// component's requested set is returned unfiltered.
+fn effective_secrets<'a>(
+    matching_component: &[&'a AllowedHostPolicy],
+    matching_global: Option<&[&AllowedHostPolicy]>,
+    location: ReplacementLocation,
+) -> Vec<&'a PlaceholderSecret> {
+    let requested = matching_component
+        .iter()
+        .flat_map(|h| h.secrets.iter())
+        .filter(|s| s.replace_in.contains(&location));
+    match matching_global {
+        None => requested.collect(),
+        Some(global) => {
+            let authorized: hashbrown::HashSet<&str> = global
+                .iter()
+                .flat_map(|h| h.secrets.iter())
+                .filter(|s| s.replace_in.contains(&location))
+                .map(|s| s.name.as_str())
+                .collect();
+            requested
+                .filter(|s| authorized.contains(s.name.as_str()))
+                .collect()
+        }
+    }
 }
 
 /// Which content types get body replacement.
@@ -311,7 +380,7 @@ fn request_match_input(uri: &hyper::Uri, method: &Method) -> Option<String> {
 pub(crate) enum PolicyError {
     #[error("outgoing HTTP request has no host in URI: {0}")]
     RequestHasNoHost(Uri),
-    #[error("outgoing HTTP request {request_url} denied")]
+    #[error("outgoing HTTP request {request_url} denied by {denied_by}")]
     RequestDenied {
         method: Method,
         scheme: String,
@@ -319,7 +388,16 @@ pub(crate) enum PolicyError {
         port: u16,
         path: String,
         request_url: String,
+        denied_by: PolicyLayer,
     },
+}
+
+#[derive(Clone, Copy, Debug, derive_more::Display)]
+pub(crate) enum PolicyLayer {
+    #[display("deployment.toml component policy")]
+    Component,
+    #[display("server.toml outbound HTTP bound")]
+    GlobalBound,
 }
 impl From<PolicyError> for ErrorCode {
     fn from(_value: PolicyError) -> Self {
@@ -341,36 +419,41 @@ impl HttpRequestPolicy {
             .ok_or_else(|| PolicyError::RequestHasNoHost(request.uri().clone()))?;
         let method = request.method().clone();
 
-        // 1. Find matching host entries (check host + method + optional request regex)
-        let matching: Vec<&AllowedHostPolicy> = self
-            .hosts
-            .iter()
-            .filter(|h| h.matches_request(&scheme, &host, port, &method, &request_match))
-            .collect();
+        let deny = |denied_by| PolicyError::RequestDenied {
+            method: method.clone(),
+            scheme: scheme.clone(),
+            host: host.clone(),
+            port,
+            path: path.clone(),
+            request_url: request_match.clone(),
+            denied_by,
+        };
+
+        // 1. Pass 1 (component policy): the request must match a component entry.
+        let matching: Vec<&AllowedHostPolicy> =
+            filter_matching(&self.hosts, &scheme, &host, port, &method, &request_match);
         if matching.is_empty() {
-            return Err(PolicyError::RequestDenied {
-                method,
-                scheme,
-                host,
-                port,
-                path,
-                request_url: request_match,
-            });
+            return Err(deny(PolicyLayer::Component));
         }
 
-        // 2. Collect all applicable secrets from matching host entries
-        let applicable: Vec<&PlaceholderSecret> =
-            matching.iter().flat_map(|h| h.secrets.iter()).collect();
+        // 2. Pass 2 (operator global bound): when enforced, the request must also
+        //    match a global entry, or the whole request is denied regardless of
+        //    any secret placement.
+        let matching_global: Option<Vec<&AllowedHostPolicy>> = match &self.global_bound {
+            Some(global) => {
+                let m = filter_matching(global, &scheme, &host, port, &method, &request_match);
+                if m.is_empty() {
+                    return Err(deny(PolicyLayer::GlobalBound));
+                }
+                Some(m)
+            }
+            None => None,
+        };
+        let matching_global = matching_global.as_deref();
 
-        if applicable.is_empty() {
-            return Ok(());
-        }
-
-        // 3. Replace in header values
-        let header_secrets: Vec<_> = applicable
-            .iter()
-            .filter(|s| s.replace_in.contains(&ReplacementLocation::Headers))
-            .collect();
+        // 3. Replace in header values, intersecting (secret, Headers) across sides.
+        let header_secrets =
+            effective_secrets(&matching, matching_global, ReplacementLocation::Headers);
         if !header_secrets.is_empty() {
             let headers = request.headers_mut();
             let keys: Vec<_> = headers.keys().cloned().collect();
@@ -392,11 +475,9 @@ impl HttpRequestPolicy {
             }
         }
 
-        // 4. Replace in URI query parameter values
-        let param_secrets: Vec<_> = applicable
-            .iter()
-            .filter(|s| s.replace_in.contains(&ReplacementLocation::Params))
-            .collect();
+        // 4. Replace in URI query parameter values, intersecting (secret, Params).
+        let param_secrets =
+            effective_secrets(&matching, matching_global, ReplacementLocation::Params);
         if !param_secrets.is_empty()
             && let Some(query) = request.uri().query()
         {
@@ -433,7 +514,8 @@ impl HttpRequestPolicy {
         Ok(())
     }
 
-    /// Get body secrets applicable for the request's target host and method.
+    /// Get body secrets applicable for the request's target host and method,
+    /// applying the same two-pass `(secret, Body)` intersection as [`Self::apply`].
     fn body_secrets_for(&self, uri: &hyper::Uri, method: &Method) -> Vec<&PlaceholderSecret> {
         let Some((scheme, host, port, _path)) = extract_request_target(uri) else {
             return Vec::new();
@@ -441,12 +523,28 @@ impl HttpRequestPolicy {
         let Some(request_match) = request_match_input(uri, method) else {
             return Vec::new();
         };
-        self.hosts
-            .iter()
-            .filter(|h| h.matches_request(&scheme, &host, port, method, &request_match))
-            .flat_map(|h| h.secrets.iter())
-            .filter(|s| s.replace_in.contains(&ReplacementLocation::Body))
-            .collect()
+        let matching = filter_matching(&self.hosts, &scheme, &host, port, method, &request_match);
+        if matching.is_empty() {
+            return Vec::new();
+        }
+        // A global bound that no entry satisfies denies the destination outright;
+        // `apply` already rejected such requests before the body pass, so here we
+        // simply inject nothing (deny-safe).
+        let matching_global = match &self.global_bound {
+            Some(global) => {
+                let m = filter_matching(global, &scheme, &host, port, method, &request_match);
+                if m.is_empty() {
+                    return Vec::new();
+                }
+                Some(m)
+            }
+            None => None,
+        };
+        effective_secrets(
+            &matching,
+            matching_global.as_deref(),
+            ReplacementLocation::Body,
+        )
     }
 
     /// Perform async body replacement on a request.
@@ -531,6 +629,32 @@ pub struct AllowedHostConfig {
     pub secret_env_mappings: Vec<(String, SecretString)>,
     /// Where in the request to perform replacement.
     pub replace_in: hashbrown::HashSet<ReplacementLocation>,
+}
+
+/// Resolved operator-owned outbound HTTP configuration from `server.toml`.
+///
+/// This wrapper keeps the global outer bound distinct from component-owned
+/// [`AllowedHostConfig`] entries when configuration is threaded into workers.
+#[derive(Clone, Debug, Default)]
+pub struct GlobalHttpConfig(Arc<[AllowedHostConfig]>);
+
+impl GlobalHttpConfig {
+    #[must_use]
+    pub fn entries(&self) -> &[AllowedHostConfig] {
+        &self.0
+    }
+}
+
+impl From<Arc<[AllowedHostConfig]>> for GlobalHttpConfig {
+    fn from(entries: Arc<[AllowedHostConfig]>) -> Self {
+        Self(entries)
+    }
+}
+
+impl From<Vec<AllowedHostConfig>> for GlobalHttpConfig {
+    fn from(entries: Vec<AllowedHostConfig>) -> Self {
+        Self(entries.into())
+    }
 }
 
 #[cfg(test)]
@@ -815,11 +939,13 @@ mod tests {
                 pattern: HostPattern::parse("api.example.com").unwrap(),
                 request_url_regex: None,
                 secrets: vec![PlaceholderSecret {
+                    name: "SECRET".to_string(),
                     placeholder: PLACEHOLDER.to_string(),
                     real_value: SecretString::from("real/value? with space"),
                     replace_in: hashbrown::HashSet::from([ReplacementLocation::Params]),
                 }],
             }],
+            global_bound: None,
         };
         let uri = format!(
             "https://api.example.com/{PLACEHOLDER}?{PLACEHOLDER}=unchanged&token=Bearer-{PLACEHOLDER}"
@@ -845,6 +971,182 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// Two rules match the same request: rule 1 allows s1,s2 in headers, rule 2
+    /// allows s2,s3 in params. A single pass must union per location: s1 in
+    /// headers only, s3 in params only, s2 in both.
+    #[test]
+    fn overlapping_rules_union_secret_replacement_per_target() {
+        let headers_only = |name: &str, ph: &str, real: &str| PlaceholderSecret {
+            name: name.to_string(),
+            placeholder: ph.to_string(),
+            real_value: SecretString::from(real),
+            replace_in: hashbrown::HashSet::from([ReplacementLocation::Headers]),
+        };
+        let params_only = |name: &str, ph: &str, real: &str| PlaceholderSecret {
+            name: name.to_string(),
+            placeholder: ph.to_string(),
+            real_value: SecretString::from(real),
+            replace_in: hashbrown::HashSet::from([ReplacementLocation::Params]),
+        };
+        let host = || AllowedHostPolicy {
+            pattern: HostPattern::parse("api.example.com").unwrap(),
+            request_url_regex: None,
+            secrets: Vec::new(),
+        };
+        let policy = HttpRequestPolicy {
+            hosts: vec![
+                AllowedHostPolicy {
+                    secrets: vec![
+                        headers_only("S1", "PH_S1", "REAL_1"),
+                        headers_only("S2", "PH_S2", "REAL_2"),
+                    ],
+                    ..host()
+                },
+                AllowedHostPolicy {
+                    secrets: vec![
+                        params_only("S2", "PH_S2", "REAL_2"),
+                        params_only("S3", "PH_S3", "REAL_3"),
+                    ],
+                    ..host()
+                },
+            ],
+            global_bound: None,
+        };
+
+        let mut request = hyper::Request::builder()
+            .uri("https://api.example.com/path?a=PH_S1&b=PH_S2&c=PH_S3")
+            .header("h-s1", "v-PH_S1")
+            .header("h-s2", "v-PH_S2")
+            .header("h-s3", "v-PH_S3")
+            .body(empty_body())
+            .unwrap();
+
+        policy.apply(&mut request).unwrap();
+
+        // Headers: s1 and s2 replaced, s3 (params-only) left as the placeholder.
+        assert_eq!(request.headers().get("h-s1").unwrap(), "v-REAL_1");
+        assert_eq!(request.headers().get("h-s2").unwrap(), "v-REAL_2");
+        assert_eq!(request.headers().get("h-s3").unwrap(), "v-PH_S3");
+
+        // Params: s2 and s3 replaced, s1 (headers-only) left as the placeholder.
+        let params = url::form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
+            .into_owned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            params,
+            vec![
+                ("a".to_string(), "PH_S1".to_string()),
+                ("b".to_string(), "REAL_2".to_string()),
+                ("c".to_string(), "REAL_3".to_string()),
+            ]
+        );
+    }
+
+    /// Double pass: the operator global bound and the component policy must both
+    /// authorize a `(secret, replacement target)` pair for injection. The component asks to
+    /// place S1 in headers and params and S2 in headers; the global bound
+    /// authorizes only S1-in-headers. Only that one pair is substituted.
+    #[test]
+    fn global_bound_intersects_secret_and_replacement_target() {
+        let secret =
+            |name: &str, ph: &str, real: &str, locs: &[ReplacementLocation]| PlaceholderSecret {
+                name: name.to_string(),
+                placeholder: ph.to_string(),
+                real_value: SecretString::from(real),
+                replace_in: locs.iter().copied().collect(),
+            };
+        let host = |secrets: Vec<PlaceholderSecret>| AllowedHostPolicy {
+            pattern: HostPattern::parse("api.example.com").unwrap(),
+            request_url_regex: None,
+            secrets,
+        };
+        let policy = HttpRequestPolicy {
+            hosts: vec![host(vec![
+                secret(
+                    "S1",
+                    "PH_S1",
+                    "REAL_1",
+                    &[ReplacementLocation::Headers, ReplacementLocation::Params],
+                ),
+                secret("S2", "PH_S2", "REAL_2", &[ReplacementLocation::Headers]),
+            ])],
+            // Global bound authorizes S1 in headers only; S2 not listed at all.
+            // Placeholder/real_value are unused on the authorization side.
+            global_bound: Some(vec![host(vec![secret(
+                "S1",
+                "",
+                "",
+                &[ReplacementLocation::Headers],
+            )])]),
+        };
+
+        let mut request = hyper::Request::builder()
+            .uri("https://api.example.com/path?a=PH_S1")
+            .header("h1", "v-PH_S1")
+            .header("h2", "v-PH_S2")
+            .body(empty_body())
+            .unwrap();
+
+        policy.apply(&mut request).unwrap();
+
+        // S1 in headers: authorized by both -> replaced.
+        assert_eq!(request.headers().get("h1").unwrap(), "v-REAL_1");
+        // S2 in headers: not in global bound -> left as placeholder.
+        assert_eq!(request.headers().get("h2").unwrap(), "v-PH_S2");
+        // S1 in params: component asked, but global bound withheld Params -> left.
+        let params = url::form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
+            .into_owned()
+            .collect::<Vec<_>>();
+        assert_eq!(params, vec![("a".to_string(), "PH_S1".to_string())]);
+    }
+
+    /// Double pass: a destination the component allows but the global bound does
+    /// not is denied outright, before any secret handling.
+    #[test]
+    fn global_bound_denies_destination_component_allows() {
+        let host = |name: &str| AllowedHostPolicy {
+            pattern: HostPattern::parse(name).unwrap(),
+            request_url_regex: None,
+            secrets: Vec::new(),
+        };
+        let policy = HttpRequestPolicy {
+            hosts: vec![host("api.example.com")],
+            global_bound: Some(vec![host("other.example.com")]),
+        };
+        let mut request = hyper::Request::builder()
+            .uri("https://api.example.com/path")
+            .body(empty_body())
+            .unwrap();
+
+        let err = policy.apply(&mut request).unwrap_err();
+        assert!(matches!(err, PolicyError::RequestDenied { .. }));
+    }
+
+    #[test]
+    fn empty_global_bound_denies_every_destination() {
+        let policy = HttpRequestPolicy {
+            hosts: vec![AllowedHostPolicy {
+                pattern: HostPattern::parse("*://*:*").unwrap(),
+                request_url_regex: None,
+                secrets: Vec::new(),
+            }],
+            global_bound: Some(Vec::new()),
+        };
+        let mut request = hyper::Request::builder()
+            .uri("https://api.example.com/path")
+            .body(empty_body())
+            .unwrap();
+
+        let err = policy.apply(&mut request).unwrap_err();
+        assert!(matches!(
+            err,
+            PolicyError::RequestDenied {
+                denied_by: PolicyLayer::GlobalBound,
+                ..
+            }
+        ));
     }
 
     #[test]

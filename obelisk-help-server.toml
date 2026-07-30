@@ -49,6 +49,28 @@
 #   "sha256:...",   # greet.sh, reviewed 2026-07-13
 # ]
 
+## Global outbound HTTP policy. Component-originated requests must be allowed by both
+## this operator-owned bound and the component's deployment.toml `allowed_host` entry.
+## If no `[[outbound_http.allowed_host]]` entries are defined, all component outbound
+## HTTP is denied. To migrate, copy the deployment entries here, then narrow them.
+##
+## Entries use the same fields as deployment.toml:
+## - `pattern` matches scheme, host, and port. HTTPS and its default port are implied.
+## - `methods = "*"` allows all methods; a list restricts them.
+## - `request_url_regex` optionally matches `METHOD URL` without query parameters.
+## - `secrets` names entries from `[secrets]`.
+## - `replace_in` allows each named secret in "headers", "params", and/or "body".
+##
+## A destination must match an entry in both files. A secret placeholder is replaced
+## at a request location only when matching entries in both files list that exact
+## secret and replacement target.
+# [[outbound_http.allowed_host]]
+# pattern = "api.openai.com"
+# methods = ["POST"]
+# request_url_regex = "^POST https://api\\.openai\\.com/v1/"
+# secrets = ["OPENAI_KEY"]
+# replace_in = ["headers"]
+
 ## SQLite configuration (enabled by default)
 # database.sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
 ## Customize PRAGMA statements.

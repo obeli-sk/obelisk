@@ -399,13 +399,16 @@ mod tests {
             )
             .await;
 
+            let allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]> =
+                Arc::from(self.allowed_hosts);
             let config = super::super::activity_worker::ActivityConfig {
                 component_id,
                 forward_stdout: None,
                 forward_stderr: None,
                 env_vars: Arc::from([]),
                 fuel: None,
-                allowed_hosts: Arc::from(self.allowed_hosts),
+                allowed_hosts: allowed_hosts.clone(),
+                global_http_config: allowed_hosts.into(),
                 config_section_hint: ConfigSectionHint::ActivityJs,
             };
 

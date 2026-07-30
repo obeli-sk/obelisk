@@ -1,21 +1,52 @@
 use crate::http_request_policy::{
-    AllowedHostConfig, AllowedHostPolicy, HttpRequestPolicy, PlaceholderSecret,
+    AllowedHostConfig, AllowedHostPolicy, GlobalHttpConfig, HttpRequestPolicy, PlaceholderSecret,
     generate_placeholder,
 };
+use secrecy::SecretString;
 use wasmtime_wasi::WasiCtxBuilder;
 
 /// Build an [`HttpRequestPolicy`] from resolved allowed-host configs, generating
 /// one random placeholder per unique secret env var name and binding each env
 /// var into `wasi_ctx` exactly once.
+///
+/// `global_bound` is the operator-owned outer bound from `server.toml`. Egress
+/// must additionally match it and secret injection is intersected against it
+/// (see [`HttpRequestPolicy`]). The global bound contributes authorization only:
+/// it mints no placeholders and binds nothing into the guest env.
 pub(crate) fn build_http_policy(
     allowed_hosts: &[AllowedHostConfig],
+    global_http_config: &GlobalHttpConfig,
     wasi_ctx: &mut WasiCtxBuilder,
 ) -> HttpRequestPolicy {
-    let (policy, placeholders) = build_http_policy_inner(allowed_hosts);
+    let (mut policy, placeholders) = build_http_policy_inner(allowed_hosts);
     for (env_key, placeholder) in &placeholders {
         wasi_ctx.env(env_key, placeholder);
     }
+    policy.global_bound = Some(build_authorization_hosts(global_http_config.entries()));
     policy
+}
+
+/// Build the operator global bound's host list. Each entry authorizes a
+/// `(secret name, replacement target)` pair but carries no placeholder or real value, so no
+/// guest env binding is produced.
+fn build_authorization_hosts(allowed_hosts: &[AllowedHostConfig]) -> Vec<AllowedHostPolicy> {
+    allowed_hosts
+        .iter()
+        .map(|host_config| AllowedHostPolicy {
+            pattern: host_config.pattern.clone(),
+            request_url_regex: host_config.request_url_regex.clone(),
+            secrets: host_config
+                .secret_env_mappings
+                .iter()
+                .map(|(env_key, _real_value)| PlaceholderSecret {
+                    name: env_key.clone(),
+                    placeholder: String::new(),
+                    real_value: SecretString::from(String::new()),
+                    replace_in: host_config.replace_in.clone(),
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// Pure core of [`build_http_policy`]: returns the policy plus the
@@ -44,6 +75,7 @@ fn build_http_policy_inner(
                 .or_insert_with(generate_placeholder)
                 .clone();
             secrets.push(PlaceholderSecret {
+                name: env_key.clone(),
                 placeholder,
                 real_value: real_value.clone(),
                 replace_in: host_config.replace_in.clone(),
@@ -55,7 +87,13 @@ fn build_http_policy_inner(
             secrets,
         });
     }
-    (HttpRequestPolicy { hosts }, placeholders)
+    (
+        HttpRequestPolicy {
+            hosts,
+            global_bound: None,
+        },
+        placeholders,
+    )
 }
 
 #[cfg(test)]

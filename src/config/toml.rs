@@ -46,7 +46,9 @@ use wasm_workers::http_request_policy::HostPatternError;
 use wasm_workers::{
     activity::activity_worker::ActivityConfig,
     envvar::EnvVar,
-    http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern, ReplacementLocation},
+    http_request_policy::{
+        AllowedHostConfig, GlobalHttpConfig, HostPattern, MethodsPattern, ReplacementLocation,
+    },
     std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
@@ -430,6 +432,10 @@ pub(crate) struct ServerConfigToml {
     /// content digests allows only the listed exec scripts.
     #[serde(default)]
     pub(crate) allow_exec_activities: AllowExecActivities,
+    /// Operator-owned outer bound for component-originated HTTP requests.
+    /// An empty bound denies every outbound request.
+    #[serde(default)]
+    pub(crate) outbound_http: OutboundHttpToml,
     /// Per-file size limit for deployment-owned blobs attached to a submit request.
     #[serde(default)]
     pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
@@ -456,6 +462,15 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OutboundHttpToml {
+    /// Global outbound HTTP entries use the same grammar as deployment
+    /// `allowed_host` entries.
+    #[serde(default, rename = "allowed_host")]
+    pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }
 
 /// Per-file size limit (in bytes) for deployment-owned blobs, defaulting to 20 MiB.
@@ -1417,12 +1432,14 @@ impl ActivityWasmConfigVerified {
 }
 
 pub(crate) trait ActivityWasmComponentConfigTomlExt {
+    #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error>;
@@ -1436,6 +1453,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
@@ -1471,6 +1489,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             env_vars,
             fuel,
             allowed_hosts,
+            global_http_config,
             config_section_hint: ConfigSectionHint::ActivityWasm,
         };
         let retry_config = ComponentRetryConfig {
@@ -2098,12 +2117,14 @@ impl WorkflowConfigVerified {
 // Resolved component config types live in the `deployment-config` crate.
 
 pub(crate) trait ActivityJsComponentConfigResolvedExt {
+    #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify(
         self,
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error>;
@@ -2117,6 +2138,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
@@ -2184,6 +2206,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             env_vars,
             fuel,
             allowed_hosts,
+            global_http_config,
             config_section_hint: ConfigSectionHint::ActivityJs,
         };
         let retry_config = ComponentRetryConfig {
@@ -3447,7 +3470,7 @@ fn resolve_named_secrets(
 }
 
 #[derive(Debug, thiserror::Error)]
-enum ResolveAllowedHostsError {
+pub(crate) enum ResolveAllowedHostsError {
     #[error(transparent)]
     HostPattern(#[from] HostPatternError),
     #[error(transparent)]
@@ -3464,7 +3487,7 @@ enum ResolveAllowedHostsError {
     InvalidRequestUrlRegex { pattern: String, err: regex::Error },
 }
 
-fn resolve_allowed_hosts(
+pub(crate) fn resolve_allowed_hosts(
     entries: Vec<AllowedHostToml>,
     ignore_missing_env_vars: bool,
     secret_registry: &SecretRegistry,
@@ -3752,6 +3775,43 @@ pub(crate) mod cron {
 
 #[cfg(test)]
 mod tests {
+    mod outbound_http {
+        use super::super::*;
+
+        #[test]
+        fn server_bound_uses_deployment_allowed_host_shape() {
+            let config: ServerConfigToml = toml::from_str(
+                r#"
+                [secrets]
+                API_KEY = { env = "API_KEY_SOURCE" }
+
+                [[outbound_http.allowed_host]]
+                pattern = "api.example.com"
+                methods = ["POST"]
+                request_url_regex = "^POST https://api\\.example\\.com/v1/"
+                secrets = ["API_KEY"]
+                replace_in = ["headers"]
+                "#,
+            )
+            .unwrap();
+
+            let entry = &config.outbound_http.allowed_hosts[0];
+            assert_eq!(entry.pattern, "api.example.com");
+            assert_eq!(entry.secrets, ["API_KEY"]);
+            assert!(matches!(
+                entry.methods,
+                Some(MethodsInput::List(ref methods)) if methods.as_slice() == ["POST"]
+            ));
+            assert!(matches!(entry.replace_in.as_slice(), [ReplaceIn::Headers]));
+        }
+
+        #[test]
+        fn omitted_server_bound_is_empty() {
+            let config: ServerConfigToml = toml::from_str("").unwrap();
+            assert!(config.outbound_http.allowed_hosts.is_empty());
+        }
+    }
+
     mod blocking_strategy {
         use super::super::*;
         use deployment_config::config::{

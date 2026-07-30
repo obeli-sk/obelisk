@@ -41,6 +41,10 @@
 ## Outgoing HTTP host allowlist.
 ## Each `[[activity_wasm.allowed_host]]` entry permits outbound requests to a host.
 ## If no entries are defined, all outbound HTTP connections are blocked.
+## The server operator must also allow the request with a matching
+## `[[outbound_http.allowed_host]]` entry in server.toml. Neither side can widen
+## the other. On upgrade, copy the deployment entries into server.toml, then narrow
+## the operator-owned copies as needed.
 ##
 ## `pattern` matches the request origin: scheme, host, and port. It uses the
 ## limited wildcard syntax below, not regular expressions, and must not contain
@@ -80,6 +84,8 @@
 ## Each logical secret name is exposed to WASM as an env var containing an opaque
 ## placeholder instead of the real value; the runtime replaces placeholders with
 ## real values only for requests to this host.
+## A replacement occurs only when matching server.toml and deployment.toml entries
+## both list the same secret and `replace_in` replacement target.
 ## `replace_in` controls where substitution happens:
 ## - "headers" searches textual header values and replaces every placeholder occurrence,
 ##   including placeholders embedded in a larger value such as `Bearer <placeholder>`.

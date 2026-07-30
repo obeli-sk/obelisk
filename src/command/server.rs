@@ -45,6 +45,7 @@ use crate::config::toml::WorkflowJsConfigVerified;
 use crate::config::toml::WorkflowWasmComponentConfigResolvedExt as _;
 use crate::config::toml::cron::CronComponentConfigTomlExt as _;
 use crate::config::toml::cron::CronConfigVerified;
+use crate::config::toml::resolve_allowed_hosts;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::HttpServer;
 use crate::config::toml::webhook::WebhookJsComponentConfigResolvedExt as _;
@@ -53,7 +54,7 @@ use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::webhook::WebhookWasmComponentConfigResolvedExt as _;
 use crate::config::toml::webhook::WebhookWasmComponentConfigVerified;
-use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
+use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn};
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
@@ -153,6 +154,7 @@ use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
+use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
 use wasm_workers::log_db_forwarder;
 use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
@@ -696,6 +698,101 @@ impl RuntimeConfigAvailability {
     }
 }
 
+fn replacement_target(replace_in: ReplaceIn) -> ReplacementLocation {
+    match replace_in {
+        ReplaceIn::Headers => ReplacementLocation::Headers,
+        ReplaceIn::Body => ReplacementLocation::Body,
+        ReplaceIn::Params => ReplacementLocation::Params,
+    }
+}
+
+fn replacement_target_name(replace_in: ReplaceIn) -> &'static str {
+    match replace_in {
+        ReplaceIn::Headers => "headers",
+        ReplaceIn::Body => "body",
+        ReplaceIn::Params => "params",
+    }
+}
+
+fn allowed_host_snippet(
+    section: &str,
+    entry: &AllowedHostToml,
+    secret: &str,
+    replace_in: ReplaceIn,
+) -> String {
+    let mut entry = entry.clone();
+    entry.secrets = vec![secret.to_string()];
+    entry.replace_in = vec![replace_in];
+    let body = toml::to_string(&entry).expect("AllowedHostToml must serialize to TOML");
+    format!("[[{section}.allowed_host]]\n{body}")
+}
+
+fn validate_outbound_http_secret_replacements(
+    component_section: &str,
+    component_name: &ConfigName,
+    entries: &[AllowedHostToml],
+    global_http_config: &GlobalHttpConfig,
+    secret_registry: &SecretRegistry,
+    availability: RuntimeConfigAvailability,
+) -> Result<(), anyhow::Error> {
+    let server_replacements = global_http_config
+        .entries()
+        .iter()
+        .flat_map(|entry| {
+            entry.secret_env_mappings.iter().flat_map(|(name, _)| {
+                entry
+                    .replace_in
+                    .iter()
+                    .copied()
+                    .map(move |target| (name.as_str(), target))
+            })
+        })
+        .collect::<hashbrown::HashSet<_>>();
+
+    for entry in entries {
+        if entry.methods.is_none()
+            || matches!(&entry.methods, Some(MethodsInput::List(methods)) if methods.is_empty())
+        {
+            continue;
+        }
+        for secret in &entry.secrets {
+            if secret_registry.secret_lookup(secret).is_none() {
+                continue;
+            }
+            for replace_in in &entry.replace_in {
+                let requested_replacement = (secret.as_str(), replacement_target(*replace_in));
+                if server_replacements.contains(&requested_replacement) {
+                    continue;
+                }
+                let server_snippet =
+                    allowed_host_snippet("outbound_http", entry, secret, *replace_in);
+                let deployment_snippet =
+                    allowed_host_snippet(component_section, entry, secret, *replace_in);
+                let message = format!(
+                    "deployment.toml `[[{component_section}.allowed_host]]` for component \
+                     `{component_name}` requests replacing secret `{secret}` in `{target}`, \
+                     but no server.toml `[[outbound_http.allowed_host]]` entry authorizes that \
+                     replacement.\n\
+                     After review, add this outer bound to server.toml:\n\n\
+                     {server_snippet}\n\
+                     The corresponding deployment.toml entry is:\n\n\
+                     {deployment_snippet}",
+                    target = replacement_target_name(*replace_in),
+                );
+                if availability.allows_unavailable() {
+                    warn!(
+                        "{message}\nSkipping this load-time secret replacement check because unavailable \
+                         runtime configuration is allowed; activation will enforce it strictly."
+                    );
+                } else {
+                    bail!("{message}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct VerifyParams {
     pub(crate) dir_params: PrepareDirsParams,
@@ -1042,6 +1139,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.database_subscription_interruption,
         server_verified.api_addr_if_webui_enabled.clone(),
         server_verified.secret_registry.clone(),
+        server_verified.global_http_config.clone(),
     ))
     .await?;
     trace!("Verified deployment: {deployment_verified:#?}");
@@ -1815,6 +1913,7 @@ pub(crate) struct ServerVerified {
     database_subscription_interruption: Option<Duration>,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
+    global_http_config: GlobalHttpConfig,
     /// Operator-owned secret registry, resolved before the runtime started. Carried
     /// here so runtime redeploys/submits resolve deployment secret references without
     /// re-reading the (already wiped) process environment.
@@ -1872,6 +1971,21 @@ impl ServerVerified {
                  programs; consider allowlisting reviewed scripts by content digest instead"
             );
         }
+        for entry in &config.outbound_http.allowed_hosts {
+            for secret in &entry.secrets {
+                if secret_registry.secret_lookup(secret).is_none() {
+                    bail!(
+                        "server.toml `[[outbound_http.allowed_host]]` references secret \
+                         `{secret}`, but it is not registered in the server.toml `[secrets]` \
+                         table; register it there or remove it from the outbound HTTP entry"
+                    );
+                }
+            }
+        }
+        let global_http_config = GlobalHttpConfig::from(
+            resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
+                .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?,
+        );
 
         Ok(Self {
             launch: ServerVerifiedLaunch {
@@ -1890,6 +2004,7 @@ impl ServerVerified {
                 None
             },
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
+            global_http_config,
             secret_registry,
         })
     }
@@ -1939,6 +2054,7 @@ impl ServerCompiledLinked {
             crons,
             http_servers_to_webhook_names,
             fuel,
+            global_http_config,
         } = deployment_verified;
         let linked = compile_and_link(
             &server_verified.engines,
@@ -1953,6 +2069,7 @@ impl ServerCompiledLinked {
             webhooks_js_by_names,
             crons,
             fuel,
+            global_http_config,
             server_verified.build_semaphore,
             server_verified.workflows_lock_extension_leeway,
             termination_watcher,
@@ -3184,6 +3301,7 @@ pub(crate) struct DeploymentVerified {
     crons: Vec<CronConfigVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
     fuel: Option<u64>,
+    global_http_config: GlobalHttpConfig,
 }
 
 impl DeploymentVerified {
@@ -3312,10 +3430,51 @@ impl DeploymentVerified {
         subscription_interruption: Option<Duration>,
         api_addr_if_webui_enabled: Option<String>,
         secret_registry: Arc<SecretRegistry>,
+        global_http_config: GlobalHttpConfig,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_canonical();
         trace!("Using deployment toml: {deployment:#?}");
+        for activity in &deployment.activities_wasm {
+            validate_outbound_http_secret_replacements(
+                "activity_wasm",
+                &activity.common.name,
+                &activity.allowed_hosts,
+                &global_http_config,
+                &secret_registry,
+                runtime_config_availability,
+            )?;
+        }
+        for activity in &deployment.activities_js {
+            validate_outbound_http_secret_replacements(
+                "activity_js",
+                &activity.name,
+                &activity.allowed_hosts,
+                &global_http_config,
+                &secret_registry,
+                runtime_config_availability,
+            )?;
+        }
+        for webhook in &deployment.webhooks_wasm {
+            validate_outbound_http_secret_replacements(
+                "webhook_endpoint_wasm",
+                &webhook.common.name,
+                &webhook.allowed_hosts,
+                &global_http_config,
+                &secret_registry,
+                runtime_config_availability,
+            )?;
+        }
+        for webhook in &deployment.webhooks_js {
+            validate_outbound_http_secret_replacements(
+                "webhook_endpoint_js",
+                &webhook.name,
+                &webhook.allowed_hosts,
+                &global_http_config,
+                &secret_registry,
+                runtime_config_availability,
+            )?;
+        }
         // Check uniqueness of http_server names.
         if http_servers.len()
             > http_servers
@@ -3414,6 +3573,7 @@ impl DeploymentVerified {
                 let metadata_dir = metadata_dir.clone();
                 let global_executor_instance_limiter = global_executor_instance_limiter.clone();
                 let secret_registry = secret_registry.clone();
+                let global_http_config = global_http_config.clone();
                 tokio::spawn(
                     async move {
                         activity_wasm
@@ -3422,6 +3582,7 @@ impl DeploymentVerified {
                                 metadata_dir,
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                global_http_config,
                                 global_executor_instance_limiter,
                                 fuel,
                             )
@@ -3585,6 +3746,7 @@ impl DeploymentVerified {
                                 wasm_cache_dir.clone(),
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                global_http_config.clone(),
                                 global_executor_instance_limiter.clone(),
                                 fuel,
                             ).await?
@@ -3664,7 +3826,8 @@ impl DeploymentVerified {
                     webhooks_js_by_names,
                     crons,
                     http_servers_to_webhook_names,
-                    fuel
+                    fuel,
+                    global_http_config,
                 };
                 deployment_verified.validate_component_digests()?;
                 Ok(deployment_verified)
@@ -3718,6 +3881,7 @@ async fn compile_and_link(
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     crons: Vec<CronConfigVerified>,
     fuel: Option<u64>,
+    global_http_config: GlobalHttpConfig,
     build_semaphore: Option<u64>,
     workflows_lock_extension_leeway: Duration,
     termination_watcher: &mut watch::Receiver<()>,
@@ -3935,6 +4099,7 @@ async fn compile_and_link(
                     let engines = engines.clone();
                     let build_semaphore = build_semaphore.clone();
                     let parent_span = parent_span.clone();
+                    let global_http_config = global_http_config.clone();
                     tokio::task::spawn_blocking(move || {
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                         let span = info_span!(parent: parent_span, "webhook_compile", component_id = %webhook.component_id);
@@ -3950,6 +4115,7 @@ async fn compile_and_link(
                                 subscription_interruption: webhook.subscription_interruption,
                                 logs_store_min_level: webhook.logs_store_min_level,
                                 allowed_hosts: webhook.allowed_hosts,
+                                global_http_config: global_http_config.clone(),
                                 js_config: None,
                                 config_section_hint: webhook.config_section_hint,
                             };
@@ -3975,6 +4141,7 @@ async fn compile_and_link(
                 .map(|(webhook_name, webhook_js)| {
                     let build_semaphore = build_semaphore.clone();
                     let parent_span = parent_span.clone();
+                    let global_http_config = global_http_config.clone();
                     let webhook_js_runnable = webhook_js_runnable.clone().expect("must have been filled above");
                     tokio::task::spawn_blocking(move || {
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
@@ -3991,6 +4158,7 @@ async fn compile_and_link(
                                 subscription_interruption: None,
                                 logs_store_min_level: webhook_js.logs_store_min_level,
                                 allowed_hosts: webhook_js.allowed_hosts,
+                                global_http_config: global_http_config.clone(),
                                 js_config: Some(WebhookEndpointJsConfig {
                                     source: webhook_js.js_source,
                                     file_name: webhook_js.js_file_name.clone(),
@@ -4949,11 +5117,15 @@ mod tests {
             DeploymentRunnable, DeploymentVerified, PrepareDirsParams, RuntimeConfigAvailability,
             ServerCompiledLinked, ServerVerified, VerifyParams, compile_activity_inline,
             compute_content_digest, create_engines, deployment_verify_config, prepare_dirs,
+            validate_outbound_http_secret_replacements,
         },
         config::{
             config_holder::{ConfigHolder, load_deployment_canonical},
             secret_registry::SecretRegistry,
-            toml::{AllowExecActivities, ScriptLocationResolved},
+            toml::{
+                AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
+                ScriptLocationResolved,
+            },
         },
     };
     use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
@@ -4966,6 +5138,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::watch;
+    use wasm_workers::http_request_policy::GlobalHttpConfig;
 
     fn get_workspace_dir() -> PathBuf {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
@@ -4978,6 +5151,39 @@ mod tests {
             "MY_SECRET".to_string(),
             secrecy::SecretString::from("s3cret_value"),
         )]))
+    }
+
+    #[test]
+    fn strict_outbound_http_replacement_error_has_both_toml_entries() {
+        let entry = AllowedHostToml {
+            pattern: "api.example.com".to_string(),
+            methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+            request_url_regex: None,
+            secrets: vec!["API_KEY".to_string()],
+            replace_in: vec![ReplaceIn::Headers],
+        };
+        let component_name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
+        let secret_registry = SecretRegistry::from_test_values([(
+            "API_KEY".to_string(),
+            secrecy::SecretString::from("value"),
+        )]);
+        let global_http_config = GlobalHttpConfig::default();
+
+        let err = validate_outbound_http_secret_replacements(
+            "activity_wasm",
+            &component_name,
+            &[entry],
+            &global_http_config,
+            &secret_registry,
+            RuntimeConfigAvailability::Strict,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("[[outbound_http.allowed_host]]"));
+        assert!(err.contains("[[activity_wasm.allowed_host]]"));
+        assert!(err.contains("secrets = [\"API_KEY\"]"));
+        assert!(err.contains("replace_in = [\"headers\"]"));
     }
 
     #[test]
@@ -5086,6 +5292,7 @@ mod tests {
             server_verified.database_subscription_interruption,
             webui_enabled,
             server_verified.secret_registry,
+            server_verified.global_http_config,
         ))
         .await?;
 
@@ -5300,7 +5507,7 @@ mod tests {
         let server_verified = Box::pin(ServerVerified::new(
             engines.clone(),
             config.clone(),
-            Arc::new(SecretRegistry::empty()),
+            test_secret_registry(),
         ))
         .await?;
         let err = deployment_verify_config(

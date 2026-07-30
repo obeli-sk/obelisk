@@ -22,6 +22,10 @@
       "description": "Permit deployments to run host processes through `activity_exec`.\n`false` denies all (default), `true` allows any, a list of `sha256:...`\ncontent digests allows only the listed exec scripts.",
       "$ref": "#/$defs/AllowExecActivities"
     },
+    "outbound_http": {
+      "description": "Operator-owned outer bound for component-originated HTTP requests.\nAn empty bound denies every outbound request.",
+      "$ref": "#/$defs/OutboundHttpToml"
+    },
     "max_deployment_file_bytes": {
       "description": "Per-file size limit for deployment-owned blobs attached to a submit request.",
       "$ref": "#/$defs/MaxDeploymentFileBytes"
@@ -101,6 +105,96 @@
             "type": "string"
           }
         }
+      ]
+    },
+    "OutboundHttpToml": {
+      "type": "object",
+      "properties": {
+        "allowed_host": {
+          "description": "Global outbound HTTP entries use the same grammar as deployment\n`allowed_host` entries.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "AllowedHostToml": {
+      "description": "An allowed outgoing HTTP host with optional method restrictions and secrets.",
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "description": "Host pattern (e.g. `\"api.example.com\"`, `\"*.example.com\"`, `\"http://localhost:8080\"`).",
+          "type": "string"
+        },
+        "methods": {
+          "description": "Allowed HTTP methods.\n- Omit to allow nothing (warning emitted).\n- `methods = \"*\"` or `methods = [\"*\"]` to allow all methods.\n- `methods = [\"GET\", \"POST\"]` to allow specific methods.\n- `methods = []` to allow nothing (warning emitted).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MethodsInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_url_regex": {
+          "description": "Optional regex restriction checked against `METHOD URL` with query params removed.\nFor example, `GET https://api.example.com/v1/items`.\nSupports `${VAR}` and `${VAR:-default}` env var interpolation.\nEnv var values are interpreted as regex syntax; use regex-escaped values when precision matters.\nOmit to allow all paths accepted by the host and method restrictions.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secrets": {
+          "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "replace_in": {
+          "description": "Where in the request to perform placeholder replacement:\n- `headers` searches textual header values, including placeholders within larger values.\n- `params` searches URL query parameter values.\n- `body` searches valid UTF-8 bodies whose content type is text, JSON, or form-urlencoded.\n\nDefault: empty (no replacement, deny by default).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReplaceIn"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern"
+      ]
+    },
+    "MethodsInput": {
+      "description": "Input for method restrictions in TOML configuration.\nSupports both `methods = \"*\"` and `methods = [\"GET\", \"POST\"]` syntax.",
+      "anyOf": [
+        {
+          "description": "All methods allowed (from `methods = \"*\"`).",
+          "$ref": "#/$defs/MethodsInputStar"
+        },
+        {
+          "description": "Specific methods list (from `methods = [\"GET\", \"POST\"]`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "MethodsInputStar": {
+      "type": "null"
+    },
+    "ReplaceIn": {
+      "description": "Where in the outgoing request placeholders are replaced.",
+      "type": "string",
+      "enum": [
+        "headers",
+        "body",
+        "params"
       ]
     },
     "MaxDeploymentFileBytes": {
