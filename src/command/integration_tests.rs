@@ -709,9 +709,14 @@ impl TestServer {
             allow_unauthenticated_api,
         };
 
-        let prepared_dirs = prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes)
-            .await
-            .unwrap();
+        let prepared_dirs = prepare_dirs(
+            &config,
+            &params.dir_params,
+            &config_holder.path_prefixes,
+            &crate::config::secret_registry::SecretRegistry::empty(),
+        )
+        .await
+        .unwrap();
 
         let base_url = format!("http://{ip}:{API_PORT}");
         let client = reqwest::Client::new();

@@ -6,6 +6,7 @@ use crate::command::server::{
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{ConfigHolder, load_deployment_validated};
+use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::{
     ActivityExternalComponentConfigToml, ActivityStubComponentConfigToml, ComponentLocationToml,
     DeploymentTomlValidated, JsLocationToml, ServerConfigToml,
@@ -17,7 +18,7 @@ use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid:
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::{HashMap, HashSet};
 use serde::Serialize;
-use std::{borrow::Cow, path::PathBuf};
+use std::{borrow::Cow, path::PathBuf, sync::Arc};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::watch;
@@ -25,7 +26,10 @@ use utils::{wasm_tools::WasmComponent, wit};
 use wasm_workers::registry::WitOrigin;
 
 impl Generate {
-    pub(crate) async fn run(self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(
+        self,
+        secret_registry: Arc<SecretRegistry>,
+    ) -> Result<(), anyhow::Error> {
         match self {
             #[cfg(debug_assertions)]
             Generate::ServerConfigSchema { output } => generate_server_config_schema(output),
@@ -116,6 +120,7 @@ impl Generate {
                     output_directory,
                     force,
                     skip_local,
+                    secret_registry,
                 )
                 .await?;
                 print_generated_path_statuses(&results, json)?;
@@ -642,6 +647,7 @@ async fn generate_wit_deps(
     output_directory: PathBuf,
     force: bool,
     skip_local: bool,
+    secret_registry: Arc<SecretRegistry>,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let deployment = filter_wit_deps_deployment(
         load_deployment_validated(&deployment_toml).await?,
@@ -671,17 +677,13 @@ async fn generate_wit_deps(
         &server_config,
         &verify_params.dir_params,
         &config_holder.path_prefixes,
+        &secret_registry,
     )
     .await?;
     let engines = create_engines(&server_config, &prepared_dirs)?;
 
-    // Config generation resolves no secrets; use an empty registry.
-    let server_verified = Box::pin(server_verify(
-        server_config,
-        engines,
-        std::sync::Arc::new(crate::config::secret_registry::SecretRegistry::default()),
-    ))
-    .await?;
+    // WIT extraction resolves no secrets; the caller passes a no-secrets registry.
+    let server_verified = Box::pin(server_verify(server_config, engines, secret_registry)).await?;
     // Disk-authored canonical: only absolute paths, so it resolves without a CAS.
     let deployment_verified = deployment_verify_config(
         &server_verified,

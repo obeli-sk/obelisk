@@ -661,6 +661,7 @@ impl SqliteConfigToml {
     pub(crate) async fn get_sqlite_dir(
         &self,
         path_prefixes: &PathPrefixes,
+        secret_registry: &SecretRegistry,
     ) -> Result<PathBuf, anyhow::Error> {
         let sqlite_file = self.directory.as_deref().unwrap_or_else(|| {
             if path_prefixes.project_dirs.is_some() {
@@ -670,7 +671,7 @@ impl SqliteConfigToml {
             }
         });
         path_prefixes
-            .server_config_replace_path_prefix_mkdir(sqlite_file)
+            .server_config_replace_path_prefix_mkdir(sqlite_file, secret_registry)
             .await
     }
 
@@ -768,6 +769,7 @@ impl WasmGlobalConfigToml {
     pub(crate) async fn get_wasm_cache_directory(
         &self,
         path_prefixes: &PathPrefixes,
+        secret_registry: &SecretRegistry,
     ) -> Result<PathBuf, anyhow::Error> {
         let wasm_directory = self.cache_directory.as_deref().unwrap_or_else(|| {
             if path_prefixes.project_dirs.is_some() {
@@ -777,7 +779,7 @@ impl WasmGlobalConfigToml {
             }
         });
         path_prefixes
-            .server_config_replace_path_prefix_mkdir(wasm_directory)
+            .server_config_replace_path_prefix_mkdir(wasm_directory, secret_registry)
             .await
     }
 }
@@ -818,6 +820,7 @@ impl CodegenCache {
     pub(crate) async fn get_directory(
         &self,
         path_prefixes: &PathPrefixes,
+        secret_registry: &SecretRegistry,
     ) -> Result<Option<PathBuf>, anyhow::Error> {
         if self.enabled {
             let directory = self.directory.as_deref().unwrap_or_else(|| {
@@ -828,7 +831,7 @@ impl CodegenCache {
                 }
             });
             path_prefixes
-                .server_config_replace_path_prefix_mkdir(directory)
+                .server_config_replace_path_prefix_mkdir(directory, secret_registry)
                 .await
                 .map(Some)
         } else {

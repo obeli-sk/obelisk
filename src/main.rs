@@ -15,7 +15,7 @@ use args::{Args, Server, Subcommand};
 use clap::Parser;
 use client::ClientStartup;
 use config::config_holder::ConfigHolder;
-use config::secret_registry::SecretRegistry;
+use config::secret_registry::{SecretRegistry, SecretsToml};
 use config::toml::ServerConfigToml;
 use directories::{BaseDirs, ProjectDirs};
 use std::future::Future;
@@ -46,7 +46,11 @@ fn main() -> Result<(), anyhow::Error> {
             Box::pin(server.run(config_holder, config, secret_registry))
         }
         Subcommand::Component(component) => {
-            Box::pin(component.run(ClientStartup::new(args.api_token)))
+            // Resolve the client token before wiping, then build a no-secrets registry
+            // (single-threaded, so `resolve_and_wipe` is sound) for local path interpolation.
+            let client_startup = ClientStartup::new(args.api_token);
+            let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(SecretsToml::new())?);
+            Box::pin(component.run(client_startup, secret_registry))
         }
         Subcommand::Execution(execution) => {
             Box::pin(execution.run(ClientStartup::new(args.api_token)))
@@ -54,7 +58,12 @@ fn main() -> Result<(), anyhow::Error> {
         Subcommand::Deployment(deployment) => {
             Box::pin(deployment.run(ClientStartup::new(args.api_token)))
         }
-        Subcommand::Generate(generate) => Box::pin(generate.run()),
+        Subcommand::Generate(generate) => {
+            // No `[secrets]`: a no-secrets registry, built single-threaded here so the
+            // `resolve_and_wipe` env wipe is sound, satisfies the WIT-extraction path.
+            let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(SecretsToml::new())?);
+            Box::pin(generate.run(secret_registry))
+        }
     };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -73,7 +82,7 @@ struct ServerStartup {
 /// Parse the complete server config once, then resolve and wipe its secret sources
 /// before the runtime starts.
 fn prepare_server_startup(server_config: Option<PathBuf>) -> anyhow::Result<ServerStartup> {
-    let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
+    let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
     let config = config_holder.load_config_sync()?;
     let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(config.secrets.clone())?);
     Ok(ServerStartup {

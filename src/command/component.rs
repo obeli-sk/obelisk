@@ -3,6 +3,7 @@ use crate::args;
 use crate::args::TomlComponentType;
 use crate::client::ClientStartup;
 use crate::client::FunctionRepositoryClient;
+use crate::config::secret_registry::SecretRegistry;
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
 use crate::config::env_var::EnvVarConfig;
 use crate::config::toml::ComponentLocationToml;
@@ -23,12 +24,17 @@ use directories::BaseDirs;
 use grpc::grpc_gen;
 use grpc::to_channel;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 
 impl args::Component {
-    pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run(
+        self,
+        client_startup: ClientStartup,
+        secret_registry: Arc<SecretRegistry>,
+    ) -> Result<(), anyhow::Error> {
         match self {
             args::Component::List {
                 api_url,
@@ -58,7 +64,16 @@ impl args::Component {
                 component_name,
                 deployment,
                 locked,
-            } => add_component_from_oci(location, component_name, deployment, locked).await,
+            } => {
+                add_component_from_oci(
+                    location,
+                    component_name,
+                    deployment,
+                    locked,
+                    &secret_registry,
+                )
+                .await
+            }
         }
     }
 }
@@ -298,6 +313,7 @@ async fn add_component_from_oci(
     name: String,
     deployment_path: PathBuf,
     locked: bool,
+    secret_registry: &SecretRegistry,
 ) -> anyhow::Result<()> {
     // Validate name
     ConfigName::new(name.clone().into()).context("name is invalid")?;
@@ -346,7 +362,7 @@ async fn add_component_from_oci(
         let config = config_holder.load_config()?;
         let wasm_cache_dir = config
             .wasm_global_config
-            .get_wasm_cache_directory(&config_holder.path_prefixes)
+            .get_wasm_cache_directory(&config_holder.path_prefixes, secret_registry)
             .await?;
         let metadata_dir = wasm_cache_metadata_dir(&wasm_cache_dir);
         tokio::fs::create_dir_all(&metadata_dir)

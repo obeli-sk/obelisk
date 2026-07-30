@@ -658,7 +658,7 @@ pub(crate) async fn run(
     tokio::spawn(async move { termination_notifier(termination_sender).await });
 
     let prepared_dirs =
-        prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes).await?;
+        prepare_dirs(&config, &params.dir_params, &config_holder.path_prefixes, &secret_registry).await?;
     Box::pin(run_internal(
         config,
         deployment,
@@ -719,6 +719,7 @@ pub(crate) async fn verify(
         &config,
         &verify_params.dir_params,
         &config_holder.path_prefixes,
+        &secret_registry,
     )
     .await?;
     let engines = create_engines(&config, &prepared_dirs)?;
@@ -783,7 +784,7 @@ async fn verify_db_schema(
 ) -> Result<DbPoolCloseableContainer, anyhow::Error> {
     let result: DbPoolCloseableContainer = match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-            let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
+            let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes, secret_registry).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if sqlite_file.exists() {
@@ -833,15 +834,16 @@ pub(crate) async fn prepare_dirs(
     config: &ServerConfigToml,
     params: &PrepareDirsParams,
     path_prefixes: &PathPrefixes,
+    secret_registry: &SecretRegistry,
 ) -> Result<PreparedDirs, anyhow::Error> {
     let wasm_cache_dir = config
         .wasm_global_config
-        .get_wasm_cache_directory(path_prefixes)
+        .get_wasm_cache_directory(path_prefixes, secret_registry)
         .await?;
     let codegen_cache_dir = config
         .wasm_global_config
         .codegen_cache
-        .get_directory(path_prefixes)
+        .get_directory(path_prefixes, secret_registry)
         .await?;
     debug!("Using codegen cache? {codegen_cache_dir:?}");
     if params.clean_cache {
@@ -1074,7 +1076,7 @@ async fn get_deployment_canonical_from_db(
     } else {
         match database {
             DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-                let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes).await?;
+                let db_dir = sqlite_config_toml.get_sqlite_dir(path_prefixes, secret_registry).await?;
                 let sqlite_config = sqlite_config_toml.as_sqlite_config();
                 let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
                 let db_pool = Arc::new(
@@ -1475,7 +1477,7 @@ pub(crate) async fn run_internal(
     // we can read the active/enqueued deployment from it.
     let (db_pool, db_close): (Arc<dyn DbPool>, DbClose) = match &database {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-            let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes).await?;
+            let db_dir = sqlite_config_toml.get_sqlite_dir(&path_prefixes, &secret_registry).await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
             if params.clean_sqlite_directory {
@@ -5038,6 +5040,7 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
 
@@ -5123,6 +5126,7 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
 
@@ -5175,6 +5179,7 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
         let engines = create_engines(&config, &prepared_dirs)?;
@@ -5263,6 +5268,7 @@ mod tests {
                 clean_codegen_cache: false,
             },
             &config_holder.path_prefixes,
+            &SecretRegistry::empty(),
         )
         .await?;
         let engines = create_engines(&config, &prepared_dirs)?;
