@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(server)* `allow_exec_activities` now maps exec activity names to their reviewed content digests.
+  The previous digest-array form remains accepted for compatibility.
 - **Breaking:** *(server)* Component outbound HTTP is now denied unless both server.toml
   `[[outbound_http.allowed_host]]` and deployment.toml component `allowed_host` entries permit it.
   An omitted server allowlist denies all outbound HTTP. Existing deployments that use HTTP must copy

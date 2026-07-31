@@ -1314,13 +1314,13 @@ pub(crate) async fn deployment_verify_config(
                 )
                 .await?
                 .into_iter()
-                .map(|(_, line)| line)
+                .map(|(_, _, line)| line)
                 .collect::<Vec<_>>();
                 bail!(
                     "deployment contains exec activities, which run outside the WASM sandbox; \
                      enable them with `allow_exec_activities = true` in server.toml or \
                      `OBELISK__ALLOW_EXEC_ACTIVITIES=true`, or allowlist the reviewed scripts \
-                     by adding to server.toml:\nallow_exec_activities = [\n{}\n]",
+                     by adding to server.toml:\n[allow_exec_activities]\n{}",
                     lines.join("\n")
                 );
             }
@@ -1331,14 +1331,35 @@ pub(crate) async fn deployment_verify_config(
                 )
                 .await?
                 .into_iter()
-                .filter(|(digest, _)| !allowed.contains(digest))
-                .map(|(_, line)| line)
+                .filter(|(name, digest, _)| allowed.get(name.as_str()) != Some(digest))
+                .map(|(_, _, line)| line)
                 .collect::<Vec<_>>();
                 if !rejected.is_empty() {
                     bail!(
                         "deployment contains exec activities, which run outside the WASM sandbox, \
                          whose content digests are not in the `allow_exec_activities` allowlist \
-                         in server.toml; review each script, then allow it by adding its line:\n{}",
+                         in server.toml; review each script, then allow it by adding its line under \
+                         `[allow_exec_activities]`:\n{}",
+                        rejected.join("\n")
+                    );
+                }
+            }
+            AllowExecActivities::LegacyAllowlist(allowed) => {
+                let rejected = exec_content_digest_lines(
+                    &deployment.activities_exec,
+                    &prepared_dirs.wasm_cache_dir,
+                )
+                .await?
+                .into_iter()
+                .filter(|(_, digest, _)| !allowed.contains(digest))
+                .map(|(_, _, line)| line)
+                .collect::<Vec<_>>();
+                if !rejected.is_empty() {
+                    bail!(
+                        "deployment contains exec activities, which run outside the WASM sandbox, \
+                         whose content digests are not in the `allow_exec_activities` allowlist \
+                         in server.toml; review each script, then allow it by adding its line under \
+                         `[allow_exec_activities]`:\n{}",
                         rejected.join("\n")
                     );
                 }
@@ -1369,21 +1390,21 @@ pub(crate) async fn deployment_verify_config(
 }
 
 /// For each exec activity, the digest of the exact script text that runs plus a
-/// server.toml-pasteable allowlist line: `  "sha256:...", # name (ffqn)`.
+/// server.toml-pasteable allowlist line: `name = "sha256:..." # ffqn`.
 async fn exec_content_digest_lines(
     activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
     wasm_cache_dir: &Path,
-) -> anyhow::Result<Vec<(ContentDigest, String)>> {
+) -> anyhow::Result<Vec<(ConfigName, ContentDigest, String)>> {
     let mut digests_with_lines = Vec::with_capacity(activities_exec.len());
     for activity in activities_exec {
         let resolved = activity.resolve(wasm_cache_dir).await?;
         let digest = compute_content_digest(&resolved.source_bytes);
         let line = format!(
-            "  \"{digest}\", # {name} ({ffqn})",
+            "\"{name}\" = \"{digest}\" # {ffqn}",
             name = activity.name,
             ffqn = activity.ffqn
         );
-        digests_with_lines.push((digest, line));
+        digests_with_lines.push((activity.name.clone(), digest, line));
     }
     Ok(digests_with_lines)
 }
@@ -5817,7 +5838,7 @@ mod tests {
         assert!(err.to_string().contains("run outside the WASM sandbox"));
         assert!(err.to_string().contains("exec-stream"));
         // The error must contain a pasteable allowlist block.
-        assert!(err.to_string().contains("allow_exec_activities = [\n"));
+        assert!(err.to_string().contains("[allow_exec_activities]\n"));
         assert!(err.to_string().contains("\"sha256:"));
 
         let verified = deployment_verify_config(
@@ -5894,7 +5915,15 @@ mod tests {
 
         // An allowlist missing the first digest must reject the deployment,
         // printing the missing digest so it can be copy-pasted after review.
-        config.allow_exec_activities = AllowExecActivities::Allowlist(digests[1..].to_vec());
+        config.allow_exec_activities = AllowExecActivities::Allowlist(
+            deployment
+                .activities_exec
+                .iter()
+                .skip(1)
+                .zip(digests.iter().skip(1))
+                .map(|(activity, digest)| (activity.name.to_string(), digest.clone()))
+                .collect(),
+        );
         let server_verified = Box::pin(ServerVerified::new(
             engines.clone(),
             config.clone(),
@@ -5919,7 +5948,14 @@ mod tests {
         );
 
         // The full allowlist must pass strict verification.
-        config.allow_exec_activities = AllowExecActivities::Allowlist(digests);
+        config.allow_exec_activities = AllowExecActivities::Allowlist(
+            deployment
+                .activities_exec
+                .iter()
+                .zip(digests)
+                .map(|(activity, digest)| (activity.name.to_string(), digest))
+                .collect(),
+        );
         let server_verified =
             Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         deployment_verify_config(

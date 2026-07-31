@@ -32,6 +32,7 @@ use sha2::{Digest as _, Sha256};
 use std::fmt::Display;
 use std::str::FromStr;
 use std::{
+    collections::BTreeMap,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -428,8 +429,8 @@ pub(crate) struct ServerConfigToml {
     #[serde(default)]
     pub(crate) secrets: SecretsToml,
     /// Permit deployments to run host processes through `activity_exec`.
-    /// `false` denies all (default), `true` allows any, a list of `sha256:...`
-    /// content digests allows only the listed exec scripts.
+    /// `false` denies all (default), `true` allows any, a map from exec activity
+    /// names to `sha256:...` content digests allows only the named scripts.
     #[serde(default)]
     pub(crate) allow_exec_activities: AllowExecActivities,
     /// Operator-owned allowlist for component-originated HTTP requests.
@@ -483,14 +484,16 @@ impl Default for MaxDeploymentFileBytes {
     }
 }
 
-/// Exec activity policy: deny all, allow any, or allow only scripts whose
-/// content digest (digest of the exact script text that runs) is listed.
+/// Exec activity policy: deny all, allow any, or allow only named scripts whose
+/// content digest matches the configured digest of the exact script text.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) enum AllowExecActivities {
     #[default]
     Deny,
     AllowAny,
-    Allowlist(Vec<ContentDigest>),
+    Allowlist(BTreeMap<String, ContentDigest>),
+    // backcompat: 0.40.x accepted an unnamed list of content digests.
+    LegacyAllowlist(Vec<ContentDigest>),
 }
 impl<'de> Deserialize<'de> for AllowExecActivities {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -499,7 +502,9 @@ impl<'de> Deserialize<'de> for AllowExecActivities {
             type Value = AllowExecActivities;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a boolean or a list of `sha256:...` content digests")
+                formatter.write_str(
+                    "a boolean or a map from exec activity names to `sha256:...` content digests",
+                )
             }
 
             fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
@@ -526,6 +531,21 @@ impl<'de> Deserialize<'de> for AllowExecActivities {
                 while let Some(digest) = seq.next_element::<ContentDigest>()? {
                     digests.push(digest);
                 }
+                Ok(AllowExecActivities::LegacyAllowlist(digests))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut digests = BTreeMap::new();
+                while let Some((name, digest)) = map.next_entry::<String, ContentDigest>()? {
+                    if digests.insert(name.clone(), digest).is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate exec activity name `{name}`"
+                        )));
+                    }
+                }
                 Ok(AllowExecActivities::Allowlist(digests))
             }
         }
@@ -542,6 +562,8 @@ impl JsonSchema for AllowExecActivities {
         schemars::json_schema!({
             "anyOf": [
                 {"type": "boolean"},
+                {"type": "object", "additionalProperties": {"type": "string"}},
+                // backcompat: 0.40.x accepted an unnamed list of content digests.
                 {"type": "array", "items": {"type": "string"}}
             ]
         })
@@ -3983,16 +4005,25 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
             "sha256:abababababababababababababababababababababababababababababababab";
 
         #[test]
-        fn deserialize_bool_and_digest_list() {
+        fn deserialize_bool_map_and_legacy_digest_list() {
             let actual: TestConfig = toml::from_str("allow = true").unwrap();
             assert_eq!(AllowExecActivities::AllowAny, actual.allow);
             let actual: TestConfig = toml::from_str("allow = false").unwrap();
             assert_eq!(AllowExecActivities::Deny, actual.allow);
             let actual: TestConfig = toml::from_str("").unwrap();
             assert_eq!(AllowExecActivities::Deny, actual.allow);
+            let actual: TestConfig =
+                toml::from_str(&format!("[allow]\ngreet = \"{DIGEST}\"")).unwrap();
+            assert_eq!(
+                AllowExecActivities::Allowlist(BTreeMap::from([(
+                    "greet".to_string(),
+                    DIGEST.parse().unwrap()
+                )])),
+                actual.allow
+            );
             let actual: TestConfig = toml::from_str(&format!("allow = [\"{DIGEST}\"]")).unwrap();
             assert_eq!(
-                AllowExecActivities::Allowlist(vec![DIGEST.parse().unwrap()]),
+                AllowExecActivities::LegacyAllowlist(vec![DIGEST.parse().unwrap()]),
                 actual.allow
             );
         }
