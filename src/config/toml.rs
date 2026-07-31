@@ -32,10 +32,10 @@ use sha2::{Digest as _, Sha256};
 use std::fmt::Display;
 use std::str::FromStr;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tracing::{debug, instrument, warn};
@@ -1461,6 +1461,7 @@ pub(crate) trait ActivityWasmComponentConfigTomlExt {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        warnings: ConfigWarnings,
         global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -1475,6 +1476,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
         metadata_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        warnings: ConfigWarnings,
         global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -1490,8 +1492,12 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
 
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
-        let allowed_hosts =
-            resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
+        let allowed_hosts = resolve_allowed_hosts(
+            self.allowed_hosts,
+            ignore_missing_env_vars,
+            secret_registry,
+            &warnings,
+        )?;
 
         // Validate no collision between env_vars and secret env names
         validate_no_env_collision(&env_vars, &allowed_hosts)?;
@@ -1685,6 +1691,7 @@ pub(crate) trait ActivityExecComponentConfigResolvedExt {
         resolved_program: ResolvedExecProgram,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        warnings: &ConfigWarnings,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error>;
 }
@@ -1743,6 +1750,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         resolved_program: ResolvedExecProgram,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        warnings: &ConfigWarnings,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error> {
         let parsed_params = self
@@ -1793,11 +1801,15 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
         let resolved_secrets = {
-            let resolved =
-                resolve_named_secrets(&self.secrets, secret_registry, ignore_missing_env_vars)
-                    .map_err(|e| anyhow!("failed to resolve exec secrets: {e}"))?
-                    .into_iter()
-                    .collect::<indexmap::IndexMap<_, _>>();
+            let resolved = resolve_named_secrets(
+                &self.secrets,
+                secret_registry,
+                ignore_missing_env_vars,
+                warnings,
+            )
+            .map_err(|e| anyhow!("failed to resolve exec secrets: {e}"))?
+            .into_iter()
+            .collect::<indexmap::IndexMap<_, _>>();
             if resolved.is_empty() {
                 None
             } else {
@@ -2146,6 +2158,7 @@ pub(crate) trait ActivityJsComponentConfigResolvedExt {
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        warnings: ConfigWarnings,
         global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -2160,6 +2173,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         wasm_cache_dir: Arc<Path>,
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        warnings: ConfigWarnings,
         global_http_config: GlobalHttpConfig,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
@@ -2218,8 +2232,12 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         )?;
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
-        let allowed_hosts =
-            resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
+        let allowed_hosts = resolve_allowed_hosts(
+            self.allowed_hosts,
+            ignore_missing_env_vars,
+            secret_registry,
+            &warnings,
+        )?;
         validate_no_env_collision(&env_vars, &allowed_hosts)?;
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
@@ -3086,7 +3104,7 @@ impl ComponentStdOutputTomlExt for ComponentStdOutputToml {
 pub(crate) mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentCommonFetchExt,
-        ComponentStdOutputToml, ComponentStdOutputTomlExt, ConfigName, JsContent,
+        ComponentStdOutputToml, ComponentStdOutputTomlExt, ConfigName, ConfigWarnings, JsContent,
         JsLocationResolvedExt, JsLocationToml, LogLevelTomlExt, resolve_allowed_hosts,
         resolve_env_vars_plaintext, validate_no_env_collision,
     };
@@ -3269,6 +3287,7 @@ pub(crate) mod webhook {
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
             secret_registry: &SecretRegistry,
+            warnings: ConfigWarnings,
             subscription_interruption: Option<Duration>,
         ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error>;
     }
@@ -3281,6 +3300,7 @@ pub(crate) mod webhook {
             metadata_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
             secret_registry: &SecretRegistry,
+            warnings: ConfigWarnings,
             subscription_interruption: Option<Duration>,
         ) -> Result<(ConfigName, WebhookWasmComponentConfigVerified), anyhow::Error> {
             let expected_content_digest = self.content_digest;
@@ -3306,6 +3326,7 @@ pub(crate) mod webhook {
                 self.allowed_hosts,
                 ignore_missing_env_vars,
                 secret_registry,
+                &warnings,
             )?;
             validate_no_env_collision(&env_vars, &allowed_hosts)?;
             Ok((
@@ -3340,6 +3361,7 @@ pub(crate) mod webhook {
             wasm_cache_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
             secret_registry: &SecretRegistry,
+            warnings: ConfigWarnings,
         ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error>;
     }
 
@@ -3351,6 +3373,7 @@ pub(crate) mod webhook {
             wasm_cache_dir: Arc<Path>,
             ignore_missing_env_vars: bool,
             secret_registry: &SecretRegistry,
+            warnings: ConfigWarnings,
         ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error> {
             let JsContent {
                 source: js_source,
@@ -3377,6 +3400,7 @@ pub(crate) mod webhook {
                 self.allowed_hosts,
                 ignore_missing_env_vars,
                 secret_registry,
+                &warnings,
             )?;
             validate_no_env_collision(&env_vars, &allowed_hosts)?;
             Ok((
@@ -3478,18 +3502,43 @@ fn resolve_named_secrets(
     names: &[String],
     secret_registry: &SecretRegistry,
     ignore_missing: bool,
+    warnings: &ConfigWarnings,
 ) -> Result<Vec<(String, SecretString)>, anyhow::Error> {
     let mut resolved = Vec::with_capacity(names.len());
     for name in names {
         match secret_registry.secret_lookup(name) {
             Some(value) => resolved.push((name.clone(), value)),
             None if ignore_missing => {
-                warn!("secret `{name}` is not registered on this server; skipping");
+                warnings.insert(format!(
+                    "secret `{name}` is not registered on this server; skipping"
+                ));
             }
             None => bail!("secret `{name}` is not registered in the server `[secrets]` table"),
         }
     }
     Ok(resolved)
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ConfigWarnings(Arc<Mutex<BTreeSet<String>>>);
+
+impl ConfigWarnings {
+    pub(crate) fn insert(&self, warning: String) {
+        self.0
+            .lock()
+            .expect("config warnings lock poisoned")
+            .insert(warning);
+    }
+
+    pub(crate) fn report(&self) {
+        let warnings = std::mem::take(&mut *self.0.lock().expect("config warnings lock poisoned"));
+        if !warnings.is_empty() {
+            warn!(
+                "Configuration warnings:\n- {}",
+                warnings.into_iter().collect::<Vec<_>>().join("\n- ")
+            );
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -3514,6 +3563,7 @@ pub(crate) fn resolve_allowed_hosts(
     entries: Vec<AllowedHostToml>,
     ignore_missing_env_vars: bool,
     secret_registry: &SecretRegistry,
+    warnings: &ConfigWarnings,
 ) -> Result<Arc<[AllowedHostConfig]>, ResolveAllowedHostsError> {
     entries
         .into_iter()
@@ -3522,11 +3572,11 @@ pub(crate) fn resolve_allowed_hosts(
             let methods = match entry.methods {
                 None => {
                     // Omitted methods: nothing allowed, warn and skip
-                    warn!(
+                    warnings.insert(format!(
                         "allowed_host `{}` has no `methods` field - no requests will be allowed; \
                          use `methods = \"*\"` to allow all methods",
                         entry.pattern
-                    );
+                    ));
                     return None;
                 }
                 Some(MethodsInput::Star(_)) => {
@@ -3536,10 +3586,10 @@ pub(crate) fn resolve_allowed_hosts(
                 Some(MethodsInput::List(list)) => {
                     if list.is_empty() {
                         // Empty list: nothing allowed, warn and skip
-                        warn!(
+                        warnings.insert(format!(
                             "allowed_host `{}` has empty `methods = []` - no requests will be allowed",
                             entry.pattern
-                        );
+                        ));
                         return None;
                     }
                     // Parse specific methods
@@ -3566,10 +3616,10 @@ pub(crate) fn resolve_allowed_hosts(
                 Ok(s) => s,
                 Err(EnvVarError::Missing(var)) => {
                     if ignore_missing_env_vars {
-                        warn!(
+                        warnings.insert(format!(
                             "allowed_host pattern `{}` references missing env var `{var}`, skipping",
                             entry.pattern
-                        );
+                        ));
                         return None;
                     }
                     return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
@@ -3584,10 +3634,9 @@ pub(crate) fn resolve_allowed_hosts(
                         Ok(s) => s,
                         Err(EnvVarError::Missing(var)) => {
                             if ignore_missing_env_vars {
-                                warn!(
-                                    "allowed_host request_url_regex `{}` references missing env var `{var}`, skipping",
-                                    pattern
-                                );
+                                warnings.insert(format!(
+                                    "allowed_host request_url_regex `{pattern}` references missing env var `{var}`, skipping"
+                                ));
                                 return None;
                             }
                             return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
@@ -3617,27 +3666,30 @@ pub(crate) fn resolve_allowed_hosts(
 
             let (secret_env_mappings, replace_in) = if entry.secrets.is_empty() {
                 if !entry.replace_in.is_empty() {
-                    warn!(
+                    warnings.insert(format!(
                         "allowed_host `{}` has `replace_in` but no `secrets` - nothing to inject",
                         entry.pattern
-                    );
+                    ));
                 }
                 (Vec::new(), hashbrown::HashSet::new())
             } else {
                 if entry.replace_in.is_empty() {
-                    warn!(
+                    warnings.insert(format!(
                         "allowed_host `{}` has empty `replace_in` - secrets will never be injected",
                         entry.pattern
-                    );
+                    ));
                 }
                 if pattern.scheme.allows_unencrypted() {
-                    warn!("secrets allowed for potentially unencrypted host `{pattern}`");
+                    warnings.insert(format!(
+                        "secrets allowed for potentially unencrypted host `{pattern}`"
+                    ));
                 }
 
                 let env_mappings = match resolve_named_secrets(
                     &entry.secrets,
                     secret_registry,
                     ignore_missing_env_vars,
+                    warnings,
                 ) {
                     Ok(m) => m,
                     Err(e) => return Some(Err(e.into())),
@@ -4058,6 +4110,7 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
                 )],
                 false,
                 &SecretRegistry::empty(),
+                &ConfigWarnings::default(),
             )
             .unwrap();
 
@@ -4075,6 +4128,7 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
                 ))],
                 false,
                 &SecretRegistry::empty(),
+                &ConfigWarnings::default(),
             )
             .unwrap_err()
             .to_string();
@@ -4090,9 +4144,36 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
                 ))],
                 true,
                 &SecretRegistry::empty(),
+                &ConfigWarnings::default(),
             )
             .unwrap();
             assert!(hosts.is_empty());
+        }
+
+        #[test]
+        fn warnings_are_deduplicated_across_resolutions() {
+            let entry = AllowedHostToml {
+                pattern: "http://localhost:5005".to_string(),
+                methods: Some(MethodsInput::List(vec!["GET".to_string()])),
+                request_url_regex: None,
+                secrets: vec!["TOKEN".to_string()],
+                replace_in: vec![ReplaceIn::Headers],
+            };
+            let registry = SecretRegistry::from_test_values([(
+                "TOKEN".to_string(),
+                SecretString::from("value"),
+            )]);
+            let warnings = ConfigWarnings::default();
+
+            resolve_allowed_hosts(vec![entry.clone()], false, &registry, &warnings).unwrap();
+            resolve_allowed_hosts(vec![entry], false, &registry, &warnings).unwrap();
+
+            let warnings = warnings.0.lock().unwrap();
+            assert_eq!(warnings.len(), 1);
+            assert_eq!(
+                warnings.first().unwrap(),
+                "secrets allowed for potentially unencrypted host `http://localhost:5005 [GET]`"
+            );
         }
     }
 
@@ -4281,7 +4362,13 @@ name = "my_stub"
         fn fetch_and_verify_activity_exec_secret_fails_when_unregistered_and_not_ignored() {
             let config = exec_config_with_secret();
             let error = config
-                .fetch_and_verify(inline_program(), false, &SecretRegistry::empty(), None)
+                .fetch_and_verify(
+                    inline_program(),
+                    false,
+                    &SecretRegistry::empty(),
+                    &ConfigWarnings::default(),
+                    None,
+                )
                 .unwrap_err()
                 .to_string();
             assert!(
@@ -4295,7 +4382,13 @@ name = "my_stub"
         fn fetch_and_verify_activity_exec_secret_is_skipped_when_unregistered_and_ignored() {
             let config = exec_config_with_secret();
             let verified = config
-                .fetch_and_verify(inline_program(), true, &SecretRegistry::empty(), None)
+                .fetch_and_verify(
+                    inline_program(),
+                    true,
+                    &SecretRegistry::empty(),
+                    &ConfigWarnings::default(),
+                    None,
+                )
                 .unwrap();
             assert!(verified.secrets.is_none());
         }
@@ -4308,7 +4401,13 @@ name = "my_stub"
                 SecretString::from("s3cret_value"),
             )]);
             let verified = config
-                .fetch_and_verify(inline_program(), false, &registry, None)
+                .fetch_and_verify(
+                    inline_program(),
+                    false,
+                    &registry,
+                    &ConfigWarnings::default(),
+                    None,
+                )
                 .unwrap();
             let secrets = verified.secrets.expect("secret must be resolved");
             assert!(secrets.env_vars.contains_key("MY_SECRET"));
@@ -4339,6 +4438,7 @@ name = "my_stub"
                     },
                     true,
                     &SecretRegistry::empty(),
+                    &ConfigWarnings::default(),
                     None,
                 )
                 .unwrap();
@@ -4352,6 +4452,7 @@ name = "my_stub"
                     },
                     true,
                     &SecretRegistry::empty(),
+                    &ConfigWarnings::default(),
                     None,
                 )
                 .unwrap();

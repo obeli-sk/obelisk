@@ -32,6 +32,7 @@ use crate::config::toml::ComponentLocationFetchExt as _;
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
+use crate::config::toml::ConfigWarnings;
 use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::DeploymentResolved;
 use crate::config::toml::InflightSemaphoreExt as _;
@@ -809,6 +810,7 @@ fn collect_outbound_http_secret_replacements(
 fn report_missing_outbound_http_secret_replacements(
     missing: &[MissingSecretReplacement],
     availability: RuntimeConfigAvailability,
+    warnings: &ConfigWarnings,
 ) -> Result<(), anyhow::Error> {
     if missing.is_empty() {
         return Ok(());
@@ -853,10 +855,10 @@ fn report_missing_outbound_http_secret_replacements(
         deployment = deployment_snippets.join("\n"),
     );
     if availability.allows_unavailable() {
-        warn!(
+        warnings.insert(format!(
             "{message}\nSkipping these load-time secret replacement checks because unavailable \
              runtime configuration is allowed; activation will enforce them strictly."
-        );
+        ));
         Ok(())
     } else {
         bail!("{message}");
@@ -909,6 +911,7 @@ fn host_allowlist_snippet(section: &str, entry: &AllowedHostToml) -> String {
 /// Append every destination in `entries` that no global allowlist entry covers onto
 /// `uncovered`. Allow-nothing entries need no allowlist entry; resolution failures are
 /// left for component preparation to report authoritatively.
+#[expect(clippy::too_many_arguments)]
 fn collect_uncovered_outbound_http_hosts(
     component_section: &'static str,
     component_name: &ConfigName,
@@ -916,6 +919,7 @@ fn collect_uncovered_outbound_http_hosts(
     global_http_config: &GlobalHttpConfig,
     secret_registry: &SecretRegistry,
     ignore_missing_env_vars: bool,
+    warnings: &ConfigWarnings,
     uncovered: &mut Vec<UncoveredOutboundHost>,
 ) {
     for entry in entries {
@@ -929,6 +933,7 @@ fn collect_uncovered_outbound_http_hosts(
             vec![entry.clone()],
             ignore_missing_env_vars,
             secret_registry,
+            warnings,
         ) else {
             continue;
         };
@@ -951,7 +956,10 @@ fn collect_uncovered_outbound_http_hosts(
 
 /// Warn once, listing the allowlist entries to add. A warning, not an error: coverage
 /// is conservative and a component may declare destinations it never calls.
-fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
+fn report_uncovered_outbound_http_hosts(
+    uncovered: &[UncoveredOutboundHost],
+    warnings: &ConfigWarnings,
+) {
     if uncovered.is_empty() {
         return;
     }
@@ -971,7 +979,7 @@ fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
             snippets.push(snippet);
         }
     }
-    warn!(
+    warnings.insert(format!(
         "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
          server.toml `[[outbound_http.allowed_host]]` allowlist entry; requests to them will be \
          denied at runtime:\n\
@@ -980,7 +988,7 @@ fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
          {snippets}",
         count = uncovered.len(),
         snippets = snippets.join("\n"),
-    );
+    ));
 }
 
 #[derive(Debug, Clone)]
@@ -1271,7 +1279,11 @@ pub(crate) async fn deployment_verify_config_compile_link(
         params.clone(),
         termination_watcher,
     )
-    .await?;
+    .await;
+    if deployment_verified.is_err() {
+        server_verified.config_warnings.report();
+    }
+    let deployment_verified = deployment_verified?;
     deployment_compile_link(
         server_verified,
         deployment_verified,
@@ -1290,6 +1302,7 @@ pub(crate) async fn deployment_compile_link(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<ServerCompiledLinked, anyhow::Error> {
+    let config_warnings = server_verified.config_warnings.clone();
     let compiled_and_linked = ServerCompiledLinked::new(
         deployment_id,
         deployment_verified,
@@ -1298,7 +1311,9 @@ pub(crate) async fn deployment_compile_link(
         params.suppress_type_checking_errors,
         params.suppress_linking_errors,
     )
-    .await?;
+    .await;
+    config_warnings.report();
+    let compiled_and_linked = compiled_and_linked?;
     if compiled_and_linked.supressed_errors.is_none() {
         info!("Obelisk configuration was verified");
     } else {
@@ -1397,6 +1412,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.api_addr_if_webui_enabled.clone(),
         server_verified.secret_registry.clone(),
         server_verified.global_http_config.clone(),
+        server_verified.config_warnings.clone(),
     ))
     .await?;
     trace!("Verified deployment: {deployment_verified:#?}");
@@ -2231,6 +2247,7 @@ pub(crate) struct ServerVerified {
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
     global_http_config: GlobalHttpConfig,
+    config_warnings: ConfigWarnings,
     /// Operator-owned secret registry, resolved before the runtime started. Carried
     /// here so runtime redeploys/submits resolve deployment secret references without
     /// re-reading the (already wiped) process environment.
@@ -2252,6 +2269,7 @@ impl ServerVerified {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<ServerVerified, anyhow::Error> {
         trace!("Using server toml: {config:#?}");
+        let config_warnings = ConfigWarnings::default();
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -2283,9 +2301,10 @@ impl ServerVerified {
             .as_semaphore();
         let database_subscription_interruption = config.database.get_subscription_interruption();
         if config.allow_exec_activities == AllowExecActivities::AllowAny {
-            warn!(
+            config_warnings.insert(
                 "`allow_exec_activities = true` permits deployments to run arbitrary host \
                  programs; consider allowlisting reviewed scripts by content digest instead"
+                    .to_string(),
             );
         }
         for entry in &config.outbound_http.allowed_hosts {
@@ -2300,8 +2319,13 @@ impl ServerVerified {
             }
         }
         let global_http_config = GlobalHttpConfig::from(
-            resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
-                .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?,
+            resolve_allowed_hosts(
+                config.outbound_http.allowed_hosts,
+                false,
+                &secret_registry,
+                &config_warnings,
+            )
+            .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?,
         );
 
         Ok(Self {
@@ -2322,6 +2346,7 @@ impl ServerVerified {
             },
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
             global_http_config,
+            config_warnings,
             secret_registry,
         })
     }
@@ -3748,6 +3773,7 @@ impl DeploymentVerified {
         api_addr_if_webui_enabled: Option<String>,
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
+        config_warnings: ConfigWarnings,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_resolved();
@@ -3777,6 +3803,7 @@ impl DeploymentVerified {
                         &global_http_config,
                         &secret_registry,
                         ignore_missing_env_vars,
+                        &config_warnings,
                         &mut uncovered_hosts,
                     );
                 };
@@ -3805,8 +3832,9 @@ impl DeploymentVerified {
         report_missing_outbound_http_secret_replacements(
             &missing_replacements,
             runtime_config_availability,
+            &config_warnings,
         )?;
-        report_uncovered_outbound_http_hosts(&uncovered_hosts);
+        report_uncovered_outbound_http_hosts(&uncovered_hosts, &config_warnings);
         // Check uniqueness of http_server names.
         if http_servers.len()
             > http_servers
@@ -3907,6 +3935,7 @@ impl DeploymentVerified {
                 let global_executor_instance_limiter = global_executor_instance_limiter.clone();
                 let secret_registry = secret_registry.clone();
                 let global_http_config = global_http_config.clone();
+                let config_warnings = config_warnings.clone();
                 tokio::spawn(
                     async move {
                         activity_wasm
@@ -3915,6 +3944,7 @@ impl DeploymentVerified {
                                 metadata_dir,
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                config_warnings,
                                 global_http_config,
                                 global_executor_instance_limiter,
                                 fuel,
@@ -3973,6 +4003,7 @@ impl DeploymentVerified {
                 let wasm_cache_dir = wasm_cache_dir.clone();
                 let metadata_dir = metadata_dir.clone();
                 let secret_registry = secret_registry.clone();
+                let config_warnings = config_warnings.clone();
                 tokio::spawn(
                     async move {
                         webhook
@@ -3981,6 +4012,7 @@ impl DeploymentVerified {
                                 metadata_dir,
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                config_warnings,
                                 subscription_interruption,
                             )
                             .await
@@ -4079,6 +4111,7 @@ impl DeploymentVerified {
                                 wasm_cache_dir.clone(),
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                config_warnings.clone(),
                                 global_http_config.clone(),
                                 global_executor_instance_limiter.clone(),
                                 fuel,
@@ -4120,6 +4153,7 @@ impl DeploymentVerified {
                             wasm_cache_dir.clone(),
                             ignore_missing_env_vars,
                             &secret_registry,
+                            config_warnings.clone(),
                         ).await?;
                         webhooks_js_by_names.insert(k, v);
                     }
@@ -4133,6 +4167,7 @@ impl DeploymentVerified {
                             resolved_program,
                             ignore_missing_env_vars,
                             &secret_registry,
+                            &config_warnings,
                             global_executor_instance_limiter.clone(),
                         )?
                     );
@@ -5525,6 +5560,7 @@ mod tests {
         let err = report_missing_outbound_http_secret_replacements(
             &missing,
             RuntimeConfigAvailability::Strict,
+            &crate::config::toml::ConfigWarnings::default(),
         )
         .unwrap_err()
         .to_string();
@@ -5583,6 +5619,7 @@ mod tests {
         let err = report_missing_outbound_http_secret_replacements(
             &missing,
             RuntimeConfigAvailability::Strict,
+            &crate::config::toml::ConfigWarnings::default(),
         )
         .unwrap_err()
         .to_string();
@@ -5610,9 +5647,15 @@ mod tests {
         };
         let registry =
             SecretRegistry::from_test_values(Vec::<(String, secrecy::SecretString)>::new());
+        let warnings = crate::config::toml::ConfigWarnings::default();
         let global = GlobalHttpConfig::from(
-            crate::config::toml::resolve_allowed_hosts(vec![host("obeli.sk")], false, &registry)
-                .unwrap(),
+            crate::config::toml::resolve_allowed_hosts(
+                vec![host("obeli.sk")],
+                false,
+                &registry,
+                &warnings,
+            )
+            .unwrap(),
         );
         let name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
 
@@ -5624,6 +5667,7 @@ mod tests {
             &global,
             &registry,
             false,
+            &warnings,
             &mut uncovered,
         );
 
@@ -5780,6 +5824,7 @@ mod tests {
             webui_enabled,
             server_verified.secret_registry,
             server_verified.global_http_config,
+            server_verified.config_warnings,
         ))
         .await?;
 
