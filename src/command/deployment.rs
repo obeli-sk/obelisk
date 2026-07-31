@@ -270,8 +270,8 @@ impl args::Deployment {
                 Ok(())
             }
 
-            // `deployment verify` is a local alias dispatched through the server-startup path in
-            // `main`, so it never reaches the gRPC client here.
+            // `deployment verify` is dispatched through the local verification path in `main`,
+            // so it never reaches the gRPC client here.
             args::Deployment::Verify(_) => unreachable!("handled in main before ClientStartup"),
         }
     }

@@ -1700,8 +1700,8 @@ pub(crate) struct DeploymentRunnable {
 impl DeploymentRunnable {
     /// Resolve every deployment-owned WASM location against the CAS.
     ///
-    /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
-    /// `--skip-db`), whose current resolved form holds internal absolute paths and OCI refs;
+    /// `cas` may be `None` for disk/offline flows (e.g. `obelisk deployment verify`), whose
+    /// current resolved form holds internal absolute paths and OCI refs;
     /// encountering a deployment-owned (relative) WASM there is an error because there is no
     /// store to read it.
     pub(crate) async fn resolve(

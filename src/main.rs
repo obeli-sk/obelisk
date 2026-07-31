@@ -12,7 +12,8 @@ mod server;
 mod wit_printer;
 
 use args::{
-    Args, ComponentArgs, Deployment, DeploymentArgs, ExecutionArgs, Server, Subcommand, VerifyArgs,
+    Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
+    Subcommand, VerifyArgs,
 };
 use clap::Parser;
 use client::ClientStartup;
@@ -56,21 +57,36 @@ fn main() -> Result<(), anyhow::Error> {
         Subcommand::Execution(ExecutionArgs { command, token }) => {
             Box::pin(command.run(ClientStartup::new(token.api_token)))
         }
-        // `deployment verify` is a local alias for `server verify`: it runs through the
-        // server-startup machinery rather than the gRPC client the other deployment commands use.
+        // `deployment verify` uses server configuration and compilation machinery locally, but
+        // never opens the database or uses its content-addressed store.
         Subcommand::Deployment(DeploymentArgs {
             command: Deployment::Verify(args),
             token: _,
         }) => {
-            let server = Server::Verify(args);
-            let Server::Verify(VerifyArgs { server_config, .. }) = &server else {
-                unreachable!()
-            };
+            let DeploymentVerifyArgs {
+                clean_cache,
+                clean_codegen_cache,
+                server_config,
+                deployment,
+                allow_unavailable_runtime_config,
+                suppress_type_checking_errors,
+                fix,
+            } = args;
             let ServerStartup {
                 config_holder,
                 config,
                 secret_registry,
             } = prepare_server_startup(server_config.clone())?;
+            let server = Server::Verify(VerifyArgs {
+                clean_cache,
+                clean_codegen_cache,
+                server_config,
+                deployment: Some(deployment),
+                allow_unavailable_runtime_config,
+                suppress_type_checking_errors,
+                skip_db: true,
+                fix,
+            });
             Box::pin(server.run(config_holder, config, secret_registry))
         }
         Subcommand::Deployment(DeploymentArgs { command, token }) => {

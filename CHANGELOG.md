@@ -8,9 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(cli)* Added `obelisk deployment verify` as a local alias for `obelisk server verify`, so
-  deployment authors can verify a `deployment.toml` from the `deployment` command group. It accepts
-  the same flags and runs the same local compile-and-verify path without starting the server.
+- *(cli)* Added `obelisk deployment verify` for compiling and verifying a local `deployment.toml`
+  without starting the server or accessing its database or content-addressed store.
 - *(cli)* `obelisk deployment verify --fix` corrects mismatched content digests in the passed
   deployment file and updates the passed server config's exec allowlist, sorted by activity name.
   Without `--fix`, verification reports every mismatched local digest at once.

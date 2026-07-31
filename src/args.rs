@@ -283,8 +283,8 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
-    /// Local alias for `server verify`: compile the components and verify their imports without starting the server.
-    Verify(VerifyArgs),
+    /// Verify a local deployment without accessing the server database.
+    Verify(DeploymentVerifyArgs),
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -475,7 +475,6 @@ pub(crate) enum Server {
     Verify(VerifyArgs),
 }
 
-/// Flags shared by `server verify` and its `deployment verify` alias.
 #[derive(Debug, clap::Args)]
 #[expect(clippy::struct_excessive_bools)]
 pub(crate) struct VerifyArgs {
@@ -503,6 +502,32 @@ pub(crate) struct VerifyArgs {
     pub(crate) skip_db: bool,
     /// Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist.
     #[arg(long, requires = "deployment")]
+    pub(crate) fix: bool,
+}
+
+#[derive(Debug, clap::Args)]
+#[expect(clippy::struct_excessive_bools)]
+pub(crate) struct DeploymentVerifyArgs {
+    /// Delete both the codegen cache and the OCI image cache before verifying.
+    #[arg(long)]
+    pub(crate) clean_cache: bool,
+    /// Delete only the codegen cache before verifying; OCI image cache is kept.
+    #[arg(long)]
+    pub(crate) clean_codegen_cache: bool,
+    /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
+    #[arg(short, long)]
+    pub(crate) server_config: Option<PathBuf>,
+    /// Path to the local deployment TOML file.
+    #[arg(short, long)]
+    pub(crate) deployment: PathBuf,
+    /// Tolerate runtime requirements unavailable on this server while verifying.
+    #[arg(long)]
+    pub(crate) allow_unavailable_runtime_config: bool,
+    /// Do not fail when a component's imports/exports fail type checking against the deployment.
+    #[arg(long)]
+    pub(crate) suppress_type_checking_errors: bool,
+    /// Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist.
+    #[arg(long)]
     pub(crate) fix: bool,
 }
 
