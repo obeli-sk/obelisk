@@ -6,9 +6,9 @@ use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Source of deployment-owned file bytes during canonicalization.
+/// Source of deployment-owned file bytes during deployment resolution.
 ///
-/// Canonicalization inlines every deployment-owned script/source into the
+/// Resolution inlines every deployment-owned script/source into the
 /// `DeploymentResolved`; where the bytes come from depends on context.
 /// OCI refs are not deployment-owned and are not read through a provider.
 #[async_trait::async_trait]
@@ -41,7 +41,7 @@ impl FileProvider for DiskProvider {
 /// Reads blobs from the content-addressed store by digest.
 ///
 /// A digest is required; later manifest work makes digests mandatory on every
-/// relative ref before this provider is used for canonicalization.
+/// relative ref before this provider is used for resolution.
 pub(crate) struct CasFileProvider {
     pub(crate) cas: Arc<dyn Cas>,
 }
@@ -50,7 +50,7 @@ pub(crate) struct CasFileProvider {
 impl FileProvider for CasFileProvider {
     async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>> {
         let digest = digest.with_context(|| {
-            format!("CAS-backed canonicalization requires a content digest for `{path}`")
+            format!("CAS-backed resolution requires a content digest for `{path}`")
         })?;
         self.cas
             .read_blob(digest)

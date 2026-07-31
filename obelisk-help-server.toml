@@ -50,7 +50,7 @@
 # ]
 
 ## Global outbound HTTP policy. Component-originated requests must be allowed by both
-## this operator-owned bound and the component's deployment.toml `allowed_host` entry.
+## this operator-owned allowlist and the component's deployment.toml `allowed_host` entry.
 ## If no `[[outbound_http.allowed_host]]` entries are defined, all component outbound
 ## HTTP is denied. To migrate, copy the deployment entries here, then narrow them.
 ##

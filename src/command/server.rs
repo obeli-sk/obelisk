@@ -3,7 +3,7 @@ use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
-use crate::config::config_holder::load_deployment_canonical;
+use crate::config::config_holder::load_deployment_resolved;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::file_provider::CasFileProvider;
@@ -154,7 +154,7 @@ use wasm_workers::engines::EngineConfig;
 use wasm_workers::engines::Engines;
 use wasm_workers::engines::PoolingConfig;
 use wasm_workers::epoch_ticker::EpochTicker;
-use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
+use wasm_workers::http_request_policy::{AllowedHostConfig, GlobalHttpConfig, ReplacementLocation};
 use wasm_workers::log_db_forwarder;
 use wasm_workers::registry::ComponentConfig;
 use wasm_workers::registry::ComponentConfigImportable;
@@ -397,6 +397,8 @@ pub(crate) const WEBHOOK_JS_LOCATION: &str =
 
 const HTTP_SERVER_NAME_WEBUI: &str = "webui";
 const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
+/// Component name of the operator-owned web UI webhook injected when the web UI is enabled.
+const COMPONENT_NAME_WEBUI: &str = "obelisk_webui";
 
 impl Server {
     pub(crate) async fn run(
@@ -727,9 +729,9 @@ fn allowed_host_snippet(
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
-/// A secret replacement a component requests that the operator global bound does
-/// not authorize. Collected across the whole deployment so every missing outer
-/// bound is reported at once, letting the operator add all allowances in one pass.
+/// A secret replacement a component requests that the operator global allowlist
+/// does not authorize. Collected across the whole deployment so every missing
+/// allowance is reported at once, letting the operator add them all in one pass.
 struct MissingSecretReplacement {
     component_section: &'static str,
     component_name: ConfigName,
@@ -738,7 +740,7 @@ struct MissingSecretReplacement {
     replace_in: ReplaceIn,
 }
 
-/// The `(secret name, replacement target)` pairs the operator global bound authorizes.
+/// The `(secret name, replacement target)` pairs the operator global allowlist authorizes.
 fn global_secret_replacements(
     global_http_config: &GlobalHttpConfig,
 ) -> hashbrown::HashSet<(&str, ReplacementLocation)> {
@@ -796,7 +798,7 @@ fn collect_outbound_http_secret_replacements(
 }
 
 /// Emit a single report covering every collected missing secret replacement, so
-/// the operator can add all the required outer bounds to server.toml in one edit.
+/// the operator can add all the required allowlist entries to server.toml in one edit.
 /// Bails under strict availability; downgrades to a warning when unavailable
 /// runtime config is allowed (activation re-checks strictly).
 fn report_missing_outbound_http_secret_replacements(
@@ -820,7 +822,7 @@ fn report_missing_outbound_http_secret_replacements(
             secret = m.secret,
             target = replacement_target_name(m.replace_in),
         );
-        // Multiple components may request the same outer bound; list each unique
+        // Multiple components may request the same allowlist entry; list each unique
         // snippet once so the operator does not paste duplicates.
         let server_snippet =
             allowed_host_snippet("outbound_http", &m.entry, &m.secret, m.replace_in);
@@ -837,7 +839,7 @@ fn report_missing_outbound_http_secret_replacements(
         "the deployment requests {count} outbound HTTP secret replacement(s) that no server.toml \
          `[[outbound_http.allowed_host]]` entry authorizes:\n\
          {details}\n\
-         After review, add these outer bounds to server.toml:\n\n\
+         After review, add these allowlist entries to server.toml:\n\n\
          {server}\n\
          The corresponding deployment.toml entries are:\n\n\
          {deployment}",
@@ -856,36 +858,52 @@ fn report_missing_outbound_http_secret_replacements(
     }
 }
 
-/// A component destination that no operator outer bound covers, collected across
-/// the deployment so every gap is reported at load time rather than one-by-one.
+/// A component destination that no operator global allowlist entry covers, collected
+/// across the deployment so every gap is reported at load time rather than one-by-one.
 struct UncoveredOutboundHost {
     component_section: &'static str,
     component_name: ConfigName,
     entry: AllowedHostToml,
 }
 
+/// The global allowlist to enforce for a webhook. A `self_authorize` webhook (only
+/// the framework-injected, operator-owned web UI) is bounded by its own component
+/// allowlist rather than requiring an explicit server.toml entry; every other
+/// webhook is bound by the operator global allowlist.
+fn webhook_global_http_allowlist(
+    self_authorize: bool,
+    allowed_hosts: &Arc<[AllowedHostConfig]>,
+    operator_global: &GlobalHttpConfig,
+) -> GlobalHttpConfig {
+    if self_authorize {
+        GlobalHttpConfig::from(allowed_hosts.clone())
+    } else {
+        operator_global.clone()
+    }
+}
+
 /// Render a destination-only `[[<section>.allowed_host]]` snippet, dropping secret fields.
-fn host_bound_snippet(section: &str, entry: &AllowedHostToml) -> String {
+fn host_allowlist_snippet(section: &str, entry: &AllowedHostToml) -> String {
     #[derive(serde::Serialize)]
-    struct DestinationBound {
+    struct DestinationEntry {
         pattern: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         methods: Option<MethodsInput>,
         #[serde(skip_serializing_if = "Option::is_none")]
         request_url_regex: Option<String>,
     }
-    let body = toml::to_string(&DestinationBound {
+    let body = toml::to_string(&DestinationEntry {
         pattern: entry.pattern.clone(),
         methods: entry.methods.clone(),
         request_url_regex: entry.request_url_regex.clone(),
     })
-    .expect("destination bound must serialize to TOML");
+    .expect("destination allowlist entry must serialize to TOML");
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
-/// Append every destination in `entries` that no global bound covers onto
-/// `uncovered`. Allow-nothing entries need no bound; resolution failures are left
-/// for component preparation to report authoritatively.
+/// Append every destination in `entries` that no global allowlist entry covers onto
+/// `uncovered`. Allow-nothing entries need no allowlist entry; resolution failures are
+/// left for component preparation to report authoritatively.
 fn collect_uncovered_outbound_http_hosts(
     component_section: &'static str,
     component_name: &ConfigName,
@@ -915,7 +933,7 @@ fn collect_uncovered_outbound_http_hosts(
         if !global_http_config
             .entries()
             .iter()
-            .any(|bound| bound.covers(resolved))
+            .any(|allowed| allowed.covers(resolved))
         {
             uncovered.push(UncoveredOutboundHost {
                 component_section,
@@ -926,7 +944,7 @@ fn collect_uncovered_outbound_http_hosts(
     }
 }
 
-/// Warn once, listing the outer bounds to add. A warning, not an error: coverage
+/// Warn once, listing the allowlist entries to add. A warning, not an error: coverage
 /// is conservative and a component may declare destinations it never calls.
 fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
     if uncovered.is_empty() {
@@ -943,17 +961,17 @@ fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
             section = host.component_section,
             pattern = host.entry.pattern,
         );
-        let snippet = host_bound_snippet("outbound_http", &host.entry);
+        let snippet = host_allowlist_snippet("outbound_http", &host.entry);
         if !snippets.contains(&snippet) {
             snippets.push(snippet);
         }
     }
     warn!(
         "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
-         server.toml `[[outbound_http.allowed_host]]` outer bound; requests to them will be \
+         server.toml `[[outbound_http.allowed_host]]` allowlist entry; requests to them will be \
          denied at runtime:\n\
          {details}\n\
-         After review, add these outer bounds to server.toml:\n\n\
+         After review, add these allowlist entries to server.toml:\n\n\
          {snippets}",
         count = uncovered.len(),
         snippets = snippets.join("\n"),
@@ -978,7 +996,7 @@ pub(crate) async fn verify(
 ) -> Result<(), anyhow::Error> {
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
-        Some(load_deployment_canonical(&deployment_path).await?)
+        Some(load_deployment_resolved(&deployment_path).await?)
     } else {
         None
     };
@@ -1006,7 +1024,7 @@ pub(crate) async fn verify(
     let (deployment, deployment_id) = if let Some(deployment) = deployment_opt {
         (deployment, DeploymentId::generate())
     } else {
-        get_deployment_canonical_from_db(
+        get_deployment_resolved_from_db(
             &config.database,
             &config_holder.path_prefixes,
             &mut db_pool,
@@ -1335,7 +1353,7 @@ async fn exec_content_digest_lines(
 
 /// Look up the current deployment from the database.
 /// Prefers Enqueued over Active; errors if neither exists.
-async fn get_deployment_canonical_from_db(
+async fn get_deployment_resolved_from_db(
     database: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
     db_pool_container: &mut DbPoolCloseableContainer,
@@ -1408,7 +1426,7 @@ async fn get_deployment_canonical_from_db(
         .await
         .with_context(|| {
             format!(
-                "cannot canonicalize deployment manifest for {:?}",
+                "cannot resolve deployment manifest for {:?}",
                 record.deployment_id
             )
         })?;
@@ -1418,22 +1436,22 @@ async fn get_deployment_canonical_from_db(
 /// A deployment authored locally and passed via `server run -d <toml>` / `--empty`.
 ///
 /// Carries the verbatim manifest (stored as the source of truth), its referenced file
-/// blobs (uploaded to the CAS so later restarts can canonicalize from it), and the
-/// already-canonicalized form used to compile/link this run.
+/// blobs (uploaded to the CAS so later restarts can resolve from it), and the
+/// already-resolved form used to compile/link this run.
 pub(crate) struct LocalDeployment {
     deployment_toml: String,
-    canonical: DeploymentResolved,
+    resolved: DeploymentResolved,
     files: Vec<DeploymentManifestFile>,
 }
 
 impl LocalDeployment {
     pub(crate) async fn from_path(deployment_path: &Path) -> anyhow::Result<Self> {
-        let canonical = load_deployment_canonical(deployment_path).await?;
+        let resolved = load_deployment_resolved(deployment_path).await?;
         let prepared =
             crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_path).await?;
         Ok(Self {
             deployment_toml: prepared.deployment_toml,
-            canonical,
+            resolved,
             files: prepared.files,
         })
     }
@@ -1441,13 +1459,13 @@ impl LocalDeployment {
     pub(crate) fn empty() -> Self {
         Self {
             deployment_toml: String::new(),
-            canonical: DeploymentResolved::default(),
+            resolved: DeploymentResolved::default(),
             files: Vec::new(),
         }
     }
 }
 
-/// Root for canonicalizing a stored manifest against the CAS.
+/// Root for resolving a stored manifest against the CAS.
 ///
 /// Empty on purpose: a stored manifest has no submitter host to anchor relative paths to.
 /// Deployment-owned references are addressed by content digest in the CAS, so joining a
@@ -1485,7 +1503,7 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
 }
 
 /// Resolve a stored verbatim TOML manifest by reading its referenced blobs from the CAS,
-/// returning the canonical form and the `(path, digest)` of every file it referenced.
+/// returning the resolved form and the `(path, digest)` of every file it referenced.
 ///
 /// `${...}` env vars and secrets resolve here, in the server's environment.
 async fn deployment_resolved_and_files_from_manifest(
@@ -1498,7 +1516,7 @@ async fn deployment_resolved_and_files_from_manifest(
     let cas: Arc<dyn concepts::cas::Cas> = db_pool
         .cas_conn()
         .await
-        .context("cannot get CAS connection for deployment canonicalization")?
+        .context("cannot get CAS connection for deployment resolution")?
         .into();
     let provider = RecordingCasProvider {
         inner: CasFileProvider { cas },
@@ -1538,11 +1556,11 @@ async fn deployment_resolved_from_manifest(
 /// Compiling/linking needs real files, so [`Self::resolve`] materializes each deployment-owned
 /// blob from the CAS into the wasm cache and rewrites its location to that path. OCI
 /// references already are concrete and pass through unchanged. The current disk-authored
-/// local-run canonical expands valid relative WASM paths to absolute internal paths, so it
+/// local-run resolved form expands valid relative WASM paths to absolute internal paths, so it
 /// resolves to itself.
 ///
 /// The inner value is private so the only way to obtain one is `resolve`; that makes it
-/// impossible to feed an unresolved (relative-path) canonical into compilation.
+/// impossible to feed an unresolved (relative-path) `DeploymentResolved` into compilation.
 pub(crate) struct DeploymentRunnable {
     deployment: DeploymentResolved,
 }
@@ -1551,7 +1569,7 @@ impl DeploymentRunnable {
     /// Resolve every deployment-owned WASM location against the CAS.
     ///
     /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
-    /// `--skip-db`), whose current canonical holds internal absolute paths and OCI refs;
+    /// `--skip-db`), whose current resolved form holds internal absolute paths and OCI refs;
     /// encountering a deployment-owned (relative) WASM there is an error because there is no
     /// store to read it.
     pub(crate) async fn resolve(
@@ -1611,7 +1629,7 @@ impl DeploymentRunnable {
         Ok(Self { deployment })
     }
 
-    fn into_canonical(self) -> DeploymentResolved {
+    fn into_resolved(self) -> DeploymentResolved {
         self.deployment
     }
 }
@@ -1664,7 +1682,7 @@ async fn prepare_new_deployment_record(
     files: Vec<DeploymentManifestFile>,
     description: Option<String>,
 ) -> anyhow::Result<DeploymentRecord> {
-    // Upload referenced blobs to the CAS first, so a later restart can canonicalize from it.
+    // Upload referenced blobs to the CAS first, so a later restart can resolve from it.
     let cas = db_pool
         .cas_conn()
         .await
@@ -1794,7 +1812,7 @@ pub(crate) async fn run_internal(
         }
     };
     let span = Span::current();
-    let (active_deployment_id, deployment_canonical, new_deployment_record) =
+    let (active_deployment_id, deployment_resolved, new_deployment_record) =
         if let Some(deployment) = deployment {
             // --deployment or `--deployment-empty` provided: prepare, insert+activate after compile.
             let new_deployment_id = DeploymentId::generate();
@@ -1807,7 +1825,7 @@ pub(crate) async fn run_internal(
                 description,
             )
             .await?;
-            (new_deployment_id, deployment.canonical, Some(record))
+            (new_deployment_id, deployment.resolved, Some(record))
         } else {
             // No --deployment: pick up from the DB.
             // Activate any Enqueued deployment (queued for this restart), then use active.
@@ -1825,7 +1843,7 @@ pub(crate) async fn run_internal(
                         .await
                         .context("cannot activate enqueued deployment")?;
                 }
-                let canonical =
+                let resolved =
                     deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
                 span.record(
                     "deployment_id",
@@ -1837,7 +1855,7 @@ pub(crate) async fn run_internal(
                     info!("Using the currently active deployment");
                 }
 
-                (record.deployment_id, canonical, None)
+                (record.deployment_id, resolved, None)
             } else {
                 let new_deployment_id = DeploymentId::generate();
                 span.record("deployment_id", tracing::field::display(&new_deployment_id));
@@ -1864,7 +1882,7 @@ pub(crate) async fn run_internal(
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
         &prepared_dirs,
-        deployment_canonical,
+        deployment_resolved,
         Some(cas),
         active_deployment_id,
         VerifyParams {
@@ -2703,7 +2721,7 @@ pub(crate) async fn submit_deployment(
     }
 
     // Fully validate the deployment before persisting it, so a stored deployment is
-    // already known-good: canonicalize from the CAS (resolving env vars/secrets),
+    // already known-good: resolve from the CAS (resolving env vars/secrets),
     // parse JS, validate WIT/WASM, and compile + link every component. Activation no
     // longer performs first-time package validation. Blobs already written to the CAS
     // when verification fails are acceptable GC input; no deployment row is inserted.
@@ -3600,11 +3618,11 @@ impl DeploymentVerified {
         global_http_config: GlobalHttpConfig,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
-        let mut deployment = deployment.into_canonical();
+        let mut deployment = deployment.into_resolved();
         trace!("Using deployment toml: {deployment:#?}");
         // Scoped so the `server_replacements` borrow of `global_http_config` ends
         // before the config is moved into the deployment below. Each component's
-        // outbound HTTP entries are checked against the operator global bound for
+        // outbound HTTP entries are checked against the operator global allowlist for
         // both unauthorized secret replacements and uncovered destinations.
         let (missing_replacements, uncovered_hosts) = {
             let server_replacements = global_secret_replacements(&global_http_config);
@@ -3675,7 +3693,7 @@ impl DeploymentVerified {
                 .webhooks_wasm
                 .push(webhook::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
-                        name: ConfigName::new(StrVariant::Static("obelisk_webui")).unwrap(),
+                        name: ConfigName::new(StrVariant::Static(COMPONENT_NAME_WEBUI)).unwrap(),
                         location: WEBUI_LOCATION
                             .parse()
                             .expect("hard-coded webui reference must be parsed"),
@@ -3699,6 +3717,7 @@ impl DeploymentVerified {
                         secrets: Vec::new(),
                         replace_in: Vec::new(),
                     }],
+                    is_webui: true,
                 });
         }
 
@@ -4287,6 +4306,12 @@ async fn compile_and_link(
                         let span = info_span!(parent: parent_span, "webhook_compile", component_id = %webhook.component_id);
                         span.in_scope(|| {
                             let component_id = webhook.component_id;
+                            let allowed_hosts = webhook.allowed_hosts;
+                            let global_http_config = webhook_global_http_allowlist(
+                                webhook.is_webui,
+                                &allowed_hosts,
+                                &global_http_config,
+                            );
                             let config = WebhookEndpointConfig {
                                 component_id,
                                 forward_stdout: webhook.forward_stdout,
@@ -4296,8 +4321,8 @@ async fn compile_and_link(
                                 backtrace_persist: webhook.backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
                                 logs_store_min_level: webhook.logs_store_min_level,
-                                allowed_hosts: webhook.allowed_hosts,
-                                global_http_config: global_http_config.clone(),
+                                allowed_hosts,
+                                global_http_config,
                                 js_config: None,
                                 config_section_hint: webhook.config_section_hint,
                             };
@@ -5300,11 +5325,12 @@ mod tests {
             ServerCompiledLinked, ServerVerified, VerifyParams,
             collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
             compile_activity_inline, compute_content_digest, create_engines,
-            deployment_verify_config, global_secret_replacements, host_bound_snippet, prepare_dirs,
-            report_missing_outbound_http_secret_replacements,
+            deployment_verify_config, global_secret_replacements, host_allowlist_snippet,
+            prepare_dirs, report_missing_outbound_http_secret_replacements,
+            webhook_global_http_allowlist,
         },
         config::{
-            config_holder::{ConfigHolder, load_deployment_canonical},
+            config_holder::{ConfigHolder, load_deployment_resolved},
             secret_registry::SecretRegistry,
             toml::{
                 AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
@@ -5377,7 +5403,7 @@ mod tests {
     }
 
     /// Missing replacements from several components are gathered into one report,
-    /// so the operator can add every outer bound to server.toml in a single edit.
+    /// so the operator can add every allowlist entry to server.toml in a single edit.
     #[test]
     fn strict_outbound_http_replacement_error_collects_all_components() {
         let entry = |secret: &str| AllowedHostToml {
@@ -5438,7 +5464,7 @@ mod tests {
         assert!(err.contains("secrets = [\"OTHER_KEY\"]"));
     }
 
-    /// A deployment destination the operator global bound covers is not flagged,
+    /// A deployment destination the operator global allowlist covers is not flagged,
     /// while an uncovered one is collected with a destination-only server snippet.
     #[test]
     fn uncovered_outbound_http_host_collected_covered_skipped() {
@@ -5471,13 +5497,47 @@ mod tests {
         assert_eq!(uncovered.len(), 1, "only the uncovered host is collected");
         assert_eq!(uncovered[0].entry.pattern, "example.com");
 
-        let snippet = host_bound_snippet("outbound_http", &uncovered[0].entry);
+        let snippet = host_allowlist_snippet("outbound_http", &uncovered[0].entry);
         assert!(snippet.contains("[[outbound_http.allowed_host]]"));
         assert!(snippet.contains("pattern = \"example.com\""));
         assert!(snippet.contains("methods = [\"GET\"]"));
-        // Destination-only bound: no secret fields leak into the snippet.
+        // Destination-only allowlist entry: no secret fields leak into the snippet.
         assert!(!snippet.contains("secrets"), "snippet: {snippet}");
         assert!(!snippet.contains("replace_in"), "snippet: {snippet}");
+    }
+
+    /// A self-authorizing webhook (the operator-owned web UI) is bounded by its own
+    /// component allowlist, so an empty operator allowlist does not deny its egress;
+    /// every other webhook stays bound by the operator allowlist.
+    #[test]
+    fn self_authorizing_webhook_uses_own_allowlist() {
+        use wasm_workers::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+        let target = AllowedHostConfig {
+            pattern: HostPattern::parse_with_methods(
+                "http://127.0.0.1:5005",
+                MethodsPattern::AllMethods,
+            )
+            .unwrap(),
+            request_url_regex: None,
+            secret_env_mappings: Vec::new(),
+            replace_in: hashbrown::HashSet::new(),
+        };
+        let allowed: Arc<[AllowedHostConfig]> = Arc::from(vec![target]);
+        // Empty operator allowlist denies every destination on its own.
+        let operator = GlobalHttpConfig::default();
+
+        let self_auth = webhook_global_http_allowlist(true, &allowed, &operator);
+        assert_eq!(
+            self_auth.entries().len(),
+            1,
+            "self-authorized from own allowlist"
+        );
+
+        let bound = webhook_global_http_allowlist(false, &allowed, &operator);
+        assert!(
+            bound.entries().is_empty(),
+            "other webhooks keep the operator allowlist"
+        );
     }
 
     #[test]
@@ -5542,7 +5602,7 @@ mod tests {
             deployment_toml,
         )
         .await?;
-        let deployment = load_deployment_canonical(fixture.path()).await?;
+        let deployment = load_deployment_resolved(fixture.path()).await?;
 
         let prepared_dirs = prepare_dirs(
             &config,
@@ -5570,7 +5630,7 @@ mod tests {
         };
         let webui_enabled = None;
 
-        // Verify deployment. The current disk-authored canonical holds internal absolute
+        // Verify deployment. The current disk-authored resolved form holds internal absolute
         // paths, so it resolves to itself without a CAS.
         let deployment =
             DeploymentRunnable::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
@@ -5623,7 +5683,7 @@ mod tests {
             "obelisk-testing-wasm-local.toml",
         )
         .await?;
-        let mut deployment = load_deployment_canonical(fixture.path()).await?;
+        let mut deployment = load_deployment_resolved(fixture.path()).await?;
         let shared_digest: ComponentDigest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 .parse()
@@ -5683,7 +5743,7 @@ mod tests {
         let config = config_holder.load_config()?;
         assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
         let deployment =
-            load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
+            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
             &config,
             &PrepareDirsParams {
@@ -5760,7 +5820,7 @@ mod tests {
         )?;
         let mut config = config_holder.load_config()?;
         let deployment =
-            load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
+            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
         let digests = deployment
             .activities_exec
             .iter()

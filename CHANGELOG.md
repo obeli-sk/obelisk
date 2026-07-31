@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(server)* Added an operator-owned `[[outbound_http.allowed_host]]` outer bound for
+- *(server)* Added an operator-owned `[[outbound_http.allowed_host]]` allowlist for
   component-originated HTTP. It uses the same host, method, URL regex, secret, and replacement
   location grammar as deployment `allowed_host` entries. Destinations and secret placements are
   enforced as the runtime intersection of the server and deployment policies.
@@ -27,10 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** *(server)* Component outbound HTTP is now denied unless both server.toml
   `[[outbound_http.allowed_host]]` and deployment.toml component `allowed_host` entries permit it.
-  An omitted server bound denies all outbound HTTP. Existing deployments that use HTTP must copy
+  An omitted server allowlist denies all outbound HTTP. Existing deployments that use HTTP must copy
   their component entries into server.toml as a migration starting point; operators can then
   narrow the global entries. Deployment verification also checks secret and replacement-location
-  pairing against the global bound.
+  pairing against the global allowlist.
 - **Breaking:** *(deployment)* Deployment-owned secrets now reference operator-owned registry names
   instead of carrying values. `activity_exec` takes `secrets = ["NAME", ...]` (replacing the
   `[activity_exec.secrets] env_vars = [{ name, value }]` table), and `allowed_host` takes flattened

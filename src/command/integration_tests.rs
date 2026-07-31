@@ -14,7 +14,7 @@ use crate::{
 };
 use toml_edit::{DocumentMut, value};
 
-/// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the canonical
+/// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the resolved
 /// `ActivityStubExtInlineConfigResolved` the tests used to construct in-memory.
 fn append_inline_stub(doc: &mut DocumentMut, name: &str, ffqn: &str) {
     let mut table = toml_edit::Table::new();
@@ -1296,7 +1296,7 @@ async fn api_auth_should_deny_unauthenticated_requests() {
 ///
 /// Starts with an empty deployment (no components, no CAS blobs), then runs the
 /// `deployment apply` flow over gRPC: upload every referenced WASM blob, submit the verbatim
-/// manifest, and hot-redeploy. This used to fail because the server canonicalized the stored
+/// manifest, and hot-redeploy. This used to fail because the server resolved the stored
 /// manifest against a synthetic `/deployment` root and then tried to read the WASM from that
 /// non-existent path instead of materializing the uploaded blobs from the CAS.
 #[tokio::test]

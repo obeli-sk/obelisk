@@ -191,14 +191,14 @@ pub(crate) async fn load_deployment_validated(
         .with_context(|| format!("cannot validate {deployment_toml:?}"))
 }
 
-pub(crate) async fn load_deployment_canonical(
+pub(crate) async fn load_deployment_resolved(
     deployment_toml: &Path,
 ) -> Result<DeploymentResolved, anyhow::Error> {
     load_deployment_validated(deployment_toml)
         .await?
-        .canonicalize()
+        .resolve()
         .await
-        .with_context(|| format!("cannot canonicalize {deployment_toml:?}"))
+        .with_context(|| format!("cannot resolve {deployment_toml:?}"))
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

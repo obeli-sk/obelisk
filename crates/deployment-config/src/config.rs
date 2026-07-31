@@ -79,7 +79,7 @@ impl ConfigName {
 
 /// Location of a WASM component.
 /// The OCI reference is kept as a string (without the `oci://` prefix); it is
-/// validated and normalized by the obelisk server before canonicalization.
+/// validated and normalized by the obelisk server before resolution.
 #[derive(
     Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr, serde_with::SerializeDisplay,
 )]
@@ -689,6 +689,8 @@ pub mod webhook {
         pub logs_store_min_level: LogLevelToml,
         #[serde(default, rename = "allowed_host")]
         pub allowed_hosts: Vec<AllowedHostToml>,
+        #[serde(skip)]
+        pub is_webui: bool,
     }
 
     /// Resolved form of `WebhookJsComponentConfigToml`.
@@ -752,7 +754,7 @@ pub mod cron {
 /// and backtrace sources are inlined as content; deployment-owned WASM locations remain
 /// relative path + content digest until `DeploymentRunnable` materializes them from the
 /// CAS into a runnable cache path. OCI references remain external references.
-#[derive(Debug, Deserialize, Serialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Default, Clone)]
 pub struct DeploymentResolved {
     pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,
     pub activities_stub: Vec<ActivityStubComponentConfigResolved>,
@@ -763,11 +765,10 @@ pub struct DeploymentResolved {
     pub workflows_js: Vec<WorkflowJsComponentConfigResolved>,
     pub webhooks_wasm: Vec<webhook::WebhookWasmComponentConfigResolved>,
     pub webhooks_js: Vec<webhook::WebhookJsComponentConfigResolved>,
-    #[serde(default)]
     pub crons: Vec<cron::CronComponentConfigToml>,
 }
 
-// Serde defaults shared by the canonical types and the TOML types in the obelisk binary.
+// Serde defaults shared by the resolved config types and the TOML types in the obelisk binary.
 
 #[must_use]
 pub const fn default_max_retries() -> u32 {

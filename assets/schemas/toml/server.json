@@ -23,7 +23,7 @@
       "$ref": "#/$defs/AllowExecActivities"
     },
     "outbound_http": {
-      "description": "Operator-owned outer bound for component-originated HTTP requests.\nAn empty bound denies every outbound request.",
+      "description": "Operator-owned allowlist for component-originated HTTP requests.\nAn empty allowlist denies every outbound request.",
       "$ref": "#/$defs/OutboundHttpToml"
     },
     "max_deployment_file_bytes": {

@@ -9,9 +9,9 @@ use wasmtime_wasi::WasiCtxBuilder;
 /// one random placeholder per unique secret env var name and binding each env
 /// var into `wasi_ctx` exactly once.
 ///
-/// `global_bound` is the operator-owned outer bound from `server.toml`. Egress
+/// `global_allowlist` is the operator-owned allowlist from `server.toml`. Egress
 /// must additionally match it and secret injection is intersected against it
-/// (see [`HttpRequestPolicy`]). The global bound contributes authorization only:
+/// (see [`HttpRequestPolicy`]). The global allowlist contributes authorization only:
 /// it mints no placeholders and binds nothing into the guest env.
 pub(crate) fn build_http_policy(
     allowed_hosts: &[AllowedHostConfig],
@@ -22,11 +22,11 @@ pub(crate) fn build_http_policy(
     for (env_key, placeholder) in &placeholders {
         wasi_ctx.env(env_key, placeholder);
     }
-    policy.global_bound = Some(build_authorization_hosts(global_http_config.entries()));
+    policy.global_allowlist = Some(build_authorization_hosts(global_http_config.entries()));
     policy
 }
 
-/// Build the operator global bound's host list. Each entry authorizes a
+/// Build the operator global allowlist's host list. Each entry authorizes a
 /// `(secret name, replacement target)` pair but carries no placeholder or real value, so no
 /// guest env binding is produced.
 fn build_authorization_hosts(allowed_hosts: &[AllowedHostConfig]) -> Vec<AllowedHostPolicy> {
@@ -90,7 +90,7 @@ fn build_http_policy_inner(
     (
         HttpRequestPolicy {
             hosts,
-            global_bound: None,
+            global_allowlist: None,
         },
         placeholders,
     )

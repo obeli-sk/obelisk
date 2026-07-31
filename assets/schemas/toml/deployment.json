@@ -165,7 +165,7 @@
       "type": "string"
     },
     "ComponentLocationToml": {
-      "description": "Location of a WASM component.\nThe OCI reference is kept as a string (without the `oci://` prefix); it is\nvalidated and normalized by the obelisk server before canonicalization.",
+      "description": "Location of a WASM component.\nThe OCI reference is kept as a string (without the `oci://` prefix); it is\nvalidated and normalized by the obelisk server before resolution.",
       "type": "string"
     },
     "ExecConfigToml": {

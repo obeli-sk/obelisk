@@ -68,7 +68,7 @@ fn generate_toml_snippet(
         Some(format!(
             "{err}\n\
              Review and add the following entries as needed.\n\n\
-             # server.toml (operator-owned outer bound)\n\
+             # server.toml (operator-owned allowlist)\n\
              [[outbound_http.allowed_host]]\n\
              pattern = \"{pattern}\"\n\
              methods = [\"{method}\"]\n\
@@ -167,7 +167,7 @@ mod tests {
                 port: 443,
                 path: "/v1/items".to_string(),
                 request_url: "POST https://api.example.com/v1/items".to_string(),
-                denied_by: PolicyLayer::GlobalBound,
+                denied_by: PolicyLayer::GlobalAllowlist,
             },
             ConfigSectionHint::ActivityWasm,
         )

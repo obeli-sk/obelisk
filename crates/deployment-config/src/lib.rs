@@ -1,7 +1,7 @@
 //! Shared deployment configuration schema and core naming types.
 //!
 //! This crate holds the data model that is shared between the obelisk server
-//! (TOML parsing, canonicalization, DB storage) and the webui. It must keep
+//! (TOML parsing, resolution, DB storage) and the webui. It must keep
 //! compiling for `wasm32-unknown-unknown`, so it contains plain data types only;
 //! all behavior that needs the server runtime (OCI fetching, executor
 //! configuration, env var resolution) lives in the obelisk binary.
