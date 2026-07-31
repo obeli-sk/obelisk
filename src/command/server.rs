@@ -114,6 +114,7 @@ use indexmap::IndexMap;
 use secrecy::ExposeSecret as _;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -129,6 +130,7 @@ use tokio::sync::TryAcquireError;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
+use toml_edit::{DocumentMut, Item, Table, value};
 use tonic::codec::CompressionEncoding;
 use tonic::service::RoutesBuilder;
 use tonic_web::GrpcWebLayer;
@@ -991,7 +993,7 @@ pub(crate) struct VerifyParams {
 
 pub(crate) async fn verify(
     config_holder: ConfigHolder,
-    config: ServerConfigToml,
+    mut config: ServerConfigToml,
     deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
@@ -1046,6 +1048,18 @@ pub(crate) async fn verify(
         &secret_registry,
     )
     .await?;
+    if fix
+        && let (Some(server_config_path), Some(deployment)) =
+            (config_holder.config_source(), deployment_opt.as_ref())
+    {
+        let allowlist = fix_server_exec_digests(
+            server_config_path,
+            &deployment.activities_exec,
+            &prepared_dirs.wasm_cache_dir,
+        )
+        .await?;
+        config.allow_exec_activities = AllowExecActivities::Allowlist(allowlist);
+    }
     let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let mut db_pool = if !skip_db {
@@ -1407,6 +1421,66 @@ async fn exec_content_digest_lines(
         digests_with_lines.push((activity.name.clone(), digest, line));
     }
     Ok(digests_with_lines)
+}
+
+async fn fix_server_exec_digests(
+    server_config_path: &Path,
+    activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
+    wasm_cache_dir: &Path,
+) -> anyhow::Result<BTreeMap<String, ContentDigest>> {
+    let allowlist = exec_content_digest_lines(activities_exec, wasm_cache_dir)
+        .await?
+        .into_iter()
+        .map(|(name, digest, _)| (name.to_string(), digest))
+        .collect::<BTreeMap<_, _>>();
+    let server_toml = tokio::fs::read_to_string(server_config_path)
+        .await
+        .with_context(|| format!("cannot read server config {server_config_path:?}"))?;
+    let mut doc = server_toml
+        .parse::<DocumentMut>()
+        .context("cannot parse server config as TOML")?;
+    if let Some(table) = doc
+        .get_mut("allow_exec_activities")
+        .and_then(Item::as_table_mut)
+    {
+        table.retain(|name, _| allowlist.contains_key(name));
+        for (name, digest) in &allowlist {
+            let replacement = value(digest.to_string());
+            if let Some(item) = table.get_mut(name) {
+                let decor = item.as_value().map(|value| value.decor().clone());
+                *item = replacement;
+                if let Some(decor) = decor {
+                    *item.as_value_mut().unwrap().decor_mut() = decor;
+                }
+            } else {
+                table.insert(name, replacement);
+            }
+        }
+        table.sort_values();
+    } else {
+        let mut table = Table::new();
+        for (name, digest) in &allowlist {
+            table.insert(name, value(digest.to_string()));
+        }
+        if let Some(prefix) = doc
+            .as_table()
+            .key("allow_exec_activities")
+            .and_then(|key| key.leaf_decor().prefix())
+            .cloned()
+        {
+            table.decor_mut().set_prefix(prefix);
+        }
+        doc.insert("allow_exec_activities", Item::Table(table));
+    }
+    tokio::fs::write(server_config_path, doc.to_string())
+        .await
+        .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
+    info!(
+        "Updated {} exec activity digest(s) in {}",
+        allowlist.len(),
+        server_config_path.display()
+    );
+    Ok(allowlist)
 }
 
 /// Look up the current deployment from the database.
@@ -5383,8 +5457,8 @@ mod tests {
             ServerCompiledLinked, ServerVerified, VerifyParams,
             collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
             compile_activity_inline, compute_content_digest, create_engines,
-            deployment_verify_config, global_secret_replacements, host_allowlist_snippet,
-            prepare_dirs, report_missing_outbound_http_secret_replacements,
+            deployment_verify_config, fix_server_exec_digests, global_secret_replacements,
+            host_allowlist_snippet, prepare_dirs, report_missing_outbound_http_secret_replacements,
             webhook_global_http_allowlist,
         },
         config::{
@@ -5392,7 +5466,7 @@ mod tests {
             secret_registry::SecretRegistry,
             toml::{
                 AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
-                ScriptLocationResolved,
+                ScriptLocationResolved, ServerConfigToml,
             },
         },
     };
@@ -5406,6 +5480,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::watch;
+    use toml_edit::DocumentMut;
     use wasm_workers::http_request_policy::GlobalHttpConfig;
 
     fn get_workspace_dir() -> PathBuf {
@@ -5861,6 +5936,56 @@ mod tests {
         assert_eq!(
             verified.runtime_config_availability,
             RuntimeConfigAvailability::AllowUnavailable
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fix_server_exec_digests_replaces_policy_with_sorted_map() -> Result<(), anyhow::Error>
+    {
+        use std::fmt::Write as _;
+
+        test_utils::set_up();
+
+        let workspace = get_workspace_dir();
+        let deployment =
+            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
+        let dir = tempfile::tempdir()?;
+        let server_config_path = dir.path().join("server.toml");
+        let wrong = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        let mut server_toml = "# formatting is preserved\n[allow_exec_activities]\n".to_string();
+        for activity in deployment.activities_exec.iter().rev() {
+            writeln!(
+                server_toml,
+                "\"{}\" = \"{wrong}\" # reviewed",
+                activity.name
+            )?;
+        }
+        writeln!(server_toml, "stale = \"{wrong}\"\n")?;
+        server_toml.push_str("[api]\nenabled = false\n");
+        tokio::fs::write(&server_config_path, server_toml).await?;
+
+        let allowlist =
+            fix_server_exec_digests(&server_config_path, &deployment.activities_exec, dir.path())
+                .await?;
+        let fixed = tokio::fs::read_to_string(&server_config_path).await?;
+        let doc = fixed.parse::<DocumentMut>()?;
+        let table = doc["allow_exec_activities"].as_table().unwrap();
+        assert_eq!(
+            table.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            allowlist.keys().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert!(fixed.contains("# formatting is preserved"));
+        assert_eq!(
+            fixed.matches("# reviewed").count(),
+            allowlist.len(),
+            "{fixed}"
+        );
+        assert!(!fixed.contains("stale ="));
+        assert!(fixed.contains("[api]\nenabled = false"));
+        assert_eq!(
+            toml::from_str::<ServerConfigToml>(&fixed)?.allow_exec_activities,
+            AllowExecActivities::Allowlist(allowlist)
         );
         Ok(())
     }

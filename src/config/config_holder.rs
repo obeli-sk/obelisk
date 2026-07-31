@@ -90,6 +90,10 @@ pub(crate) struct ConfigHolder {
 }
 
 impl ConfigHolder {
+    pub(crate) fn config_source(&self) -> Option<&Path> {
+        self.config_source.as_deref()
+    }
+
     pub(crate) async fn generate_default_server_config(
         dst: Option<PathBuf>,
         overwrite: bool,

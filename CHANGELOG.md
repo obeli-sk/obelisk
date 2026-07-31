@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deployment authors can verify a `deployment.toml` from the `deployment` command group. It accepts
   the same flags and runs the same local compile-and-verify path without starting the server.
 - *(cli)* `obelisk deployment verify --fix` corrects mismatched content digests in the passed
-  deployment file. Without `--fix`, verification reports every mismatched local digest at once.
+  deployment file and updates the passed server config's exec allowlist, sorted by activity name.
+  Without `--fix`, verification reports every mismatched local digest at once.
 - *(server)* Added an operator-owned `[[outbound_http.allowed_host]]` allowlist for
   component-originated HTTP. It uses the same host, method, URL regex, secret, and replacement
   location grammar as deployment `allowed_host` entries. Destinations and secret placements are

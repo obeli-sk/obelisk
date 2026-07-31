@@ -105,7 +105,7 @@
             },
             {
               "name": "--fix",
-              "help": "Rewrite mismatched `content_digest` values in the deployment file"
+              "help": "Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist"
             }
           ]
         }
@@ -905,7 +905,7 @@
             },
             {
               "name": "--fix",
-              "help": "Rewrite mismatched `content_digest` values in the deployment file"
+              "help": "Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist"
             }
           ]
         }
