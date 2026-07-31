@@ -583,6 +583,7 @@ async fn read_deployment_file(
     let digest = content_digest(&bytes);
     Ok((digest, bytes))
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

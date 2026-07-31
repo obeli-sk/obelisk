@@ -2453,8 +2453,7 @@ async fn resolve_local_refs(
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
-            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider)
-                .await?,
+            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider).await?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
             logs_store_min_level: w.logs_store_min_level,
@@ -2497,8 +2496,7 @@ async fn resolve_local_refs(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars,
-            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider)
-                .await?,
+            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider).await?,
             backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts,
@@ -4700,10 +4698,11 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, dir.path(), &provider)
-                .await
+            let resolved = resolve_backtrace(&bt, dir.path(), &provider).await.unwrap();
+            let src = resolved
+                .frame_files_to_sources
+                .get(".../src/lib.rs")
                 .unwrap();
-            let src = resolved.frame_files_to_sources.get(".../src/lib.rs").unwrap();
             assert_eq!(src.content, "SRC");
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
@@ -4725,10 +4724,11 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, dir.path(), &provider)
-                .await
+            let resolved = resolve_backtrace(&bt, dir.path(), &provider).await.unwrap();
+            let src = resolved
+                .frame_files_to_sources
+                .get(".../src/lib.rs")
                 .unwrap();
-            let src = resolved.frame_files_to_sources.get(".../src/lib.rs").unwrap();
             assert_eq!(src.content, "SRC");
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }

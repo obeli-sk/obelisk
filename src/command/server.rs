@@ -5325,8 +5325,9 @@ mod tests {
             ServerCompiledLinked, ServerVerified, VerifyParams,
             collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
             compile_activity_inline, compute_content_digest, create_engines,
-            deployment_verify_config, global_secret_replacements, host_allowlist_snippet, prepare_dirs,
-            report_missing_outbound_http_secret_replacements, webhook_global_http_allowlist,
+            deployment_verify_config, global_secret_replacements, host_allowlist_snippet,
+            prepare_dirs, report_missing_outbound_http_secret_replacements,
+            webhook_global_http_allowlist,
         },
         config::{
             config_holder::{ConfigHolder, load_deployment_resolved},
@@ -5526,7 +5527,11 @@ mod tests {
         let operator = GlobalHttpConfig::default();
 
         let self_auth = webhook_global_http_allowlist(true, &allowed, &operator);
-        assert_eq!(self_auth.entries().len(), 1, "self-authorized from own allowlist");
+        assert_eq!(
+            self_auth.entries().len(),
+            1,
+            "self-authorized from own allowlist"
+        );
 
         let bound = webhook_global_http_allowlist(false, &allowed, &operator);
         assert!(
