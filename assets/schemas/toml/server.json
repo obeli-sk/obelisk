@@ -19,7 +19,7 @@
       "default": {}
     },
     "allow_exec_activities": {
-      "description": "Permit deployments to run host processes through `activity_exec`.\n`false` denies all (default), `true` allows any, a list of `sha256:...`\ncontent digests allows only the listed exec scripts.",
+      "description": "Permit deployments to run host processes through `activity_exec`.\n`false` denies all (default), `true` allows any, a map from exec activity\nnames to `sha256:...` content digests allows only the named scripts.",
       "$ref": "#/$defs/AllowExecActivities"
     },
     "outbound_http": {
@@ -98,6 +98,12 @@
       "anyOf": [
         {
           "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         {
           "type": "array",

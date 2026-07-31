@@ -102,6 +102,10 @@
             {
               "name": "--skip-db",
               "help": "Skip opening the sqlite database and validating its schema"
+            },
+            {
+              "name": "--fix",
+              "help": "Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist"
             }
           ]
         }
@@ -856,6 +860,49 @@
               "name": "id",
               "help": "Deployment ID",
               "required": true
+            }
+          ]
+        },
+        {
+          "name": "verify",
+          "about": "Verify a local deployment without accessing the server database",
+          "options": [
+            {
+              "name": "--clean-cache",
+              "help": "Delete both the codegen cache and the OCI image cache before verifying"
+            },
+            {
+              "name": "--clean-codegen-cache",
+              "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
+            },
+            {
+              "name": "--server-config",
+              "short": "s",
+              "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the local deployment TOML file",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--allow-unavailable-runtime-config",
+              "help": "Tolerate runtime requirements unavailable on this server while verifying"
+            },
+            {
+              "name": "--suppress-type-checking-errors",
+              "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
+            },
+            {
+              "name": "--fix",
+              "help": "Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist"
             }
           ]
         }

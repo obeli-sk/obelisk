@@ -269,6 +269,10 @@ impl args::Deployment {
                 );
                 Ok(())
             }
+
+            // `deployment verify` is dispatched through the local verification path in `main`,
+            // so it never reaches the gRPC client here.
+            args::Deployment::Verify(_) => unreachable!("handled in main before ClientStartup"),
         }
     }
 }

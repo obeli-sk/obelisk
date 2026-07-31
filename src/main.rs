@@ -11,7 +11,10 @@ mod oci;
 mod server;
 mod wit_printer;
 
-use args::{Args, ComponentArgs, DeploymentArgs, ExecutionArgs, Server, Subcommand};
+use args::{
+    Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
+    Subcommand, VerifyArgs,
+};
 use clap::Parser;
 use client::ClientStartup;
 use config::config_holder::ConfigHolder;
@@ -36,8 +39,8 @@ fn main() -> Result<(), anyhow::Error> {
     type CommandFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>;
     let future: CommandFuture = match command {
         Subcommand::Server(server) => {
-            let (Server::Run { server_config, .. } | Server::Verify { server_config, .. }) =
-                &server;
+            let (Server::Run { server_config, .. }
+            | Server::Verify(VerifyArgs { server_config, .. })) = &server;
             let ServerStartup {
                 config_holder,
                 config,
@@ -53,6 +56,38 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Subcommand::Execution(ExecutionArgs { command, token }) => {
             Box::pin(command.run(ClientStartup::new(token.api_token)))
+        }
+        // `deployment verify` uses server configuration and compilation machinery locally, but
+        // never opens the database or uses its content-addressed store.
+        Subcommand::Deployment(DeploymentArgs {
+            command: Deployment::Verify(args),
+            token: _,
+        }) => {
+            let DeploymentVerifyArgs {
+                clean_cache,
+                clean_codegen_cache,
+                server_config,
+                deployment,
+                allow_unavailable_runtime_config,
+                suppress_type_checking_errors,
+                fix,
+            } = args;
+            let ServerStartup {
+                config_holder,
+                config,
+                secret_registry,
+            } = prepare_server_startup(server_config.clone())?;
+            let server = Server::Verify(VerifyArgs {
+                clean_cache,
+                clean_codegen_cache,
+                server_config,
+                deployment: Some(deployment),
+                allow_unavailable_runtime_config,
+                suppress_type_checking_errors,
+                skip_db: true,
+                fix,
+            });
+            Box::pin(server.run(config_holder, config, secret_registry))
         }
         Subcommand::Deployment(DeploymentArgs { command, token }) => {
             Box::pin(command.run(ClientStartup::new(token.api_token)))

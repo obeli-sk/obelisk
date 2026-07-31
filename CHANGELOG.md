@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *(cli)* Added `obelisk deployment verify` for compiling and verifying a local `deployment.toml`
+  without starting the server or accessing its database or content-addressed store.
+- *(cli)* `obelisk deployment verify --fix` corrects mismatched content digests in the passed
+  deployment file and updates the passed server config's exec allowlist, sorted by activity name.
+  Without `--fix`, verification reports every mismatched local digest at once.
 - *(server)* Added an operator-owned `[[outbound_http.allowed_host]]` allowlist for
   component-originated HTTP. It uses the same host, method, URL regex, secret, and replacement
   location grammar as deployment `allowed_host` entries. Destinations and secret placements are
@@ -25,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(cli)* Deployment configuration warnings are collected during verification, deduplicated, and
+  printed together in stable order after compilation, with source file and line locations when
+  available.
+- *(server)* `allow_exec_activities` now maps exec activity names to their reviewed content digests.
+  The previous digest-array form remains accepted for compatibility.
 - **Breaking:** *(server)* Component outbound HTTP is now denied unless both server.toml
   `[[outbound_http.allowed_host]]` and deployment.toml component `allowed_host` entries permit it.
   An omitted server allowlist denies all outbound HTTP. Existing deployments that use HTTP must copy

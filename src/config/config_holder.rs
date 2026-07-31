@@ -90,6 +90,10 @@ pub(crate) struct ConfigHolder {
 }
 
 impl ConfigHolder {
+    pub(crate) fn config_source(&self) -> Option<&Path> {
+        self.config_source.as_deref()
+    }
+
     pub(crate) async fn generate_default_server_config(
         dst: Option<PathBuf>,
         overwrite: bool,
@@ -163,7 +167,9 @@ impl ConfigHolder {
         }
         builder = builder.add_source(Environment::with_prefix("obelisk").separator("__"));
         let settings = builder.build()?;
-        Ok(settings.try_deserialize()?)
+        let mut config: ServerConfigToml = settings.try_deserialize()?;
+        config.source_path.clone_from(&self.config_source);
+        Ok(config)
     }
 }
 
@@ -194,11 +200,13 @@ pub(crate) async fn load_deployment_validated(
 pub(crate) async fn load_deployment_resolved(
     deployment_toml: &Path,
 ) -> Result<DeploymentResolved, anyhow::Error> {
-    load_deployment_validated(deployment_toml)
+    let mut deployment = load_deployment_validated(deployment_toml)
         .await?
         .resolve()
         .await
-        .with_context(|| format!("cannot resolve {deployment_toml:?}"))
+        .with_context(|| format!("cannot resolve {deployment_toml:?}"))?;
+    deployment.source_path = Some(deployment_toml.to_path_buf());
+    Ok(deployment)
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

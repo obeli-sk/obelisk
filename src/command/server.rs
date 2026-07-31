@@ -9,6 +9,7 @@ use crate::config::env_var::EnvVarConfig;
 use crate::config::file_provider::CasFileProvider;
 use crate::config::manifest::DeploymentManifest;
 use crate::config::manifest::DeploymentManifestFile;
+use crate::config::manifest::reconcile_deployment_digests;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
@@ -31,6 +32,7 @@ use crate::config::toml::ComponentLocationFetchExt as _;
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
+use crate::config::toml::ConfigWarnings;
 use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::DeploymentResolved;
 use crate::config::toml::InflightSemaphoreExt as _;
@@ -113,6 +115,7 @@ use indexmap::IndexMap;
 use secrecy::ExposeSecret as _;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -128,6 +131,7 @@ use tokio::sync::TryAcquireError;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
+use toml_edit::{DocumentMut, Item, Table, value};
 use tonic::codec::CompressionEncoding;
 use tonic::service::RoutesBuilder;
 use tonic_web::GrpcWebLayer;
@@ -438,7 +442,7 @@ impl Server {
                 ))
                 .await
             }
-            Server::Verify {
+            Server::Verify(crate::args::VerifyArgs {
                 clean_cache,
                 clean_codegen_cache,
                 server_config: _,
@@ -446,7 +450,8 @@ impl Server {
                 allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
                 skip_db,
-            } => {
+                fix,
+            }) => {
                 Box::pin(verify(
                     config_holder,
                     config,
@@ -465,6 +470,7 @@ impl Server {
                         suppress_linking_errors: false,
                     },
                     skip_db,
+                    fix,
                     secret_registry,
                 ))
                 .await
@@ -804,6 +810,7 @@ fn collect_outbound_http_secret_replacements(
 fn report_missing_outbound_http_secret_replacements(
     missing: &[MissingSecretReplacement],
     availability: RuntimeConfigAvailability,
+    warnings: &ConfigWarnings,
 ) -> Result<(), anyhow::Error> {
     if missing.is_empty() {
         return Ok(());
@@ -848,10 +855,10 @@ fn report_missing_outbound_http_secret_replacements(
         deployment = deployment_snippets.join("\n"),
     );
     if availability.allows_unavailable() {
-        warn!(
+        warnings.insert(format!(
             "{message}\nSkipping these load-time secret replacement checks because unavailable \
              runtime configuration is allowed; activation will enforce them strictly."
-        );
+        ));
         Ok(())
     } else {
         bail!("{message}");
@@ -904,6 +911,7 @@ fn host_allowlist_snippet(section: &str, entry: &AllowedHostToml) -> String {
 /// Append every destination in `entries` that no global allowlist entry covers onto
 /// `uncovered`. Allow-nothing entries need no allowlist entry; resolution failures are
 /// left for component preparation to report authoritatively.
+#[expect(clippy::too_many_arguments)]
 fn collect_uncovered_outbound_http_hosts(
     component_section: &'static str,
     component_name: &ConfigName,
@@ -911,6 +919,7 @@ fn collect_uncovered_outbound_http_hosts(
     global_http_config: &GlobalHttpConfig,
     secret_registry: &SecretRegistry,
     ignore_missing_env_vars: bool,
+    warnings: &ConfigWarnings,
     uncovered: &mut Vec<UncoveredOutboundHost>,
 ) {
     for entry in entries {
@@ -924,6 +933,7 @@ fn collect_uncovered_outbound_http_hosts(
             vec![entry.clone()],
             ignore_missing_env_vars,
             secret_registry,
+            warnings,
         ) else {
             continue;
         };
@@ -946,7 +956,10 @@ fn collect_uncovered_outbound_http_hosts(
 
 /// Warn once, listing the allowlist entries to add. A warning, not an error: coverage
 /// is conservative and a component may declare destinations it never calls.
-fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
+fn report_uncovered_outbound_http_hosts(
+    uncovered: &[UncoveredOutboundHost],
+    warnings: &ConfigWarnings,
+) {
     if uncovered.is_empty() {
         return;
     }
@@ -966,7 +979,7 @@ fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
             snippets.push(snippet);
         }
     }
-    warn!(
+    warnings.insert(format!(
         "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
          server.toml `[[outbound_http.allowed_host]]` allowlist entry; requests to them will be \
          denied at runtime:\n\
@@ -975,7 +988,7 @@ fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
          {snippets}",
         count = uncovered.len(),
         snippets = snippets.join("\n"),
-    );
+    ));
 }
 
 #[derive(Debug, Clone)]
@@ -988,14 +1001,48 @@ pub(crate) struct VerifyParams {
 
 pub(crate) async fn verify(
     config_holder: ConfigHolder,
-    config: ServerConfigToml,
+    mut config: ServerConfigToml,
     deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
+    fix: bool,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
+        let broken = reconcile_deployment_digests(&deployment_path, fix).await?;
+        if !broken.is_empty() {
+            if fix {
+                for digest in &broken {
+                    info!(
+                        "Fixed {} ({}): {} -> {}",
+                        digest.field_path, digest.path, digest.stored, digest.actual
+                    );
+                }
+                info!(
+                    "Corrected {} content digest(s) in {}",
+                    broken.len(),
+                    deployment_path.display()
+                );
+            } else {
+                let details = broken
+                    .iter()
+                    .map(|digest| {
+                        format!(
+                            "- {} ({}): expected {}, got {}",
+                            digest.field_path, digest.path, digest.stored, digest.actual
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                bail!(
+                    "{} content digest(s) in {} do not match:\n{}\nRun again with `--fix` to update them.",
+                    broken.len(),
+                    deployment_path.display(),
+                    details
+                );
+            }
+        }
         Some(load_deployment_resolved(&deployment_path).await?)
     } else {
         None
@@ -1009,6 +1056,18 @@ pub(crate) async fn verify(
         &secret_registry,
     )
     .await?;
+    if fix
+        && let (Some(server_config_path), Some(deployment)) =
+            (config_holder.config_source(), deployment_opt.as_ref())
+    {
+        let allowlist = fix_server_exec_digests(
+            server_config_path,
+            &deployment.activities_exec,
+            &prepared_dirs.wasm_cache_dir,
+        )
+        .await?;
+        config.allow_exec_activities = AllowExecActivities::Allowlist(allowlist);
+    }
     let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let mut db_pool = if !skip_db {
@@ -1220,7 +1279,11 @@ pub(crate) async fn deployment_verify_config_compile_link(
         params.clone(),
         termination_watcher,
     )
-    .await?;
+    .await;
+    if deployment_verified.is_err() {
+        server_verified.config_warnings.report();
+    }
+    let deployment_verified = deployment_verified?;
     deployment_compile_link(
         server_verified,
         deployment_verified,
@@ -1239,6 +1302,7 @@ pub(crate) async fn deployment_compile_link(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<ServerCompiledLinked, anyhow::Error> {
+    let config_warnings = server_verified.config_warnings.clone();
     let compiled_and_linked = ServerCompiledLinked::new(
         deployment_id,
         deployment_verified,
@@ -1247,7 +1311,9 @@ pub(crate) async fn deployment_compile_link(
         params.suppress_type_checking_errors,
         params.suppress_linking_errors,
     )
-    .await?;
+    .await;
+    config_warnings.report();
+    let compiled_and_linked = compiled_and_linked?;
     if compiled_and_linked.supressed_errors.is_none() {
         info!("Obelisk configuration was verified");
     } else {
@@ -1277,13 +1343,13 @@ pub(crate) async fn deployment_verify_config(
                 )
                 .await?
                 .into_iter()
-                .map(|(_, line)| line)
+                .map(|(_, _, line)| line)
                 .collect::<Vec<_>>();
                 bail!(
                     "deployment contains exec activities, which run outside the WASM sandbox; \
                      enable them with `allow_exec_activities = true` in server.toml or \
                      `OBELISK__ALLOW_EXEC_ACTIVITIES=true`, or allowlist the reviewed scripts \
-                     by adding to server.toml:\nallow_exec_activities = [\n{}\n]",
+                     by adding to server.toml:\n[allow_exec_activities]\n{}",
                     lines.join("\n")
                 );
             }
@@ -1294,14 +1360,35 @@ pub(crate) async fn deployment_verify_config(
                 )
                 .await?
                 .into_iter()
-                .filter(|(digest, _)| !allowed.contains(digest))
-                .map(|(_, line)| line)
+                .filter(|(name, digest, _)| allowed.get(name.as_str()) != Some(digest))
+                .map(|(_, _, line)| line)
                 .collect::<Vec<_>>();
                 if !rejected.is_empty() {
                     bail!(
                         "deployment contains exec activities, which run outside the WASM sandbox, \
                          whose content digests are not in the `allow_exec_activities` allowlist \
-                         in server.toml; review each script, then allow it by adding its line:\n{}",
+                         in server.toml; review each script, then allow it by adding its line under \
+                         `[allow_exec_activities]`:\n{}",
+                        rejected.join("\n")
+                    );
+                }
+            }
+            AllowExecActivities::LegacyAllowlist(allowed) => {
+                let rejected = exec_content_digest_lines(
+                    &deployment.activities_exec,
+                    &prepared_dirs.wasm_cache_dir,
+                )
+                .await?
+                .into_iter()
+                .filter(|(_, digest, _)| !allowed.contains(digest))
+                .map(|(_, _, line)| line)
+                .collect::<Vec<_>>();
+                if !rejected.is_empty() {
+                    bail!(
+                        "deployment contains exec activities, which run outside the WASM sandbox, \
+                         whose content digests are not in the `allow_exec_activities` allowlist \
+                         in server.toml; review each script, then allow it by adding its line under \
+                         `[allow_exec_activities]`:\n{}",
                         rejected.join("\n")
                     );
                 }
@@ -1325,6 +1412,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.api_addr_if_webui_enabled.clone(),
         server_verified.secret_registry.clone(),
         server_verified.global_http_config.clone(),
+        server_verified.config_warnings.clone(),
     ))
     .await?;
     trace!("Verified deployment: {deployment_verified:#?}");
@@ -1332,23 +1420,83 @@ pub(crate) async fn deployment_verify_config(
 }
 
 /// For each exec activity, the digest of the exact script text that runs plus a
-/// server.toml-pasteable allowlist line: `  "sha256:...", # name (ffqn)`.
+/// server.toml-pasteable allowlist line: `name = "sha256:..." # ffqn`.
 async fn exec_content_digest_lines(
     activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
     wasm_cache_dir: &Path,
-) -> anyhow::Result<Vec<(ContentDigest, String)>> {
+) -> anyhow::Result<Vec<(ConfigName, ContentDigest, String)>> {
     let mut digests_with_lines = Vec::with_capacity(activities_exec.len());
     for activity in activities_exec {
         let resolved = activity.resolve(wasm_cache_dir).await?;
         let digest = compute_content_digest(&resolved.source_bytes);
         let line = format!(
-            "  \"{digest}\", # {name} ({ffqn})",
+            "\"{name}\" = \"{digest}\" # {ffqn}",
             name = activity.name,
             ffqn = activity.ffqn
         );
-        digests_with_lines.push((digest, line));
+        digests_with_lines.push((activity.name.clone(), digest, line));
     }
     Ok(digests_with_lines)
+}
+
+async fn fix_server_exec_digests(
+    server_config_path: &Path,
+    activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
+    wasm_cache_dir: &Path,
+) -> anyhow::Result<BTreeMap<String, ContentDigest>> {
+    let allowlist = exec_content_digest_lines(activities_exec, wasm_cache_dir)
+        .await?
+        .into_iter()
+        .map(|(name, digest, _)| (name.to_string(), digest))
+        .collect::<BTreeMap<_, _>>();
+    let server_toml = tokio::fs::read_to_string(server_config_path)
+        .await
+        .with_context(|| format!("cannot read server config {server_config_path:?}"))?;
+    let mut doc = server_toml
+        .parse::<DocumentMut>()
+        .context("cannot parse server config as TOML")?;
+    if let Some(table) = doc
+        .get_mut("allow_exec_activities")
+        .and_then(Item::as_table_mut)
+    {
+        table.retain(|name, _| allowlist.contains_key(name));
+        for (name, digest) in &allowlist {
+            let replacement = value(digest.to_string());
+            if let Some(item) = table.get_mut(name) {
+                let decor = item.as_value().map(|value| value.decor().clone());
+                *item = replacement;
+                if let Some(decor) = decor {
+                    *item.as_value_mut().unwrap().decor_mut() = decor;
+                }
+            } else {
+                table.insert(name, replacement);
+            }
+        }
+        table.sort_values();
+    } else {
+        let mut table = Table::new();
+        for (name, digest) in &allowlist {
+            table.insert(name, value(digest.to_string()));
+        }
+        if let Some(prefix) = doc
+            .as_table()
+            .key("allow_exec_activities")
+            .and_then(|key| key.leaf_decor().prefix())
+            .cloned()
+        {
+            table.decor_mut().set_prefix(prefix);
+        }
+        doc.insert("allow_exec_activities", Item::Table(table));
+    }
+    tokio::fs::write(server_config_path, doc.to_string())
+        .await
+        .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
+    info!(
+        "Updated {} exec activity digest(s) in {}",
+        allowlist.len(),
+        server_config_path.display()
+    );
+    Ok(allowlist)
 }
 
 /// Look up the current deployment from the database.
@@ -1568,8 +1716,8 @@ pub(crate) struct DeploymentRunnable {
 impl DeploymentRunnable {
     /// Resolve every deployment-owned WASM location against the CAS.
     ///
-    /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
-    /// `--skip-db`), whose current resolved form holds internal absolute paths and OCI refs;
+    /// `cas` may be `None` for disk/offline flows (e.g. `obelisk deployment verify`), whose
+    /// current resolved form holds internal absolute paths and OCI refs;
     /// encountering a deployment-owned (relative) WASM there is an error because there is no
     /// store to read it.
     pub(crate) async fn resolve(
@@ -2099,6 +2247,7 @@ pub(crate) struct ServerVerified {
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
     global_http_config: GlobalHttpConfig,
+    config_warnings: ConfigWarnings,
     /// Operator-owned secret registry, resolved before the runtime started. Carried
     /// here so runtime redeploys/submits resolve deployment secret references without
     /// re-reading the (already wiped) process environment.
@@ -2120,6 +2269,10 @@ impl ServerVerified {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<ServerVerified, anyhow::Error> {
         trace!("Using server toml: {config:#?}");
+        let config_warnings = ConfigWarnings::default();
+        if let Some(source_path) = &config.source_path {
+            config_warnings.index_allowed_hosts(source_path);
+        }
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -2151,9 +2304,10 @@ impl ServerVerified {
             .as_semaphore();
         let database_subscription_interruption = config.database.get_subscription_interruption();
         if config.allow_exec_activities == AllowExecActivities::AllowAny {
-            warn!(
+            config_warnings.insert(
                 "`allow_exec_activities = true` permits deployments to run arbitrary host \
                  programs; consider allowlisting reviewed scripts by content digest instead"
+                    .to_string(),
             );
         }
         for entry in &config.outbound_http.allowed_hosts {
@@ -2168,8 +2322,13 @@ impl ServerVerified {
             }
         }
         let global_http_config = GlobalHttpConfig::from(
-            resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
-                .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?,
+            resolve_allowed_hosts(
+                config.outbound_http.allowed_hosts,
+                false,
+                &secret_registry,
+                &config_warnings,
+            )
+            .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?,
         );
 
         Ok(Self {
@@ -2190,6 +2349,7 @@ impl ServerVerified {
             },
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
             global_http_config,
+            config_warnings,
             secret_registry,
         })
     }
@@ -3616,9 +3776,13 @@ impl DeploymentVerified {
         api_addr_if_webui_enabled: Option<String>,
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
+        config_warnings: ConfigWarnings,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_resolved();
+        if let Some(source_path) = &deployment.source_path {
+            config_warnings.index_allowed_hosts(source_path);
+        }
         trace!("Using deployment toml: {deployment:#?}");
         // Scoped so the `server_replacements` borrow of `global_http_config` ends
         // before the config is moved into the deployment below. Each component's
@@ -3645,6 +3809,7 @@ impl DeploymentVerified {
                         &global_http_config,
                         &secret_registry,
                         ignore_missing_env_vars,
+                        &config_warnings,
                         &mut uncovered_hosts,
                     );
                 };
@@ -3673,8 +3838,9 @@ impl DeploymentVerified {
         report_missing_outbound_http_secret_replacements(
             &missing_replacements,
             runtime_config_availability,
+            &config_warnings,
         )?;
-        report_uncovered_outbound_http_hosts(&uncovered_hosts);
+        report_uncovered_outbound_http_hosts(&uncovered_hosts, &config_warnings);
         // Check uniqueness of http_server names.
         if http_servers.len()
             > http_servers
@@ -3775,6 +3941,7 @@ impl DeploymentVerified {
                 let global_executor_instance_limiter = global_executor_instance_limiter.clone();
                 let secret_registry = secret_registry.clone();
                 let global_http_config = global_http_config.clone();
+                let config_warnings = config_warnings.clone();
                 tokio::spawn(
                     async move {
                         activity_wasm
@@ -3783,6 +3950,7 @@ impl DeploymentVerified {
                                 metadata_dir,
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                config_warnings,
                                 global_http_config,
                                 global_executor_instance_limiter,
                                 fuel,
@@ -3841,6 +4009,7 @@ impl DeploymentVerified {
                 let wasm_cache_dir = wasm_cache_dir.clone();
                 let metadata_dir = metadata_dir.clone();
                 let secret_registry = secret_registry.clone();
+                let config_warnings = config_warnings.clone();
                 tokio::spawn(
                     async move {
                         webhook
@@ -3849,6 +4018,7 @@ impl DeploymentVerified {
                                 metadata_dir,
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                config_warnings,
                                 subscription_interruption,
                             )
                             .await
@@ -3947,6 +4117,7 @@ impl DeploymentVerified {
                                 wasm_cache_dir.clone(),
                                 ignore_missing_env_vars,
                                 &secret_registry,
+                                config_warnings.clone(),
                                 global_http_config.clone(),
                                 global_executor_instance_limiter.clone(),
                                 fuel,
@@ -3988,6 +4159,7 @@ impl DeploymentVerified {
                             wasm_cache_dir.clone(),
                             ignore_missing_env_vars,
                             &secret_registry,
+                            config_warnings.clone(),
                         ).await?;
                         webhooks_js_by_names.insert(k, v);
                     }
@@ -4001,6 +4173,7 @@ impl DeploymentVerified {
                             resolved_program,
                             ignore_missing_env_vars,
                             &secret_registry,
+                            &config_warnings,
                             global_executor_instance_limiter.clone(),
                         )?
                     );
@@ -5325,8 +5498,8 @@ mod tests {
             ServerCompiledLinked, ServerVerified, VerifyParams,
             collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
             compile_activity_inline, compute_content_digest, create_engines,
-            deployment_verify_config, global_secret_replacements, host_allowlist_snippet,
-            prepare_dirs, report_missing_outbound_http_secret_replacements,
+            deployment_verify_config, fix_server_exec_digests, global_secret_replacements,
+            host_allowlist_snippet, prepare_dirs, report_missing_outbound_http_secret_replacements,
             webhook_global_http_allowlist,
         },
         config::{
@@ -5334,7 +5507,7 @@ mod tests {
             secret_registry::SecretRegistry,
             toml::{
                 AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
-                ScriptLocationResolved,
+                ScriptLocationResolved, ServerConfigToml,
             },
         },
     };
@@ -5348,6 +5521,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::watch;
+    use toml_edit::DocumentMut;
     use wasm_workers::http_request_policy::GlobalHttpConfig;
 
     fn get_workspace_dir() -> PathBuf {
@@ -5392,6 +5566,7 @@ mod tests {
         let err = report_missing_outbound_http_secret_replacements(
             &missing,
             RuntimeConfigAvailability::Strict,
+            &crate::config::toml::ConfigWarnings::default(),
         )
         .unwrap_err()
         .to_string();
@@ -5450,6 +5625,7 @@ mod tests {
         let err = report_missing_outbound_http_secret_replacements(
             &missing,
             RuntimeConfigAvailability::Strict,
+            &crate::config::toml::ConfigWarnings::default(),
         )
         .unwrap_err()
         .to_string();
@@ -5477,9 +5653,15 @@ mod tests {
         };
         let registry =
             SecretRegistry::from_test_values(Vec::<(String, secrecy::SecretString)>::new());
+        let warnings = crate::config::toml::ConfigWarnings::default();
         let global = GlobalHttpConfig::from(
-            crate::config::toml::resolve_allowed_hosts(vec![host("obeli.sk")], false, &registry)
-                .unwrap(),
+            crate::config::toml::resolve_allowed_hosts(
+                vec![host("obeli.sk")],
+                false,
+                &registry,
+                &warnings,
+            )
+            .unwrap(),
         );
         let name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
 
@@ -5491,6 +5673,7 @@ mod tests {
             &global,
             &registry,
             false,
+            &warnings,
             &mut uncovered,
         );
 
@@ -5647,6 +5830,7 @@ mod tests {
             webui_enabled,
             server_verified.secret_registry,
             server_verified.global_http_config,
+            server_verified.config_warnings,
         ))
         .await?;
 
@@ -5780,7 +5964,7 @@ mod tests {
         assert!(err.to_string().contains("run outside the WASM sandbox"));
         assert!(err.to_string().contains("exec-stream"));
         // The error must contain a pasteable allowlist block.
-        assert!(err.to_string().contains("allow_exec_activities = [\n"));
+        assert!(err.to_string().contains("[allow_exec_activities]\n"));
         assert!(err.to_string().contains("\"sha256:"));
 
         let verified = deployment_verify_config(
@@ -5803,6 +5987,56 @@ mod tests {
         assert_eq!(
             verified.runtime_config_availability,
             RuntimeConfigAvailability::AllowUnavailable
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fix_server_exec_digests_replaces_policy_with_sorted_map() -> Result<(), anyhow::Error>
+    {
+        use std::fmt::Write as _;
+
+        test_utils::set_up();
+
+        let workspace = get_workspace_dir();
+        let deployment =
+            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
+        let dir = tempfile::tempdir()?;
+        let server_config_path = dir.path().join("server.toml");
+        let wrong = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        let mut server_toml = "# formatting is preserved\n[allow_exec_activities]\n".to_string();
+        for activity in deployment.activities_exec.iter().rev() {
+            writeln!(
+                server_toml,
+                "\"{}\" = \"{wrong}\" # reviewed",
+                activity.name
+            )?;
+        }
+        writeln!(server_toml, "stale = \"{wrong}\"\n")?;
+        server_toml.push_str("[api]\nenabled = false\n");
+        tokio::fs::write(&server_config_path, server_toml).await?;
+
+        let allowlist =
+            fix_server_exec_digests(&server_config_path, &deployment.activities_exec, dir.path())
+                .await?;
+        let fixed = tokio::fs::read_to_string(&server_config_path).await?;
+        let doc = fixed.parse::<DocumentMut>()?;
+        let table = doc["allow_exec_activities"].as_table().unwrap();
+        assert_eq!(
+            table.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            allowlist.keys().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert!(fixed.contains("# formatting is preserved"));
+        assert_eq!(
+            fixed.matches("# reviewed").count(),
+            allowlist.len(),
+            "{fixed}"
+        );
+        assert!(!fixed.contains("stale ="));
+        assert!(fixed.contains("[api]\nenabled = false"));
+        assert_eq!(
+            toml::from_str::<ServerConfigToml>(&fixed)?.allow_exec_activities,
+            AllowExecActivities::Allowlist(allowlist)
         );
         Ok(())
     }
@@ -5857,7 +6091,15 @@ mod tests {
 
         // An allowlist missing the first digest must reject the deployment,
         // printing the missing digest so it can be copy-pasted after review.
-        config.allow_exec_activities = AllowExecActivities::Allowlist(digests[1..].to_vec());
+        config.allow_exec_activities = AllowExecActivities::Allowlist(
+            deployment
+                .activities_exec
+                .iter()
+                .skip(1)
+                .zip(digests.iter().skip(1))
+                .map(|(activity, digest)| (activity.name.to_string(), digest.clone()))
+                .collect(),
+        );
         let server_verified = Box::pin(ServerVerified::new(
             engines.clone(),
             config.clone(),
@@ -5882,7 +6124,14 @@ mod tests {
         );
 
         // The full allowlist must pass strict verification.
-        config.allow_exec_activities = AllowExecActivities::Allowlist(digests);
+        config.allow_exec_activities = AllowExecActivities::Allowlist(
+            deployment
+                .activities_exec
+                .iter()
+                .zip(digests)
+                .map(|(activity, digest)| (activity.name.to_string(), digest))
+                .collect(),
+        );
         let server_verified =
             Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
         deployment_verify_config(
