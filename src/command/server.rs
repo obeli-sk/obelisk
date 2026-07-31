@@ -3,7 +3,7 @@ use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
-use crate::config::config_holder::load_deployment_canonical;
+use crate::config::config_holder::load_deployment_resolved;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::file_provider::CasFileProvider;
@@ -996,7 +996,7 @@ pub(crate) async fn verify(
 ) -> Result<(), anyhow::Error> {
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
-        Some(load_deployment_canonical(&deployment_path).await?)
+        Some(load_deployment_resolved(&deployment_path).await?)
     } else {
         None
     };
@@ -1024,7 +1024,7 @@ pub(crate) async fn verify(
     let (deployment, deployment_id) = if let Some(deployment) = deployment_opt {
         (deployment, DeploymentId::generate())
     } else {
-        get_deployment_canonical_from_db(
+        get_deployment_resolved_from_db(
             &config.database,
             &config_holder.path_prefixes,
             &mut db_pool,
@@ -1353,7 +1353,7 @@ async fn exec_content_digest_lines(
 
 /// Look up the current deployment from the database.
 /// Prefers Enqueued over Active; errors if neither exists.
-async fn get_deployment_canonical_from_db(
+async fn get_deployment_resolved_from_db(
     database: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
     db_pool_container: &mut DbPoolCloseableContainer,
@@ -1426,7 +1426,7 @@ async fn get_deployment_canonical_from_db(
         .await
         .with_context(|| {
             format!(
-                "cannot canonicalize deployment manifest for {:?}",
+                "cannot resolve deployment manifest for {:?}",
                 record.deployment_id
             )
         })?;
@@ -1436,22 +1436,22 @@ async fn get_deployment_canonical_from_db(
 /// A deployment authored locally and passed via `server run -d <toml>` / `--empty`.
 ///
 /// Carries the verbatim manifest (stored as the source of truth), its referenced file
-/// blobs (uploaded to the CAS so later restarts can canonicalize from it), and the
-/// already-canonicalized form used to compile/link this run.
+/// blobs (uploaded to the CAS so later restarts can resolve from it), and the
+/// already-resolved form used to compile/link this run.
 pub(crate) struct LocalDeployment {
     deployment_toml: String,
-    canonical: DeploymentResolved,
+    resolved: DeploymentResolved,
     files: Vec<DeploymentManifestFile>,
 }
 
 impl LocalDeployment {
     pub(crate) async fn from_path(deployment_path: &Path) -> anyhow::Result<Self> {
-        let canonical = load_deployment_canonical(deployment_path).await?;
+        let resolved = load_deployment_resolved(deployment_path).await?;
         let prepared =
             crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_path).await?;
         Ok(Self {
             deployment_toml: prepared.deployment_toml,
-            canonical,
+            resolved,
             files: prepared.files,
         })
     }
@@ -1459,13 +1459,13 @@ impl LocalDeployment {
     pub(crate) fn empty() -> Self {
         Self {
             deployment_toml: String::new(),
-            canonical: DeploymentResolved::default(),
+            resolved: DeploymentResolved::default(),
             files: Vec::new(),
         }
     }
 }
 
-/// Root for canonicalizing a stored manifest against the CAS.
+/// Root for resolving a stored manifest against the CAS.
 ///
 /// Empty on purpose: a stored manifest has no submitter host to anchor relative paths to.
 /// Deployment-owned references are addressed by content digest in the CAS, so joining a
@@ -1503,7 +1503,7 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
 }
 
 /// Resolve a stored verbatim TOML manifest by reading its referenced blobs from the CAS,
-/// returning the canonical form and the `(path, digest)` of every file it referenced.
+/// returning the resolved form and the `(path, digest)` of every file it referenced.
 ///
 /// `${...}` env vars and secrets resolve here, in the server's environment.
 async fn deployment_resolved_and_files_from_manifest(
@@ -1516,7 +1516,7 @@ async fn deployment_resolved_and_files_from_manifest(
     let cas: Arc<dyn concepts::cas::Cas> = db_pool
         .cas_conn()
         .await
-        .context("cannot get CAS connection for deployment canonicalization")?
+        .context("cannot get CAS connection for deployment resolution")?
         .into();
     let provider = RecordingCasProvider {
         inner: CasFileProvider { cas },
@@ -1556,11 +1556,11 @@ async fn deployment_resolved_from_manifest(
 /// Compiling/linking needs real files, so [`Self::resolve`] materializes each deployment-owned
 /// blob from the CAS into the wasm cache and rewrites its location to that path. OCI
 /// references already are concrete and pass through unchanged. The current disk-authored
-/// local-run canonical expands valid relative WASM paths to absolute internal paths, so it
+/// local-run resolved form expands valid relative WASM paths to absolute internal paths, so it
 /// resolves to itself.
 ///
 /// The inner value is private so the only way to obtain one is `resolve`; that makes it
-/// impossible to feed an unresolved (relative-path) canonical into compilation.
+/// impossible to feed an unresolved (relative-path) `DeploymentResolved` into compilation.
 pub(crate) struct DeploymentRunnable {
     deployment: DeploymentResolved,
 }
@@ -1569,7 +1569,7 @@ impl DeploymentRunnable {
     /// Resolve every deployment-owned WASM location against the CAS.
     ///
     /// `cas` may be `None` for disk/offline flows (e.g. `obelisk server verify <toml>` with
-    /// `--skip-db`), whose current canonical holds internal absolute paths and OCI refs;
+    /// `--skip-db`), whose current resolved form holds internal absolute paths and OCI refs;
     /// encountering a deployment-owned (relative) WASM there is an error because there is no
     /// store to read it.
     pub(crate) async fn resolve(
@@ -1629,7 +1629,7 @@ impl DeploymentRunnable {
         Ok(Self { deployment })
     }
 
-    fn into_canonical(self) -> DeploymentResolved {
+    fn into_resolved(self) -> DeploymentResolved {
         self.deployment
     }
 }
@@ -1682,7 +1682,7 @@ async fn prepare_new_deployment_record(
     files: Vec<DeploymentManifestFile>,
     description: Option<String>,
 ) -> anyhow::Result<DeploymentRecord> {
-    // Upload referenced blobs to the CAS first, so a later restart can canonicalize from it.
+    // Upload referenced blobs to the CAS first, so a later restart can resolve from it.
     let cas = db_pool
         .cas_conn()
         .await
@@ -1812,7 +1812,7 @@ pub(crate) async fn run_internal(
         }
     };
     let span = Span::current();
-    let (active_deployment_id, deployment_canonical, new_deployment_record) =
+    let (active_deployment_id, deployment_resolved, new_deployment_record) =
         if let Some(deployment) = deployment {
             // --deployment or `--deployment-empty` provided: prepare, insert+activate after compile.
             let new_deployment_id = DeploymentId::generate();
@@ -1825,7 +1825,7 @@ pub(crate) async fn run_internal(
                 description,
             )
             .await?;
-            (new_deployment_id, deployment.canonical, Some(record))
+            (new_deployment_id, deployment.resolved, Some(record))
         } else {
             // No --deployment: pick up from the DB.
             // Activate any Enqueued deployment (queued for this restart), then use active.
@@ -1843,7 +1843,7 @@ pub(crate) async fn run_internal(
                         .await
                         .context("cannot activate enqueued deployment")?;
                 }
-                let canonical =
+                let resolved =
                     deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
                 span.record(
                     "deployment_id",
@@ -1855,7 +1855,7 @@ pub(crate) async fn run_internal(
                     info!("Using the currently active deployment");
                 }
 
-                (record.deployment_id, canonical, None)
+                (record.deployment_id, resolved, None)
             } else {
                 let new_deployment_id = DeploymentId::generate();
                 span.record("deployment_id", tracing::field::display(&new_deployment_id));
@@ -1882,7 +1882,7 @@ pub(crate) async fn run_internal(
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
         &prepared_dirs,
-        deployment_canonical,
+        deployment_resolved,
         Some(cas),
         active_deployment_id,
         VerifyParams {
@@ -2721,7 +2721,7 @@ pub(crate) async fn submit_deployment(
     }
 
     // Fully validate the deployment before persisting it, so a stored deployment is
-    // already known-good: canonicalize from the CAS (resolving env vars/secrets),
+    // already known-good: resolve from the CAS (resolving env vars/secrets),
     // parse JS, validate WIT/WASM, and compile + link every component. Activation no
     // longer performs first-time package validation. Blobs already written to the CAS
     // when verification fails are acceptable GC input; no deployment row is inserted.
@@ -3618,7 +3618,7 @@ impl DeploymentVerified {
         global_http_config: GlobalHttpConfig,
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
-        let mut deployment = deployment.into_canonical();
+        let mut deployment = deployment.into_resolved();
         trace!("Using deployment toml: {deployment:#?}");
         // Scoped so the `server_replacements` borrow of `global_http_config` ends
         // before the config is moved into the deployment below. Each component's
@@ -5329,7 +5329,7 @@ mod tests {
             report_missing_outbound_http_secret_replacements, webhook_global_http_allowlist,
         },
         config::{
-            config_holder::{ConfigHolder, load_deployment_canonical},
+            config_holder::{ConfigHolder, load_deployment_resolved},
             secret_registry::SecretRegistry,
             toml::{
                 AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
@@ -5597,7 +5597,7 @@ mod tests {
             deployment_toml,
         )
         .await?;
-        let deployment = load_deployment_canonical(fixture.path()).await?;
+        let deployment = load_deployment_resolved(fixture.path()).await?;
 
         let prepared_dirs = prepare_dirs(
             &config,
@@ -5625,7 +5625,7 @@ mod tests {
         };
         let webui_enabled = None;
 
-        // Verify deployment. The current disk-authored canonical holds internal absolute
+        // Verify deployment. The current disk-authored resolved form holds internal absolute
         // paths, so it resolves to itself without a CAS.
         let deployment =
             DeploymentRunnable::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
@@ -5678,7 +5678,7 @@ mod tests {
             "obelisk-testing-wasm-local.toml",
         )
         .await?;
-        let mut deployment = load_deployment_canonical(fixture.path()).await?;
+        let mut deployment = load_deployment_resolved(fixture.path()).await?;
         let shared_digest: ComponentDigest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 .parse()
@@ -5738,7 +5738,7 @@ mod tests {
         let config = config_holder.load_config()?;
         assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
         let deployment =
-            load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
+            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
             &config,
             &PrepareDirsParams {
@@ -5815,7 +5815,7 @@ mod tests {
         )?;
         let mut config = config_holder.load_config()?;
         let deployment =
-            load_deployment_canonical(&workspace.join("obelisk-testing-exec.toml")).await?;
+            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
         let digests = deployment
             .activities_exec
             .iter()

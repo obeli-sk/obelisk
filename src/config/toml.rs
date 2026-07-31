@@ -135,18 +135,18 @@ pub(crate) struct DeploymentTomlValidated {
     pub(crate) deployment_dir: PathBuf,
 }
 impl DeploymentTomlValidated {
-    pub(crate) async fn canonicalize(self) -> Result<DeploymentResolved, anyhow::Error> {
+    pub(crate) async fn resolve(self) -> Result<DeploymentResolved, anyhow::Error> {
         let provider = DiskProvider {
             deployment_dir: self.deployment_dir.clone(),
         };
-        self.canonicalize_with_provider(&provider).await
+        self.resolve_with_provider(&provider).await
     }
 
-    pub(crate) async fn canonicalize_with_provider(
+    pub(crate) async fn resolve_with_provider(
         self,
         provider: &dyn FileProvider,
     ) -> Result<DeploymentResolved, anyhow::Error> {
-        resolve_local_refs_to_canonical(self, provider).await
+        resolve_local_refs(self, provider).await
     }
 }
 
@@ -339,7 +339,7 @@ impl DeploymentToml {
         Ok(())
     }
 
-    /// Validate and normalize OCI references of WASM components so that the canonical
+    /// Validate and normalize OCI references of WASM components so that the resolved
     /// form matches the previous `oci_client::Reference`-based serialization.
     fn normalize_oci_locations(&mut self) -> Result<(), anyhow::Error> {
         fn normalize(loc: &mut ComponentLocationToml) -> Result<(), anyhow::Error> {
@@ -373,7 +373,7 @@ impl DeploymentToml {
     }
 
     /// Expand `${DEPLOYMENT_DIR}` prefixes in WASM component paths (which are read lazily
-    /// at runtime and therefore must be absolute in the canonical form), rejecting `..`
+    /// at runtime and therefore must be absolute in the resolved form), rejecting `..`
     /// escapes.
     fn expand_deployment_dir_prefix(
         &mut self,
@@ -402,8 +402,8 @@ impl DeploymentToml {
             }
         }
         // Script (JS/exec) locations and backtrace sources are NOT expanded here. Their
-        // `${DEPLOYMENT_DIR}` prefix is handled when resolving to canonical
-        // (`resolve_script_toml_to_canonical` / `resolve_backtrace_to_canonical`), so
+        // `${DEPLOYMENT_DIR}` prefix is handled when resolving deployment-owned refs
+        // (`resolve_script_toml` / `resolve_backtrace`), so
         // deployment-owned files preserve deployment-relative names.
         for c in &mut self.workflows_wasm {
             expand_loc(&mut c.common.location, deployment_dir)?;
@@ -1668,7 +1668,7 @@ pub(crate) trait ActivityExecComponentConfigResolvedExt {
 }
 
 impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResolved {
-    /// Resolve the canonical program to a form the worker can execute.
+    /// Resolve the program to a form the worker can execute.
     async fn resolve(
         &self,
         wasm_cache_dir: &std::path::Path,
@@ -2047,7 +2047,7 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                     );
                 }
                 // Report the basename to the JS engine so stack frames (and the source
-                // lookup keyed by them) use the bare file name. The canonical `file_name`
+                // lookup keyed by them) use the bare file name. The resolved `file_name`
                 // keeps its deployment-relative subpath for `deployment get` export.
                 let file_name = std::path::Path::new(file_name)
                     .file_name()
@@ -2061,7 +2061,7 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
             }
             ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)
-                    .map_err(|e| anyhow::anyhow!("invalid OCI reference in canonical form: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("invalid OCI reference in resolved form: {e}"))?;
                 let js_cache_dir = wasm_cache_dir.join("js");
                 tokio::fs::create_dir_all(&js_cache_dir)
                     .await
@@ -2410,7 +2410,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
 
 /// Resolve a `DeploymentToml` to `DeploymentResolved` by reading all local JS and backtrace
 /// source files.
-async fn resolve_local_refs_to_canonical(
+async fn resolve_local_refs(
     deployment: DeploymentTomlValidated,
     provider: &dyn FileProvider,
 ) -> anyhow::Result<DeploymentResolved> {
@@ -2418,7 +2418,7 @@ async fn resolve_local_refs_to_canonical(
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
     for (a, name) in deployment.activities_js {
         activities_js.push(ActivityJsComponentConfigResolved {
-            location: resolve_script_toml_to_canonical(
+            location: resolve_script_toml(
                 a.location,
                 a.content,
                 format!("{name}.js"),
@@ -2453,7 +2453,7 @@ async fn resolve_local_refs_to_canonical(
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
-            backtrace: resolve_backtrace_to_canonical(&w.backtrace, &deployment_dir, provider)
+            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider)
                 .await?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
@@ -2464,7 +2464,7 @@ async fn resolve_local_refs_to_canonical(
     let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
     for (w, name) in deployment.workflows_js {
         workflows_js.push(WorkflowJsComponentConfigResolved {
-            location: resolve_script_toml_to_canonical(
+            location: resolve_script_toml(
                 w.location,
                 w.content,
                 format!("{name}.js"),
@@ -2497,7 +2497,7 @@ async fn resolve_local_refs_to_canonical(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars,
-            backtrace: resolve_backtrace_to_canonical(&w.backtrace, &deployment_dir, provider)
+            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider)
                 .await?,
             backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
@@ -2509,7 +2509,7 @@ async fn resolve_local_refs_to_canonical(
     let mut webhooks_js = Vec::with_capacity(deployment.webhooks_js.len());
     for w in deployment.webhooks_js {
         webhooks_js.push(webhook::WebhookJsComponentConfigResolved {
-            location: resolve_script_toml_to_canonical(
+            location: resolve_script_toml(
                 w.location,
                 w.content,
                 format!("{}.js", w.name),
@@ -2533,7 +2533,7 @@ async fn resolve_local_refs_to_canonical(
 
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
     for (a, name) in deployment.activities_exec {
-        let location = resolve_script_toml_to_canonical(
+        let location = resolve_script_toml(
             a.location,
             a.content,
             name.to_string(),
@@ -2563,7 +2563,7 @@ async fn resolve_local_refs_to_canonical(
         });
     }
 
-    // Build canonical stubs/externals with resolved names filled in.
+    // Build resolved stubs/externals with their names filled in.
     let activities_stub = deployment
         .activities_stub
         .into_iter()
@@ -2601,7 +2601,7 @@ async fn resolve_local_refs_to_canonical(
         })
         .collect();
 
-    let canonical = DeploymentResolved {
+    let resolved = DeploymentResolved {
         activities_wasm: deployment.activities_wasm,
         activities_stub,
         activities_external,
@@ -2613,8 +2613,8 @@ async fn resolve_local_refs_to_canonical(
         webhooks_js,
         crons: deployment.crons,
     };
-    validate_owned_source_file_names(&canonical)?;
-    Ok(canonical)
+    validate_owned_source_file_names(&resolved)?;
+    Ok(resolved)
 }
 
 /// Reject deployments where two deployment-owned source files (inline/owned scripts and
@@ -2623,7 +2623,7 @@ async fn resolve_local_refs_to_canonical(
 /// retrieved with `deployment get`, which writes every owned source to disk at its
 /// `file_name` and refuses to clobber. Identical re-uses of a name are allowed (they dedupe
 /// to a single file). This surfaces the failure at submit time rather than on a later round-trip.
-fn validate_owned_source_file_names(canonical: &DeploymentResolved) -> anyhow::Result<()> {
+fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Result<()> {
     fn register<'a>(
         seen: &mut HashMap<&'a str, &'a str>,
         file_name: &'a str,
@@ -2642,24 +2642,24 @@ fn validate_owned_source_file_names(canonical: &DeploymentResolved) -> anyhow::R
 
     let mut seen: HashMap<&str, &str> = HashMap::new();
 
-    let script_locations = canonical
+    let script_locations = resolved
         .activities_js
         .iter()
         .map(|c| &c.location)
-        .chain(canonical.activities_exec.iter().map(|c| &c.location))
-        .chain(canonical.workflows_js.iter().map(|c| &c.location))
-        .chain(canonical.webhooks_js.iter().map(|c| &c.location));
+        .chain(resolved.activities_exec.iter().map(|c| &c.location))
+        .chain(resolved.workflows_js.iter().map(|c| &c.location))
+        .chain(resolved.webhooks_js.iter().map(|c| &c.location));
     for loc in script_locations {
         if let ScriptLocationResolved::Content { content, file_name } = loc {
             register(&mut seen, file_name, content)?;
         }
     }
 
-    let backtraces = canonical
+    let backtraces = resolved
         .workflows_wasm
         .iter()
         .map(|c| &c.backtrace)
-        .chain(canonical.webhooks_wasm.iter().map(|c| &c.backtrace));
+        .chain(resolved.webhooks_wasm.iter().map(|c| &c.backtrace));
     for bt in backtraces {
         for source in bt.frame_files_to_sources.values() {
             register(&mut seen, &source.file_name, &source.content)?;
@@ -2703,7 +2703,7 @@ pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<Str
     Ok(parts.join("/"))
 }
 
-/// Resolve a script source (JS or exec) TOML location to its canonical form.
+/// Resolve a script source (JS or exec) TOML location to its resolved form.
 ///
 /// - inline `content` → `Content { content, file_name: default_file_name }` (owned).
 /// - a **relative** `Path` (bare, or `${DEPLOYMENT_DIR}/…`) → read + inline as `Content`,
@@ -2713,7 +2713,7 @@ pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<Str
 ///
 /// When `content_digest` is set it is verified here against the relevant bytes (inline
 /// content or the owned file). `Oci` digests are verified at runtime.
-async fn resolve_script_toml_to_canonical(
+async fn resolve_script_toml(
     location: Option<JsLocationToml>,
     content: Option<String>,
     default_file_name: String,
@@ -2752,7 +2752,7 @@ async fn resolve_script_toml_to_canonical(
     }
 }
 
-async fn resolve_backtrace_to_canonical(
+async fn resolve_backtrace(
     backtrace: &ComponentBacktraceConfig,
     _deployment_dir: &Path,
     provider: &dyn FileProvider,
@@ -4373,7 +4373,7 @@ name = "my_stub"
         async fn inline_content_becomes_owned() {
             let dir = tempfile::tempdir().unwrap();
             let provider = disk_provider(dir.path());
-            let location = resolve_script_toml_to_canonical(
+            let location = resolve_script_toml(
                 None,
                 Some("export const x = 1;".to_string()),
                 "foo.js".to_string(),
@@ -4399,7 +4399,7 @@ name = "my_stub"
             std::fs::write(sub.join("a.js"), "owned content").unwrap();
 
             // Bare relative path (implicit `${DEPLOYMENT_DIR}` prefix).
-            let location = resolve_script_toml_to_canonical(
+            let location = resolve_script_toml(
                 Some(JsLocationToml::Path("scripts/a.js".to_string())),
                 None,
                 "ignored.js".to_string(),
@@ -4424,7 +4424,7 @@ name = "my_stub"
             std::fs::create_dir_all(&sub).unwrap();
             std::fs::write(sub.join("a.js"), "owned content").unwrap();
 
-            let location = resolve_script_toml_to_canonical(
+            let location = resolve_script_toml(
                 Some(JsLocationToml::Path(
                     "${DEPLOYMENT_DIR}/scripts/a.js".to_string(),
                 )),
@@ -4450,7 +4450,7 @@ name = "my_stub"
             std::fs::write(&outside, "external content").unwrap();
             let abs = outside.to_string_lossy().into_owned();
 
-            let err = resolve_script_toml_to_canonical(
+            let err = resolve_script_toml(
                 Some(JsLocationToml::Path(abs.clone())),
                 None,
                 "ignored.js".to_string(),
@@ -4472,7 +4472,7 @@ name = "my_stub"
             let dir = tempfile::tempdir().unwrap();
             let provider = disk_provider(dir.path());
             for raw in ["../escape.js", "${DEPLOYMENT_DIR}/../escape.js"] {
-                let err = resolve_script_toml_to_canonical(
+                let err = resolve_script_toml(
                     Some(JsLocationToml::Path(raw.to_string())),
                     None,
                     "ignored.js".to_string(),
@@ -4493,7 +4493,7 @@ name = "my_stub"
             let provider = disk_provider(dir.path());
             let reference =
                 oci_client::Reference::from_str("docker.io/library/example:latest").unwrap();
-            let location = resolve_script_toml_to_canonical(
+            let location = resolve_script_toml(
                 Some(JsLocationToml::Oci(reference)),
                 None,
                 "ignored.js".to_string(),
@@ -4517,7 +4517,7 @@ name = "my_stub"
             let content = "export const x = 1;";
 
             // Matching digest succeeds.
-            resolve_script_toml_to_canonical(
+            resolve_script_toml(
                 None,
                 Some(content.to_string()),
                 "foo.js".to_string(),
@@ -4530,7 +4530,7 @@ name = "my_stub"
 
             // Mismatching digest fails.
             let wrong = digest_of(b"different");
-            let err = resolve_script_toml_to_canonical(
+            let err = resolve_script_toml(
                 None,
                 Some(content.to_string()),
                 "foo.js".to_string(),
@@ -4554,7 +4554,7 @@ name = "my_stub"
             std::fs::write(dir.path().join("script.js"), "owned content").unwrap();
 
             let wrong = digest_of(b"nope");
-            let err = resolve_script_toml_to_canonical(
+            let err = resolve_script_toml(
                 Some(JsLocationToml::Path("script.js".to_string())),
                 None,
                 "ignored.js".to_string(),
@@ -4686,7 +4686,7 @@ name = "my_stub"
         }
 
         #[tokio::test]
-        async fn canonical_retains_relative_subpath() {
+        async fn resolved_retains_relative_subpath() {
             let dir = tempfile::tempdir().unwrap();
             let provider = DiskProvider {
                 deployment_dir: dir.path().to_path_buf(),
@@ -4700,10 +4700,10 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string().into(),
             );
-            let canon = resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
+            let resolved = resolve_backtrace(&bt, dir.path(), &provider)
                 .await
                 .unwrap();
-            let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
+            let src = resolved.frame_files_to_sources.get(".../src/lib.rs").unwrap();
             assert_eq!(src.content, "SRC");
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
@@ -4725,10 +4725,10 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "crates/foo/src/lib.rs".to_string().into(),
             );
-            let canon = resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
+            let resolved = resolve_backtrace(&bt, dir.path(), &provider)
                 .await
                 .unwrap();
-            let src = canon.frame_files_to_sources.get(".../src/lib.rs").unwrap();
+            let src = resolved.frame_files_to_sources.get(".../src/lib.rs").unwrap();
             assert_eq!(src.content, "SRC");
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
@@ -4746,7 +4746,7 @@ name = "my_stub"
             );
             let err = format!(
                 "{:#}",
-                resolve_backtrace_to_canonical(&bt, dir.path(), &provider)
+                resolve_backtrace(&bt, dir.path(), &provider)
                     .await
                     .unwrap_err()
             );
@@ -4770,7 +4770,7 @@ name = "my_stub"
             let provider = DiskProvider {
                 deployment_dir: other_dir.path().to_path_buf(),
             };
-            let err = resolve_backtrace_to_canonical(&bt, other_dir.path(), &provider)
+            let err = resolve_backtrace(&bt, other_dir.path(), &provider)
                 .await
                 .unwrap_err()
                 .to_string();

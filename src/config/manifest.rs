@@ -1,4 +1,4 @@
-use crate::config::file_provider::{DiskProvider, FileProvider};
+use crate::config::file_provider::FileProvider;
 use crate::config::toml::{
     DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
     strip_deployment_dir_prefix,
@@ -48,7 +48,7 @@ pub(crate) async fn manifest_to_resolved(
     provider: &dyn FileProvider,
 ) -> anyhow::Result<DeploymentResolved> {
     parse_manifest(deployment_toml, deployment_dir)?
-        .canonicalize_with_provider(provider)
+        .resolve_with_provider(provider)
         .await
 }
 
@@ -72,7 +72,7 @@ pub(crate) async fn prepare_deployment_manifest(
         .context("cannot parse deployment manifest as TOML")?;
 
     // Validate through the typed config before collecting files so malformed component
-    // entries fail with the same errors as today's canonicalization path.
+    // entries fail with the same errors as today's resolution path.
     parse_manifest(deployment_toml, deployment_dir)?;
 
     let mut files = Vec::new();
@@ -583,28 +583,10 @@ async fn read_deployment_file(
     let digest = content_digest(&bytes);
     Ok((digest, bytes))
 }
-
-#[expect(
-    dead_code,
-    reason = "used by CLI manifest canonicalization in later slices"
-)]
-pub(crate) async fn manifest_file_to_canonical(
-    deployment_toml_path: &Path,
-) -> anyhow::Result<DeploymentResolved> {
-    let deployment_toml = tokio::fs::read_to_string(deployment_toml_path)
-        .await
-        .with_context(|| format!("cannot read deployment manifest {deployment_toml_path:?}"))?;
-    let deployment_dir = canonicalize_parent(deployment_toml_path)
-        .with_context(|| format!("cannot resolve parent of {deployment_toml_path:?}"))?;
-    let provider = DiskProvider {
-        deployment_dir: deployment_dir.clone(),
-    };
-    manifest_to_resolved(&deployment_toml, &deployment_dir, &provider).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::file_provider::DiskProvider;
 
     #[tokio::test]
     async fn prepare_fills_relative_script_digest_and_collects_blob() {
@@ -846,7 +828,7 @@ location = "components/a.wasm"
     }
 
     #[tokio::test]
-    async fn manifest_to_canonical_uses_supplied_provider() {
+    async fn manifest_to_resolved_uses_supplied_provider() {
         let dir = tempfile::tempdir().unwrap();
         tokio::fs::write(dir.path().join("a.js"), "export const x = 1;")
             .await
@@ -861,10 +843,10 @@ ffqn = "ns:pkg/ifc.fn"
             deployment_dir: dir.path().to_path_buf(),
         };
 
-        let canonical = manifest_to_resolved(manifest, dir.path(), &provider)
+        let resolved = manifest_to_resolved(manifest, dir.path(), &provider)
             .await
             .unwrap();
 
-        assert_eq!(canonical.activities_js.len(), 1);
+        assert_eq!(resolved.activities_js.len(), 1);
     }
 }

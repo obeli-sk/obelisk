@@ -646,9 +646,9 @@ async fn generate_wit_deps(
     server_config.webui.enabled = false;
     let _guard = init::init(&server_config)?; // Configure logging
     let deployment = deployment
-        .canonicalize()
+        .resolve()
         .await
-        .with_context(|| format!("cannot canonicalize {deployment_toml:?}"))?;
+        .with_context(|| format!("cannot resolve {deployment_toml:?}"))?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let verify_params = VerifyParams {
@@ -673,7 +673,7 @@ async fn generate_wit_deps(
 
     // WIT extraction resolves no secrets; the caller passes a no-secrets registry.
     let server_verified = Box::pin(server_verify(server_config, engines, secret_registry)).await?;
-    // Disk-authored canonical: only absolute paths, so it resolves without a CAS.
+    // Disk-authored resolved form: only absolute paths, so it resolves without a CAS.
     let deployment_verified = deployment_verify_config(
         &server_verified,
         &prepared_dirs,

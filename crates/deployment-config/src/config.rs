@@ -79,7 +79,7 @@ impl ConfigName {
 
 /// Location of a WASM component.
 /// The OCI reference is kept as a string (without the `oci://` prefix); it is
-/// validated and normalized by the obelisk server before canonicalization.
+/// validated and normalized by the obelisk server before resolution.
 #[derive(
     Debug, Clone, Hash, JsonSchema, serde_with::DeserializeFromStr, serde_with::SerializeDisplay,
 )]
@@ -768,7 +768,7 @@ pub struct DeploymentResolved {
     pub crons: Vec<cron::CronComponentConfigToml>,
 }
 
-// Serde defaults shared by the canonical types and the TOML types in the obelisk binary.
+// Serde defaults shared by the resolved config types and the TOML types in the obelisk binary.
 
 #[must_use]
 pub const fn default_max_retries() -> u32 {
