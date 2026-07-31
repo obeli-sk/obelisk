@@ -11,7 +11,9 @@ mod oci;
 mod server;
 mod wit_printer;
 
-use args::{Args, ComponentArgs, DeploymentArgs, ExecutionArgs, Server, Subcommand};
+use args::{
+    Args, ComponentArgs, Deployment, DeploymentArgs, ExecutionArgs, Server, Subcommand, VerifyArgs,
+};
 use clap::Parser;
 use client::ClientStartup;
 use config::config_holder::ConfigHolder;
@@ -36,8 +38,8 @@ fn main() -> Result<(), anyhow::Error> {
     type CommandFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>;
     let future: CommandFuture = match command {
         Subcommand::Server(server) => {
-            let (Server::Run { server_config, .. } | Server::Verify { server_config, .. }) =
-                &server;
+            let (Server::Run { server_config, .. }
+            | Server::Verify(VerifyArgs { server_config, .. })) = &server;
             let ServerStartup {
                 config_holder,
                 config,
@@ -53,6 +55,23 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Subcommand::Execution(ExecutionArgs { command, token }) => {
             Box::pin(command.run(ClientStartup::new(token.api_token)))
+        }
+        // `deployment verify` is a local alias for `server verify`: it runs through the
+        // server-startup machinery rather than the gRPC client the other deployment commands use.
+        Subcommand::Deployment(DeploymentArgs {
+            command: Deployment::Verify(args),
+            token: _,
+        }) => {
+            let server = Server::Verify(args);
+            let Server::Verify(VerifyArgs { server_config, .. }) = &server else {
+                unreachable!()
+            };
+            let ServerStartup {
+                config_holder,
+                config,
+                secret_registry,
+            } = prepare_server_startup(server_config.clone())?;
+            Box::pin(server.run(config_holder, config, secret_registry))
         }
         Subcommand::Deployment(DeploymentArgs { command, token }) => {
             Box::pin(command.run(ClientStartup::new(token.api_token)))

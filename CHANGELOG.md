@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *(cli)* Added `obelisk deployment verify` as a local alias for `obelisk server verify`, so
+  deployment authors can verify a `deployment.toml` from the `deployment` command group. It accepts
+  the same flags and runs the same local compile-and-verify path without starting the server.
 - *(server)* Added an operator-owned `[[outbound_http.allowed_host]]` allowlist for
   component-originated HTTP. It uses the same host, method, URL regex, secret, and replacement
   location grammar as deployment `allowed_host` entries. Destinations and secret placements are

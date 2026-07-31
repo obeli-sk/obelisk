@@ -438,7 +438,7 @@ impl Server {
                 ))
                 .await
             }
-            Server::Verify {
+            Server::Verify(crate::args::VerifyArgs {
                 clean_cache,
                 clean_codegen_cache,
                 server_config: _,
@@ -446,7 +446,7 @@ impl Server {
                 allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
                 skip_db,
-            } => {
+            }) => {
                 Box::pin(verify(
                     config_holder,
                     config,

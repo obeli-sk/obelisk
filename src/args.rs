@@ -283,6 +283,8 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
+    /// Local alias for `server verify`: compile the components and verify their imports without starting the server.
+    Verify(VerifyArgs),
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -470,30 +472,35 @@ pub(crate) enum Server {
         allow_unauthenticated_api: bool,
     },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
-    Verify {
-        /// Delete both the codegen cache and the OCI image cache before verifying.
-        #[arg(long)]
-        clean_cache: bool,
-        /// Delete only the codegen cache before verifying; OCI image cache is kept.
-        #[arg(long)]
-        clean_codegen_cache: bool,
-        /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
-        #[arg(short, long)]
-        server_config: Option<PathBuf>,
-        /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
-        /// falling back to the Active deployment. Errors if neither is found.
-        #[arg(short, long)]
-        deployment: Option<PathBuf>,
-        /// Tolerate runtime requirements unavailable on this server while verifying.
-        #[arg(long)]
-        allow_unavailable_runtime_config: bool,
-        /// Do not fail when a component's imports/exports fail type checking against the deployment.
-        #[arg(long)]
-        suppress_type_checking_errors: bool,
-        /// Skip opening the sqlite database and validating its schema.
-        #[arg(long)]
-        skip_db: bool,
-    },
+    Verify(VerifyArgs),
+}
+
+/// Flags shared by `server verify` and its `deployment verify` alias.
+#[derive(Debug, clap::Args)]
+#[expect(clippy::struct_excessive_bools)]
+pub(crate) struct VerifyArgs {
+    /// Delete both the codegen cache and the OCI image cache before verifying.
+    #[arg(long)]
+    pub(crate) clean_cache: bool,
+    /// Delete only the codegen cache before verifying; OCI image cache is kept.
+    #[arg(long)]
+    pub(crate) clean_codegen_cache: bool,
+    /// Path to the server configuration file (server.toml). If omitted, built-in defaults are used.
+    #[arg(short, long)]
+    pub(crate) server_config: Option<PathBuf>,
+    /// Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used,
+    /// falling back to the Active deployment. Errors if neither is found.
+    #[arg(short, long)]
+    pub(crate) deployment: Option<PathBuf>,
+    /// Tolerate runtime requirements unavailable on this server while verifying.
+    #[arg(long)]
+    pub(crate) allow_unavailable_runtime_config: bool,
+    /// Do not fail when a component's imports/exports fail type checking against the deployment.
+    #[arg(long)]
+    pub(crate) suppress_type_checking_errors: bool,
+    /// Skip opening the sqlite database and validating its schema.
+    #[arg(long)]
+    pub(crate) skip_db: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]
