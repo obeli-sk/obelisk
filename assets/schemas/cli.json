@@ -102,6 +102,10 @@
             {
               "name": "--skip-db",
               "help": "Skip opening the sqlite database and validating its schema"
+            },
+            {
+              "name": "--fix",
+              "help": "Rewrite mismatched `content_digest` values in the deployment file"
             }
           ]
         }
@@ -856,6 +860,52 @@
               "name": "id",
               "help": "Deployment ID",
               "required": true
+            }
+          ]
+        },
+        {
+          "name": "verify",
+          "about": "Local alias for `server verify`: compile the components and verify their imports without starting the server",
+          "options": [
+            {
+              "name": "--clean-cache",
+              "help": "Delete both the codegen cache and the OCI image cache before verifying"
+            },
+            {
+              "name": "--clean-codegen-cache",
+              "help": "Delete only the codegen cache before verifying; OCI image cache is kept"
+            },
+            {
+              "name": "--server-config",
+              "short": "s",
+              "help": "Path to the server configuration file (server.toml). If omitted, built-in defaults are used",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the deployment TOML file. If omitted, the database's Enqueued deployment is used, falling back to the Active deployment. Errors if neither is found",
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--allow-unavailable-runtime-config",
+              "help": "Tolerate runtime requirements unavailable on this server while verifying"
+            },
+            {
+              "name": "--suppress-type-checking-errors",
+              "help": "Do not fail when a component's imports/exports fail type checking against the deployment"
+            },
+            {
+              "name": "--skip-db",
+              "help": "Skip opening the sqlite database and validating its schema"
+            },
+            {
+              "name": "--fix",
+              "help": "Rewrite mismatched `content_digest` values in the deployment file"
             }
           ]
         }

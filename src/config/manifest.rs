@@ -584,6 +584,156 @@ async fn read_deployment_file(
     Ok((digest, bytes))
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct BrokenDigest {
+    pub(crate) field_path: String,
+    pub(crate) path: String,
+    pub(crate) stored: String,
+    pub(crate) actual: ContentDigest,
+}
+
+pub(crate) async fn reconcile_deployment_digests(
+    deployment_toml_path: &Path,
+    fix: bool,
+) -> anyhow::Result<Vec<BrokenDigest>> {
+    let deployment_toml = tokio::fs::read_to_string(deployment_toml_path)
+        .await
+        .with_context(|| format!("cannot read deployment manifest {deployment_toml_path:?}"))?;
+    let deployment_dir = canonicalize_parent(deployment_toml_path)
+        .with_context(|| format!("cannot resolve parent of {deployment_toml_path:?}"))?;
+    let mut doc = deployment_toml
+        .parse::<DocumentMut>()
+        .context("cannot parse deployment manifest as TOML")?;
+
+    let mut broken = Vec::new();
+    for section in WASM_SECTIONS.iter().chain(SCRIPT_SECTIONS) {
+        reconcile_location_section(&mut doc, section, &deployment_dir, fix, &mut broken).await?;
+    }
+    for section in BACKTRACE_SECTIONS {
+        reconcile_backtrace_section(&mut doc, section, &deployment_dir, fix, &mut broken).await?;
+    }
+
+    if fix && !broken.is_empty() {
+        tokio::fs::write(deployment_toml_path, doc.to_string())
+            .await
+            .with_context(|| {
+                format!("cannot write fixed deployment manifest {deployment_toml_path:?}")
+            })?;
+    }
+    Ok(broken)
+}
+
+async fn reconcile_location_section(
+    doc: &mut DocumentMut,
+    section: &str,
+    deployment_dir: &Path,
+    fix: bool,
+    broken: &mut Vec<BrokenDigest>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+        return Ok(());
+    };
+
+    for table in components.iter_mut() {
+        let name = component_name(table);
+        let Some(stored) = table
+            .get("content_digest")
+            .and_then(Item::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let (path, actual) =
+            if let Some(raw_location) = table.get("location").and_then(Item::as_str) {
+                let Some(path) = deployment_owned_path(raw_location)? else {
+                    continue;
+                };
+                let (actual, _) = read_deployment_file(deployment_dir, &path).await?;
+                (path, actual)
+            } else if let Some(content) = table.get("content").and_then(Item::as_str) {
+                ("<inline>".to_string(), content_digest(content.as_bytes()))
+            } else {
+                continue;
+            };
+
+        if stored != actual.to_string() {
+            if fix {
+                table["content_digest"] = value(actual.to_string());
+            }
+            broken.push(BrokenDigest {
+                field_path: format!(
+                    "{section}[name={}].content_digest",
+                    name.as_deref().unwrap_or("")
+                ),
+                path,
+                stored,
+                actual,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+async fn reconcile_backtrace_section(
+    doc: &mut DocumentMut,
+    section: &str,
+    deployment_dir: &Path,
+    fix: bool,
+    broken: &mut Vec<BrokenDigest>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+        return Ok(());
+    };
+
+    for table in components.iter_mut() {
+        let name = component_name(table);
+        let Some(sources) = table
+            .get_mut("backtrace")
+            .and_then(Item::as_table_like_mut)
+            .and_then(|backtrace| backtrace.get_mut("sources"))
+            .and_then(Item::as_table_like_mut)
+        else {
+            continue;
+        };
+
+        for (key, source) in sources.iter_mut() {
+            let Some(raw_path) = backtrace_source_path(source) else {
+                continue;
+            };
+            let Some(path) = deployment_owned_path(&raw_path)? else {
+                continue;
+            };
+            let Some(stored) = source
+                .as_table_like()
+                .and_then(|table| table.get("content_digest"))
+                .and_then(Item::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let (actual, _) = read_deployment_file(deployment_dir, &path).await?;
+            if stored != actual.to_string() {
+                if fix && let Some(table) = source.as_table_like_mut() {
+                    table.insert("content_digest", value(actual.to_string()));
+                }
+                broken.push(BrokenDigest {
+                    field_path: format!(
+                        "{section}[name={}].backtrace.sources[{}].content_digest",
+                        name.as_deref().unwrap_or(""),
+                        key.get()
+                    ),
+                    path,
+                    stored,
+                    actual,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,5 +999,91 @@ ffqn = "ns:pkg/ifc.fn"
             .unwrap();
 
         assert_eq!(resolved.activities_js.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_reports_all_mismatches_and_fixes_them() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("components"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(dir.path().join("scripts"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(dir.path().join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("components/w.wasm"), b"workflow")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("scripts/a.js"), b"activity")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("src/lib.rs"), b"source")
+            .await
+            .unwrap();
+
+        let wrong = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        let deployment_path = dir.path().join("deployment.toml");
+        let manifest = format!(
+            r#"# formatting is preserved
+[[workflow_wasm]]
+name = "wf"
+location = "components/w.wasm"
+content_digest = "{wrong}"
+
+[workflow_wasm.backtrace.sources]
+".../src/lib.rs" = {{ path = "src/lib.rs", content_digest = "{wrong}" }}
+
+[[activity_js]]
+name = "file"
+location = "scripts/a.js"
+content_digest = "{wrong}"
+
+[[activity_exec]]
+name = "inline"
+content = "echo hello"
+content_digest = "{wrong}"
+"#
+        );
+        tokio::fs::write(&deployment_path, &manifest).await.unwrap();
+
+        let broken = reconcile_deployment_digests(&deployment_path, false)
+            .await
+            .unwrap();
+        assert_eq!(broken.len(), 4);
+        assert_eq!(
+            broken
+                .iter()
+                .map(|digest| digest.field_path.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "workflow_wasm[name=wf].content_digest",
+                "activity_js[name=file].content_digest",
+                "activity_exec[name=inline].content_digest",
+                "workflow_wasm[name=wf].backtrace.sources[.../src/lib.rs].content_digest",
+            ]
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&deployment_path).await.unwrap(),
+            manifest
+        );
+
+        let fixed = reconcile_deployment_digests(&deployment_path, true)
+            .await
+            .unwrap();
+        assert_eq!(fixed.len(), 4);
+        assert!(
+            tokio::fs::read_to_string(&deployment_path)
+                .await
+                .unwrap()
+                .starts_with("# formatting is preserved")
+        );
+        assert!(
+            reconcile_deployment_digests(&deployment_path, false)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

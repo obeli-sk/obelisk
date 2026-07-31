@@ -9,6 +9,7 @@ use crate::config::env_var::EnvVarConfig;
 use crate::config::file_provider::CasFileProvider;
 use crate::config::manifest::DeploymentManifest;
 use crate::config::manifest::DeploymentManifestFile;
+use crate::config::manifest::reconcile_deployment_digests;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
@@ -446,6 +447,7 @@ impl Server {
                 allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
                 skip_db,
+                fix,
             }) => {
                 Box::pin(verify(
                     config_holder,
@@ -465,6 +467,7 @@ impl Server {
                         suppress_linking_errors: false,
                     },
                     skip_db,
+                    fix,
                     secret_registry,
                 ))
                 .await
@@ -992,10 +995,44 @@ pub(crate) async fn verify(
     deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
+    fix: bool,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
+        let broken = reconcile_deployment_digests(&deployment_path, fix).await?;
+        if !broken.is_empty() {
+            if fix {
+                for digest in &broken {
+                    info!(
+                        "Fixed {} ({}): {} -> {}",
+                        digest.field_path, digest.path, digest.stored, digest.actual
+                    );
+                }
+                info!(
+                    "Corrected {} content digest(s) in {}",
+                    broken.len(),
+                    deployment_path.display()
+                );
+            } else {
+                let details = broken
+                    .iter()
+                    .map(|digest| {
+                        format!(
+                            "- {} ({}): expected {}, got {}",
+                            digest.field_path, digest.path, digest.stored, digest.actual
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                bail!(
+                    "{} content digest(s) in {} do not match:\n{}\nRun again with `--fix` to update them.",
+                    broken.len(),
+                    deployment_path.display(),
+                    details
+                );
+            }
+        }
         Some(load_deployment_resolved(&deployment_path).await?)
     } else {
         None

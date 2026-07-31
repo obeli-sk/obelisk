@@ -501,6 +501,9 @@ pub(crate) struct VerifyArgs {
     /// Skip opening the sqlite database and validating its schema.
     #[arg(long)]
     pub(crate) skip_db: bool,
+    /// Rewrite mismatched `content_digest` values in the deployment file.
+    #[arg(long, requires = "deployment")]
+    pub(crate) fix: bool,
 }
 
 #[derive(Debug, clap::Subcommand)]
