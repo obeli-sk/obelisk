@@ -756,6 +756,8 @@ pub mod cron {
 /// CAS into a runnable cache path. OCI references remain external references.
 #[derive(Debug, Default, Clone)]
 pub struct DeploymentResolved {
+    /// Path of the deployment manifest this configuration was loaded from, when available.
+    pub source_path: Option<std::path::PathBuf>,
     pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,
     pub activities_stub: Vec<ActivityStubComponentConfigResolved>,
     pub activities_external: Vec<ActivityExternalComponentConfigResolved>,

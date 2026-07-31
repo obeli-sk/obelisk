@@ -419,6 +419,9 @@ impl DeploymentToml {
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ServerConfigToml {
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) source_path: Option<PathBuf>,
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
     /// Operator-owned secret registry. Maps a logical secret name to a source
@@ -2640,6 +2643,7 @@ async fn resolve_local_refs(
         .collect();
 
     let resolved = DeploymentResolved {
+        source_path: None,
         activities_wasm: deployment.activities_wasm,
         activities_stub,
         activities_external,
@@ -3519,24 +3523,120 @@ fn resolve_named_secrets(
     Ok(resolved)
 }
 
+#[derive(Default)]
+struct ConfigWarningState {
+    warnings: BTreeMap<String, BTreeSet<ConfigWarningSource>>,
+    allowed_host_sources: BTreeMap<String, BTreeSet<ConfigWarningSource>>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ConfigWarningSource {
+    path: PathBuf,
+    line: usize,
+}
+
 #[derive(Clone, Default)]
-pub(crate) struct ConfigWarnings(Arc<Mutex<BTreeSet<String>>>);
+pub(crate) struct ConfigWarnings(Arc<Mutex<ConfigWarningState>>);
 
 impl ConfigWarnings {
     pub(crate) fn insert(&self, warning: String) {
         self.0
             .lock()
             .expect("config warnings lock poisoned")
-            .insert(warning);
+            .warnings
+            .entry(warning)
+            .or_default();
+    }
+
+    fn allowed_host_fingerprint(entry: &AllowedHostToml) -> String {
+        toml::to_string(entry).expect("allowed host must serialize")
+    }
+
+    fn insert_allowed_host(&self, warning: String, fingerprint: &str) {
+        let mut state = self.0.lock().expect("config warnings lock poisoned");
+        let sources = state
+            .allowed_host_sources
+            .get(fingerprint)
+            .cloned()
+            .unwrap_or_default();
+        state.warnings.entry(warning).or_default().extend(sources);
+    }
+
+    pub(crate) fn index_allowed_hosts(&self, path: &Path) {
+        #[derive(Deserialize)]
+        struct AllowedHostBlock {
+            allowed_host: Vec<AllowedHostToml>,
+        }
+
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let lines = source.lines().collect::<Vec<_>>();
+        let mut state = self.0.lock().expect("config warnings lock poisoned");
+        for (start, line) in lines.iter().enumerate() {
+            let header = line.split('#').next().unwrap_or_default().trim();
+            if !(header.starts_with("[[") && header.ends_with(".allowed_host]]")) {
+                continue;
+            }
+            let end = lines[start + 1..]
+                .iter()
+                .position(|line| {
+                    line.split('#')
+                        .next()
+                        .unwrap_or_default()
+                        .trim_start()
+                        .starts_with('[')
+                })
+                .map_or(lines.len(), |offset| start + 1 + offset);
+            let mut block = String::from("[[allowed_host]]\n");
+            for line in &lines[start + 1..end] {
+                block.push_str(line);
+                block.push('\n');
+            }
+            let Ok(block) = toml::from_str::<AllowedHostBlock>(&block) else {
+                continue;
+            };
+            let Some(entry) = block.allowed_host.first() else {
+                continue;
+            };
+            state
+                .allowed_host_sources
+                .entry(Self::allowed_host_fingerprint(entry))
+                .or_default()
+                .insert(ConfigWarningSource {
+                    path: path.to_path_buf(),
+                    line: start + 1,
+                });
+        }
     }
 
     pub(crate) fn report(&self) {
-        let warnings = std::mem::take(&mut *self.0.lock().expect("config warnings lock poisoned"));
+        let warnings = std::mem::take(
+            &mut self
+                .0
+                .lock()
+                .expect("config warnings lock poisoned")
+                .warnings,
+        );
         if !warnings.is_empty() {
-            warn!(
-                "Configuration warnings:\n- {}",
-                warnings.into_iter().collect::<Vec<_>>().join("\n- ")
-            );
+            let warnings = warnings
+                .into_iter()
+                .map(|(warning, sources)| {
+                    if sources.is_empty() {
+                        warning
+                    } else {
+                        format!(
+                            "{warning} ({})",
+                            sources
+                                .into_iter()
+                                .map(|source| format!("{}:{}", source.path.display(), source.line))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                })
+                .collect::<Vec<_>>();
+            warn!("Configuration warnings:\n- {}", warnings.join("\n- "));
         }
     }
 }
@@ -3568,15 +3668,19 @@ pub(crate) fn resolve_allowed_hosts(
     entries
         .into_iter()
         .filter_map(|entry| {
+            let fingerprint = ConfigWarnings::allowed_host_fingerprint(&entry);
             // Convert MethodsInput to MethodsPattern
             let methods = match entry.methods {
                 None => {
                     // Omitted methods: nothing allowed, warn and skip
-                    warnings.insert(format!(
-                        "allowed_host `{}` has no `methods` field - no requests will be allowed; \
-                         use `methods = \"*\"` to allow all methods",
-                        entry.pattern
-                    ));
+                    warnings.insert_allowed_host(
+                        format!(
+                            "allowed_host `{}` has no `methods` field - no requests will be allowed; \
+                             use `methods = \"*\"` to allow all methods",
+                            entry.pattern
+                        ),
+                        &fingerprint,
+                    );
                     return None;
                 }
                 Some(MethodsInput::Star(_)) => {
@@ -3586,10 +3690,13 @@ pub(crate) fn resolve_allowed_hosts(
                 Some(MethodsInput::List(list)) => {
                     if list.is_empty() {
                         // Empty list: nothing allowed, warn and skip
-                        warnings.insert(format!(
-                            "allowed_host `{}` has empty `methods = []` - no requests will be allowed",
-                            entry.pattern
-                        ));
+                        warnings.insert_allowed_host(
+                            format!(
+                                "allowed_host `{}` has empty `methods = []` - no requests will be allowed",
+                                entry.pattern
+                            ),
+                            &fingerprint,
+                        );
                         return None;
                     }
                     // Parse specific methods
@@ -3616,10 +3723,13 @@ pub(crate) fn resolve_allowed_hosts(
                 Ok(s) => s,
                 Err(EnvVarError::Missing(var)) => {
                     if ignore_missing_env_vars {
-                        warnings.insert(format!(
-                            "allowed_host pattern `{}` references missing env var `{var}`, skipping",
-                            entry.pattern
-                        ));
+                        warnings.insert_allowed_host(
+                            format!(
+                                "allowed_host pattern `{}` references missing env var `{var}`, skipping",
+                                entry.pattern
+                            ),
+                            &fingerprint,
+                        );
                         return None;
                     }
                     return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
@@ -3634,9 +3744,12 @@ pub(crate) fn resolve_allowed_hosts(
                         Ok(s) => s,
                         Err(EnvVarError::Missing(var)) => {
                             if ignore_missing_env_vars {
-                                warnings.insert(format!(
-                                    "allowed_host request_url_regex `{pattern}` references missing env var `{var}`, skipping"
-                                ));
+                                warnings.insert_allowed_host(
+                                    format!(
+                                        "allowed_host request_url_regex `{pattern}` references missing env var `{var}`, skipping"
+                                    ),
+                                    &fingerprint,
+                                );
                                 return None;
                             }
                             return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
@@ -3666,23 +3779,30 @@ pub(crate) fn resolve_allowed_hosts(
 
             let (secret_env_mappings, replace_in) = if entry.secrets.is_empty() {
                 if !entry.replace_in.is_empty() {
-                    warnings.insert(format!(
-                        "allowed_host `{}` has `replace_in` but no `secrets` - nothing to inject",
-                        entry.pattern
-                    ));
+                    warnings.insert_allowed_host(
+                        format!(
+                            "allowed_host `{}` has `replace_in` but no `secrets` - nothing to inject",
+                            entry.pattern
+                        ),
+                        &fingerprint,
+                    );
                 }
                 (Vec::new(), hashbrown::HashSet::new())
             } else {
                 if entry.replace_in.is_empty() {
-                    warnings.insert(format!(
-                        "allowed_host `{}` has empty `replace_in` - secrets will never be injected",
-                        entry.pattern
-                    ));
+                    warnings.insert_allowed_host(
+                        format!(
+                            "allowed_host `{}` has empty `replace_in` - secrets will never be injected",
+                            entry.pattern
+                        ),
+                        &fingerprint,
+                    );
                 }
                 if pattern.scheme.allows_unencrypted() {
-                    warnings.insert(format!(
-                        "secrets allowed for potentially unencrypted host `{pattern}`"
-                    ));
+                    warnings.insert_allowed_host(
+                        format!("secrets allowed for potentially unencrypted host `{pattern}`"),
+                        &fingerprint,
+                    );
                 }
 
                 let env_mappings = match resolve_named_secrets(
@@ -4168,11 +4288,40 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
             resolve_allowed_hosts(vec![entry.clone()], false, &registry, &warnings).unwrap();
             resolve_allowed_hosts(vec![entry], false, &registry, &warnings).unwrap();
 
-            let warnings = warnings.0.lock().unwrap();
-            assert_eq!(warnings.len(), 1);
+            let state = warnings.0.lock().unwrap();
+            assert_eq!(state.warnings.len(), 1);
             assert_eq!(
-                warnings.first().unwrap(),
+                state.warnings.first_key_value().unwrap().0,
                 "secrets allowed for potentially unencrypted host `http://localhost:5005 [GET]`"
+            );
+        }
+
+        #[test]
+        fn warnings_include_toml_file_and_line() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("server.toml");
+            std::fs::write(
+                &path,
+                "# policy\n[[outbound_http.allowed_host]]\npattern = \"http://localhost:5005\"\n",
+            )
+            .unwrap();
+            let entry = AllowedHostToml {
+                pattern: "http://localhost:5005".to_string(),
+                methods: None,
+                request_url_regex: None,
+                secrets: Vec::new(),
+                replace_in: Vec::new(),
+            };
+            let warnings = ConfigWarnings::default();
+            warnings.index_allowed_hosts(&path);
+
+            resolve_allowed_hosts(vec![entry], false, &SecretRegistry::empty(), &warnings).unwrap();
+
+            let state = warnings.0.lock().unwrap();
+            let sources = state.warnings.first_key_value().unwrap().1;
+            assert_eq!(
+                sources.first().unwrap(),
+                &ConfigWarningSource { path, line: 2 }
             );
         }
     }

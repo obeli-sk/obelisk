@@ -2270,6 +2270,9 @@ impl ServerVerified {
     ) -> Result<ServerVerified, anyhow::Error> {
         trace!("Using server toml: {config:#?}");
         let config_warnings = ConfigWarnings::default();
+        if let Some(source_path) = &config.source_path {
+            config_warnings.index_allowed_hosts(source_path);
+        }
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -3777,6 +3780,9 @@ impl DeploymentVerified {
     ) -> Result<DeploymentVerified, anyhow::Error> {
         let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
         let mut deployment = deployment.into_resolved();
+        if let Some(source_path) = &deployment.source_path {
+            config_warnings.index_allowed_hosts(source_path);
+        }
         trace!("Using deployment toml: {deployment:#?}");
         // Scoped so the `server_replacements` borrow of `global_http_config` ends
         // before the config is moved into the deployment below. Each component's
