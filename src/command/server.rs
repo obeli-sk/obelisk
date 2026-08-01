@@ -115,7 +115,7 @@ use indexmap::IndexMap;
 use secrecy::ExposeSecret as _;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -2310,16 +2310,34 @@ impl ServerVerified {
                     .to_string(),
             );
         }
+        let mut unregistered_secrets = BTreeSet::new();
         for entry in &config.outbound_http.allowed_hosts {
             for secret in &entry.secrets {
                 if secret_registry.secret_lookup(secret).is_none() {
-                    bail!(
-                        "server.toml `[[outbound_http.allowed_host]]` references secret \
-                         `{secret}`, but it is not registered in the server.toml `[secrets]` \
-                         table; register it there or remove it from the outbound HTTP entry"
-                    );
+                    unregistered_secrets.insert(secret.as_str());
                 }
             }
+        }
+        if !unregistered_secrets.is_empty() {
+            use std::fmt::Write as _;
+            let list = unregistered_secrets
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+                .join("`, `");
+            // `env` defaults to the logical name; the operator adjusts it to the actual
+            // source variable when it differs.
+            let mut snippet = String::from("[secrets]\n");
+            for name in &unregistered_secrets {
+                let _ = writeln!(snippet, "{name} = {{ env = \"{name}\" }}");
+            }
+            bail!(
+                "server.toml `[[outbound_http.allowed_host]]` references secret(s) `{list}`, \
+                 but they are not registered in the server.toml `[secrets]` table.\n\
+                 Add them to server.toml (adjust each `env` to its source variable), or remove \
+                 them from the outbound HTTP entries:\n\n\
+                 {snippet}"
+            );
         }
         let global_http_config = GlobalHttpConfig::from(
             resolve_allowed_hosts(
