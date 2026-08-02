@@ -1,7 +1,6 @@
 mod config_prepass;
 
 use crate::ServerStartup;
-use crate::args::Server;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
@@ -408,81 +407,6 @@ const HTTP_SERVER_NAME_WEBUI: &str = "webui";
 const HTTP_SERVER_NAME_EXTERNAL: &str = "external";
 /// Component name of the operator-owned web UI webhook injected when the web UI is enabled.
 const COMPONENT_NAME_WEBUI: &str = "obelisk_webui";
-
-impl Server {
-    pub(crate) async fn run(
-        self,
-        config_holder: ConfigHolder,
-        config: ServerConfigToml,
-        secret_registry: Arc<SecretRegistry>,
-    ) -> Result<(), anyhow::Error> {
-        match self {
-            Server::Run {
-                clean_sqlite_directory,
-                clean_cache,
-                clean_codegen_cache,
-                server_config: _,
-                deployment,
-                empty: deployment_empty,
-                description,
-                suppress_type_checking_errors,
-                allow_unauthenticated_api,
-            } => {
-                Box::pin(run(
-                    config_holder,
-                    config,
-                    deployment,
-                    deployment_empty,
-                    description,
-                    RunParams {
-                        dir_params: PrepareDirsParams {
-                            clean_cache,
-                            clean_codegen_cache,
-                        },
-                        clean_sqlite_directory,
-                        suppress_type_checking_errors,
-                        allow_unauthenticated_api,
-                    },
-                    secret_registry,
-                ))
-                .await
-            }
-            Server::Verify(crate::args::VerifyArgs {
-                clean_cache,
-                clean_codegen_cache,
-                server_config: _,
-                deployment,
-                allow_unavailable_runtime_config,
-                suppress_type_checking_errors,
-                skip_db,
-                fix,
-            }) => {
-                Box::pin(verify(
-                    config_holder,
-                    config,
-                    deployment,
-                    VerifyParams {
-                        dir_params: PrepareDirsParams {
-                            clean_cache,
-                            clean_codegen_cache,
-                        },
-                        runtime_config_availability: if allow_unavailable_runtime_config {
-                            RuntimeConfigAvailability::AllowUnavailable
-                        } else {
-                            RuntimeConfigAvailability::Strict
-                        },
-                        suppress_type_checking_errors,
-                        suppress_linking_errors: false,
-                    },
-                    skip_db,
-                    fix,
-                    secret_registry,
-                ))
-                .await
-            }
-        }
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SubmitError {
