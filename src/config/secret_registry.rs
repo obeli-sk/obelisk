@@ -95,7 +95,9 @@ impl SecretRegistry {
         for (logical_name, source) in secrets {
             match source {
                 SecretSourceToml::Env { env } => {
-                    let value = if let Ok(value) = std::env::var(&env) { value } else {
+                    let value = if let Ok(value) = std::env::var(&env) {
+                        value
+                    } else {
                         missing_env_vars.insert(env.clone());
                         String::new()
                     };
