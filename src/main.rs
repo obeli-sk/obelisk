@@ -11,6 +11,7 @@ mod oci;
 mod server;
 mod wit_printer;
 
+use crate::config::secret_registry::EnvVarCleanupStrategy;
 use args::{
     Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
     Subcommand, VerifyArgs,
@@ -39,19 +40,26 @@ fn main() -> Result<(), anyhow::Error> {
     type CommandFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>;
     let future: CommandFuture = match command {
         Subcommand::Server(server) => {
-            let (Server::Run { server_config, .. }
-            | Server::Verify(VerifyArgs { server_config, .. })) = &server;
+            let (server_config, env_var_cleanup) = match &server {
+                Server::Run { server_config, .. } => (server_config, EnvVarCleanupStrategy::Wipe), // only wipe on `server run`, as `* verify --fix` reloads the secret registry.
+                Server::Verify(VerifyArgs { server_config, .. }) => {
+                    (server_config, EnvVarCleanupStrategy::Noop)
+                }
+            };
             let ServerStartup {
                 config_holder,
                 config,
                 secret_registry,
-            } = prepare_server_startup(server_config.clone())?;
+            } = prepare_server_startup(server_config.clone(), env_var_cleanup)?;
             Box::pin(server.run(config_holder, config, secret_registry))
         }
         Subcommand::Component(ComponentArgs { command, token }) => {
             // Resolve the client token before the wipe in `resolve_and_wipe`.
             let client_startup = ClientStartup::new(token.api_token);
-            let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(SecretsToml::new())?);
+            let secret_registry = Arc::new(SecretRegistry::resolve(
+                SecretsToml::new(),
+                EnvVarCleanupStrategy::Noop,
+            )?);
             Box::pin(command.run(client_startup, secret_registry))
         }
         Subcommand::Execution(ExecutionArgs { command, token }) => {
@@ -76,7 +84,7 @@ fn main() -> Result<(), anyhow::Error> {
                 config_holder,
                 config,
                 secret_registry,
-            } = prepare_server_startup(server_config.clone())?;
+            } = prepare_server_startup(server_config.clone(), EnvVarCleanupStrategy::Noop)?;
             let server = Server::Verify(VerifyArgs {
                 clean_cache,
                 clean_codegen_cache,
@@ -93,7 +101,10 @@ fn main() -> Result<(), anyhow::Error> {
             Box::pin(command.run(ClientStartup::new(token.api_token)))
         }
         Subcommand::Generate(generate) => {
-            let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(SecretsToml::new())?);
+            let secret_registry = Arc::new(SecretRegistry::resolve(
+                SecretsToml::new(),
+                EnvVarCleanupStrategy::Noop,
+            )?);
             Box::pin(generate.run(secret_registry))
         }
     };
@@ -113,10 +124,16 @@ struct ServerStartup {
 
 /// Parse the complete server config once, then resolve and wipe its secret sources
 /// before the runtime starts.
-fn prepare_server_startup(server_config: Option<PathBuf>) -> anyhow::Result<ServerStartup> {
+fn prepare_server_startup(
+    server_config: Option<PathBuf>,
+    env_var_cleanup: EnvVarCleanupStrategy,
+) -> anyhow::Result<ServerStartup> {
     let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
-    let config = config_holder.load_config_sync()?;
-    let secret_registry = Arc::new(SecretRegistry::resolve_and_wipe(config.secrets.clone())?);
+    let config = config_holder.load_config()?;
+    let secret_registry = Arc::new(SecretRegistry::resolve(
+        config.secrets.clone(),
+        env_var_cleanup,
+    )?);
     Ok(ServerStartup {
         config_holder,
         config,

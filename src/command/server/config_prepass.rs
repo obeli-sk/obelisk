@@ -79,16 +79,13 @@ pub(super) fn report_unregistered_secrets(
     }
 }
 
-/// Append a `[secrets]` scaffold entry `X = { env = "X" }` for each name not already
-/// present to the server config file, preserving existing formatting. Returns how many
-/// were written. Bucket 2 (semi-fixable): the stub has no value, so a later verify still
-/// fails until the operator points `env` at a set variable.
+/// Append a `[secrets]` scaffold entry `X = { env = "X" }` for each name.
 pub(super) async fn fix_server_secret_scaffolds(
     server_config_path: &Path,
     names: &BTreeSet<String>,
-) -> Result<usize, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     if names.is_empty() {
-        return Ok(0);
+        return Ok(());
     }
     let source = tokio::fs::read_to_string(server_config_path)
         .await
@@ -102,20 +99,17 @@ pub(super) async fn fix_server_secret_scaffolds(
         .or_insert_with(|| Item::Table(Table::new()))
         .as_table_mut()
         .context("`secrets` in server config is not a table")?;
-    let mut written = 0;
     for name in names {
         if table.contains_key(name) {
-            continue;
+            bail!("secret {name} must not be present");
         }
         let mut inline = toml_edit::InlineTable::new();
         inline.insert("env", name.as_str().into());
         table.insert(name, value(inline));
-        written += 1;
     }
-    if written > 0 {
-        tokio::fs::write(server_config_path, doc.to_string())
-            .await
-            .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
-    }
-    Ok(written)
+    tokio::fs::write(server_config_path, doc.to_string())
+        .await
+        .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
+
+    Ok(())
 }

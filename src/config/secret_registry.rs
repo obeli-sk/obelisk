@@ -1,20 +1,4 @@
-//! Operator-owned secret registry.
-//!
-//! The `[secrets]` table in `server.toml` maps a logical secret name to a source
-//! (currently only an environment variable). At startup, before the tokio runtime
-//! is constructed and while the process is still single-threaded, env-backed
-//! secrets are resolved into `SecretString` and their source variables are removed
-//! from the process environment (see [`SecretRegistry::resolve_and_wipe`]).
-//!
-//! The resulting [`SecretRegistry`] is a plain value (not a global) that is passed
-//! by ownership into the server code. It exposes:
-//! - the set of sensitive names (logical names plus env source names), used to
-//!   reject `${VAR}` interpolation of a registered secret, and
-//! - a name -> `SecretString` getter ([`SecretRegistry::secret_lookup`]), the only
-//!   way a deployment-referenced secret becomes a plaintext value (exec stdin or
-//!   HTTP placeholder injection).
-//!
-//! See `meta/designs/secret-registry.md`.
+//! Operator-owned secret registry built from `server.toml`.
 
 use anyhow::Context as _;
 use hashbrown::{HashMap, HashSet};
@@ -26,8 +10,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const API_TOKEN_CLIENT: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_SERVER: &str = "OBELISK__API__TOKEN";
 
-/// Source of a secret in the `[secrets]` table. Untagged so `{ env = "VAR" }`
-/// parses directly; more variants (`{ file = "..." }`, Vault, ...) are added later.
+/// Source of a secret in the `[secrets]` table.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 pub(crate) enum SecretSourceToml {
@@ -35,24 +18,25 @@ pub(crate) enum SecretSourceToml {
     Env { env: String },
 }
 
-/// The `[secrets]` table: logical name -> source. `IndexMap` preserves author order.
+/// The `[secrets]` table: logical name -> source.
 pub(crate) type SecretsToml = IndexMap<String, SecretSourceToml>;
 
-/// A deployment or config value referenced a name that is a registered secret.
-/// Registered secrets are inject-only and must never be interpolated as plaintext.
 #[derive(Debug, thiserror::Error)]
-#[error(
-    "cannot interpolate secret `{0}`: registered secrets are inject-only and cannot be \
-     interpolated into configuration"
-)]
+#[error("attempted to load secret `{0}` as an environment variable")]
 pub(crate) struct SecretViolation(pub(crate) String);
 
 #[derive(Debug, Clone)]
 pub(crate) struct SecretRegistry {
     /// Logical secret name -> resolved value.
     values: HashMap<String, SecretString>,
-    /// Used to reject `public_env_lookup`.
+    /// Used to reject `public_env_lookup`, contains both logical and `env` names.
     sensitive: HashSet<String>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum EnvVarCleanupStrategy {
+    Wipe,
+    Noop,
 }
 
 impl SecretRegistry {
@@ -65,7 +49,7 @@ impl SecretRegistry {
     }
 
     /// Public (non-secret) environment lookup. Rejects the name when it is sensitive
-    /// (a secret's logical name or a secret's source env var); otherwise reads it
+    /// (a secret's logical name or a secret's source env var name); otherwise reads it
     /// from the process environment, returning `None` when unset.
     pub(crate) fn public_env_lookup(&self, name: &str) -> Result<Option<String>, SecretViolation> {
         if self.sensitive.contains(name) {
@@ -75,7 +59,6 @@ impl SecretRegistry {
         }
     }
 
-    /// Resolve a registered secret by its logical name into its value.
     pub(crate) fn secret_lookup(&self, name: &str) -> Option<SecretString> {
         self.values.get(name).cloned()
     }
@@ -91,13 +74,14 @@ impl SecretRegistry {
         Self { values, sensitive }
     }
 
-    /// Build the registry from the resolved server configuration and wipe env-backed
-    /// source variables.
+    /// Build the registry from the resolved server configuration
     ///
-    /// MUST run during early, single-threaded startup, before the tokio runtime is
-    /// constructed: it calls `std::env::remove_var`, which is only sound without
-    /// concurrent readers.
-    pub(crate) fn resolve_and_wipe(secrets: SecretsToml) -> anyhow::Result<Self> {
+    /// If [`EnvVarCleanupStrategy::Wipe`] is set, MUST run during early, single-threaded startup, before the tokio runtime is
+    /// constructed: it calls `std::env::remove_var`, which is only sound without concurrent readers.
+    pub(crate) fn resolve(
+        secrets: SecretsToml,
+        env_var_cleanup: EnvVarCleanupStrategy,
+    ) -> anyhow::Result<Self> {
         let mut values = HashMap::new();
 
         // Always sensitive, even when the operator did not register them as secrets.
@@ -116,10 +100,12 @@ impl SecretRegistry {
                 }
             }
         }
-        for src in &sensitive {
-            // SAFETY: `resolve_and_wipe` runs during single-threaded startup, before the
-            // tokio runtime is constructed, so there are no concurrent environment readers.
-            unsafe { std::env::remove_var(src) };
+        if env_var_cleanup == EnvVarCleanupStrategy::Wipe {
+            for src in &sensitive {
+                // SAFETY: `resolve_and_wipe` runs during single-threaded startup, before the
+                // tokio runtime is constructed, so there are no concurrent environment readers.
+                unsafe { std::env::remove_var(src) };
+            }
         }
 
         Ok(Self { values, sensitive })
@@ -132,7 +118,7 @@ mod tests {
     use secrecy::ExposeSecret as _;
 
     #[test]
-    fn resolve_and_wipe_reads_value_wipes_source_and_rejects_lookup() {
+    fn resolve_reads_value_wipes_source_and_rejects_lookup() {
         // A source name distinct from the logical name exercises the rename mapping.
         const SRC: &str = "OBELISK_TEST_SECRET_SRC_7A3F";
         // SAFETY: test-only, unique var name, no concurrent access.
@@ -145,7 +131,7 @@ mod tests {
                 env: SRC.to_string(),
             },
         );
-        let registry = SecretRegistry::resolve_and_wipe(secrets).unwrap();
+        let registry = SecretRegistry::resolve(secrets, EnvVarCleanupStrategy::Wipe).unwrap();
 
         // Value is available under the logical name only.
         assert_eq!(
@@ -178,7 +164,7 @@ mod tests {
                 env: "OBELISK_TEST_DEFINITELY_UNSET_2B9C".to_string(),
             },
         );
-        let err = SecretRegistry::resolve_and_wipe(secrets)
+        let err = SecretRegistry::resolve(secrets, EnvVarCleanupStrategy::Noop)
             .unwrap_err()
             .to_string();
         assert!(err.contains("is not set"), "unexpected error: {err}");

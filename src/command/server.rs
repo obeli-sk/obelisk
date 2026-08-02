@@ -1,5 +1,6 @@
 mod config_prepass;
 
+use crate::ServerStartup;
 use crate::args::Server;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
@@ -12,6 +13,7 @@ use crate::config::file_provider::CasFileProvider;
 use crate::config::manifest::DeploymentManifest;
 use crate::config::manifest::DeploymentManifestFile;
 use crate::config::manifest::reconcile_deployment_digests;
+use crate::config::secret_registry::EnvVarCleanupStrategy;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::toml::ActivityExecConfigVerified;
@@ -62,6 +64,7 @@ use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar, Repla
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
+use crate::prepare_server_startup;
 use crate::server::grpc_server::GrpcServer;
 use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
@@ -1014,7 +1017,7 @@ pub(crate) struct VerifyParams {
 
 pub(crate) async fn verify(
     config_holder: ConfigHolder,
-    mut config: ServerConfigToml,
+    config: ServerConfigToml,
     deployment: Option<PathBuf>,
     verify_params: VerifyParams,
     skip_db: bool,
@@ -1061,42 +1064,45 @@ pub(crate) async fn verify(
         None
     };
 
-    // Bucket 2 auto-fix: scaffold `[secrets]` stubs for every unregistered secret the
-    // server and deployment reference. The stub has no value, so the operator must point
-    // each `env` at a set variable and re-run; stop here rather than bail confusingly on
-    // the secrets we just scaffolded.
-    if fix {
-        if let Some(server_config_path) = config_holder.config_source() {
-            let mut unregistered = BTreeSet::new();
-            config_prepass::collect_unregistered_secrets(
-                &config.outbound_http.allowed_hosts,
-                &secret_registry,
-                &mut unregistered,
-            );
-            if let Some(deployment) = deployment_opt.as_ref() {
-                for hosts in deployment_allowed_host_lists(deployment) {
-                    config_prepass::collect_unregistered_secrets(
-                        hosts,
-                        &secret_registry,
-                        &mut unregistered,
-                    );
-                }
-            }
-            let written =
-                config_prepass::fix_server_secret_scaffolds(server_config_path, &unregistered)
-                    .await?;
-            if written > 0 {
-                info!(
-                    "Scaffolded {written} `[secrets]` entry(ies) in {}; point each `env` at a set \
-                     variable and re-run verify.",
-                    server_config_path.display()
+    let (config_holder, config, secret_registry) = if fix
+        && let Some(server_config_path) = config_holder.config_source.as_deref()
+    {
+        // Add unregistered secrets
+        let mut unregistered = BTreeSet::new();
+        config_prepass::collect_unregistered_secrets(
+            &config.outbound_http.allowed_hosts,
+            &secret_registry,
+            &mut unregistered,
+        );
+        if let Some(deployment) = deployment_opt.as_ref() {
+            for hosts in deployment_allowed_host_lists(deployment) {
+                config_prepass::collect_unregistered_secrets(
+                    hosts,
+                    &secret_registry,
+                    &mut unregistered,
                 );
-                return Ok(());
             }
-        } else {
-            warn!("Cannot scaffold `[secrets]`: the server config was not loaded from a file");
         }
-    }
+        if !unregistered.is_empty() {
+            config_prepass::fix_server_secret_scaffolds(server_config_path, &unregistered).await?;
+
+            warn!(
+                "Scaffolded `[secrets]` entries in {}: {unregistered:?}",
+                server_config_path.display()
+            );
+            // Reload server config
+            let ServerStartup {
+                config_holder,
+                config,
+                secret_registry,
+            } = prepare_server_startup(config_holder.config_source, EnvVarCleanupStrategy::Noop)?;
+            (config_holder, config, secret_registry)
+        } else {
+            (config_holder, config, secret_registry)
+        }
+    } else {
+        (config_holder, config, secret_registry)
+    };
 
     let (termination_sender, mut termination_watcher) = watch::channel(());
     let prepared_dirs = prepare_dirs(
@@ -1106,18 +1112,23 @@ pub(crate) async fn verify(
         &secret_registry,
     )
     .await?;
-    if fix
-        && let (Some(server_config_path), Some(deployment)) =
-            (config_holder.config_source(), deployment_opt.as_ref())
-    {
+    let config = if fix
+        && let (Some(server_config_path), Some(deployment)) = (
+            config_holder.config_source.as_deref(),
+            deployment_opt.as_ref(),
+        ) {
         let allowlist = fix_server_exec_digests(
             server_config_path,
             &deployment.activities_exec,
             &prepared_dirs.wasm_cache_dir,
         )
         .await?;
+        let mut config = config;
         config.allow_exec_activities = AllowExecActivities::Allowlist(allowlist);
-    }
+        config
+    } else {
+        config
+    };
     let engines = create_engines(&config, &prepared_dirs)?;
     tokio::spawn(async move { termination_notifier(termination_sender).await });
     let mut db_pool = if !skip_db {
@@ -5699,10 +5710,9 @@ mod tests {
         .expect("unavailable runtime config downgrades unregistered secrets to a warning");
     }
 
-    /// `--fix` appends a `[secrets]` scaffold only for names not already present,
-    /// preserving existing entries, and is a no-op on re-run.
+    /// `--fix` appends a `[secrets]` scaffold for all specified names
     #[tokio::test]
-    async fn fix_server_secret_scaffolds_appends_missing_and_is_idempotent() {
+    async fn fix_server_secret_scaffolds_appends_missing() {
         use crate::command::server::config_prepass::fix_server_secret_scaffolds;
         use std::io::Write as _;
         let mut file = tempfile::NamedTempFile::new().unwrap();
@@ -5710,10 +5720,8 @@ mod tests {
         let path = file.path();
 
         let mut names = std::collections::BTreeSet::new();
-        names.insert("EXISTING".to_string()); // already present, must not be duplicated
         names.insert("NEW_ONE".to_string());
-        let written = fix_server_secret_scaffolds(path, &names).await.unwrap();
-        assert_eq!(written, 1, "only NEW_ONE is scaffolded");
+        fix_server_secret_scaffolds(path, &names).await.unwrap();
 
         let after = std::fs::read_to_string(path).unwrap();
         assert!(
@@ -5721,9 +5729,6 @@ mod tests {
             "{after}"
         );
         assert!(after.contains("NEW_ONE = { env = \"NEW_ONE\" }"), "{after}");
-
-        let written_again = fix_server_secret_scaffolds(path, &names).await.unwrap();
-        assert_eq!(written_again, 0, "re-running scaffolds nothing new");
     }
 
     /// Missing replacements from several components are gathered into one report,

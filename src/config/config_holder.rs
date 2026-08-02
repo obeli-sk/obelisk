@@ -85,15 +85,11 @@ impl PathPrefixes {
 
 #[derive(Clone)]
 pub(crate) struct ConfigHolder {
-    config_source: Option<PathBuf>,
+    pub(crate) config_source: Option<PathBuf>,
     pub(crate) path_prefixes: PathPrefixes,
 }
 
 impl ConfigHolder {
-    pub(crate) fn config_source(&self) -> Option<&Path> {
-        self.config_source.as_deref()
-    }
-
     pub(crate) async fn generate_default_server_config(
         dst: Option<PathBuf>,
         overwrite: bool,
@@ -146,17 +142,13 @@ impl ConfigHolder {
         })
     }
 
-    pub(crate) fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
-        self.load_config_sync()
-    }
-
     /// Load the complete server configuration before the async runtime starts.
     ///
     /// This uses the same file and `OBELISK__...` environment sources as
     /// [`Self::load_config`]. Server startup uses this synchronous variant so the
     /// exact config value that defines `[secrets]` is passed into the runtime after
     /// its env-backed sources have been wiped.
-    pub(crate) fn load_config_sync(&self) -> Result<ServerConfigToml, anyhow::Error> {
+    pub(crate) fn load_config(&self) -> Result<ServerConfigToml, anyhow::Error> {
         let mut builder = Config::builder();
         if let Some(path) = &self.config_source {
             builder = builder.add_source(
