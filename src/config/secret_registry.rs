@@ -107,7 +107,9 @@ impl SecretRegistry {
                 }
             }
         }
-        if runtime_config_availability == RuntimeConfigAvailability::Strict {
+        if runtime_config_availability == RuntimeConfigAvailability::Strict
+            && !missing_env_vars.is_empty()
+        {
             bail!("secrets sourced from environment variables are not set: {missing_env_vars:?}");
         }
         if env_var_cleanup == EnvVarCleanupStrategy::Wipe {
@@ -186,6 +188,10 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(err.contains("is not set"), "unexpected error: {err}");
+        assert!(err.contains("not set"), "unexpected error: {err}");
+        assert!(
+            err.contains("OBELISK_TEST_DEFINITELY_UNSET_2B9C"),
+            "unexpected error: {err}"
+        );
     }
 }
