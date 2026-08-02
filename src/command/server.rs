@@ -1,3 +1,5 @@
+mod config_prepass;
+
 use crate::args::Server;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
@@ -115,7 +117,7 @@ use indexmap::IndexMap;
 use secrecy::ExposeSecret as _;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -746,6 +748,17 @@ struct MissingSecretReplacement {
     replace_in: ReplaceIn,
 }
 
+/// Every component's outbound HTTP `allowed_hosts`, over the same component kinds the
+/// deployment pre-pass checks. Used by `--fix` to gather referenced secret names.
+fn deployment_allowed_host_lists(deployment: &DeploymentResolved) -> Vec<&[AllowedHostToml]> {
+    let mut lists: Vec<&[AllowedHostToml]> = Vec::new();
+    lists.extend(deployment.activities_wasm.iter().map(|c| &*c.allowed_hosts));
+    lists.extend(deployment.activities_js.iter().map(|c| &*c.allowed_hosts));
+    lists.extend(deployment.webhooks_wasm.iter().map(|c| &*c.allowed_hosts));
+    lists.extend(deployment.webhooks_js.iter().map(|c| &*c.allowed_hosts));
+    lists
+}
+
 /// The `(secret name, replacement target)` pairs the operator global allowlist authorizes.
 fn global_secret_replacements(
     global_http_config: &GlobalHttpConfig,
@@ -1047,6 +1060,43 @@ pub(crate) async fn verify(
     } else {
         None
     };
+
+    // Bucket 2 auto-fix: scaffold `[secrets]` stubs for every unregistered secret the
+    // server and deployment reference. The stub has no value, so the operator must point
+    // each `env` at a set variable and re-run; stop here rather than bail confusingly on
+    // the secrets we just scaffolded.
+    if fix {
+        if let Some(server_config_path) = config_holder.config_source() {
+            let mut unregistered = BTreeSet::new();
+            config_prepass::collect_unregistered_secrets(
+                &config.outbound_http.allowed_hosts,
+                &secret_registry,
+                &mut unregistered,
+            );
+            if let Some(deployment) = deployment_opt.as_ref() {
+                for hosts in deployment_allowed_host_lists(deployment) {
+                    config_prepass::collect_unregistered_secrets(
+                        hosts,
+                        &secret_registry,
+                        &mut unregistered,
+                    );
+                }
+            }
+            let written =
+                config_prepass::fix_server_secret_scaffolds(server_config_path, &unregistered)
+                    .await?;
+            if written > 0 {
+                info!(
+                    "Scaffolded {written} `[secrets]` entry(ies) in {}; point each `env` at a set \
+                     variable and re-run verify.",
+                    server_config_path.display()
+                );
+                return Ok(());
+            }
+        } else {
+            warn!("Cannot scaffold `[secrets]`: the server config was not loaded from a file");
+        }
+    }
 
     let (termination_sender, mut termination_watcher) = watch::channel(());
     let prepared_dirs = prepare_dirs(
@@ -2310,17 +2360,21 @@ impl ServerVerified {
                     .to_string(),
             );
         }
-        for entry in &config.outbound_http.allowed_hosts {
-            for secret in &entry.secrets {
-                if secret_registry.secret_lookup(secret).is_none() {
-                    bail!(
-                        "server.toml `[[outbound_http.allowed_host]]` references secret \
-                         `{secret}`, but it is not registered in the server.toml `[secrets]` \
-                         table; register it there or remove it from the outbound HTTP entry"
-                    );
-                }
-            }
-        }
+        // Fail fast on the server's own config: unregistered `[[outbound_http.allowed_host]]`
+        // secrets are always fatal (the server cannot run with an invalid allowlist), but
+        // collect every missing name first so the operator can register them in one edit.
+        let mut unregistered_secrets = BTreeSet::new();
+        config_prepass::collect_unregistered_secrets(
+            &config.outbound_http.allowed_hosts,
+            &secret_registry,
+            &mut unregistered_secrets,
+        );
+        config_prepass::report_unregistered_secrets(
+            &unregistered_secrets,
+            "server.toml `[[outbound_http.allowed_host]]` entries",
+            RuntimeConfigAvailability::Strict,
+            &config_warnings,
+        )?;
         let global_http_config = GlobalHttpConfig::from(
             resolve_allowed_hosts(
                 config.outbound_http.allowed_hosts,
@@ -3788,10 +3842,11 @@ impl DeploymentVerified {
         // before the config is moved into the deployment below. Each component's
         // outbound HTTP entries are checked against the operator global allowlist for
         // both unauthorized secret replacements and uncovered destinations.
-        let (missing_replacements, uncovered_hosts) = {
+        let (missing_replacements, uncovered_hosts, unregistered_secrets) = {
             let server_replacements = global_secret_replacements(&global_http_config);
             let mut missing_replacements = Vec::new();
             let mut uncovered_hosts = Vec::new();
+            let mut unregistered_secrets = BTreeSet::new();
             let mut check =
                 |section: &'static str, name: &ConfigName, hosts: &[AllowedHostToml]| {
                     collect_outbound_http_secret_replacements(
@@ -3811,6 +3866,11 @@ impl DeploymentVerified {
                         ignore_missing_env_vars,
                         &config_warnings,
                         &mut uncovered_hosts,
+                    );
+                    config_prepass::collect_unregistered_secrets(
+                        hosts,
+                        &secret_registry,
+                        &mut unregistered_secrets,
                     );
                 };
             for activity in &deployment.activities_wasm {
@@ -3833,8 +3893,14 @@ impl DeploymentVerified {
             for webhook in &deployment.webhooks_js {
                 check("webhook_endpoint_js", &webhook.name, &webhook.allowed_hosts);
             }
-            (missing_replacements, uncovered_hosts)
+            (missing_replacements, uncovered_hosts, unregistered_secrets)
         };
+        config_prepass::report_unregistered_secrets(
+            &unregistered_secrets,
+            "the deployment's outbound HTTP entries",
+            runtime_config_availability,
+            &config_warnings,
+        )?;
         report_missing_outbound_http_secret_replacements(
             &missing_replacements,
             runtime_config_availability,
@@ -5575,6 +5641,89 @@ mod tests {
         assert!(err.contains("[[activity_wasm.allowed_host]]"));
         assert!(err.contains("secrets = [\"API_KEY\"]"));
         assert!(err.contains("replace_in = [\"headers\"]"));
+    }
+
+    /// Every unregistered secret across several entries is gathered into one error,
+    /// registered names are omitted, and the error carries a paste-able `[secrets]` scaffold.
+    #[test]
+    fn unregistered_secrets_collect_all_and_error_shows_scaffold() {
+        use crate::command::server::config_prepass::{
+            collect_unregistered_secrets, report_unregistered_secrets,
+        };
+        let entry = |secret: &str| AllowedHostToml {
+            pattern: "api.example.com".to_string(),
+            methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+            request_url_regex: None,
+            secrets: vec![secret.to_string()],
+            replace_in: vec![ReplaceIn::Headers],
+        };
+        let secret_registry = SecretRegistry::from_test_values([(
+            "KNOWN".to_string(),
+            secrecy::SecretString::from("v"),
+        )]);
+        let mut unregistered = std::collections::BTreeSet::new();
+        collect_unregistered_secrets(
+            &[entry("MISSING_B"), entry("KNOWN"), entry("MISSING_A")],
+            &secret_registry,
+            &mut unregistered,
+        );
+        let err = report_unregistered_secrets(
+            &unregistered,
+            "the deployment's outbound HTTP entries",
+            RuntimeConfigAvailability::Strict,
+            &crate::config::toml::ConfigWarnings::default(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("`MISSING_A`, `MISSING_B`"), "{err}");
+        assert!(!err.contains("KNOWN"), "{err}");
+        assert!(err.contains("[secrets]"), "{err}");
+        assert!(err.contains("MISSING_A = { env = \"MISSING_A\" }"), "{err}");
+        assert!(err.contains("MISSING_B = { env = \"MISSING_B\" }"), "{err}");
+    }
+
+    /// When unavailable runtime config is allowed, unregistered secrets are a warning,
+    /// not a fatal error (activation re-checks strictly).
+    #[test]
+    fn unregistered_secrets_downgrade_to_warning_when_unavailable_allowed() {
+        use crate::command::server::config_prepass::report_unregistered_secrets;
+        let mut unregistered = std::collections::BTreeSet::new();
+        unregistered.insert("MISSING".to_string());
+        report_unregistered_secrets(
+            &unregistered,
+            "the deployment's outbound HTTP entries",
+            RuntimeConfigAvailability::AllowUnavailable,
+            &crate::config::toml::ConfigWarnings::default(),
+        )
+        .expect("unavailable runtime config downgrades unregistered secrets to a warning");
+    }
+
+    /// `--fix` appends a `[secrets]` scaffold only for names not already present,
+    /// preserving existing entries, and is a no-op on re-run.
+    #[tokio::test]
+    async fn fix_server_secret_scaffolds_appends_missing_and_is_idempotent() {
+        use crate::command::server::config_prepass::fix_server_secret_scaffolds;
+        use std::io::Write as _;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "[secrets]\nEXISTING = {{ env = \"EXISTING_SRC\" }}\n").unwrap();
+        let path = file.path();
+
+        let mut names = std::collections::BTreeSet::new();
+        names.insert("EXISTING".to_string()); // already present, must not be duplicated
+        names.insert("NEW_ONE".to_string());
+        let written = fix_server_secret_scaffolds(path, &names).await.unwrap();
+        assert_eq!(written, 1, "only NEW_ONE is scaffolded");
+
+        let after = std::fs::read_to_string(path).unwrap();
+        assert!(
+            after.contains("EXISTING = { env = \"EXISTING_SRC\" }"),
+            "{after}"
+        );
+        assert!(after.contains("NEW_ONE = { env = \"NEW_ONE\" }"), "{after}");
+
+        let written_again = fix_server_secret_scaffolds(path, &names).await.unwrap();
+        assert_eq!(written_again, 0, "re-running scaffolds nothing new");
     }
 
     /// Missing replacements from several components are gathered into one report,
