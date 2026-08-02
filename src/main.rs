@@ -11,6 +11,7 @@ mod oci;
 mod server;
 mod wit_printer;
 
+use crate::command::server::{PrepareDirsParams, RuntimeConfigAvailability, VerifyParams, verify};
 use crate::config::secret_registry::EnvVarCleanupStrategy;
 use args::{
     Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
@@ -40,17 +41,38 @@ fn main() -> Result<(), anyhow::Error> {
     type CommandFuture = Pin<Box<dyn Future<Output = Result<(), anyhow::Error>>>>;
     let future: CommandFuture = match command {
         Subcommand::Server(server) => {
-            let (server_config, env_var_cleanup) = match &server {
-                Server::Run { server_config, .. } => (server_config, EnvVarCleanupStrategy::Wipe), // only wipe on `server run`, as `* verify --fix` reloads the secret registry.
-                Server::Verify(VerifyArgs { server_config, .. }) => {
-                    (server_config, EnvVarCleanupStrategy::Noop)
+            let (server_config, env_var_cleanup, runtime_config_availability) = match &server {
+                Server::Run { server_config, .. } => (
+                    server_config,
+                    EnvVarCleanupStrategy::Wipe, // only wipe on `server run`, as `* verify --fix` reloads the secret registry.
+                    RuntimeConfigAvailability::Strict,
+                ),
+                Server::Verify(VerifyArgs {
+                    server_config,
+                    allow_unavailable_runtime_config,
+                    ..
+                }) => {
+                    let runtime_config_availability = if *allow_unavailable_runtime_config {
+                        RuntimeConfigAvailability::AllowUnavailable
+                    } else {
+                        RuntimeConfigAvailability::Strict
+                    };
+                    (
+                        server_config,
+                        EnvVarCleanupStrategy::Noop,
+                        runtime_config_availability,
+                    )
                 }
             };
             let ServerStartup {
                 config_holder,
                 config,
                 secret_registry,
-            } = prepare_server_startup(server_config.clone(), env_var_cleanup)?;
+            } = prepare_server_startup(
+                server_config.clone(),
+                env_var_cleanup,
+                runtime_config_availability,
+            )?;
             Box::pin(server.run(config_holder, config, secret_registry))
         }
         Subcommand::Component(ComponentArgs { command, token }) => {
@@ -59,6 +81,7 @@ fn main() -> Result<(), anyhow::Error> {
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
                 EnvVarCleanupStrategy::Noop,
+                RuntimeConfigAvailability::AllowUnavailable,
             )?);
             Box::pin(command.run(client_startup, secret_registry))
         }
@@ -80,22 +103,38 @@ fn main() -> Result<(), anyhow::Error> {
                 suppress_type_checking_errors,
                 fix,
             } = args;
+            let runtime_config_availability = if allow_unavailable_runtime_config {
+                RuntimeConfigAvailability::AllowUnavailable
+            } else {
+                RuntimeConfigAvailability::Strict
+            };
             let ServerStartup {
                 config_holder,
                 config,
                 secret_registry,
-            } = prepare_server_startup(server_config.clone(), EnvVarCleanupStrategy::Noop)?;
-            let server = Server::Verify(VerifyArgs {
-                clean_cache,
-                clean_codegen_cache,
-                server_config,
-                deployment: Some(deployment),
-                allow_unavailable_runtime_config,
-                suppress_type_checking_errors,
-                skip_db: true,
+            } = prepare_server_startup(
+                server_config.clone(),
+                EnvVarCleanupStrategy::Noop,
+                runtime_config_availability,
+            )?;
+
+            Box::pin(verify(
+                config_holder,
+                config,
+                Some(deployment),
+                VerifyParams {
+                    dir_params: PrepareDirsParams {
+                        clean_cache,
+                        clean_codegen_cache,
+                    },
+                    runtime_config_availability,
+                    suppress_type_checking_errors,
+                    suppress_linking_errors: false,
+                },
+                true, // `deployment verify` does not verify db.
                 fix,
-            });
-            Box::pin(server.run(config_holder, config, secret_registry))
+                secret_registry,
+            ))
         }
         Subcommand::Deployment(DeploymentArgs { command, token }) => {
             Box::pin(command.run(ClientStartup::new(token.api_token)))
@@ -104,6 +143,7 @@ fn main() -> Result<(), anyhow::Error> {
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
                 EnvVarCleanupStrategy::Noop,
+                RuntimeConfigAvailability::AllowUnavailable,
             )?);
             Box::pin(generate.run(secret_registry))
         }
@@ -127,12 +167,20 @@ struct ServerStartup {
 fn prepare_server_startup(
     server_config: Option<PathBuf>,
     env_var_cleanup: EnvVarCleanupStrategy,
+    runtime_config_availability: RuntimeConfigAvailability,
 ) -> anyhow::Result<ServerStartup> {
+    if env_var_cleanup == EnvVarCleanupStrategy::Wipe {
+        assert_eq!(
+            RuntimeConfigAvailability::Strict,
+            runtime_config_availability,
+        );
+    }
     let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
     let config = config_holder.load_config()?;
     let secret_registry = Arc::new(SecretRegistry::resolve(
         config.secrets.clone(),
         env_var_cleanup,
+        runtime_config_availability,
     )?);
     Ok(ServerStartup {
         config_holder,

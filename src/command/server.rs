@@ -1095,7 +1095,11 @@ pub(crate) async fn verify(
                 config_holder,
                 config,
                 secret_registry,
-            } = prepare_server_startup(config_holder.config_source, EnvVarCleanupStrategy::Noop)?;
+            } = prepare_server_startup(
+                config_holder.config_source,
+                EnvVarCleanupStrategy::Noop,
+                verify_params.runtime_config_availability,
+            )?;
             (config_holder, config, secret_registry)
         } else {
             (config_holder, config, secret_registry)

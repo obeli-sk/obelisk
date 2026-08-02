@@ -1,11 +1,13 @@
 //! Operator-owned secret registry built from `server.toml`.
 
-use anyhow::Context as _;
+use crate::command::server::RuntimeConfigAvailability;
+use anyhow::bail;
 use hashbrown::{HashMap, HashSet};
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 pub(crate) const API_TOKEN_CLIENT: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_SERVER: &str = "OBELISK__API__TOKEN";
@@ -81,6 +83,7 @@ impl SecretRegistry {
     pub(crate) fn resolve(
         secrets: SecretsToml,
         env_var_cleanup: EnvVarCleanupStrategy,
+        runtime_config_availability: RuntimeConfigAvailability,
     ) -> anyhow::Result<Self> {
         let mut values = HashMap::new();
 
@@ -88,17 +91,22 @@ impl SecretRegistry {
         let mut sensitive =
             HashSet::from([API_TOKEN_SERVER.to_string(), API_TOKEN_CLIENT.to_string()]);
 
-        for (name, source) in secrets {
+        let mut missing_env_vars = BTreeSet::new();
+        for (logical_name, source) in secrets {
             match source {
                 SecretSourceToml::Env { env } => {
-                    let value = std::env::var(&env).with_context(|| {
-                        format!("secret `{name}` source environment variable `{env}` is not set")
-                    })?;
-                    values.insert(name.clone(), SecretString::from(value));
+                    let value = if let Ok(value) = std::env::var(&env) { value } else {
+                        missing_env_vars.insert(env.clone());
+                        String::new()
+                    };
+                    values.insert(logical_name.clone(), SecretString::from(value));
                     sensitive.insert(env);
-                    sensitive.insert(name);
+                    sensitive.insert(logical_name);
                 }
             }
+        }
+        if runtime_config_availability == RuntimeConfigAvailability::Strict {
+            bail!("secrets sourced from environment variables are not set: {missing_env_vars:?}");
         }
         if env_var_cleanup == EnvVarCleanupStrategy::Wipe {
             for src in &sensitive {
@@ -131,7 +139,12 @@ mod tests {
                 env: SRC.to_string(),
             },
         );
-        let registry = SecretRegistry::resolve(secrets, EnvVarCleanupStrategy::Wipe).unwrap();
+        let registry = SecretRegistry::resolve(
+            secrets,
+            EnvVarCleanupStrategy::Wipe,
+            RuntimeConfigAvailability::Strict,
+        )
+        .unwrap();
 
         // Value is available under the logical name only.
         assert_eq!(
@@ -164,9 +177,13 @@ mod tests {
                 env: "OBELISK_TEST_DEFINITELY_UNSET_2B9C".to_string(),
             },
         );
-        let err = SecretRegistry::resolve(secrets, EnvVarCleanupStrategy::Noop)
-            .unwrap_err()
-            .to_string();
+        let err = SecretRegistry::resolve(
+            secrets,
+            EnvVarCleanupStrategy::Noop,
+            RuntimeConfigAvailability::Strict,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("is not set"), "unexpected error: {err}");
     }
 }
