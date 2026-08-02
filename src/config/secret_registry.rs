@@ -8,6 +8,8 @@ use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::sync::Arc;
+use wasm_workers::http_request_policy::SecretResolver;
 
 pub(crate) const API_TOKEN_CLIENT: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_SERVER: &str = "OBELISK__API__TOKEN";
@@ -121,6 +123,43 @@ impl SecretRegistry {
         }
 
         Ok(Self { values, sensitive })
+    }
+}
+
+/// A component-scoped view over the operator [`SecretRegistry`].
+///
+/// Handed to activities and webhooks so they resolve secret values *by name, on
+/// demand* (at execution-run policy build / process spawn), never baking values
+/// into long-lived verified configs. Lookups are restricted to the subset of
+/// names the component declared: an undeclared name resolves to `None` even if
+/// the operator registered it, so a component can only reach the secrets it
+/// asked for. Env-backed today via the shared registry, Vault-backed later
+/// without changing this boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct RestrictedSecretRegistry {
+    registry: Arc<SecretRegistry>,
+    allowed: Arc<HashSet<String>>,
+}
+
+impl RestrictedSecretRegistry {
+    pub(crate) fn new(
+        registry: Arc<SecretRegistry>,
+        allowed: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            registry,
+            allowed: Arc::new(allowed.into_iter().collect()),
+        }
+    }
+}
+
+impl SecretResolver for RestrictedSecretRegistry {
+    fn secret_lookup(&self, name: &str) -> Option<SecretString> {
+        if self.allowed.contains(name) {
+            self.registry.secret_lookup(name)
+        } else {
+            None
+        }
     }
 }
 

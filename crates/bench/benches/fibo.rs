@@ -58,6 +58,7 @@ mod bench {
             fuel: None,
             allowed_hosts: Arc::from([]),
             global_http_config: wasm_workers::http_request_policy::GlobalHttpConfig::default(),
+            secrets: Arc::new(wasm_workers::http_request_policy::NoSecrets),
             config_section_hint: wasm_workers::http_hooks::ConfigSectionHint::ActivityWasm,
         }
     }

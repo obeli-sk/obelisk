@@ -35,6 +35,9 @@ pub struct ActivityConfig {
     pub fuel: Option<u64>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
     pub global_http_config: crate::http_request_policy::GlobalHttpConfig,
+    /// Resolves the component's declared secret names to values at execution-run
+    /// policy-build time (scoped `RestrictedSecretRegistry` in production).
+    pub secrets: Arc<dyn crate::http_request_policy::SecretResolver>,
     /// The TOML config section type for error messages
     pub config_section_hint: ConfigSectionHint,
 }
@@ -599,6 +602,7 @@ pub(crate) mod tests {
             fuel: None,
             allowed_hosts: Arc::from([]),
             global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
+            secrets: Arc::new(crate::http_request_policy::NoSecrets),
             config_section_hint: ConfigSectionHint::ActivityWasm,
         }
     }
@@ -611,7 +615,7 @@ pub(crate) mod tests {
             pattern: HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods)
                 .unwrap(),
             request_url_regex: None,
-            secret_env_mappings: Vec::new(),
+            secret_names: Vec::new(),
             replace_in: hashbrown::HashSet::new(),
         }]);
         ActivityConfig {
@@ -623,6 +627,7 @@ pub(crate) mod tests {
             fuel: None,
             allowed_hosts: allowed_hosts.clone(),
             global_http_config: allowed_hosts.into(),
+            secrets: Arc::new(crate::http_request_policy::NoSecrets),
             config_section_hint: ConfigSectionHint::ActivityWasm,
         }
     }
@@ -1766,16 +1771,19 @@ pub(crate) mod tests {
                         Arc::from(vec![AllowedHostConfig {
                             pattern: host_pattern,
                             request_url_regex: None,
-                            secret_env_mappings: vec![(
-                                SECRET_ENV_VAR.to_string(),
-                                SecretString::from(SECRET_VALUE.to_string()),
-                            )],
+                            secret_names: vec![SECRET_ENV_VAR.to_string()],
                             replace_in: HashSet::from_iter([
                                 ReplacementLocation::Headers,
                                 ReplacementLocation::Params,
                                 ReplacementLocation::Body,
                             ]),
                         }]);
+                    let secrets = Arc::new(crate::http_request_policy::TestSecretResolver(
+                        hashbrown::HashMap::from_iter([(
+                            SECRET_ENV_VAR.to_string(),
+                            SecretString::from(SECRET_VALUE.to_string()),
+                        )]),
+                    ));
                     ActivityConfig {
                         component_id,
                         forward_stdout: None,
@@ -1784,6 +1792,7 @@ pub(crate) mod tests {
                         fuel: None,
                         allowed_hosts: allowed_hosts.clone(),
                         global_http_config: allowed_hosts.into(),
+                        secrets,
                         config_section_hint: ConfigSectionHint::ActivityWasm,
                     }
                 }
@@ -1905,6 +1914,7 @@ pub(crate) mod tests {
                 fuel: None,
                 allowed_hosts: Arc::from([]),
                 global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
+                secrets: Arc::new(crate::http_request_policy::NoSecrets),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
@@ -1980,6 +1990,7 @@ pub(crate) mod tests {
                 fuel: None,
                 allowed_hosts: Arc::from([]),
                 global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
+                secrets: Arc::new(crate::http_request_policy::NoSecrets),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             ComponentRetryConfig::ZERO,
@@ -2061,6 +2072,7 @@ pub(crate) mod tests {
                 fuel: None,
                 allowed_hosts: Arc::from([]),
                 global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
+                secrets: Arc::new(crate::http_request_policy::NoSecrets),
                 config_section_hint: ConfigSectionHint::ActivityWasm,
             },
             retry_config,

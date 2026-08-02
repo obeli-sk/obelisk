@@ -363,7 +363,7 @@ mod tests {
             self.allowed_hosts.push(AllowedHostConfig {
                 pattern,
                 request_url_regex: None,
-                secret_env_mappings: Vec::new(),
+                secret_names: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
             });
             self
@@ -409,6 +409,7 @@ mod tests {
                 fuel: None,
                 allowed_hosts: allowed_hosts.clone(),
                 global_http_config: allowed_hosts.into(),
+                secrets: Arc::new(crate::http_request_policy::NoSecrets),
                 config_section_hint: ConfigSectionHint::ActivityJs,
             };
 

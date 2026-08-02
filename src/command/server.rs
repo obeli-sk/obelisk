@@ -4144,6 +4144,7 @@ async fn compile_and_link(
                                 logs_store_min_level: webhook.logs_store_min_level,
                                 allowed_hosts,
                                 global_http_config,
+                                secrets: webhook.secrets,
                                 js_config: None,
                                 config_section_hint: webhook.config_section_hint,
                             };
@@ -4187,6 +4188,7 @@ async fn compile_and_link(
                                 logs_store_min_level: webhook_js.logs_store_min_level,
                                 allowed_hosts: webhook_js.allowed_hosts,
                                 global_http_config: global_http_config.clone(),
+                                secrets: webhook_js.secrets,
                                 js_config: Some(WebhookEndpointJsConfig {
                                     source: webhook_js.js_source,
                                     file_name: webhook_js.js_file_name.clone(),
@@ -4536,9 +4538,9 @@ fn prespawn_activity_exec(
 
     let program = activity_exec.program;
 
-    // The worker nests these secrets under the `secrets` key of the stdin JSON document
-    // at execution time.
-    let secrets = activity_exec.secrets.map(|secrets| secrets.env_vars);
+    // The worker resolves these declared secrets by name and nests them under the
+    // `secrets` key of the stdin JSON document at execution time.
+    let secrets = activity_exec.secrets;
 
     let worker = ActivityExecWorkerCompiled::new(
         program,
@@ -5420,7 +5422,7 @@ mod tests {
             )
             .unwrap(),
             request_url_regex: None,
-            secret_env_mappings: Vec::new(),
+            secret_names: Vec::new(),
             replace_in: hashbrown::HashSet::new(),
         };
         let allowed: Arc<[AllowedHostConfig]> = Arc::from(vec![target]);

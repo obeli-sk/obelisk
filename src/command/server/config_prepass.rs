@@ -4,9 +4,10 @@
 //!
 //! The pre-pass owns the continue/bail/fix decision for the outbound-HTTP allowlist:
 //! unregistered secret names, secret replacements the operator allowlist does not authorize,
-//! and destinations no allowlist entry covers. The resolvers (`resolve_allowed_hosts`,
-//! `resolve_named_secrets`) no longer make that decision; they drop what they cannot resolve,
-//! and `http_request_policy` enforces the same rules per request (failing closed). Running the
+//! and destinations no allowlist entry covers. The verified config carries only secret
+//! *names*; `resolve_allowed_hosts` no longer makes that decision, and values are fetched
+//! lazily per execution run through a component-scoped `RestrictedSecretRegistry`, which
+//! (like `http_request_policy`) fails closed when a name cannot be resolved. Running the
 //! pre-pass here lets the operator fix every finding in one edit.
 
 use super::RuntimeConfigAvailability;
@@ -329,7 +330,7 @@ pub(super) fn global_secret_replacements(
         .entries()
         .iter()
         .flat_map(|entry| {
-            entry.secret_env_mappings.iter().flat_map(|(name, _)| {
+            entry.secret_names.iter().flat_map(|name| {
                 entry
                     .replace_in
                     .iter()
