@@ -1959,8 +1959,11 @@ pub(crate) struct ServerVerified {
     global_http_config: GlobalHttpConfig,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
-    /// dropped by resolution.
+    /// dropped by resolution, and locate its per-entry advisories in `source_path`.
     server_outbound_allowed_hosts: Vec<AllowedHostToml>,
+    /// Path to the server.toml the config was loaded from, if any. Used by the pre-pass to
+    /// annotate `[[outbound_http.allowed_host]]` advisories with their source line.
+    source_path: Option<PathBuf>,
     /// Operator-owned secret registry, resolved before the runtime started. Carried
     /// here so runtime redeploys/submits resolve deployment secret references without
     /// re-reading the (already wiped) process environment.
@@ -2022,10 +2025,11 @@ impl ServerVerified {
         // (which runs before this) using `server_outbound_allowed_hosts`; here they resolve to
         // nothing and are dropped.
         let server_outbound_allowed_hosts = config.outbound_http.allowed_hosts.clone();
-        let global_http_config = GlobalHttpConfig::from(
+        let source_path = config.source_path.clone();
+        let (server_hosts, _advisories) =
             resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
-                .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?,
-        );
+                .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?;
+        let global_http_config = GlobalHttpConfig::from(server_hosts);
 
         Ok(Self {
             launch: ServerVerifiedLaunch {
@@ -2046,6 +2050,7 @@ impl ServerVerified {
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
             global_http_config,
             server_outbound_allowed_hosts,
+            source_path,
             secret_registry,
         })
     }
@@ -5374,7 +5379,8 @@ mod tests {
             SecretRegistry::from_test_values(Vec::<(String, secrecy::SecretString)>::new());
         let global = GlobalHttpConfig::from(
             crate::config::toml::resolve_allowed_hosts(vec![host("obeli.sk")], false, &registry)
-                .unwrap(),
+                .unwrap()
+                .0,
         );
         let name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
 

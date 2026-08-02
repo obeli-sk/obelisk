@@ -12,14 +12,123 @@
 use super::RuntimeConfigAvailability;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::{
-    AllowedHostToml, ConfigName, DeploymentResolved, MethodsInput, ReplaceIn, resolve_allowed_hosts,
+    AllowedHostToml, ConfigName, DeploymentResolved, MethodsInput, ReplaceIn,
+    allowed_host_fingerprint, resolve_allowed_hosts,
 };
 use anyhow::{Context, bail};
-use std::collections::BTreeSet;
-use std::path::Path;
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, Item, Table, value};
 use tracing::warn;
 use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
+
+/// Collects the per-entry `allowed_host` advisories the resolver emits and pairs each with the
+/// source `path:line` of the `[[*.allowed_host]]` block it came from, deduplicating identical
+/// findings that appear in several entries. Single-threaded (owned by the pre-pass), so it
+/// needs no lock; the resolvers no longer carry a warning sink.
+#[derive(Default)]
+struct LocatedWarnings {
+    /// advisory message -> set of `path:line` locations
+    by_message: BTreeMap<String, BTreeSet<String>>,
+    /// `allowed_host` TOML fingerprint -> source locations parsed out of the indexed files
+    locations: BTreeMap<String, BTreeSet<(PathBuf, usize)>>,
+}
+
+impl LocatedWarnings {
+    /// Parse `path` and record the line of every `[[*.allowed_host]]` block, keyed by the
+    /// fingerprint of the entry it deserializes to. Best-effort: unreadable or unparsable
+    /// files leave the index empty and advisories are reported without a location.
+    fn index_file(&mut self, path: &Path) {
+        #[derive(Deserialize)]
+        struct AllowedHostBlock {
+            allowed_host: Vec<AllowedHostToml>,
+        }
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let lines = source.lines().collect::<Vec<_>>();
+        for (start, line) in lines.iter().enumerate() {
+            let header = line.split('#').next().unwrap_or_default().trim();
+            if !(header.starts_with("[[") && header.ends_with(".allowed_host]]")) {
+                continue;
+            }
+            let end = lines[start + 1..]
+                .iter()
+                .position(|line| {
+                    line.split('#')
+                        .next()
+                        .unwrap_or_default()
+                        .trim_start()
+                        .starts_with('[')
+                })
+                .map_or(lines.len(), |offset| start + 1 + offset);
+            let mut block = String::from("[[allowed_host]]\n");
+            for line in &lines[start + 1..end] {
+                block.push_str(line);
+                block.push('\n');
+            }
+            let Ok(block) = toml::from_str::<AllowedHostBlock>(&block) else {
+                continue;
+            };
+            let Some(entry) = block.allowed_host.first() else {
+                continue;
+            };
+            self.locations
+                .entry(allowed_host_fingerprint(entry))
+                .or_default()
+                .insert((path.to_path_buf(), start + 1));
+        }
+    }
+
+    /// Resolve `entries` for their advisories and record each against its source locations.
+    fn lint(
+        &mut self,
+        entries: &[AllowedHostToml],
+        ignore_missing_env_vars: bool,
+        secret_registry: &SecretRegistry,
+    ) {
+        let Ok((_hosts, advisories)) =
+            resolve_allowed_hosts(entries.to_vec(), ignore_missing_env_vars, secret_registry)
+        else {
+            return;
+        };
+        for advisory in advisories {
+            let located = self
+                .locations
+                .get(&advisory.fingerprint)
+                .into_iter()
+                .flatten()
+                .map(|(path, line)| format!("{}:{line}", path.display()))
+                .collect::<Vec<_>>();
+            self.by_message
+                .entry(advisory.message)
+                .or_default()
+                .extend(located);
+        }
+    }
+
+    fn emit(self) {
+        if self.by_message.is_empty() {
+            return;
+        }
+        let lines = self
+            .by_message
+            .into_iter()
+            .map(|(message, locations)| {
+                if locations.is_empty() {
+                    message
+                } else {
+                    format!(
+                        "{message} ({})",
+                        locations.into_iter().collect::<Vec<_>>().join(", ")
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+        warn!("Configuration warnings:\n- {}", lines.join("\n- "));
+    }
+}
 
 /// Run the outbound-HTTP allowlist pre-pass over the server's own config and, when present,
 /// the deployment being started/verified. Bails on the first fatal category collected so far
@@ -32,86 +141,107 @@ pub(super) fn preflight(
 ) -> Result<(), anyhow::Error> {
     let secret_registry = &*server_verified.secret_registry;
     let global_http_config = &server_verified.global_http_config;
+    let ignore_missing_env_vars = availability.allows_unavailable();
 
-    // Unregistered secrets: the server's own `[[outbound_http.allowed_host]]` entries are always
-    // fatal (the server cannot run with an invalid allowlist); the deployment's follow availability.
+    // Index the source files up front so per-entry advisories can be located, then lint the
+    // server's own outbound allowlist. Resolution (in `ServerVerified::new` and component
+    // preparation) drops these advisories; the pre-pass is their sole, located emitter.
+    let mut warnings = LocatedWarnings::default();
+    if let Some(path) = &server_verified.source_path {
+        warnings.index_file(path);
+    }
+    if let Some(deployment) = deployment
+        && let Some(path) = &deployment.source_path
+    {
+        warnings.index_file(path);
+    }
+    warnings.lint(
+        &server_verified.server_outbound_allowed_hosts,
+        false,
+        secret_registry,
+    );
+
+    // The server's own `[[outbound_http.allowed_host]]` unregistered secrets are always fatal
+    // (the server cannot run with an invalid allowlist); the deployment's follow availability.
     let mut server_unregistered = BTreeSet::new();
     collect_unregistered_secrets(
         &server_verified.server_outbound_allowed_hosts,
         secret_registry,
         &mut server_unregistered,
     );
+
+    let server_replacements = global_secret_replacements(global_http_config);
+    let mut missing_replacements = Vec::new();
+    let mut uncovered_hosts = Vec::new();
+    let mut unregistered = BTreeSet::new();
+    if let Some(deployment) = deployment {
+        let mut check = |section: &'static str, name: &ConfigName, hosts: &[AllowedHostToml]| {
+            warnings.lint(hosts, ignore_missing_env_vars, secret_registry);
+            collect_outbound_http_secret_replacements(
+                section,
+                name,
+                hosts,
+                &server_replacements,
+                secret_registry,
+                &mut missing_replacements,
+            );
+            collect_uncovered_outbound_http_hosts(
+                section,
+                name,
+                hosts,
+                global_http_config,
+                secret_registry,
+                ignore_missing_env_vars,
+                &mut uncovered_hosts,
+            );
+            collect_unregistered_secrets(hosts, secret_registry, &mut unregistered);
+        };
+        for activity in &deployment.activities_wasm {
+            check(
+                "activity_wasm",
+                &activity.common.name,
+                &activity.allowed_hosts,
+            );
+        }
+        for activity in &deployment.activities_js {
+            check("activity_js", &activity.name, &activity.allowed_hosts);
+        }
+        for webhook in &deployment.webhooks_wasm {
+            check(
+                "webhook_endpoint_wasm",
+                &webhook.common.name,
+                &webhook.allowed_hosts,
+            );
+        }
+        for webhook in &deployment.webhooks_js {
+            check("webhook_endpoint_js", &webhook.name, &webhook.allowed_hosts);
+        }
+        // Exec activities reference secrets directly (exposed on stdin), not via `allowed_host`.
+        for exec in &deployment.activities_exec {
+            for name in &exec.secrets {
+                if secret_registry.secret_lookup(name).is_none() {
+                    unregistered.insert(name.clone());
+                }
+            }
+        }
+    }
+
+    // Emit the informational warnings (located advisories, uncovered hosts) before any fatal
+    // report, so the operator sees every finding even when a fatal one aborts the run.
+    warnings.emit();
+    report_uncovered_outbound_http_hosts(&uncovered_hosts);
+
     report_unregistered_secrets(
         &server_unregistered,
         "server.toml `[[outbound_http.allowed_host]]` entries",
         RuntimeConfigAvailability::Strict,
     )?;
-
-    let Some(deployment) = deployment else {
-        return Ok(());
-    };
-
-    let ignore_missing_env_vars = availability.allows_unavailable();
-    let server_replacements = global_secret_replacements(global_http_config);
-    let mut missing_replacements = Vec::new();
-    let mut uncovered_hosts = Vec::new();
-    let mut unregistered = BTreeSet::new();
-    let mut check = |section: &'static str, name: &ConfigName, hosts: &[AllowedHostToml]| {
-        collect_outbound_http_secret_replacements(
-            section,
-            name,
-            hosts,
-            &server_replacements,
-            secret_registry,
-            &mut missing_replacements,
-        );
-        collect_uncovered_outbound_http_hosts(
-            section,
-            name,
-            hosts,
-            global_http_config,
-            secret_registry,
-            ignore_missing_env_vars,
-            &mut uncovered_hosts,
-        );
-        collect_unregistered_secrets(hosts, secret_registry, &mut unregistered);
-    };
-    for activity in &deployment.activities_wasm {
-        check(
-            "activity_wasm",
-            &activity.common.name,
-            &activity.allowed_hosts,
-        );
-    }
-    for activity in &deployment.activities_js {
-        check("activity_js", &activity.name, &activity.allowed_hosts);
-    }
-    for webhook in &deployment.webhooks_wasm {
-        check(
-            "webhook_endpoint_wasm",
-            &webhook.common.name,
-            &webhook.allowed_hosts,
-        );
-    }
-    for webhook in &deployment.webhooks_js {
-        check("webhook_endpoint_js", &webhook.name, &webhook.allowed_hosts);
-    }
-    // Exec activities reference secrets directly (exposed on stdin), not via `allowed_host`.
-    for exec in &deployment.activities_exec {
-        for name in &exec.secrets {
-            if secret_registry.secret_lookup(name).is_none() {
-                unregistered.insert(name.clone());
-            }
-        }
-    }
-
     report_unregistered_secrets(
         &unregistered,
         "the deployment's secret references",
         availability,
     )?;
     report_missing_outbound_http_secret_replacements(&missing_replacements, availability)?;
-    report_uncovered_outbound_http_hosts(&uncovered_hosts);
     Ok(())
 }
 
@@ -395,7 +525,7 @@ pub(super) fn collect_uncovered_outbound_http_hosts(
             continue;
         }
         // Resolve one entry at a time to keep the original TOML for the snippet.
-        let Ok(resolved) = resolve_allowed_hosts(
+        let Ok((resolved, _advisories)) = resolve_allowed_hosts(
             vec![entry.clone()],
             ignore_missing_env_vars,
             secret_registry,
@@ -486,4 +616,43 @@ pub(super) async fn fix_server_secret_scaffolds(
         .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A resolver advisory is joined to the `[[*.allowed_host]]` block it came from and
+    /// annotated with the source `path:line`, deduplicating identical findings.
+    #[test]
+    fn advisory_is_located_to_source_line() {
+        // `methods` omitted triggers the "no methods" advisory; the entry still resolves.
+        let entry = AllowedHostToml {
+            pattern: "http://localhost:5005".to_string(),
+            methods: None,
+            request_url_regex: None,
+            secrets: Vec::new(),
+            replace_in: Vec::new(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        // Write the block from the same entry so its fingerprint matches on both sides.
+        std::fs::write(
+            &path,
+            format!(
+                "# policy\n[[outbound_http.allowed_host]]\n{}",
+                toml::to_string(&entry).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let mut warnings = LocatedWarnings::default();
+        warnings.index_file(&path);
+        warnings.lint(&[entry], false, &SecretRegistry::empty());
+
+        let (message, locations) = warnings.by_message.iter().next().expect("one advisory");
+        assert!(message.contains("has no `methods`"), "{message}");
+        let location = locations.iter().next().expect("one location");
+        assert!(location.ends_with("server.toml:2"), "{location}");
+    }
 }

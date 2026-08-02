@@ -1493,7 +1493,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
 
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
-        let allowed_hosts =
+        let (allowed_hosts, _advisories) =
             resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
 
         // Validate no collision between env_vars and secret env names
@@ -2219,7 +2219,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         )?;
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
-        let allowed_hosts =
+        let (allowed_hosts, _advisories) =
             resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
         validate_no_env_collision(&env_vars, &allowed_hosts)?;
         let activity_config = ActivityConfig {
@@ -3304,7 +3304,7 @@ pub(crate) mod webhook {
                 ignore_missing_env_vars,
                 secret_registry,
             )?;
-            let allowed_hosts = resolve_allowed_hosts(
+            let (allowed_hosts, _advisories) = resolve_allowed_hosts(
                 self.allowed_hosts,
                 ignore_missing_env_vars,
                 secret_registry,
@@ -3375,7 +3375,7 @@ pub(crate) mod webhook {
                 ignore_missing_env_vars,
                 secret_registry,
             )?;
-            let allowed_hosts = resolve_allowed_hosts(
+            let (allowed_hosts, _advisories) = resolve_allowed_hosts(
                 self.allowed_hosts,
                 ignore_missing_env_vars,
                 secret_registry,
@@ -3502,8 +3502,6 @@ pub(crate) enum ResolveAllowedHostsError {
     EnvVarsMissing(#[from] EnvVarsMissing),
     #[error(transparent)]
     SecretViolation(#[from] SecretViolation),
-    #[error(transparent)]
-    NamedSecret(#[from] anyhow::Error),
     #[error("cannot parse HTTP method `{0}`")]
     InvalidMethod(String),
     #[error("use `methods = \"*\"` to allow all methods, not `methods = [\"*\"]`")]
@@ -3512,23 +3510,47 @@ pub(crate) enum ResolveAllowedHostsError {
     InvalidRequestUrlRegex { pattern: String, err: regex::Error },
 }
 
+/// An `allowed_host` entry that is valid but likely misconfigured. Carries the entry's TOML
+/// fingerprint so a located reporter (`config_prepass`) can map it back to a source line.
+/// Resolution collects these instead of logging them, so a single deduplicated, source-located
+/// report is emitted once by the pre-pass rather than scattered across the resolvers.
+#[derive(Debug)]
+pub(crate) struct AllowedHostAdvisory {
+    pub(crate) fingerprint: String,
+    pub(crate) message: String,
+}
+
+/// The TOML serialization of an entry, used as a stable key to join a resolver advisory to the
+/// `[[*.allowed_host]]` block it came from in the source file.
+pub(crate) fn allowed_host_fingerprint(entry: &AllowedHostToml) -> String {
+    toml::to_string(entry).expect("allowed host must serialize")
+}
+
 pub(crate) fn resolve_allowed_hosts(
     entries: Vec<AllowedHostToml>,
     ignore_missing_env_vars: bool,
     secret_registry: &SecretRegistry,
-) -> Result<Arc<[AllowedHostConfig]>, ResolveAllowedHostsError> {
-    entries
+) -> Result<(Arc<[AllowedHostConfig]>, Vec<AllowedHostAdvisory>), ResolveAllowedHostsError> {
+    let mut advisories = Vec::new();
+    let hosts = entries
         .into_iter()
         .filter_map(|entry| {
+            let fingerprint = allowed_host_fingerprint(&entry);
+            let mut advise = |message: String| {
+                advisories.push(AllowedHostAdvisory {
+                    fingerprint: fingerprint.clone(),
+                    message,
+                });
+            };
             // Convert MethodsInput to MethodsPattern
             let methods = match entry.methods {
                 None => {
                     // Omitted methods: nothing allowed, warn and skip
-                    warn!(
+                    advise(format!(
                         "allowed_host `{}` has no `methods` field - no requests will be allowed; \
                          use `methods = \"*\"` to allow all methods",
                         entry.pattern
-                    );
+                    ));
                     return None;
                 }
                 Some(MethodsInput::Star(_)) => {
@@ -3538,10 +3560,10 @@ pub(crate) fn resolve_allowed_hosts(
                 Some(MethodsInput::List(list)) => {
                     if list.is_empty() {
                         // Empty list: nothing allowed, warn and skip
-                        warn!(
+                        advise(format!(
                             "allowed_host `{}` has empty `methods = []` - no requests will be allowed",
                             entry.pattern
-                        );
+                        ));
                         return None;
                     }
                     // Parse specific methods
@@ -3568,10 +3590,10 @@ pub(crate) fn resolve_allowed_hosts(
                 Ok(s) => s,
                 Err(EnvVarError::Missing(var)) => {
                     if ignore_missing_env_vars {
-                        warn!(
+                        advise(format!(
                             "allowed_host pattern `{}` references missing env var `{var}`, skipping",
                             entry.pattern
-                        );
+                        ));
                         return None;
                     }
                     return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
@@ -3586,9 +3608,9 @@ pub(crate) fn resolve_allowed_hosts(
                         Ok(s) => s,
                         Err(EnvVarError::Missing(var)) => {
                             if ignore_missing_env_vars {
-                                warn!(
+                                advise(format!(
                                     "allowed_host request_url_regex `{pattern}` references missing env var `{var}`, skipping"
-                                );
+                                ));
                                 return None;
                             }
                             return Some(Err(ResolveAllowedHostsError::EnvVarsMissing(
@@ -3618,21 +3640,23 @@ pub(crate) fn resolve_allowed_hosts(
 
             let (secret_env_mappings, replace_in) = if entry.secrets.is_empty() {
                 if !entry.replace_in.is_empty() {
-                    warn!(
+                    advise(format!(
                         "allowed_host `{}` has `replace_in` but no `secrets` - nothing to inject",
                         entry.pattern
-                    );
+                    ));
                 }
                 (Vec::new(), hashbrown::HashSet::new())
             } else {
                 if entry.replace_in.is_empty() {
-                    warn!(
+                    advise(format!(
                         "allowed_host `{}` has empty `replace_in` - secrets will never be injected",
                         entry.pattern
-                    );
+                    ));
                 }
                 if pattern.scheme.allows_unencrypted() {
-                    warn!("secrets allowed for potentially unencrypted host `{pattern}`");
+                    advise(format!(
+                        "secrets allowed for potentially unencrypted host `{pattern}`"
+                    ));
                 }
 
                 let env_mappings = resolve_named_secrets(&entry.secrets, secret_registry);
@@ -3655,7 +3679,8 @@ pub(crate) fn resolve_allowed_hosts(
                 replace_in,
             }))
         })
-        .collect::<Result<_, _>>()
+        .collect::<Result<Arc<[AllowedHostConfig]>, _>>()?;
+    Ok((hosts, advisories))
 }
 
 fn validate_no_env_collision(
@@ -4046,7 +4071,7 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 
         #[test]
         fn request_url_regex_interpolates_env_vars() {
-            let hosts = resolve_allowed_hosts(
+            let (hosts, _advisories) = resolve_allowed_hosts(
                 vec![allowed_host_with_regex(
                     r"^GET https://${OBELISK_TEST_REQUEST_URL_REGEX_DOMAIN:-api\.example\.com}/v1/",
                 )],
@@ -4078,7 +4103,7 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
         #[test]
         fn request_url_regex_missing_env_var_skips_when_ignored() {
             const VAR: &str = "OBELISK_TEST_MISSING_REQUEST_URL_REGEX_DOMAIN_IGNORED_9E5F58E0";
-            let hosts = resolve_allowed_hosts(
+            let (hosts, _advisories) = resolve_allowed_hosts(
                 vec![allowed_host_with_regex(&format!(
                     "^GET https://${{{VAR}}}/"
                 ))],
