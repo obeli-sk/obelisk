@@ -2883,10 +2883,10 @@
             "type": "object",
             "description": "Execution failed",
             "required": [
-              "execution_failure"
+              "execution_failed"
             ],
             "properties": {
-              "execution_failure": {
+              "execution_failed": {
                 "type": "object",
                 "description": "Execution failed"
               }

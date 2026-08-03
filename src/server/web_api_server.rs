@@ -1475,7 +1475,7 @@ enum RetVal {
     Err(Option<WastVal>),
     /// Execution failed
     #[schema(value_type = Object)]
-    ExecutionFailure(FinishedExecutionFailure),
+    ExecutionFailed(FinishedExecutionFailure),
 }
 impl From<SupportedFunctionReturnValue> for RetVal {
     fn from(value: SupportedFunctionReturnValue) -> RetVal {
@@ -1486,7 +1486,7 @@ impl From<SupportedFunctionReturnValue> for RetVal {
             SupportedFunctionReturnValue::Err(val_with_type) => {
                 RetVal::Err(val_with_type.map(|it| it.value))
             }
-            SupportedFunctionReturnValue::ExecutionFailure(err) => RetVal::ExecutionFailure(err),
+            SupportedFunctionReturnValue::ExecutionFailure(err) => RetVal::ExecutionFailed(err),
         }
     }
 }
@@ -4327,7 +4327,7 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::format_execution_status_text;
+    use super::{RetVal, format_execution_status_text};
     use chrono::{DateTime, Utc};
     use concepts::{
         ExecutionFailureKind, SupportedFunctionReturnValue,
@@ -4370,6 +4370,25 @@ mod tests {
                 ),
             })),
             "Finished: Execution failure (Uncategorized)"
+        );
+    }
+
+    #[test]
+    fn execution_failure_retval_has_canonical_field() {
+        let failure = concepts::FinishedExecutionFailure {
+            kind: ExecutionFailureKind::TimedOut,
+            reason: Some("timed out".to_string()),
+            detail: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(RetVal::from(
+                SupportedFunctionReturnValue::ExecutionFailure(failure.clone())
+            ))
+            .unwrap(),
+            serde_json::json!({
+                "execution_failed": failure,
+            })
         );
     }
 

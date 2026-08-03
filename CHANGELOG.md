@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `undefined`. An uncaught such error therefore encodes as a correctly-typed `err` for a
   workflow returning `result<_, string>` or a variant `err`, rather than failing to type check as
   `null`.
+- **Breaking:** *(webapi)* Execution failure results now use the canonical `execution_failed`
+  field instead of `execution_failure`.
+
 ### Deprecated
 
 - *(js)* Renamed `obelisk.ChildExecutionError` to `obelisk.ChildError`, which now also covers
