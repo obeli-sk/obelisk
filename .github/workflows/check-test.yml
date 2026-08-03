@@ -26,6 +26,9 @@ jobs:
   ci-test:
     name: ci-test ${{ matrix.name }}
     runs-on: ubuntu-24.04
+    env:
+      # kache 0.12 can report build-script hits without restoring Cargo's expected executable.
+      KACHE_CACHE_EXECUTABLES: "0"
 
     strategy:
       fail-fast: false
