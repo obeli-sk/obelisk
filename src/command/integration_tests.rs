@@ -3385,7 +3385,7 @@ async fn submit_workflow_rethrows_child_execution_error() {
 
 /// A child execution cancelled out-of-band surfaces to an awaiting JS parent as a
 /// `ChildError` with `.cancelled === true` and `.failureKind === "cancelled"`
-/// (a platform failure with no err payload), not as a business err value.
+/// whose `.value` is projected onto the child's string err type.
 #[tokio::test]
 async fn submit_workflow_child_cancelled_surfaces_child_execution_error() {
     use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};

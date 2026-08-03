@@ -1,7 +1,7 @@
 // Await a child execution that is cancelled out-of-band. The child's cancellation
 // is a platform failure (not a business err), so `joinNext` throws a
 // `ChildError` whose `.cancelled` is true, `.failureKind` is `cancelled`
-// and `.value` is undefined (no err payload to carry).
+// and `.value` is projected onto the child's string err type.
 export default function cancel_child_error() {
     // Deprecated alias must stay the very same constructor.
     if (obelisk.ChildExecutionError !== obelisk.ChildError) {
@@ -25,8 +25,8 @@ export default function cancel_child_error() {
         if (e.childId !== childId) {
             throw `expected childId=${childId}, got: ${e.childId}`;
         }
-        if (e.value !== undefined) {
-            throw `expected value=undefined, got: ${JSON.stringify(e.value)}`;
+        if (e.value !== 'execution-failed') {
+            throw `expected value=execution-failed, got: ${JSON.stringify(e.value)}`;
         }
         return 'cancelled-child-observed';
     }

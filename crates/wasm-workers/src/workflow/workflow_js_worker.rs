@@ -681,6 +681,7 @@ mod tests {
     use crate::workflow::deadline_tracker::{
         DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
     };
+    use crate::workflow::workflow_worker::tests::write_stub_response;
     use crate::workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig};
     use assert_matches::assert_matches;
     use chrono::DateTime;
@@ -713,7 +714,7 @@ mod tests {
     use test_utils::{ExecutionLogSanitized, redact_component_digest};
     use tokio::sync::mpsc;
     use tracing::{info, info_span};
-    use val_json::wast_val::WastVal;
+    use val_json::wast_val::{ValKey, WastVal};
     use wasmtime::Engine;
 
     type ExecTaskAndClose = (ExecTask, tokio::sync::watch::Sender<bool>);
@@ -1219,9 +1220,35 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
+        compile_js_workflow_worker_with_deployment_id_and_return_type(
+            js_source,
+            user_ffqn,
+            db_pool,
+            clock_fn,
+            fn_registry,
+            workflow_engine,
+            deployment_id,
+            join_next_blocking_strategy,
+            deadline_factory,
+            default_return_type(),
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn compile_js_workflow_worker_with_deployment_id_and_return_type(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: &dyn ClockFn,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        workflow_engine: Arc<Engine>,
+        deployment_id: DeploymentId,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        return_type: ReturnTypeExtendable,
+    ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let params = default_js_params();
-        let return_type = default_return_type();
         let component_id = concepts::ComponentId::new(
             ComponentType::Workflow,
             StrVariant::Static("test_js_workflow"),
@@ -1731,6 +1758,7 @@ mod tests {
     enum TestActivities {
         None,
         Stub,
+        ChildErrorProjections,
     }
 
     /// Helper for running JS workflow tests with reduced boilerplate.
@@ -1801,6 +1829,25 @@ mod tests {
             activities: TestActivities,
             join_next_blocking_strategy: JoinNextBlockingStrategy,
         ) -> Self {
+            Self::new_with_return_type(
+                db_pool,
+                js_source,
+                fn_name,
+                activities,
+                join_next_blocking_strategy,
+                default_return_type(),
+            )
+            .await
+        }
+
+        async fn new_with_return_type(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+            activities: TestActivities,
+            join_next_blocking_strategy: JoinNextBlockingStrategy,
+            return_type: ReturnTypeExtendable,
+        ) -> Self {
             use crate::activity::activity_worker::test::compile_activity_stub;
 
             let sim_clock = SimClock::epoch();
@@ -1811,6 +1858,20 @@ mod tests {
                 TestActivities::Stub => vec![
                     compile_activity_stub(
                         test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY,
+                    )
+                    .await,
+                ],
+                TestActivities::ChildErrorProjections => vec![
+                    compile_activity(
+                        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                    )
+                    .await,
+                    compile_activity(
+                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                    )
+                    .await,
+                    compile_activity(
+                        test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
                     )
                     .await,
                 ],
@@ -1832,7 +1893,7 @@ mod tests {
             let workflow_engine =
                 Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
             let (worker, component_id, _runnable_component) =
-                compile_js_workflow_worker_with_deployment_id(
+                compile_js_workflow_worker_with_deployment_id_and_return_type(
                     js_source,
                     &user_ffqn,
                     db_pool.clone(),
@@ -1842,6 +1903,7 @@ mod tests {
                     DEPLOYMENT_ID_DUMMY,
                     join_next_blocking_strategy,
                     deadline_factory,
+                    return_type,
                 );
 
             let (workflow_exec, workflow_close_tx) =
@@ -1912,6 +1974,242 @@ mod tests {
     }
 
     // ==================== Workflow tests ====================
+
+    #[derive(Clone, Copy, Debug)]
+    enum ChildErrorAwaitStyle {
+        DirectImport,
+        JoinNext,
+        JoinNextTry,
+    }
+
+    impl ChildErrorAwaitStyle {
+        fn js_source(self, projection: ChildErrProjection) -> String {
+            let (direct_import, direct_call) = projection.direct_import();
+            let (import, setup, await_child) = match self {
+                Self::DirectImport => (direct_import, String::new(), direct_call.to_string()),
+                Self::JoinNext => (
+                    "",
+                    format!(
+                        "const js = obelisk.createJoinSet();\njs.submit('{}', {});",
+                        projection.target_ffqn(),
+                        projection.params_json()
+                    ),
+                    "js.joinNext();".to_string(),
+                ),
+                Self::JoinNextTry => (
+                    "",
+                    format!(
+                        "const js = obelisk.createJoinSet();\njs.submit('{}', {});\nobelisk.sleep({{ milliseconds: 1 }});",
+                        projection.target_ffqn(),
+                        projection.params_json()
+                    ),
+                    "js.joinNextTry();\nthrow 'expected ChildError';".to_string(),
+                ),
+            };
+            let value_assertion = projection.value_assertion();
+            format!(
+                r"
+                {import}
+                export default function test_child_error(_params) {{
+                    {setup}
+                    try {{
+                        {await_child}
+                    }} catch (e) {{
+                        if (!(e instanceof obelisk.ChildError)) {{
+                            throw `expected ChildError, got: ${{e}}`;
+                        }}
+                        {value_assertion}
+                        if (e.failureKind !== 'uncategorized') {{
+                            throw `unexpected failure kind: ${{e.failureKind}}`;
+                        }}
+                        throw e;
+                    }}
+                }}
+                "
+            )
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum ChildErrProjection {
+        Unit,
+        String,
+        ExecutionFailedVariant,
+    }
+
+    impl ChildErrProjection {
+        fn direct_import(self) -> (&'static str, &'static str) {
+            match self {
+                Self::Unit => ("import { fibo } from 'testing:fibo/fibo';", "fibo(1);"),
+                Self::String => (
+                    "import { get } from 'testing:http/http-get';",
+                    "get('http://unused');",
+                ),
+                Self::ExecutionFailedVariant => {
+                    ("import { trap } from 'testing:serde/serde';", "trap();")
+                }
+            }
+        }
+
+        fn target_ffqn(self) -> &'static str {
+            match self {
+                Self::Unit => "testing:fibo/fibo.fibo",
+                Self::String => "testing:http/http-get.get",
+                Self::ExecutionFailedVariant => "testing:serde/serde.trap",
+            }
+        }
+
+        fn params_json(self) -> &'static str {
+            match self {
+                Self::Unit => "[1]",
+                Self::String => "['http://unused']",
+                Self::ExecutionFailedVariant => "[]",
+            }
+        }
+
+        fn value_assertion(self) -> &'static str {
+            match self {
+                Self::Unit => {
+                    "if (e.value !== undefined) { throw `unexpected child err value: ${e.value}`; }"
+                }
+                Self::String => {
+                    "if (e.value !== 'execution-failed') { throw `unexpected child err value: ${e.value}`; }"
+                }
+                Self::ExecutionFailedVariant => {
+                    "if (e.value !== 'execution_failed') { throw `unexpected child err value: ${e.value}`; }"
+                }
+            }
+        }
+
+        fn parent_return_type(self) -> ReturnTypeExtendable {
+            let err = match self {
+                Self::Unit => None,
+                Self::String => Some(Box::new(TypeWrapper::String)),
+                Self::ExecutionFailedVariant => {
+                    Some(Box::new(TypeWrapper::Variant(IndexMap::from([
+                        (TypeKey::new_kebab("foo"), None),
+                        (TypeKey::new_kebab("execution-failed"), None),
+                    ]))))
+                }
+            };
+            let wit_type = match self {
+                Self::Unit => StrVariant::Static("result<string>"),
+                Self::String => StrVariant::Static("result<string, string>"),
+                Self::ExecutionFailedVariant => {
+                    StrVariant::Static("result<string, variant { foo, execution-failed }>")
+                }
+            };
+            ReturnTypeExtendable {
+                type_wrapper_tl: TypeWrapperTopLevel {
+                    ok: Some(Box::new(TypeWrapper::String)),
+                    err,
+                },
+                wit_type,
+            }
+        }
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_rethrows_child_platform_failure(
+        database: Database,
+        #[values(
+            ChildErrorAwaitStyle::DirectImport,
+            ChildErrorAwaitStyle::JoinNext,
+            ChildErrorAwaitStyle::JoinNextTry
+        )]
+        await_style: ChildErrorAwaitStyle,
+        #[values(
+            ChildErrProjection::Unit,
+            ChildErrProjection::String,
+            ChildErrProjection::ExecutionFailedVariant
+        )]
+        projection: ChildErrProjection,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = await_style.js_source(projection);
+        let harness = JsWorkflowTestHarness::new_with_return_type(
+            db_pool,
+            &js_source,
+            "test-child-error",
+            TestActivities::ChildErrorProjections,
+            JoinNextBlockingStrategy::Interrupt,
+            projection.parent_return_type(),
+        )
+        .await;
+
+        harness.tick().await;
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        let child_ffqn = projection.target_ffqn().parse::<FunctionFqn>().unwrap();
+        let child_execution_id = log
+            .events
+            .iter()
+            .find_map(|event| match &event.event {
+                ExecutionRequest::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetRequest {
+                            request:
+                                JoinSetRequest::ChildExecutionRequest {
+                                    child_execution_id,
+                                    target_ffqn,
+                                    ..
+                                },
+                            ..
+                        },
+                } if target_ffqn == &child_ffqn => Some(child_execution_id.clone()),
+                _ => None,
+            })
+            .expect("workflow should submit the child activity");
+        write_stub_response(
+            harness.db_connection.as_ref(),
+            harness.sim_clock.now(),
+            child_execution_id,
+            SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+                kind: ExecutionFailureKind::Uncategorized,
+                reason: Some("injected platform failure".to_string()),
+                detail: None,
+            }),
+        )
+        .await;
+
+        if matches!(await_style, ChildErrorAwaitStyle::JoinNextTry) {
+            harness.advance_time(Duration::from_millis(1)).await;
+        }
+        harness.tick().await;
+
+        let result = harness
+            .db_connection
+            .get_finished_result(&harness.execution_id)
+            .await
+            .unwrap();
+        match projection {
+            ChildErrProjection::Unit => {
+                assert_matches!(result, SupportedFunctionReturnValue::Err(None));
+            }
+            ChildErrProjection::String => {
+                let err =
+                    assert_matches!(result, SupportedFunctionReturnValue::Err(Some(err)) => err);
+                assert_eq!(WastVal::String("execution-failed".into()), err.value);
+            }
+            ChildErrProjection::ExecutionFailedVariant => {
+                let err =
+                    assert_matches!(result, SupportedFunctionReturnValue::Err(Some(err)) => err);
+                assert_eq!(
+                    WastVal::Variant(ValKey::from_kebab("execution-failed"), None),
+                    err.value
+                );
+            }
+        }
+
+        drop(harness);
+        db_close.close().await;
+    }
 
     /// Test: JS workflow uses `obelisk.stub()` to stub an `activity_stub` execution.
     #[expand_enum_database]
