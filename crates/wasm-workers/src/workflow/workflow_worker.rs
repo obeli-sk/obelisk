@@ -1412,9 +1412,17 @@ enum CloseJoinSetOk {
     DbUpdatedByWorkerOrWatcher,
 }
 
+enum AutoUpgradeOutcome {
+    Succeeded,
+    Failed { reason: StrVariant },
+}
+
 impl WorkflowWorker {
-    async fn auto_upgrade_locked(&self, ctx: WorkerContext) -> Result<(), WorkerError> {
-        info!("Auto-upgrading execution");
+    async fn auto_upgrade_locked(
+        &self,
+        ctx: WorkerContext,
+    ) -> Result<AutoUpgradeOutcome, WorkerError> {
+        debug!("Auto-upgrading execution");
         let new_digest = self.config.component_id.component_digest.clone();
         let execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
@@ -1456,6 +1464,7 @@ impl WorkflowWorker {
         if let ReplayPendingState::FinishedWithFailure(fatal_error) = replay_pending_state {
             // Set ignore_component_digest to avoid needless locks in the future.
             let created_at = self.clock_fn.now();
+            let reason = StrVariant::from(fatal_error.to_string());
             db_conn
                 .append_batch(
                     created_at,
@@ -1466,7 +1475,7 @@ impl WorkflowWorker {
                                 component_digest: self.config.component_id.component_digest.clone(),
                                 deployment_id: self.deployment_id,
                                 outcome: ComponentUpgradeOutcome::Failed {
-                                    reason: StrVariant::from(fatal_error.to_string()),
+                                    reason: reason.clone(),
                                 },
                             },
                         },
@@ -1484,12 +1493,12 @@ impl WorkflowWorker {
                 )
                 .await
                 .map_err(WorkerError::DbError)?;
-            return Ok(()); // NOK but db already updated
+            return Ok(AutoUpgradeOutcome::Failed { reason });
         }
 
         if fresh_replay.is_empty() {
-            warn!("Auto upgrade failed - empty writes returned by replay"); // Unsure what the next pending state would be.
             let created_at = self.clock_fn.now();
+            let reason = StrVariant::from("auto-upgrade replay produced no writes");
             db_conn
                 .append_batch(
                     created_at,
@@ -1500,7 +1509,7 @@ impl WorkflowWorker {
                                 component_digest: self.config.component_id.component_digest.clone(),
                                 deployment_id: self.deployment_id,
                                 outcome: ComponentUpgradeOutcome::Failed {
-                                    reason: "auto-upgrade replay produced no writes".into(),
+                                    reason: reason.clone(),
                                 },
                             },
                         },
@@ -1518,7 +1527,7 @@ impl WorkflowWorker {
                 )
                 .await
                 .map_err(WorkerError::DbError)?;
-            return Ok(());
+            return Ok(AutoUpgradeOutcome::Failed { reason });
         }
 
         let version = db_conn
@@ -1578,8 +1587,7 @@ impl WorkflowWorker {
             }
             ReplayPendingState::FinishedWithFailure(_) => unreachable!("handled above"),
         }
-        info!("Execution auto-upgraded");
-        Ok(())
+        Ok(AutoUpgradeOutcome::Succeeded)
     }
 }
 
@@ -1591,7 +1599,12 @@ impl Worker for WorkflowWorker {
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         if ctx.component_digest != self.config.component_id.component_digest {
-            self.auto_upgrade_locked(ctx).await?;
+            match self.auto_upgrade_locked(ctx).await? {
+                AutoUpgradeOutcome::Succeeded => info!("Execution auto-upgraded"),
+                AutoUpgradeOutcome::Failed { reason } => {
+                    warn!(%reason, "Execution auto-upgrade failed");
+                }
+            }
             return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
         }
 
