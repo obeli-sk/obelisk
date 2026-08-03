@@ -21,7 +21,7 @@ if [ "${CARGO_INSTA_TEST:-}" = "true" ]; then
   cmd=(
     cargo insta test --test-runner nextest --check --disable-nextest-doctest
     --workspace
-    --profile ci-test
+    --nextest-profile ci-test
   )
 else
   cmd=(
