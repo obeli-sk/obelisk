@@ -25,8 +25,8 @@ export default function cancel_child_error() {
         if (e.childId !== childId) {
             throw `expected childId=${childId}, got: ${e.childId}`;
         }
-        if (e.value !== 'execution-failed') {
-            throw `expected value=execution-failed, got: ${JSON.stringify(e.value)}`;
+        if (e.value !== 'execution_failed') {
+            throw `expected value=execution_failed, got: ${JSON.stringify(e.value)}`;
         }
         return 'cancelled-child-observed';
     }

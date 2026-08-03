@@ -2072,10 +2072,7 @@ mod tests {
                 Self::Unit => {
                     "if (e.value !== undefined) { throw `unexpected child err value: ${e.value}`; }"
                 }
-                Self::String => {
-                    "if (e.value !== 'execution-failed') { throw `unexpected child err value: ${e.value}`; }"
-                }
-                Self::ExecutionFailedVariant => {
+                Self::String | Self::ExecutionFailedVariant => {
                     "if (e.value !== 'execution_failed') { throw `unexpected child err value: ${e.value}`; }"
                 }
             }
@@ -2195,7 +2192,7 @@ mod tests {
             ChildErrProjection::String => {
                 let err =
                     assert_matches!(result, SupportedFunctionReturnValue::Err(Some(err)) => err);
-                assert_eq!(WastVal::String("execution-failed".into()), err.value);
+                assert_eq!(WastVal::String("execution_failed".into()), err.value);
             }
             ChildErrProjection::ExecutionFailedVariant => {
                 let err =
