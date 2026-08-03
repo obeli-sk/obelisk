@@ -1,14 +1,7 @@
-//! Config verify pre-pass: aggregate config findings across a whole server startup or
-//! `server verify` run instead of bailing on the first, and apply the auto-fixable subset
-//! under `--fix`.
-//!
-//! The pre-pass owns the continue/bail/fix decision for the outbound-HTTP allowlist:
-//! unregistered secret names, secret replacements the operator allowlist does not authorize,
-//! and destinations no allowlist entry covers. The verified config carries only secret
-//! *names*; `resolve_allowed_hosts` no longer makes that decision, and values are fetched
-//! lazily per execution run through a component-scoped `RestrictedSecretRegistry`, which
-//! (like `http_request_policy`) fails closed when a name cannot be resolved. Running the
-//! pre-pass here lets the operator fix every finding in one edit.
+//! Config verify pre-pass: aggregate outbound-HTTP allowlist findings across a server startup
+//! or `server verify` run instead of bailing on the first, and apply the auto-fixable subset
+//! under `--fix`. Owns the continue/bail/fix decision; the verified config carries secret names
+//! only, resolved lazily per run through a component-scoped `RestrictedSecretRegistry`.
 
 use super::RuntimeConfigAvailability;
 use crate::config::secret_registry::SecretRegistry;
@@ -24,10 +17,8 @@ use toml_edit::{DocumentMut, Item, Table, value};
 use tracing::warn;
 use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
 
-/// Collects the per-entry `allowed_host` advisories the resolver emits and pairs each with the
-/// source `path:line` of the `[[*.allowed_host]]` block it came from, deduplicating identical
-/// findings that appear in several entries. Single-threaded (owned by the pre-pass), so it
-/// needs no lock; the resolvers no longer carry a warning sink.
+/// Pairs each per-entry `allowed_host` advisory with the source `path:line` of its
+/// `[[*.allowed_host]]` block, deduplicating identical findings across entries.
 #[derive(Default)]
 struct LocatedWarnings {
     /// advisory message -> set of `path:line` locations
@@ -37,9 +28,8 @@ struct LocatedWarnings {
 }
 
 impl LocatedWarnings {
-    /// Parse `path` and record the line of every `[[*.allowed_host]]` block, keyed by the
-    /// fingerprint of the entry it deserializes to. Best-effort: unreadable or unparsable
-    /// files leave the index empty and advisories are reported without a location.
+    /// Record the source line of every `[[*.allowed_host]]` block in `path`, keyed by entry
+    /// fingerprint. Best-effort: unreadable or unparsable files leave the index empty.
     fn index_file(&mut self, path: &Path) {
         #[derive(Deserialize)]
         struct AllowedHostBlock {
@@ -131,10 +121,9 @@ impl LocatedWarnings {
     }
 }
 
-/// Run the outbound-HTTP allowlist pre-pass over the server's own config and, when present,
-/// the deployment being started/verified. Bails on the first fatal category collected so far
-/// under strict availability; downgrades the fatal categories to warnings when unavailable
-/// runtime configuration is allowed (activation re-checks strictly).
+/// Run the outbound-HTTP allowlist pre-pass over the server config and, when present, the
+/// deployment. Fatal categories bail under strict availability, warn when unavailable runtime
+/// config is allowed (activation re-checks strictly).
 pub(super) fn preflight(
     server_verified: &super::ServerVerified,
     deployment: Option<&DeploymentResolved>,
@@ -144,9 +133,7 @@ pub(super) fn preflight(
     let global_http_config = &server_verified.global_http_config;
     let ignore_missing_env_vars = availability.allows_unavailable();
 
-    // Index the source files up front so per-entry advisories can be located, then lint the
-    // server's own outbound allowlist. Resolution (in `ServerVerified::new` and component
-    // preparation) drops these advisories; the pre-pass is their sole, located emitter.
+    // Index source files so advisories can be located, then lint the server's own allowlist.
     let mut warnings = LocatedWarnings::default();
     if let Some(path) = &server_verified.source_path {
         warnings.index_file(path);
@@ -162,10 +149,9 @@ pub(super) fn preflight(
         secret_registry,
     );
 
-    // The server's own `[[outbound_http.allowed_host]]` unregistered secrets are always fatal
-    // (the server cannot run with an invalid allowlist); the deployment's follow availability.
+    // The server's own unregistered secrets are always fatal; the deployment's follow availability.
     let mut server_unregistered = BTreeSet::new();
-    collect_unregistered_secrets(
+    collect_unregistered_allowed_host_secrets(
         &server_verified.server_outbound_allowed_hosts,
         secret_registry,
         &mut server_unregistered,
@@ -195,7 +181,7 @@ pub(super) fn preflight(
                 ignore_missing_env_vars,
                 &mut uncovered_hosts,
             );
-            collect_unregistered_secrets(hosts, secret_registry, &mut unregistered);
+            collect_unregistered_allowed_host_secrets(hosts, secret_registry, &mut unregistered);
         };
         for activity in &deployment.activities_wasm {
             check(
@@ -227,8 +213,7 @@ pub(super) fn preflight(
         }
     }
 
-    // Emit the informational warnings (located advisories, uncovered hosts) before any fatal
-    // report, so the operator sees every finding even when a fatal one aborts the run.
+    // Emit informational warnings before any fatal report, so every finding is seen.
     warnings.emit();
     report_uncovered_outbound_http_hosts(&uncovered_hosts);
 
@@ -246,8 +231,7 @@ pub(super) fn preflight(
     Ok(())
 }
 
-/// Every component's outbound HTTP `allowed_hosts`, over the same component kinds the
-/// deployment pre-pass checks. Used by `--fix` to gather referenced secret names.
+/// Every component's outbound HTTP `allowed_hosts`; used by `collect_deployment_unregistered_secrets`.
 pub(super) fn deployment_allowed_host_lists(
     deployment: &DeploymentResolved,
 ) -> Vec<&[AllowedHostToml]> {
@@ -259,10 +243,28 @@ pub(super) fn deployment_allowed_host_lists(
     lists
 }
 
-/// Append every secret name referenced by `entries` that the operator registry does not
-/// know onto `unregistered` (deduplicated). An unregistered name can never be injected,
-/// so the operator must register it or drop the reference.
-pub(super) fn collect_unregistered_secrets(
+/// Append every unregistered secret a deployment references onto `unregistered`: both
+/// `allowed_host` entries and exec-activity `secrets`. Keeps `--fix` in sync with `preflight`.
+pub(super) fn collect_deployment_unregistered_secrets(
+    deployment: &DeploymentResolved,
+    secret_registry: &SecretRegistry,
+    unregistered: &mut BTreeSet<String>,
+) {
+    for hosts in deployment_allowed_host_lists(deployment) {
+        collect_unregistered_allowed_host_secrets(hosts, secret_registry, unregistered);
+    }
+    for exec in &deployment.activities_exec {
+        for name in &exec.secrets {
+            if secret_registry.secret_lookup(name).is_none() {
+                unregistered.insert(name.clone());
+            }
+        }
+    }
+}
+
+/// Append every secret name in `allowed_host` `entries` the operator registry does not know onto
+/// `unregistered`. See `collect_deployment_unregistered_secrets` for the deployment-wide collector.
+pub(super) fn collect_unregistered_allowed_host_secrets(
     entries: &[AllowedHostToml],
     secret_registry: &SecretRegistry,
     unregistered: &mut BTreeSet<String>,
@@ -277,7 +279,6 @@ pub(super) fn collect_unregistered_secrets(
 }
 
 /// Render a paste-able `[secrets]` block scaffolding each name as `X = { env = "X" }`.
-/// `env` defaults to the logical name; the operator adjusts it when the source differs.
 pub(super) fn secret_scaffold_snippet(names: &BTreeSet<String>) -> String {
     use std::fmt::Write as _;
     let mut snippet = String::from("[secrets]\n");
@@ -287,9 +288,8 @@ pub(super) fn secret_scaffold_snippet(names: &BTreeSet<String>) -> String {
     snippet
 }
 
-/// Emit a single finding covering every unregistered secret `source_desc` references,
-/// with a paste-able `[secrets]` snippet. Fatal under strict availability; downgraded to
-/// a warning when unavailable runtime config is allowed (activation re-checks strictly).
+/// Emit a single finding for every unregistered secret `source_desc` references, with a
+/// `[secrets]` snippet. Fatal under strict availability, otherwise a warning.
 pub(super) fn report_unregistered_secrets(
     unregistered: &BTreeSet<String>,
     source_desc: &str,
@@ -370,9 +370,8 @@ fn allowed_host_snippet(
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
-/// A secret replacement a component requests that the operator global allowlist
-/// does not authorize. Collected across the whole deployment so every missing
-/// allowance is reported at once, letting the operator add them all in one pass.
+/// A secret replacement a component requests that the operator global allowlist does not
+/// authorize. Collected across the deployment so every missing allowance reports at once.
 pub(super) struct MissingSecretReplacement {
     component_section: &'static str,
     component_name: ConfigName,
@@ -381,9 +380,8 @@ pub(super) struct MissingSecretReplacement {
     replace_in: ReplaceIn,
 }
 
-/// Append every secret replacement `entries` requests that `server_replacements`
-/// does not authorize onto `missing`. Registered-only secrets are checked (an
-/// unregistered secret name cannot be injected, so it is skipped here).
+/// Append every secret replacement `entries` request that `server_replacements` does not
+/// authorize onto `missing`. Unregistered secrets are skipped (they can never be injected).
 pub(super) fn collect_outbound_http_secret_replacements(
     component_section: &'static str,
     component_name: &ConfigName,
@@ -419,10 +417,8 @@ pub(super) fn collect_outbound_http_secret_replacements(
     }
 }
 
-/// Emit a single report covering every collected missing secret replacement, so
-/// the operator can add all the required allowlist entries to server.toml in one edit.
-/// Bails under strict availability; downgrades to a warning when unavailable
-/// runtime config is allowed (activation re-checks strictly).
+/// Emit a single report of every missing secret replacement so the operator can add all the
+/// allowlist entries in one edit. Fatal under strict availability, otherwise a warning.
 pub(super) fn report_missing_outbound_http_secret_replacements(
     missing: &[MissingSecretReplacement],
     availability: RuntimeConfigAvailability,
@@ -444,8 +440,7 @@ pub(super) fn report_missing_outbound_http_secret_replacements(
             secret = m.secret,
             target = replacement_target_name(m.replace_in),
         );
-        // Multiple components may request the same allowlist entry; list each unique
-        // snippet once so the operator does not paste duplicates.
+        // Multiple components may request the same entry; list each unique snippet once.
         let server_snippet =
             allowed_host_snippet("outbound_http", &m.entry, &m.secret, m.replace_in);
         if !server_snippets.contains(&server_snippet) {
@@ -480,8 +475,7 @@ pub(super) fn report_missing_outbound_http_secret_replacements(
     }
 }
 
-/// A component destination that no operator global allowlist entry covers, collected
-/// across the deployment so every gap is reported at load time rather than one-by-one.
+/// A component destination no operator global allowlist entry covers, collected across the deployment.
 pub(super) struct UncoveredOutboundHost {
     component_section: &'static str,
     component_name: ConfigName,
@@ -507,9 +501,8 @@ pub(super) fn host_allowlist_snippet(section: &str, entry: &AllowedHostToml) -> 
     format!("[[{section}.allowed_host]]\n{body}")
 }
 
-/// Append every destination in `entries` that no global allowlist entry covers onto
-/// `uncovered`. Allow-nothing entries need no allowlist entry; resolution failures are
-/// left for component preparation to report authoritatively.
+/// Append every destination in `entries` no global allowlist entry covers onto `uncovered`.
+/// Allow-nothing entries are skipped; resolution failures are left for component preparation.
 pub(super) fn collect_uncovered_outbound_http_hosts(
     component_section: &'static str,
     component_name: &ConfigName,
@@ -550,8 +543,7 @@ pub(super) fn collect_uncovered_outbound_http_hosts(
     }
 }
 
-/// Warn once, listing the allowlist entries to add. A warning, not an error: coverage
-/// is conservative and a component may declare destinations it never calls.
+/// Warn once, listing the allowlist entries to add: coverage is conservative, so this is not fatal.
 pub(super) fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboundHost]) {
     if uncovered.is_empty() {
         return;
@@ -623,8 +615,7 @@ pub(super) async fn fix_server_secret_scaffolds(
 mod tests {
     use super::*;
 
-    /// A resolver advisory is joined to the `[[*.allowed_host]]` block it came from and
-    /// annotated with the source `path:line`, deduplicating identical findings.
+    /// A resolver advisory is joined to its `[[*.allowed_host]]` block and annotated with `path:line`.
     #[test]
     fn advisory_is_located_to_source_line() {
         // `methods` omitted triggers the "no methods" advisory; the entry still resolves.
