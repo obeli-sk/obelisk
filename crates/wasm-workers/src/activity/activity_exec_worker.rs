@@ -17,7 +17,6 @@ use concepts::{
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
-use indexmap::IndexMap;
 use secrecy::{ExposeSecret, SecretString};
 use std::sync::Arc;
 use std::{io::ErrorKind, path::PathBuf};
@@ -25,6 +24,15 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 use utils::wasm_tools::WasmComponent;
+
+/// Exec-activity secrets: the declared names plus the component-scoped resolver
+/// that supplies their values at spawn time. Values are never baked into the
+/// verified config; they are fetched by name when the child's stdin is assembled.
+#[derive(Debug, Clone)]
+pub struct ExecSecrets {
+    pub names: Vec<String>,
+    pub resolver: Arc<dyn crate::http_request_policy::SecretResolver>,
+}
 
 /// How the exec activity program is provided to the worker.
 #[derive(Debug)]
@@ -45,9 +53,9 @@ pub struct ActivityExecWorkerCompiled {
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfig>,
     forward_stderr: Option<StdOutputConfig>,
-    /// Resolved secrets, nested under the `secrets` key of the stdin JSON.
-    /// `None` when no secrets are configured.
-    secrets: Option<IndexMap<String, SecretString>>,
+    /// Declared secrets resolved by name at spawn time and nested under the
+    /// `secrets` key of the stdin JSON. `None` when no secrets are configured.
+    secrets: Option<ExecSecrets>,
     /// When `true`, parameters are passed via the stdin JSON `params` array
     /// instead of argv, sidestepping the `execve` argument-size limit.
     params_via_stdin: bool,
@@ -65,7 +73,7 @@ impl ActivityExecWorkerCompiled {
         max_output_bytes: u64,
         forward_stdout: Option<StdOutputConfig>,
         forward_stderr: Option<StdOutputConfig>,
-        secrets: Option<IndexMap<String, SecretString>>,
+        secrets: Option<ExecSecrets>,
         params_via_stdin: bool,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
         let user_wasm_component = WasmComponent::new_from_fn_signature(
@@ -149,7 +157,7 @@ pub struct ActivityExecWorker {
     max_output_bytes: u64,
     forward_stdout: Option<StdOutputConfigWithSender>,
     forward_stderr: Option<StdOutputConfigWithSender>,
-    secrets: Option<IndexMap<String, SecretString>>,
+    secrets: Option<ExecSecrets>,
     params_via_stdin: bool,
     cancel_registry: CancelRegistry,
     user_exports_noext: Vec<FunctionMetadata>,
@@ -267,13 +275,19 @@ impl Worker for ActivityExecWorker {
         {
             let mut obj = serde_json::Map::new();
             if let Some(secrets) = &self.secrets {
+                // Resolve each declared name on demand; a name the (restricted)
+                // resolver cannot supply is dropped, so the child simply does not
+                // receive it.
                 let secrets_obj = secrets
+                    .names
                     .iter()
-                    .map(|(name, value)| {
-                        (
-                            name.clone(),
-                            serde_json::Value::String(value.expose_secret().to_string()),
-                        )
+                    .filter_map(|name| {
+                        secrets.resolver.secret_lookup(name).map(|value| {
+                            (
+                                name.clone(),
+                                serde_json::Value::String(value.expose_secret().to_string()),
+                            )
+                        })
                     })
                     .collect();
                 obj.insert(

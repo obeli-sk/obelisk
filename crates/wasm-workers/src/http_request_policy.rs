@@ -674,13 +674,50 @@ pub fn generate_placeholder() -> String {
     format!("OBELISK_SECRET_{hex}")
 }
 
-/// Resolved per-host configuration: host pattern + optional secrets.
+/// Resolves a secret's value by logical name at the point of use.
+///
+/// Verified configs ([`AllowedHostConfig`]) carry only secret *names* (the
+/// authorization identity); the actual value is fetched through this resolver
+/// when a policy is built for an execution run, never baked into the long-lived
+/// verified config. The main crate supplies a `RestrictedSecretRegistry` scoped
+/// to the subset of names a component declared. Env-backed today, Vault-backed
+/// later, hence resolution stays out of the verify/startup path.
+pub trait SecretResolver: Send + Sync + fmt::Debug {
+    /// Return the secret value for `name`, or `None` when the name is unknown or
+    /// not visible to this (restricted) resolver.
+    fn secret_lookup(&self, name: &str) -> Option<SecretString>;
+}
+
+/// A resolver that knows no secrets. Used where a component declares none and in
+/// tests that never inject secret values.
+#[derive(Clone, Copy, Debug)]
+pub struct NoSecrets;
+impl SecretResolver for NoSecrets {
+    fn secret_lookup(&self, _name: &str) -> Option<SecretString> {
+        None
+    }
+}
+
+/// Test-only resolver backed by a fixed name -> value map.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct TestSecretResolver(pub(crate) hashbrown::HashMap<String, SecretString>);
+#[cfg(test)]
+impl SecretResolver for TestSecretResolver {
+    fn secret_lookup(&self, name: &str) -> Option<SecretString> {
+        self.0.get(name).cloned()
+    }
+}
+
+/// Resolved per-host configuration: host pattern + declared secret names.
 #[derive(Clone, Debug)]
 pub struct AllowedHostConfig {
     pub pattern: HostPattern,
     pub request_url_regex: Option<Regex>,
-    /// `(env_key_for_wasm, real_value)` pairs.
-    pub secret_env_mappings: Vec<(String, SecretString)>,
+    /// Logical secret names the component declared for this host. Values are
+    /// resolved lazily per execution run via a [`SecretResolver`]; the name also
+    /// doubles as the env key exposed to WASM.
+    pub secret_names: Vec<String>,
     /// Where in the request to perform replacement.
     pub replace_in: hashbrown::HashSet<ReplacementLocation>,
 }
@@ -736,7 +773,7 @@ mod tests {
         AllowedHostConfig {
             pattern: HostPattern::parse_with_methods(spec, methods).unwrap(),
             request_url_regex: regex.map(|r| Regex::new(r).unwrap()),
-            secret_env_mappings: Vec::new(),
+            secret_names: Vec::new(),
             replace_in: hashbrown::HashSet::new(),
         }
     }

@@ -91,6 +91,7 @@ pub(crate) fn store(
     let http_policy = build_http_policy(
         &config.allowed_hosts,
         &config.global_http_config,
+        config.secrets.as_ref(),
         &mut wasi_ctx,
     );
 
