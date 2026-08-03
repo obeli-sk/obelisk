@@ -77,7 +77,7 @@
   "additionalProperties": false,
   "$defs": {
     "SecretSourceToml": {
-      "description": "Source of a secret in the `[secrets]` table. Untagged so `{ env = \"VAR\" }`\nparses directly; more variants (`{ file = \"...\" }`, Vault, ...) are added later.",
+      "description": "Source of a secret in the `[secrets]` table.",
       "anyOf": [
         {
           "description": "Read the secret from a process environment variable at startup.",
