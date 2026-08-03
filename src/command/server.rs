@@ -1147,6 +1147,10 @@ async fn fix_server_exec_digests(
     activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
     wasm_cache_dir: &Path,
 ) -> anyhow::Result<BTreeMap<String, ContentDigest>> {
+    if activities_exec.is_empty() {
+        // Do not output empty `[allow_exec_activities]` table
+        return Ok(BTreeMap::new());
+    }
     let allowlist = exec_content_digest_lines(activities_exec, wasm_cache_dir)
         .await?
         .into_iter()
