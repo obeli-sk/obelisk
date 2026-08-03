@@ -6,94 +6,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0](https://github.com/obeli-sk/obelisk/compare/v0.40.0...v0.41.0)
+
+This release adds operator-controlled security boundaries for secrets and outbound HTTP, together
+with offline deployment verification and repair. It also improves JavaScript workflow ergonomics
+and makes workflow backtrace persistence explicit. Review the configuration and API migrations
+below before upgrading.
+
 ### Added
 
-- *(cli)* Added `obelisk deployment verify` for compiling and verifying a local `deployment.toml`
-  without starting the server or accessing its database or content-addressed store.
-- *(cli)* `obelisk deployment verify --fix` corrects mismatched content digests in the passed
-  deployment file and updates the passed server config's exec allowlist, sorted by activity name.
-  Without `--fix`, verification reports every mismatched local digest at once.
-- *(server)* Added an operator-owned `[[outbound_http.allowed_host]]` allowlist for
-  component-originated HTTP. It uses the same host, method, URL regex, secret, and replacement
-  location grammar as deployment `allowed_host` entries. Destinations and secret placements are
-  enforced as the runtime intersection of the server and deployment policies.
-- *(server)* Added an operator-owned secret registry. The `server.toml` `[secrets]` table maps a
-  logical secret name to a source, currently only `NAME = { env = "VAR" }` (the logical name may
-  differ from the source variable). Env-backed secrets are resolved and their source variables are
-  removed from the process environment during single-threaded startup, before the runtime starts, so
-  no deployment or worker thread can read them. Deployments reference these names in
-  `activity_exec.secrets` and `allowed_host.secrets`; a `${...}` interpolation of a registered
-  secret (logical or source name), or a reference to an unknown secret, is rejected.
-- *(api, cli)* Added the idempotent `PersistExecutionBacktraces` RPC and
-  `obelisk execution persist-backtraces` command. They replay a workflow and persist only newly
-  eligible call-site backtraces in one transaction.
+- `obelisk deployment verify` compiles and checks a local deployment without a running server or
+  database. `--fix` repairs content digests, updates the exec activity allowlist, and scaffolds
+  missing secret declarations.
+- Operators can define a global outbound HTTP allowlist and an environment-backed secret registry
+  in `server.toml`. Runtime access is limited by both the operator policy and each deployment's
+  component policy.
+- Workflow backtraces can be persisted on demand through `obelisk execution persist-backtraces`,
+  gRPC, or the web API.
+- JavaScript workflows may export `async` functions, accept `Date` values for absolute schedule
+  times, and use the deterministic Obelisk clock through `Date`, `Date()`, and `Date.now()`.
 
 ### Changed
 
-- *(cli)* Deployment configuration warnings are collected during verification, deduplicated, and
-  printed together in stable order after compilation, with source file and line locations when
-  available.
-- *(server)* `allow_exec_activities` now maps exec activity names to their reviewed content digests.
-  The previous digest-array form remains accepted for compatibility.
-- **Breaking:** *(server)* Component outbound HTTP is now denied unless both server.toml
-  `[[outbound_http.allowed_host]]` and deployment.toml component `allowed_host` entries permit it.
-  An omitted server allowlist denies all outbound HTTP. Existing deployments that use HTTP must copy
-  their component entries into server.toml as a migration starting point; operators can then
-  narrow the global entries. Deployment verification also checks secret and replacement-location
-  pairing against the global allowlist.
-- **Breaking:** *(deployment)* Deployment-owned secrets now reference operator-owned registry names
-  instead of carrying values. `activity_exec` takes `secrets = ["NAME", ...]` (replacing the
-  `[activity_exec.secrets] env_vars = [{ name, value }]` table), and `allowed_host` takes flattened
-  `secrets = ["NAME", ...]` plus `replace_in = [...]` (replacing the nested
-  `allowed_host.secrets.env_vars` table). Names must be declared in the `server.toml` `[secrets]`
-  table; `${VAR}` interpolation of secret values in deployments is no longer supported.
-- **Breaking:** *(server)* Workflow backtraces are now captured lazily by user-issued replay and
-  advance operations instead of during normal execution or internal component-upgrade replay. The
-  global `wasm.backtrace.persist` setting was removed. Webhook components can opt in independently
+- **Breaking:** *(server)* Component outbound HTTP now requires a matching
+  `[[outbound_http.allowed_host]]` entry in both `server.toml` and the deployment. An omitted server
+  allowlist denies all component-originated HTTP. Copy existing deployment entries into the server
+  configuration as a migration starting point, then narrow them as needed.
+- **Breaking:** *(deployment)* Secrets are now operator-owned names declared in the `server.toml`
+  `[secrets]` table. Replace `[activity_exec.secrets] env_vars` with
+  `activity_exec.secrets = ["NAME"]`, and
+  replace nested `allowed_host.secrets.env_vars` with flattened `secrets = ["NAME"]` and
+  `replace_in = [...]`. Deployment interpolation of secret values is no longer supported.
+- **Breaking:** *(server)* Workflow backtraces are captured lazily during user-issued replay and
+  advance operations. The global `wasm.backtrace.persist` setting was removed. Webhooks may opt in
   with `backtrace_persist = true`, which defaults to `false`.
-- *(cli)* `obelisk generate token` now prints only the token to stdout, so it composes with env
-  injection: `OBELISK__API__TOKEN=$(obelisk generate token)`. When stdout is a terminal, the
-  ready-to-paste `api.token_hashes` entry is still printed, on stderr. The `sha256:` hash is also
-  available via `--json`, and the new `--server-config <server.toml>` flag appends it to
-  `api.token_hashes` in place.
-- *(js)* A cancelled `obelisk.sleep` now throws `obelisk.ChildError` (with `cancelled: true` and
-  `failureKind: "cancelled"`) instead of a plain `Error`; the message stays `Sleep was cancelled`.
-  Its `.value` is `undefined`, indicating that the cancellation has no business error payload.
-  Re-throwing the caught error serializes that value as a `null` workflow err payload, like any
-  other payload-less `ChildError`, instead of propagating the message string.
-- *(js)* A delay cancelled inside a join set now also sets `failureKind: "cancelled"` on the
-  `ChildError` thrown by `joinNext`/`joinNextTry` (previously only `cancelled: true` was set).
-- **Breaking:** *(wit, js)* Platform failures projected onto a `result<_, string>` error now use
-  `"execution_failed"`, matching the JSON encoding of the `execution-failed` WIT variant case.
+- **Breaking:** *(wit, js, web API)* Execution failure JSON now consistently uses
+  `execution_failed`. This replaces the `execution-failed` string projected onto
+  `result<_, string>` errors and the web API's `execution_failure` field.
+- *(cli)* `obelisk generate token` now prints only the token to stdout and can append its hash
+  directly to a server configuration with `--server-config`.
 
 ### Fixed
 
-- **Breaking:** *(http)* Secret placeholder replacement with `replace_in = ["params"]` now searches
-  only URL query parameter values, leaving the URL path and parameter names unchanged. Previously,
-  it searched and replaced across the entire raw request URI.
+- **Breaking:** *(http)* `replace_in = ["params"]` replaces secret placeholders only in URL query
+  parameter values, not in paths or parameter names.
 - *(deployment)* `--allow-unavailable-runtime-config` now tolerates missing environment variable
-  interpolations in plain key/value `env_vars` entries, including entries that rename a variable.
-- *(js)* A child execution's platform failure (timeout, cancellation, out-of-fuel, uncategorized)
-  awaited via `joinNext`/`getResult` now surfaces on the thrown `obelisk.ChildError` as
-  `.value = "execution_failed"` (matching the host projection onto the child's `err` type), instead
-  of `undefined`. An uncaught such error therefore encodes as a correctly-typed `err` for a
-  workflow returning `result<_, string>` or a variant `err`, rather than failing to type check as
-  `null`.
-- **Breaking:** *(webapi)* Execution failure results now use the canonical `execution_failed`
-  field instead of `execution_failure`.
+  interpolation in plain key/value `env_vars` entries.
+- *(js)* Awaited child platform failures retain their projected error value, allowing uncaught
+  `ChildError` instances to serialize as a correctly typed workflow error.
 
 ### Deprecated
 
-- *(js)* Renamed `obelisk.ChildExecutionError` to `obelisk.ChildError`, which now also covers
-  cancelled delays and sleeps. The old name stays as a deprecated alias for the same constructor,
-  so `instanceof` checks against either name keep working; instances now report
-  `name: "ChildError"`.
+- *(js)* Renamed `obelisk.ChildExecutionError` to `obelisk.ChildError`, which also represents
+  cancelled delays. The old name remains an alias for the same constructor.
 
 ### Removed
 
-- **Breaking:** *(api)* Removed the deprecated `CancelActivity` gRPC endpoint. Use
-  `CancelExecution`, which also supports cancellable workflows.
-- **Breaking:** *(api)* Removed the `allow_missing_runtime_config` REST field alias. Use
+- **Breaking:** *(api)* Removed the deprecated `CancelActivity` gRPC endpoint. Use `CancelExecution`.
+- **Breaking:** *(api)* Removed the `allow_missing_runtime_config` REST alias. Use
   `allow_unavailable_runtime_config`.
 
 ## [0.40.0](https://github.com/obeli-sk/obelisk/compare/v0.39.5...v0.40.0)
