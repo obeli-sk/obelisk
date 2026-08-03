@@ -71,6 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it searched and replaced across the entire raw request URI.
 - *(deployment)* `--allow-unavailable-runtime-config` now tolerates missing environment variable
   interpolations in plain key/value `env_vars` entries, including entries that rename a variable.
+- *(js)* A child execution's platform failure (timeout, cancellation, out-of-fuel, uncategorized)
+  awaited via `joinNext`/`getResult` now surfaces on the thrown `obelisk.ChildError` as
+  `.value = "execution-failed"` (matching the host projection onto the child's `err` type), instead
+  of `undefined`. An uncaught such error therefore encodes as a correctly-typed `err` for a
+  workflow returning `result<_, string>` or a variant `err`, rather than failing to type check as
+  `null`.
 
 ### Deprecated
 

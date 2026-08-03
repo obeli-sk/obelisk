@@ -180,23 +180,15 @@ fn finished_status_to_wit(
 /// Err(None) for error result with no value.
 fn supported_return_value_to_json_result(
     retval: &SupportedFunctionReturnValue,
+    ret_type: concepts::TypeWrapperTopLevel,
 ) -> Result<Option<String>, Option<String>> {
-    match retval {
-        SupportedFunctionReturnValue::Ok(Some(val_with_type)) => {
-            let json =
-                serde_json::to_string(&val_with_type.value).unwrap_or_else(|_| "null".to_string());
-            Ok(Some(json))
-        }
-        SupportedFunctionReturnValue::Ok(None) => Ok(None),
-        SupportedFunctionReturnValue::Err(Some(val_with_type)) => {
-            let json =
-                serde_json::to_string(&val_with_type.value).unwrap_or_else(|_| "null".to_string());
-            Err(Some(json))
-        }
-        SupportedFunctionReturnValue::Err(None) => Err(None),
-        SupportedFunctionReturnValue::ExecutionFailure(err) => {
-            Err(Some(format!("execution error: {err}")))
-        }
+    match retval.clone().into_wast_val_res(|| ret_type) {
+        Ok(value) => Ok(value.map(|value| {
+            serde_json::to_string(&*value).expect("WastVal must be JSON serializable")
+        })),
+        Err(value) => Err(value.map(|value| {
+            serde_json::to_string(&*value).expect("WastVal must be JSON serializable")
+        })),
     }
 }
 
@@ -1085,6 +1077,10 @@ impl WebhookEndpointCtx {
                 .await;
             return Err(ScheduleJsonError::FunctionNotFound.into());
         };
+        let ret_type = self
+            .fn_registry
+            .get_ret_type(&ffqn)
+            .expect("exported webhook-call target must have a supported return type");
 
         // Parse params JSON array
         let params_json: Vec<serde_json::Value> = match serde_json::from_str(&params) {
@@ -1238,7 +1234,7 @@ impl WebhookEndpointCtx {
         .await;
 
         match result {
-            Ok(retval) => Ok(supported_return_value_to_json_result(&retval)),
+            Ok(retval) => Ok(supported_return_value_to_json_result(&retval, ret_type)),
             Err(err) => Err(wasmtime::Error::msg(format!("execution error: {err:?}")).into()),
         }
     }
@@ -1269,6 +1265,17 @@ impl WebhookEndpointCtx {
                 );
             }
         };
+        let execution = match db_connection.get_pending_state(&parsed_execution_id).await {
+            Ok(execution) => execution,
+            Err(DbErrorRead::NotFound) => return Err(GetError::NotFound.into()),
+            Err(err) => {
+                return Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into());
+            }
+        };
+        let ret_type = self
+            .fn_registry
+            .get_ret_type(&execution.ffqn)
+            .expect("webhook get target must have a supported return type");
 
         // Extract needed values before the async call to avoid borrowing issues
         let subscription_interruption = self.subscription_interruption;
@@ -1288,7 +1295,7 @@ impl WebhookEndpointCtx {
         .await;
 
         match result {
-            Ok(retval) => Ok(supported_return_value_to_json_result(&retval)),
+            Ok(retval) => Ok(supported_return_value_to_json_result(&retval, ret_type)),
             Err(err) => Err(wasmtime::Error::msg(format!("execution error: {err:?}")).into()),
         }
     }
@@ -1333,6 +1340,10 @@ impl WebhookEndpointCtx {
                 return Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into());
             }
         };
+        let ret_type = self
+            .fn_registry
+            .get_ret_type(&execution_with_state.ffqn)
+            .expect("webhook try-get target must have a supported return type");
 
         // Check if finished
         match execution_with_state.pending_state {
@@ -1342,7 +1353,7 @@ impl WebhookEndpointCtx {
                     .wait_for_finished_result(&parsed_execution_id, None)
                     .await
                 {
-                    Ok(retval) => Ok(supported_return_value_to_json_result(&retval)),
+                    Ok(retval) => Ok(supported_return_value_to_json_result(&retval, ret_type)),
                     Err(err) => {
                         Err(wasmtime::Error::msg(format!("database read error: {err:?}")).into())
                     }
@@ -3490,6 +3501,14 @@ pub(crate) mod tests {
                         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                     )
                     .await,
+                    compile_activity(
+                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                    )
+                    .await,
+                    compile_activity(
+                        test_programs_serde_activity_builder::TEST_PROGRAMS_SERDE_ACTIVITY,
+                    )
+                    .await,
                 ]);
 
                 let engine =
@@ -3811,6 +3830,140 @@ pub(crate) mod tests {
             assert_eq!(body["valueIsUndefined"], serde_json::json!(true));
             assert_eq!(body["cancelled"], serde_json::json!(false));
             assert_eq!(body["hasChildId"], serde_json::json!(true));
+        }
+
+        #[tokio::test]
+        async fn webhook_js_child_platform_failure_keeps_projected_value() {
+            use crate::workflow::workflow_worker::tests::write_stub_response;
+            use concepts::storage::{
+                ExecutionListPagination, FunctionNameFilter, ListExecutionsFilter,
+            };
+            use concepts::{
+                ExecutionFailureKind, ExecutionId, FinishedExecutionFailure,
+                SupportedFunctionReturnValue,
+            };
+
+            test_utils::set_up();
+            let cases = [
+                (
+                    "import { fibo } from 'testing:fibo/fibo';",
+                    "fibo(1);",
+                    "testing:fibo/fibo.fibo",
+                    true,
+                    serde_json::Value::Null,
+                ),
+                (
+                    "import { get } from 'testing:http/http-get';",
+                    "get('http://unused');",
+                    "testing:http/http-get.get",
+                    false,
+                    serde_json::json!("execution-failed"),
+                ),
+                (
+                    "import { trap } from 'testing:serde/serde';",
+                    "trap();",
+                    "testing:serde/serde.trap",
+                    false,
+                    serde_json::json!("execution_failed"),
+                ),
+            ];
+
+            for (import, call, target_ffqn, value_is_undefined, expected_value) in cases {
+                let js_source = format!(
+                    r"
+                    {import}
+                    export default function handle(_request) {{
+                        try {{
+                            {call}
+                            return Response.json({{ threw: false }});
+                        }} catch (e) {{
+                            return Response.json({{
+                                threw: true,
+                                isChildError: e instanceof obelisk.ChildError,
+                                valueIsUndefined: e.value === undefined,
+                                value: e.value ?? null,
+                                failureKind: e.failureKind,
+                                cancelled: e.cancelled,
+                                hasChildId: typeof e.childId === 'string',
+                            }});
+                        }}
+                    }}
+                    "
+                );
+                let harness = JsWebhookWithActivitiesHarness::new(&js_source).await;
+                let server_addr = harness.server_addr;
+                let fetch_task = tokio::spawn(async move {
+                    reqwest::get(format!("http://{server_addr}/"))
+                        .await
+                        .unwrap()
+                });
+
+                let child_execution_id =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        loop {
+                            let conn = harness.db_pool.external_api_conn().await.unwrap();
+                            let executions = conn
+                                .list_executions(
+                                    ListExecutionsFilter {
+                                        function_name_filter: Some(
+                                            FunctionNameFilter::FunctionName(
+                                                target_ffqn.to_string(),
+                                            ),
+                                        ),
+                                        show_derived: true,
+                                        ..Default::default()
+                                    },
+                                    ExecutionListPagination::default(),
+                                )
+                                .await
+                                .unwrap();
+                            if let Some(execution) = executions
+                                .into_iter()
+                                .find(|execution| execution.ffqn.to_string() == target_ffqn)
+                            {
+                                break match execution.execution_id {
+                                    ExecutionId::Derived(id) => id,
+                                    ExecutionId::TopLevel(_) => {
+                                        panic!("activity execution must be derived")
+                                    }
+                                };
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                    })
+                    .await
+                    .expect("webhook should submit the child activity");
+                let conn = harness.db_pool.connection_test().await.unwrap();
+                write_stub_response(
+                    conn.as_ref(),
+                    harness.sim_clock.now(),
+                    child_execution_id,
+                    SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+                        kind: ExecutionFailureKind::Uncategorized,
+                        reason: Some("injected platform failure".to_string()),
+                        detail: None,
+                    }),
+                )
+                .await;
+
+                let resp = fetch_task.await.unwrap();
+                assert_eq!(resp.status().as_u16(), 200);
+                let body: serde_json::Value = resp.json().await.unwrap();
+                assert_eq!(body["threw"], serde_json::json!(true));
+                assert_eq!(
+                    body["isChildError"],
+                    serde_json::json!(true),
+                    "unexpected webhook response: {body}"
+                );
+                assert_eq!(
+                    body["valueIsUndefined"],
+                    serde_json::json!(value_is_undefined)
+                );
+                assert_eq!(body["value"], expected_value);
+                assert_eq!(body["failureKind"], serde_json::json!("uncategorized"));
+                assert_eq!(body["cancelled"], serde_json::json!(false));
+                assert_eq!(body["hasChildId"], serde_json::json!(true));
+            }
         }
     }
 

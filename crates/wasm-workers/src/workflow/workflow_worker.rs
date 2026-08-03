@@ -4317,7 +4317,7 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    async fn write_stub_response(
+    pub(crate) async fn write_stub_response(
         db_connection: &dyn DbConnection,
         created_at: DateTime<Utc>,
         stub_execution_id: ExecutionIdDerived,

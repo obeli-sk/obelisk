@@ -87,8 +87,9 @@ pub struct ChildErrorParts<'a> {
     pub child_id: Option<&'a str>,
     /// Cancelled delay id; `Some` only for a cancelled delay.
     pub delay_id: Option<&'a str>,
-    /// Business `err` payload as a JSON string; `None` for a unit err or a
-    /// platform failure.
+    /// Payload as a JSON string: the business `err`, or the host-projected
+    /// value for a platform failure (e.g. `"execution-failed"`); `None` for a
+    /// unit err or a cancelled delay/sleep.
     pub value_json: Option<&'a str>,
     /// Execution-failure kind as a kebab string (mirrors the WIT
     /// `execution-failure-kind` enum) for a platform failure or a cancelled
@@ -103,11 +104,12 @@ pub struct ChildErrorParts<'a> {
 
 /// Build a `ChildError` and wrap it as a throwable [`JsError`].
 pub fn make_child_error(parts: &ChildErrorParts, context: &mut Context) -> JsResult<JsError> {
-    // `.value` is the parsed business payload, and `undefined` for a platform
-    // failure (kind set, synthesized sentinel dropped) or a unit err.
-    let value = match (parts.failure_kind, parts.value_json) {
-        (Some(_), _) | (None, None) => JsValue::undefined(),
-        (None, Some(json)) => context.eval(Source::from_bytes(&format!("({json})")))?,
+    // `.value` is the parsed payload (business `err`, or the host-projected
+    // value for a platform failure such as "execution-failed"), and `undefined`
+    // when there is none (unit err, cancelled delay/sleep).
+    let value = match parts.value_json {
+        Some(json) => context.eval(Source::from_bytes(&format!("({json})")))?,
+        None => JsValue::undefined(),
     };
 
     let message = match parts.message {

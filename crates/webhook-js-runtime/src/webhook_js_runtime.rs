@@ -507,7 +507,7 @@ fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsR
                 &ChildErrorParts {
                     child_id: Some(exec_id),
                     delay_id: None,
-                    value_json: None,
+                    value_json: payload.as_deref(),
                     failure_kind: Some(exec_failure_kind_str(kind)),
                     cancelled,
                     message: None,
