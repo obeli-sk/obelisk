@@ -3275,15 +3275,18 @@ async fn replay_failed_js_workflow_then_advance(client: TestExecutionClient, add
         .step_execution_until_finished(&server, REPLAY_FAILED_FFQN, vec![])
         .await;
     assert_eq!(stepped.steps, 1);
+    let failure_key = match client {
+        TestExecutionClient::Grpc => "execution_failure",
+        TestExecutionClient::WebApi => "execution_failed",
+    };
     assert_eq!(
-        json!(
-            {
-                "execution_failure":{
-                    "kind":"uncategorized",
-                    "reason":"value does not type check - failed to type check the ok variant value `\"not-a-number\"` as type u32 - invalid type: string \"not-a-number\", expected value matching \"u32\" at line 1 column 14"
-                }
-            }
-        ),
+        serde_json::Value::Object(serde_json::Map::from_iter([(
+            failure_key.to_string(),
+            json!({
+                "kind":"uncategorized",
+                "reason":"value does not type check - failed to type check the ok variant value `\"not-a-number\"` as type u32 - invalid type: string \"not-a-number\", expected value matching \"u32\" at line 1 column 14"
+            }),
+        )])),
         stepped.retval
     );
     server.shutdown().await;

@@ -330,14 +330,14 @@ impl SupportedFunctionReturnValue {
                 err: Some(inner),
             } => match inner.as_ref() {
                 TypeWrapper::String => Some(Box::new(WastVal::String(
-                    EXECUTION_FAILED_STRING_OR_VARIANT.to_string(),
+                    EXECUTION_FAILED_JSON_STRING.to_string(),
                 ))),
                 TypeWrapper::Variant(variants)
-                    if variants.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
+                    if variants.get(&TypeKey::new_kebab(EXECUTION_FAILED_WIT_CASE))
                         == Some(&None) =>
                 {
                     Some(Box::new(WastVal::Variant(
-                        ValKey::from_kebab(EXECUTION_FAILED_STRING_OR_VARIANT),
+                        ValKey::from_kebab(EXECUTION_FAILED_WIT_CASE),
                         None,
                     )))
                 }
@@ -1636,7 +1636,8 @@ impl<'a> arbitrary::Arbitrary<'a> for JoinSetId {
     }
 }
 
-const EXECUTION_FAILED_STRING_OR_VARIANT: &str = "execution-failed";
+const EXECUTION_FAILED_WIT_CASE: &str = "execution-failed";
+const EXECUTION_FAILED_JSON_STRING: &str = "execution_failed";
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
 )]
@@ -1671,8 +1672,7 @@ impl ReturnType {
                     wit_type,
                 });
             } else if let TypeWrapper::Variant(fields) = err.as_ref()
-                && let Some(None) =
-                    fields.get(&TypeKey::new_kebab(EXECUTION_FAILED_STRING_OR_VARIANT))
+                && let Some(None) = fields.get(&TypeKey::new_kebab(EXECUTION_FAILED_WIT_CASE))
             {
                 return ReturnType::Extendable(ReturnTypeExtendable {
                     type_wrapper_tl: TypeWrapperTopLevel { ok, err: Some(err) },
@@ -1962,13 +1962,35 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        ExecutionId, FunctionFqn, JoinSetId, JoinSetKind, StrVariant, prefixed_ulid::ExecutorId,
+        ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
+        JoinSetKind, StrVariant, SupportedFunctionReturnValue, TypeWrapperTopLevel,
+        prefixed_ulid::ExecutorId,
     };
     use std::{
         hash::{DefaultHasher, Hash, Hasher},
         str::FromStr,
         sync::Arc,
     };
+    use val_json::{type_wrapper::TypeWrapper, wast_val::WastVal};
+
+    #[test]
+    fn execution_failure_projects_to_snake_case_string() {
+        let failure = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+            kind: ExecutionFailureKind::TimedOut,
+            reason: None,
+            detail: None,
+        });
+
+        assert_eq!(
+            failure.into_wast_val_res(|| TypeWrapperTopLevel {
+                ok: None,
+                err: Some(Box::new(TypeWrapper::String)),
+            }),
+            Err(Some(Box::new(WastVal::String(
+                "execution_failed".to_string()
+            ))))
+        );
+    }
 
     #[test]
     fn ulid_parsing() {

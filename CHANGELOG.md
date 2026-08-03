@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other payload-less `ChildError`, instead of propagating the message string.
 - *(js)* A delay cancelled inside a join set now also sets `failureKind: "cancelled"` on the
   `ChildError` thrown by `joinNext`/`joinNextTry` (previously only `cancelled: true` was set).
+- **Breaking:** *(wit, js)* Platform failures projected onto a `result<_, string>` error now use
+  `"execution_failed"`, matching the JSON encoding of the `execution-failed` WIT variant case.
 
 ### Fixed
 
@@ -73,10 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interpolations in plain key/value `env_vars` entries, including entries that rename a variable.
 - *(js)* A child execution's platform failure (timeout, cancellation, out-of-fuel, uncategorized)
   awaited via `joinNext`/`getResult` now surfaces on the thrown `obelisk.ChildError` as
-  `.value = "execution-failed"` (matching the host projection onto the child's `err` type), instead
+  `.value = "execution_failed"` (matching the host projection onto the child's `err` type), instead
   of `undefined`. An uncaught such error therefore encodes as a correctly-typed `err` for a
   workflow returning `result<_, string>` or a variant `err`, rather than failing to type check as
   `null`.
+- **Breaking:** *(webapi)* Execution failure results now use the canonical `execution_failed`
+  field instead of `execution_failure`.
 
 ### Deprecated
 

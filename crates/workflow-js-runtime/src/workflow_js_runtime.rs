@@ -511,7 +511,7 @@ fn child_error(exec_id: &str, payload: Option<String>, ctx: &mut Context) -> JsR
     };
     match get_execution_failure_kind(&exec) {
         // Platform failure: keep the host-projected `err` payload (e.g.
-        // "execution-failed" for a string/variant err type) so transparent
+        // "execution_failed" for a string/variant err type) so transparent
         // rethrow re-serializes a correctly-typed value, not `null`.
         Ok(Some(kind)) => {
             let cancelled = matches!(kind, ExecutionFailureKind::Cancelled);

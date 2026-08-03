@@ -3857,7 +3857,7 @@ pub(crate) mod tests {
                     "get('http://unused');",
                     "testing:http/http-get.get",
                     false,
-                    serde_json::json!("execution-failed"),
+                    serde_json::json!("execution_failed"),
                 ),
                 (
                     "import { trap } from 'testing:serde/serde';",
