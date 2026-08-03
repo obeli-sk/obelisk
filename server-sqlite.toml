@@ -19,5 +19,3 @@ replace_in = ["headers", "params", "body"]
 
 [secrets]
 MY_SECRET = { env = "MY_SECRET" }
-
-

@@ -22,4 +22,5 @@ target = true
 directory = "."
 prefix = "obelisk.log" # File name prefix
 
-
+[secrets]
+MY_SECRET = { env = "MY_SECRET" }
