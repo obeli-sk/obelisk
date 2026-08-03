@@ -712,19 +712,17 @@ pub(crate) async fn verify(
     {
         // Add unregistered secrets
         let mut unregistered = BTreeSet::new();
-        config_prepass::collect_unregistered_secrets(
+        config_prepass::collect_unregistered_allowed_host_secrets(
             &config.outbound_http.allowed_hosts,
             &secret_registry,
             &mut unregistered,
         );
         if let Some(deployment) = deployment_opt.as_ref() {
-            for hosts in config_prepass::deployment_allowed_host_lists(deployment) {
-                config_prepass::collect_unregistered_secrets(
-                    hosts,
-                    &secret_registry,
-                    &mut unregistered,
-                );
-            }
+            config_prepass::collect_deployment_unregistered_secrets(
+                deployment,
+                &secret_registry,
+                &mut unregistered,
+            );
         }
         if !unregistered.is_empty() {
             config_prepass::fix_server_secret_scaffolds(server_config_path, &unregistered).await?;
@@ -5234,7 +5232,7 @@ mod tests {
     #[test]
     fn unregistered_secrets_collect_all_and_error_shows_scaffold() {
         use crate::command::server::config_prepass::{
-            collect_unregistered_secrets, report_unregistered_secrets,
+            collect_unregistered_allowed_host_secrets, report_unregistered_secrets,
         };
         let entry = |secret: &str| AllowedHostToml {
             pattern: "api.example.com".to_string(),
@@ -5248,7 +5246,7 @@ mod tests {
             secrecy::SecretString::from("v"),
         )]);
         let mut unregistered = std::collections::BTreeSet::new();
-        collect_unregistered_secrets(
+        collect_unregistered_allowed_host_secrets(
             &[entry("MISSING_B"), entry("KNOWN"), entry("MISSING_A")],
             &secret_registry,
             &mut unregistered,
