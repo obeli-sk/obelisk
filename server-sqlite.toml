@@ -1,3 +1,5 @@
+allow_exec_activities = true
+
 [log.file]
 level = "info,obeli_sk_wasm_workers=debug"
 enabled = true
@@ -14,3 +16,6 @@ pattern = "httpbin.org"
 methods = "*"
 secrets = ["MY_SECRET"]
 replace_in = ["headers", "params", "body"]
+
+[secrets]
+MY_SECRET = { env = "MY_SECRET" }

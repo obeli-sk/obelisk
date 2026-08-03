@@ -10,7 +10,7 @@ use crate::config::secret_registry::{
     RestrictedSecretRegistry, SecretRegistry, SecretViolation, SecretsToml,
 };
 use crate::config::toml::cron::CronComponentConfigToml;
-use crate::config::wasm_cache_metadata_dir;
+use crate::config::{content_digest_to_exec_file, wasm_cache_metadata_dir};
 use crate::oci;
 use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
@@ -42,7 +42,7 @@ use std::{
 };
 use tracing::{debug, instrument, warn};
 use utils::wasm_tools::WasmComponent;
-use wasm_workers::activity::activity_exec_worker::{ExecProgram, ExecSecrets};
+use wasm_workers::activity::activity_exec_worker::ExecSecrets;
 use wasm_workers::cron::cron_worker::CronOrOnce;
 use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
@@ -1679,8 +1679,31 @@ pub(crate) struct ActivityExecComponentConfigToml {
 
 #[derive(Debug)]
 pub(crate) struct ResolvedExecProgram {
-    pub(crate) program: ExecProgram,
-    pub(crate) source_bytes: Vec<u8>,
+    /// Path to the immutable cached script file the worker executes directly.
+    pub(crate) program: PathBuf,
+    /// Content digest of the script text (component identity and allowlist line).
+    pub(crate) content_digest: ContentDigest,
+}
+
+async fn write_inline_exec_file_to_cache_dir(
+    exec_path: &Path,
+    exec_cache_dir: &Path,
+    content: &[u8],
+) -> anyhow::Result<()> {
+    if let Ok(existing) = tokio::fs::read(exec_path).await
+        && existing == content
+    {
+        return Ok(());
+    }
+    let tmp = tempfile::NamedTempFile::new_in(exec_cache_dir)?;
+    tokio::fs::write(tmp.path(), content).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).await?;
+    }
+    tmp.persist(exec_path)?;
+    Ok(())
 }
 
 pub(crate) trait ActivityExecComponentConfigResolvedExt {
@@ -1703,25 +1726,33 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         &self,
         wasm_cache_dir: &std::path::Path,
     ) -> anyhow::Result<ResolvedExecProgram> {
+        let exec_cache_dir = wasm_cache_dir.join("exec");
         match &self.location {
             ScriptLocationResolved::Content { content, .. } => {
+                let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+                let content_digest = ContentDigest(Digest(hash));
                 if let Some(expected) = self.content_digest.as_ref() {
-                    let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
-                    let actual = ContentDigest(Digest(hash));
                     ensure!(
-                        *expected == actual,
-                        "content digest mismatch for inline exec content: expected {expected}, got {actual}"
+                        *expected == content_digest,
+                        "content digest mismatch for inline exec content: expected {expected}, got {content_digest}"
                     );
                 }
+                tokio::fs::create_dir_all(&exec_cache_dir).await?;
+                let exec_path = content_digest_to_exec_file(&exec_cache_dir, &content_digest);
+                write_inline_exec_file_to_cache_dir(
+                    &exec_path,
+                    &exec_cache_dir,
+                    content.as_bytes(),
+                )
+                .await?;
                 Ok(ResolvedExecProgram {
-                    program: ExecProgram::Inline(content.clone()),
-                    source_bytes: content.as_bytes().to_vec(),
+                    program: exec_path,
+                    content_digest,
                 })
             }
             ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)
                     .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
-                let exec_cache_dir = wasm_cache_dir.join("exec");
                 tokio::fs::create_dir_all(&exec_cache_dir).await?;
                 let metadata_dir = wasm_cache_metadata_dir(wasm_cache_dir);
                 let result =
@@ -1734,12 +1765,9 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                         "content digest mismatch for OCI exec `{image}`: expected {expected}, got {actual}"
                     );
                 }
-                let source_bytes = tokio::fs::read(&result.exec_path).await.with_context(|| {
-                    format!("cannot read cached exec file {:?}", result.exec_path)
-                })?;
                 Ok(ResolvedExecProgram {
-                    program: ExecProgram::CachedFile(result.exec_path),
-                    source_bytes,
+                    program: result.exec_path,
+                    content_digest: result.content_digest,
                 })
             }
         }
@@ -1784,7 +1812,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_exec:");
-            hasher.update(&resolved_program.source_bytes);
+            hasher.update(resolved_program.content_digest.0.0);
             hasher.update(self.ffqn.to_string().as_bytes());
             for p in &parsed_params {
                 hasher.update(p.wit_type.as_ref().as_bytes());
@@ -1840,7 +1868,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
 
 #[derive(Debug)]
 pub(crate) struct ActivityExecConfigVerified {
-    pub(crate) program: wasm_workers::activity::activity_exec_worker::ExecProgram,
+    pub(crate) program: PathBuf,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
@@ -4247,7 +4275,6 @@ name = "my_stub"
 
     mod activity_exec {
         use secrecy::{ExposeSecret as _, SecretString};
-        use wasm_workers::activity::activity_exec_worker::ExecProgram;
 
         use super::super::*;
 
@@ -4302,10 +4329,14 @@ name = "my_stub"
             }
         }
 
+        fn content_digest_of(bytes: &[u8]) -> ContentDigest {
+            ContentDigest(Digest(Sha256::digest(bytes).into()))
+        }
+
         fn inline_program() -> ResolvedExecProgram {
             ResolvedExecProgram {
-                program: ExecProgram::Inline("#!/usr/bin/env bash\necho null\n".into()),
-                source_bytes: b"#!/usr/bin/env bash\necho null\n".to_vec(),
+                program: PathBuf::from("/tmp/fake-exec-script.sh"),
+                content_digest: content_digest_of(b"#!/usr/bin/env bash\necho null\n"),
             }
         }
 
@@ -4372,8 +4403,8 @@ name = "my_stub"
             let inline_verified = inline
                 .fetch_and_verify(
                     ResolvedExecProgram {
-                        program: ExecProgram::Inline(String::from_utf8(source.clone()).unwrap()),
-                        source_bytes: source.clone(),
+                        program: PathBuf::from("/tmp/fake-exec-script.sh"),
+                        content_digest: content_digest_of(&source),
                     },
                     true,
                     &std::sync::Arc::new(SecretRegistry::empty()),
@@ -4383,10 +4414,8 @@ name = "my_stub"
             let oci_verified = oci
                 .fetch_and_verify(
                     ResolvedExecProgram {
-                        program: ExecProgram::CachedFile(std::path::PathBuf::from(
-                            "/tmp/fake-exec-script.sh",
-                        )),
-                        source_bytes: source,
+                        program: PathBuf::from("/tmp/fake-exec-script.sh"),
+                        content_digest: content_digest_of(&source),
                     },
                     true,
                     &std::sync::Arc::new(SecretRegistry::empty()),

@@ -33,6 +33,28 @@ return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
 
 
+# Fan-out workflow to reproduce https://github.com/obeli-sk/obelisk/issues/821:
+# submitting many inline exec activities at once makes their spawns race.
+[[workflow_js]]
+ffqn = "testing:integration/workflow-exec-fanout.exec-fanout"
+content = '''
+export default function exec_fanout(count) {
+    const js = obelisk.createJoinSet();
+    for (let i = 0; i < count; i++) {
+        js.submit('testing:integration/exec-greet.greet-inline', [`name-${i}`]);
+    }
+    const results = [];
+    for (let i = 0; i < count; i++) {
+        results.push(js.joinNext());
+    }
+    return JSON.stringify(results);
+}
+'''
+params = [
+  { name = "count", type = "u32" },
+]
+return_type = "result<string, string>"
+
 [[activity_exec]]
 ffqn = "testing:integration/exec-busy.busy"
 content = '''

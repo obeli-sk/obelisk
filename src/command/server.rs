@@ -1131,7 +1131,7 @@ async fn exec_content_digest_lines(
     let mut digests_with_lines = Vec::with_capacity(activities_exec.len());
     for activity in activities_exec {
         let resolved = activity.resolve(wasm_cache_dir).await?;
-        let digest = compute_content_digest(&resolved.source_bytes);
+        let digest = resolved.content_digest;
         let line = format!(
             "\"{name}\" = \"{digest}\" # {ffqn}",
             name = activity.name,
@@ -5631,15 +5631,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deployment_verify_rejects_exec_activities_unless_allowed_or_deferred()
+    async fn deployment_verify_rejects_exec_activities_on_any_runtime_config_availability()
     -> Result<(), anyhow::Error> {
         test_utils::set_up();
+
+        let server_toml_empty = tempfile::NamedTempFile::new().unwrap();
+        let server_toml_empty_path = server_toml_empty.path();
 
         let workspace = get_workspace_dir();
         let config_holder = ConfigHolder::new(
             crate::project_dirs(),
             BaseDirs::new(),
-            Some(workspace.join("server-sqlite.toml")),
+            Some(server_toml_empty_path.to_path_buf()),
         )?;
         let config = config_holder.load_config()?;
         assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);

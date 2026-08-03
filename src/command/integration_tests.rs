@@ -189,9 +189,9 @@ replace_in = ["headers", "params", "body"]
         codegen_cache = workspace.join("test-codegen-cache").display(),
         db_dir = db_dir.path().display(),
     );
-    let server_path = db_dir.path().join("obelisk-test-server.toml");
-    std::fs::write(&server_path, server_contents).unwrap();
+    let server_path = db_dir.path().join("server.toml");
 
+    std::fs::write(&server_path, server_contents).unwrap();
     let ws = ".";
     let deployment_contents = format!(
         r#"
@@ -655,7 +655,7 @@ routes = [{{ methods = ["POST"], route = "/body-form-data" }}]
 "#,
     );
     debug!("Deployment TOML:{deployment_contents}");
-    let deployment_path = db_dir.path().join("obelisk-test-deployment.toml");
+    let deployment_path = db_dir.path().join("deployment.toml");
     std::fs::write(&deployment_path, deployment_contents).unwrap();
     (db_dir, server_path, deployment_path)
 }
@@ -1227,10 +1227,7 @@ impl TestServer {
     }
 }
 
-/// v1 API token auth (`meta/designs/server-security-guard.md`): with auth active
-/// (tests otherwise run with `allow_unauthenticated_api`), the API port denies requests without a
-/// valid bearer token and accepts both the plaintext `api.token` and an
-/// `api.token_hashes` entry, on the web API and at gRPC stream open.
+/// api.token is not tested as it interferes with `OBELISK__API__TOKEN` that might be set.
 #[tokio::test]
 async fn api_auth_should_deny_unauthenticated_requests() {
     fn list_components_request() -> ListComponentsRequest {
@@ -1242,12 +1239,11 @@ async fn api_auth_should_deny_unauthenticated_requests() {
         }
     }
 
-    let plain_token = "plain-secret-token";
     let hashed_token = "hashed-secret-token";
     let server = TestServer::start_empty_with_auth(
         test_addr!(89),
         &format!(
-            "api.token = \"{plain_token}\"\napi.token_hashes = [\"{hash}\"]",
+            "api.token_hashes = [\"{hash}\"]",
             hash = crate::api::token_hash(hashed_token)
         ),
     )
@@ -1263,16 +1259,15 @@ async fn api_auth_should_deny_unauthenticated_requests() {
             reqwest::StatusCode::UNAUTHORIZED
         );
     }
-    for accepted in [plain_token, hashed_token] {
-        let resp = server
-            .client
-            .get(&url)
-            .bearer_auth(accepted)
-            .send()
-            .await
-            .unwrap();
-        assert!(resp.status().is_success(), "status: {}", resp.status());
-    }
+
+    let resp = server
+        .client
+        .get(&url)
+        .bearer_auth(hashed_token)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "status: {}", resp.status());
 
     let mut fn_client = FunctionRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
@@ -1285,7 +1280,7 @@ async fn api_auth_should_deny_unauthenticated_requests() {
     let mut authenticated = tonic::Request::new(list_components_request());
     authenticated.metadata_mut().insert(
         "authorization",
-        format!("Bearer {plain_token}").parse().unwrap(),
+        format!("Bearer {hashed_token}").parse().unwrap(),
     );
     fn_client.list_components(authenticated).await.unwrap();
 
