@@ -1681,7 +1681,8 @@ pub(crate) struct ActivityExecComponentConfigToml {
 pub(crate) struct ResolvedExecProgram {
     /// Path to the immutable cached script file the worker executes directly.
     pub(crate) program: PathBuf,
-    pub(crate) source_bytes: Vec<u8>, // FIXME: Store content digest instead
+    /// Content digest of the script text (component identity and allowlist line).
+    pub(crate) content_digest: ContentDigest,
 }
 
 async fn write_inline_exec_file_to_cache_dir(
@@ -1746,7 +1747,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                 .await?;
                 Ok(ResolvedExecProgram {
                     program: exec_path,
-                    source_bytes: content.as_bytes().to_vec(),
+                    content_digest,
                 })
             }
             ScriptLocationResolved::Oci { image } => {
@@ -1764,12 +1765,9 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                         "content digest mismatch for OCI exec `{image}`: expected {expected}, got {actual}"
                     );
                 }
-                let source_bytes = tokio::fs::read(&result.exec_path).await.with_context(|| {
-                    format!("cannot read cached exec file {:?}", result.exec_path)
-                })?;
                 Ok(ResolvedExecProgram {
                     program: result.exec_path,
-                    source_bytes,
+                    content_digest: result.content_digest,
                 })
             }
         }
@@ -1814,7 +1812,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_exec:");
-            hasher.update(&resolved_program.source_bytes);
+            hasher.update(resolved_program.content_digest.0.0);
             hasher.update(self.ffqn.to_string().as_bytes());
             for p in &parsed_params {
                 hasher.update(p.wit_type.as_ref().as_bytes());
@@ -4331,10 +4329,14 @@ name = "my_stub"
             }
         }
 
+        fn content_digest_of(bytes: &[u8]) -> ContentDigest {
+            ContentDigest(Digest(Sha256::digest(bytes).into()))
+        }
+
         fn inline_program() -> ResolvedExecProgram {
             ResolvedExecProgram {
                 program: PathBuf::from("/tmp/fake-exec-script.sh"),
-                source_bytes: b"#!/usr/bin/env bash\necho null\n".to_vec(),
+                content_digest: content_digest_of(b"#!/usr/bin/env bash\necho null\n"),
             }
         }
 
@@ -4402,7 +4404,7 @@ name = "my_stub"
                 .fetch_and_verify(
                     ResolvedExecProgram {
                         program: PathBuf::from("/tmp/fake-exec-script.sh"),
-                        source_bytes: source.clone(),
+                        content_digest: content_digest_of(&source),
                     },
                     true,
                     &std::sync::Arc::new(SecretRegistry::empty()),
@@ -4413,7 +4415,7 @@ name = "my_stub"
                 .fetch_and_verify(
                     ResolvedExecProgram {
                         program: PathBuf::from("/tmp/fake-exec-script.sh"),
-                        source_bytes: source,
+                        content_digest: content_digest_of(&source),
                     },
                     true,
                     &std::sync::Arc::new(SecretRegistry::empty()),

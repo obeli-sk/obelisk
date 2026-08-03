@@ -1131,7 +1131,7 @@ async fn exec_content_digest_lines(
     let mut digests_with_lines = Vec::with_capacity(activities_exec.len());
     for activity in activities_exec {
         let resolved = activity.resolve(wasm_cache_dir).await?;
-        let digest = compute_content_digest(&resolved.source_bytes);
+        let digest = resolved.content_digest;
         let line = format!(
             "\"{name}\" = \"{digest}\" # {ffqn}",
             name = activity.name,
