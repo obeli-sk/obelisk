@@ -616,16 +616,13 @@ pub(crate) async fn run(
     Ok(())
 }
 
+/// Policy for runtime requirements that may be unavailable on the current server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeConfigAvailability {
     Strict,
     AllowUnavailable,
 }
 impl RuntimeConfigAvailability {
-    fn allows_unavailable(self) -> bool {
-        self == Self::AllowUnavailable
-    }
-
     fn assert_strict(self) {
         assert!(
             self == Self::Strict,
@@ -1035,7 +1032,7 @@ pub(crate) async fn deployment_verify_config(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
-    if !params.runtime_config_availability.allows_unavailable()
+    if params.runtime_config_availability == RuntimeConfigAvailability::Strict
         && !deployment.activities_exec.is_empty()
     {
         match &server_verified.allow_exec_activities {
@@ -2498,7 +2495,7 @@ fn validate_submit_package(
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
     deployment_toml: &str,
-    runtime_config_check: RuntimeConfigCheck,
+    runtime_config_availability: RuntimeConfigAvailability,
     created_by: Option<String>,
     description: Option<String>,
     requested_deployment_id: Option<DeploymentId>,
@@ -2600,7 +2597,7 @@ pub(crate) async fn submit_deployment(
     config_prepass::preflight(
         &server_verified,
         Some(&deployment_resolved),
-        runtime_config_check.availability(),
+        runtime_config_availability,
     )
     .map_err(SubmitDeploymentError::Other)?;
     let compiled_linked = deployment_verify_config_compile_link(
@@ -2614,7 +2611,7 @@ pub(crate) async fn submit_deployment(
                 clean_cache: false,
                 clean_codegen_cache: false,
             },
-            runtime_config_availability: runtime_config_check.availability(),
+            runtime_config_availability,
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
         },
@@ -2661,7 +2658,7 @@ pub(crate) async fn submit_deployment(
     // artifact compiled while tolerating unavailable runtime config must not be
     // reused to satisfy a later strict switch; a strict artifact satisfies any consumer.
     if let Some(manager) = deployment_switch_manager
-        && runtime_config_check.availability() == RuntimeConfigAvailability::Strict
+        && runtime_config_availability == RuntimeConfigAvailability::Strict
     {
         manager
             .store_latest_prepared(PreparedDeploymentSwitch {
@@ -2706,33 +2703,15 @@ impl From<anyhow::Error> for SwitchError {
     }
 }
 
-/// Policy for runtime requirements that may be unavailable on the current server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum RuntimeConfigCheck {
-    /// Missing environment variables or secrets fail the operation.
-    #[default]
-    Strict,
-    /// Unavailable environment variables, secrets, or server capabilities are tolerated.
-    AllowUnavailable,
-}
-impl RuntimeConfigCheck {
-    fn availability(self) -> RuntimeConfigAvailability {
-        match self {
-            Self::Strict => RuntimeConfigAvailability::Strict,
-            Self::AllowUnavailable => RuntimeConfigAvailability::AllowUnavailable,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SwitchDeploymentAction {
     Activate,
-    Enqueue(RuntimeConfigCheck),
+    Enqueue(RuntimeConfigAvailability),
 }
 impl SwitchDeploymentAction {
     fn runtime_config_availability(self) -> RuntimeConfigAvailability {
         match self {
-            SwitchDeploymentAction::Enqueue(check) => check.availability(),
+            SwitchDeploymentAction::Enqueue(availability) => availability,
             SwitchDeploymentAction::Activate => RuntimeConfigAvailability::Strict,
         }
     }
@@ -3492,7 +3471,8 @@ impl DeploymentVerified {
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
     ) -> Result<DeploymentVerified, anyhow::Error> {
-        let ignore_missing_env_vars = runtime_config_availability.allows_unavailable();
+        let ignore_missing_env_vars =
+            runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable;
         let mut deployment = deployment.into_resolved();
         trace!("Using deployment toml: {deployment:#?}");
         // The outbound-HTTP allowlist pre-pass (unregistered secrets, uncovered hosts,

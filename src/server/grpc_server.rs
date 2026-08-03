@@ -1,6 +1,6 @@
 use crate::command::server;
 use crate::command::server::PreparedDirs;
-use crate::command::server::RuntimeConfigCheck;
+use crate::command::server::RuntimeConfigAvailability;
 use crate::command::server::ServerVerified;
 use crate::command::server::SubmitError;
 use crate::command::server::SwitchDeploymentAction;
@@ -1739,19 +1739,20 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     ) -> TonicRespResult<grpc_gen::SwitchDeploymentResponse> {
         use grpc_gen::switch_deployment_response::Outcome;
         let request = request.into_inner();
-        let check = runtime_config_check_from_grpc(request.runtime_config_check());
+        let runtime_config_availability =
+            runtime_config_availability_from_grpc(request.runtime_config_check());
         let deployment_id: DeploymentId = request
             .deployment_id
             .argument_must_exist("deployment_id")?
             .try_into()?;
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         let action = if request.hot_redeploy {
-            if check == RuntimeConfigCheck::AllowUnavailable {
+            if runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable {
                 return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `hot_redeploy = true`".to_string()));
             }
             SwitchDeploymentAction::Activate
         } else {
-            SwitchDeploymentAction::Enqueue(check)
+            SwitchDeploymentAction::Enqueue(runtime_config_availability)
         };
         let outcome = server::switch_deployment(
             self.deployment_switch_manager.clone(),
@@ -1783,7 +1784,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         request: tonic::Request<grpc_gen::SubmitDeploymentRequest>,
     ) -> TonicRespResult<grpc_gen::SubmitDeploymentResponse> {
         let request = request.into_inner();
-        let runtime_config_check = runtime_config_check_from_grpc(request.runtime_config_check());
+        let runtime_config_availability =
+            runtime_config_availability_from_grpc(request.runtime_config_check());
         let requested_deployment_id = request
             .deployment_id
             .map(DeploymentId::try_from)
@@ -1801,7 +1803,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let result = Box::pin(server::submit_deployment(
             self.server_verified.clone(),
             &request.deployment_toml,
-            runtime_config_check,
+            runtime_config_availability,
             request.created_by.clone(),
             request.description.clone(),
             requested_deployment_id,
@@ -1918,17 +1920,17 @@ fn file_issue_to_grpc(issue: server::SubmitFileIssue) -> grpc_gen::FileIssue {
     }
 }
 
-/// Map the wire `RuntimeConfigCheck` to its server-side counterpart. `UNSPECIFIED`
+/// Map the wire `RuntimeConfigCheck` to its server-side availability. `UNSPECIFIED`
 /// (the proto3 default for an unset field) is treated as `STRICT`.
-fn runtime_config_check_from_grpc(
+fn runtime_config_availability_from_grpc(
     check: grpc_gen::RuntimeConfigCheck,
-) -> server::RuntimeConfigCheck {
+) -> server::RuntimeConfigAvailability {
     match check {
         grpc_gen::RuntimeConfigCheck::AllowUnavailable => {
-            server::RuntimeConfigCheck::AllowUnavailable
+            server::RuntimeConfigAvailability::AllowUnavailable
         }
         grpc_gen::RuntimeConfigCheck::Unspecified | grpc_gen::RuntimeConfigCheck::Strict => {
-            server::RuntimeConfigCheck::Strict
+            server::RuntimeConfigAvailability::Strict
         }
     }
 }

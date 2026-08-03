@@ -3083,7 +3083,7 @@ mod functions {
 
 mod deployment {
     use crate::{
-        command::server::{self, RuntimeConfigCheck, SwitchDeploymentAction},
+        command::server::{self, RuntimeConfigAvailability, SwitchDeploymentAction},
         server::{
             deployment_summary,
             web_api_server::{
@@ -3095,11 +3095,11 @@ mod deployment {
     use http::header;
 
     /// Map the REST `allow_unavailable_runtime_config` flag to the runtime config policy.
-    fn runtime_config_check_from_bool(allow_unavailable: bool) -> RuntimeConfigCheck {
+    fn runtime_config_availability_from_bool(allow_unavailable: bool) -> RuntimeConfigAvailability {
         if allow_unavailable {
-            RuntimeConfigCheck::AllowUnavailable
+            RuntimeConfigAvailability::AllowUnavailable
         } else {
-            RuntimeConfigCheck::Strict
+            RuntimeConfigAvailability::Strict
         }
     }
     use axum::{
@@ -3689,7 +3689,7 @@ mod deployment {
         let result = Box::pin(crate::command::server::submit_deployment(
             state.server_verified.clone(),
             &inputs.deployment_toml,
-            runtime_config_check_from_bool(inputs.allow_unavailable_runtime_config),
+            runtime_config_availability_from_bool(inputs.allow_unavailable_runtime_config),
             Some("web-api".to_string()),
             inputs.description,
             requested_deployment_id,
@@ -3830,7 +3830,7 @@ mod deployment {
             }
             SwitchDeploymentAction::Activate
         } else {
-            SwitchDeploymentAction::Enqueue(runtime_config_check_from_bool(
+            SwitchDeploymentAction::Enqueue(runtime_config_availability_from_bool(
                 payload.allow_unavailable_runtime_config,
             ))
         };

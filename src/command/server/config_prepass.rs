@@ -131,7 +131,7 @@ pub(super) fn preflight(
 ) -> Result<(), anyhow::Error> {
     let secret_registry = &*server_verified.secret_registry;
     let global_http_config = &server_verified.global_http_config;
-    let ignore_missing_env_vars = availability.allows_unavailable();
+    let ignore_missing_env_vars = availability == RuntimeConfigAvailability::AllowUnavailable;
 
     // Index source files so advisories can be located, then lint the server's own allowlist.
     let mut warnings = LocatedWarnings::default();
@@ -311,7 +311,7 @@ pub(super) fn report_unregistered_secrets(
          references. Run again with `--fix` to scaffold them:\n\n\
          {snippet}"
     );
-    if availability.allows_unavailable() {
+    if availability == RuntimeConfigAvailability::AllowUnavailable {
         warn!(
             "{message}\nSkipping these load-time secret checks because unavailable runtime \
              configuration is allowed; activation will enforce them strictly."
@@ -464,7 +464,7 @@ pub(super) fn report_missing_outbound_http_secret_replacements(
         server = server_snippets.join("\n"),
         deployment = deployment_snippets.join("\n"),
     );
-    if availability.allows_unavailable() {
+    if availability == RuntimeConfigAvailability::AllowUnavailable {
         warn!(
             "{message}\nSkipping these load-time secret replacement checks because unavailable \
              runtime configuration is allowed; activation will enforce them strictly."
