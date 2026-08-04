@@ -91,19 +91,17 @@ pub(crate) struct ConfigHolder {
 
 impl ConfigHolder {
     pub(crate) async fn generate_default_server_config(
-        dst: Option<PathBuf>,
+        dst: PathBuf,
         overwrite: bool,
     ) -> Result<PathBuf, anyhow::Error> {
-        let dst = dst.unwrap_or(PathBuf::from("server.toml"));
         write_config_file(&dst, OBELISK_HELP_SERVER_TOML, overwrite).await?;
         Ok(dst)
     }
 
     pub(crate) async fn generate_default_deployment_config(
-        dst: Option<PathBuf>,
+        dst: PathBuf,
         overwrite: bool,
     ) -> Result<PathBuf, anyhow::Error> {
-        let dst = dst.unwrap_or(PathBuf::from("deployment.toml"));
         write_config_file(&dst, OBELISK_HELP_DEPLOYMENT_TOML, overwrite).await?;
         Ok(dst)
     }

@@ -376,7 +376,7 @@ pub(crate) enum Generate {
         /// Output as JSON instead of human-readable text.
         #[arg(short, long)]
         json: bool,
-        /// Filename to write the TOML to, defaults to `server.toml`.
+        /// Filename to write the TOML to, defaults to <stdout>.
         output: Option<PathBuf>,
         /// Overwrite existing file.
         #[arg(long, short)]
@@ -387,7 +387,7 @@ pub(crate) enum Generate {
         /// Output as JSON instead of human-readable text.
         #[arg(short, long)]
         json: bool,
-        /// Filename to write the TOML to, defaults to `deployment.toml`.
+        /// Filename to write the TOML to, defaults to <stdout>.
         output: Option<PathBuf>,
         /// Overwrite existing file.
         #[arg(long, short)]

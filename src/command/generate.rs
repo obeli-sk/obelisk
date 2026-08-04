@@ -5,7 +5,9 @@ use crate::command::server::{
     deployment_compile_link, deployment_verify_config, prepare_dirs, server_verify,
 };
 use crate::command::termination_notifier::termination_notifier;
-use crate::config::config_holder::{ConfigHolder, load_deployment_validated};
+use crate::config::config_holder::{
+    ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, OBELISK_HELP_SERVER_TOML, load_deployment_validated,
+};
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::{
     ActivityExternalComponentConfigToml, ActivityStubComponentConfigToml, ComponentLocationToml,
@@ -50,13 +52,17 @@ impl Generate {
                 output,
                 force,
             } => {
-                let config_file =
-                    ConfigHolder::generate_default_server_config(output, force).await?;
-                let result = GeneratedPathStatus {
-                    path: config_file,
-                    status: "generated",
-                };
-                print_generated_path_statuses(&[result], json)?;
+                if let Some(output) = output {
+                    let config_file =
+                        ConfigHolder::generate_default_server_config(output, force).await?;
+                    let result = GeneratedPathStatus {
+                        path: config_file,
+                        status: "generated",
+                    };
+                    print_generated_path_statuses(&[result], json)?;
+                } else {
+                    print!("{OBELISK_HELP_SERVER_TOML}");
+                }
                 Ok(())
             }
             Generate::Deployment {
@@ -64,13 +70,17 @@ impl Generate {
                 output,
                 force,
             } => {
-                let config_file =
-                    ConfigHolder::generate_default_deployment_config(output, force).await?;
-                let result = GeneratedPathStatus {
-                    path: config_file,
-                    status: "generated",
-                };
-                print_generated_path_statuses(&[result], json)?;
+                if let Some(output) = output {
+                    let config_file =
+                        ConfigHolder::generate_default_deployment_config(output, force).await?;
+                    let result = GeneratedPathStatus {
+                        path: config_file,
+                        status: "generated",
+                    };
+                    print_generated_path_statuses(&[result], json)?;
+                } else {
+                    print!("{OBELISK_HELP_DEPLOYMENT_TOML}");
+                }
                 Ok(())
             }
 
