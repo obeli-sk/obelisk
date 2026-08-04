@@ -6,23 +6,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- *(cli)* `obelisk generate server-config --trusted` emits a minimal single-party configuration
-  that allows all exec activities and component-originated outbound HTTP without registering
-  secrets.
-
-### Changed
-
-- **Breaking:** *(cli)* `obelisk generate server-config` and `obelisk generate deployment` now
-  print their configuration to stdout when no output path is given instead of writing to
-  `server.toml` and `deployment.toml`.
-
-### Removed
-
-- **Breaking:** *(cli)* Removed the development-only `obelisk generate *-schema` subcommands.
-  Schema assets are now regenerated through `scripts/update-schemas.sh`.
-
 ## [0.41.0](https://github.com/obeli-sk/obelisk/compare/v0.40.0...v0.41.0)
 
 This release adds operator-controlled security boundaries for secrets and outbound HTTP, together
@@ -42,6 +25,9 @@ below before upgrading.
   gRPC, or the web API.
 - JavaScript workflows may export `async` functions, accept `Date` values for absolute schedule
   times, and use the deterministic Obelisk clock through `Date`, `Date()`, and `Date.now()`.
+- *(cli)* `obelisk generate server-config --trusted` emits a minimal single-party configuration
+  that allows all exec activities and component-originated outbound HTTP without registering
+  secrets.
 
 ### Changed
 
@@ -62,6 +48,9 @@ below before upgrading.
   `result<_, string>` errors and the web API's `execution_failure` field.
 - *(cli)* `obelisk generate token` now prints only the token to stdout and can append its hash
   directly to a server configuration with `--server-config`.
+- **Breaking:** *(cli)* `obelisk generate server-config` and `obelisk generate deployment` now
+  print their configuration to stdout when no output path is given instead of writing to
+  `server.toml` and `deployment.toml`.
 
 ### Fixed
 
@@ -82,6 +71,8 @@ below before upgrading.
 - **Breaking:** *(api)* Removed the deprecated `CancelActivity` gRPC endpoint. Use `CancelExecution`.
 - **Breaking:** *(api)* Removed the `allow_missing_runtime_config` REST alias. Use
   `allow_unavailable_runtime_config`.
+- **Breaking:** *(cli)* Removed the development-only `obelisk generate *-schema` subcommands.
+  Schema assets are now regenerated through `scripts/update-schemas.sh`.
 
 ## [0.40.0](https://github.com/obeli-sk/obelisk/compare/v0.39.5...v0.40.0)
 
