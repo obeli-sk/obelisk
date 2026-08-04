@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(cli)* `obelisk generate server-config --trusted` emits a minimal single-party configuration
+  that allows all exec activities and component-originated outbound HTTP without registering
+  secrets.
+
+### Changed
+
+- **Breaking:** *(cli)* `obelisk generate server-config` and `obelisk generate deployment` now
+  print their configuration to stdout when no output path is given instead of writing to
+  `server.toml` and `deployment.toml`.
+
 ## [0.41.0](https://github.com/obeli-sk/obelisk/compare/v0.40.0...v0.41.0)
 
 This release adds operator-controlled security boundaries for secrets and outbound HTTP, together

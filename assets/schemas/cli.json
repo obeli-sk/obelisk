@@ -1109,6 +1109,10 @@
               "help": "Output as JSON instead of human-readable text"
             },
             {
+              "name": "--trusted",
+              "help": "Generate a single-party config that allows all exec activities and outbound HTTP"
+            },
+            {
               "name": "--force",
               "short": "f",
               "help": "Overwrite existing file"
@@ -1117,7 +1121,7 @@
           "positionals": [
             {
               "name": "output",
-              "help": "Filename to write the TOML to, defaults to `server.toml`",
+              "help": "Filename to write the TOML to, defaults to <stdout>",
               "accepts": {
                 "path": true
               }
@@ -1142,7 +1146,7 @@
           "positionals": [
             {
               "name": "output",
-              "help": "Filename to write the TOML to, defaults to `deployment.toml`",
+              "help": "Filename to write the TOML to, defaults to <stdout>",
               "accepts": {
                 "path": true
               }

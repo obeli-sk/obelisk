@@ -1,0 +1,15 @@
+# TRUSTED: single-party config, no operator/agent boundary.
+# Do not use for multi-tenant or agent-driven deployments.
+
+allow_exec_activities = true
+
+[[outbound_http.allowed_host]]
+pattern = "*://*:*" # any scheme, any host, any port
+methods = "*"
+
+# No [secrets]: exec secret inputs and outbound HTTP injection are disabled.
+# Components can use plain environment variables instead.
+# To scaffold referenced secrets, run:
+# obelisk deployment verify -d <deployment.toml> -s <this file> --fix
+# Then review secret sources and any suggested HTTP mappings.
+# For deployments with exec activities, --fix replaces allow-any with a script allowlist.

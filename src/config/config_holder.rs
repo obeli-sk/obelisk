@@ -12,6 +12,8 @@ use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 
 pub(crate) const OBELISK_HELP_SERVER_TOML: &str = include_str!("../../obelisk-help-server.toml");
+pub(crate) const OBELISK_TRUSTED_SERVER_TOML: &str =
+    include_str!("../../server-trusted-template.toml");
 pub(crate) const OBELISK_HELP_DEPLOYMENT_TOML: &str =
     include_str!("../../obelisk-help-deployment.toml");
 
@@ -90,20 +92,19 @@ pub(crate) struct ConfigHolder {
 }
 
 impl ConfigHolder {
-    pub(crate) async fn generate_default_server_config(
-        dst: Option<PathBuf>,
+    pub(crate) async fn generate_server_config(
+        dst: PathBuf,
+        trusted: bool,
         overwrite: bool,
     ) -> Result<PathBuf, anyhow::Error> {
-        let dst = dst.unwrap_or(PathBuf::from("server.toml"));
-        write_config_file(&dst, OBELISK_HELP_SERVER_TOML, overwrite).await?;
+        write_config_file(&dst, server_config_template(trusted), overwrite).await?;
         Ok(dst)
     }
 
     pub(crate) async fn generate_default_deployment_config(
-        dst: Option<PathBuf>,
+        dst: PathBuf,
         overwrite: bool,
     ) -> Result<PathBuf, anyhow::Error> {
-        let dst = dst.unwrap_or(PathBuf::from("deployment.toml"));
         write_config_file(&dst, OBELISK_HELP_DEPLOYMENT_TOML, overwrite).await?;
         Ok(dst)
     }
@@ -162,6 +163,14 @@ impl ConfigHolder {
         let mut config: ServerConfigToml = settings.try_deserialize()?;
         config.source_path.clone_from(&self.config_source);
         Ok(config)
+    }
+}
+
+pub(crate) fn server_config_template(trusted: bool) -> &'static str {
+    if trusted {
+        OBELISK_TRUSTED_SERVER_TOML
+    } else {
+        OBELISK_HELP_SERVER_TOML
     }
 }
 
@@ -236,4 +245,25 @@ async fn write_config_file(
         .await
         .with_context(|| format!("cannot write to {dst:?}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OBELISK_TRUSTED_SERVER_TOML, ServerConfigToml};
+    use crate::config::toml::{AllowExecActivities, MethodsInput};
+
+    #[test]
+    fn trusted_server_config_allows_exec_and_outbound_http_without_secrets() {
+        let config: ServerConfigToml = toml::from_str(OBELISK_TRUSTED_SERVER_TOML).unwrap();
+
+        assert_eq!(config.allow_exec_activities, AllowExecActivities::AllowAny);
+        assert!(config.secrets.is_empty());
+        let [host] = config.outbound_http.allowed_hosts.as_slice() else {
+            panic!("expected one outbound HTTP host");
+        };
+        assert_eq!(host.pattern, "*://*:*");
+        assert!(matches!(host.methods, Some(MethodsInput::Star(_))));
+        assert!(host.secrets.is_empty());
+        assert!(host.replace_in.is_empty());
+    }
 }
