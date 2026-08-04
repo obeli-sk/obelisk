@@ -5163,7 +5163,7 @@ mod tests {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
     }
 
-    /// Registry holding the `MY_SECRET` referenced by `obelisk-testing-wasm-local.toml`,
+    /// Registry holding the `MY_SECRET` referenced by `deployment-testing-wasm-local.toml`,
     /// matching the value the integration test server registers.
     fn test_secret_registry() -> Arc<SecretRegistry> {
         Arc::new(SecretRegistry::from_test_values([(
@@ -5470,7 +5470,7 @@ mod tests {
     #[tokio::test]
     async fn server_verify(
         #[values("server-sqlite.toml", "server-postgres.toml")] server_toml: &'static str,
-        #[values("obelisk-testing-wasm-local.toml", "obelisk-testing-wasm-oci.toml")]
+        #[values("deployment-testing-wasm-local.toml", "deployment-testing-wasm-oci.toml")]
         deployment_toml: &'static str,
     ) -> Result<(), anyhow::Error> {
         test_utils::set_up();
@@ -5565,7 +5565,7 @@ mod tests {
 
         let fixture = crate::command::test_support::target_aware_deployment_fixture(
             &workspace,
-            "obelisk-testing-wasm-local.toml",
+            "deployment-testing-wasm-local.toml",
         )
         .await?;
         let mut deployment = load_deployment_resolved(fixture.path()).await?;
@@ -5631,7 +5631,7 @@ mod tests {
         let config = config_holder.load_config()?;
         assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
         let deployment =
-            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
+            load_deployment_resolved(&workspace.join("deployment-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
             &config,
             &PrepareDirsParams {
@@ -5704,7 +5704,7 @@ mod tests {
 
         let workspace = get_workspace_dir();
         let deployment =
-            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
+            load_deployment_resolved(&workspace.join("deployment-testing-exec.toml")).await?;
         let dir = tempfile::tempdir()?;
         let server_config_path = dir.path().join("server.toml");
         let wrong = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -5758,7 +5758,7 @@ mod tests {
         )?;
         let mut config = config_holder.load_config()?;
         let deployment =
-            load_deployment_resolved(&workspace.join("obelisk-testing-exec.toml")).await?;
+            load_deployment_resolved(&workspace.join("deployment-testing-exec.toml")).await?;
         let digests = deployment
             .activities_exec
             .iter()

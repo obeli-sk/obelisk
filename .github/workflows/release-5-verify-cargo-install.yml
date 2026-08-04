@@ -61,4 +61,4 @@ jobs:
         run: |
           source "$HOME/.cargo/env"
           obelisk --version | grep "$VERSION"
-          obelisk server verify --deployment obelisk-testing-wasm-oci.toml
+          obelisk server verify --deployment deployment-testing-wasm-oci.toml

@@ -49,6 +49,6 @@ jobs:
           echo "Pulling $IMAGE"
           docker pull $IMAGE
           docker run --rm $IMAGE --version | grep $VERSION
-          docker run --rm -v $PWD/obelisk-testing-wasm-oci.toml:/etc/obelisk/deployment.toml $IMAGE server verify --deployment /etc/obelisk/deployment.toml
+          docker run --rm -v $PWD/deployment-testing-wasm-oci.toml:/etc/obelisk/deployment.toml $IMAGE server verify --deployment /etc/obelisk/deployment.toml
         env:
           VERSION: ${{ steps.git-info.outputs.version }}

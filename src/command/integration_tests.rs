@@ -1300,7 +1300,7 @@ async fn deploy_local_wasm_to_empty_server() {
 
     let fixture = crate::command::test_support::target_aware_deployment_fixture(
         &get_workspace_dir(),
-        "obelisk-testing-wasm-local.toml",
+        "deployment-testing-wasm-local.toml",
     )
     .await
     .unwrap();
