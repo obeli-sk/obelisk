@@ -5470,7 +5470,10 @@ mod tests {
     #[tokio::test]
     async fn server_verify(
         #[values("server-sqlite.toml", "server-postgres.toml")] server_toml: &'static str,
-        #[values("deployment-testing-wasm-local.toml", "deployment-testing-wasm-oci.toml")]
+        #[values(
+            "deployment-testing-wasm-local.toml",
+            "deployment-testing-wasm-oci.toml"
+        )]
         deployment_toml: &'static str,
     ) -> Result<(), anyhow::Error> {
         test_utils::set_up();
