@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(cli)* `obelisk generate server-config --trusted` emits a minimal single-party configuration
+  that allows all exec activities and component-originated outbound HTTP without registering
+  secrets.
+
 ### Changed
 
 - **Breaking:** *(cli)* `obelisk generate server-config` and `obelisk generate deployment` now

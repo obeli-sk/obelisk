@@ -6,7 +6,7 @@ use crate::command::server::{
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{
-    ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, OBELISK_HELP_SERVER_TOML, load_deployment_validated,
+    ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, load_deployment_validated, server_config_template,
 };
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::{
@@ -49,19 +49,20 @@ impl Generate {
             }
             Generate::ServerConfig {
                 json,
+                trusted,
                 output,
                 force,
             } => {
                 if let Some(output) = output {
                     let config_file =
-                        ConfigHolder::generate_default_server_config(output, force).await?;
+                        ConfigHolder::generate_server_config(output, trusted, force).await?;
                     let result = GeneratedPathStatus {
                         path: config_file,
                         status: "generated",
                     };
                     print_generated_path_statuses(&[result], json)?;
                 } else {
-                    print!("{OBELISK_HELP_SERVER_TOML}");
+                    print!("{}", server_config_template(trusted));
                 }
                 Ok(())
             }
