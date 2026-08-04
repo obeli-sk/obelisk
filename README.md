@@ -194,7 +194,6 @@ under the [GNU Affero General Public License version 3](LICENSE-AGPL).
 The following subfolders are licensed under the MIT License:
 
 * `wit/`   – see [LICENSE-MIT](wit/LICENSE-MIT)
-* `toml/`  – see [LICENSE-MIT](toml/LICENSE-MIT)
 * `proto/` – see [LICENSE-MIT](proto/LICENSE-MIT)
 
 ## Generated WIT Files
