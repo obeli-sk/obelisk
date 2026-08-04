@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   print their configuration to stdout when no output path is given instead of writing to
   `server.toml` and `deployment.toml`.
 
+### Removed
+
+- **Breaking:** *(cli)* Removed the development-only `obelisk generate *-schema` subcommands.
+  Schema assets are now regenerated through `scripts/update-schemas.sh`.
+
 ## [0.41.0](https://github.com/obeli-sk/obelisk/compare/v0.40.0...v0.41.0)
 
 This release adds operator-controlled security boundaries for secrets and outbound HTTP, together

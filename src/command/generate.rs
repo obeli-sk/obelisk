@@ -33,20 +33,6 @@ impl Generate {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
-            #[cfg(debug_assertions)]
-            Generate::ServerConfigSchema { output } => generate_server_config_schema(output),
-            #[cfg(debug_assertions)]
-            Generate::DeploymentSchema { output } => generate_deployment_schema(output),
-            #[cfg(debug_assertions)]
-            Generate::DbSchema { output } => generate_db_schema(output),
-            #[cfg(debug_assertions)]
-            Generate::OpenApiSchema { output } => generate_openapi_schema(output),
-            #[cfg(debug_assertions)]
-            Generate::CliSchema { output } => generate_cli_schema(output),
-            #[cfg(debug_assertions)]
-            Generate::ComponentMetadataAnnotationSchema { output } => {
-                generate_component_metadata_annotation_schema(output)
-            }
             Generate::ServerConfig {
                 json,
                 trusted,
@@ -252,7 +238,7 @@ fn print_generated_path_statuses(
     Ok(())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     use std::{
         fs::File,
@@ -270,18 +256,18 @@ fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), 
     Ok(())
 }
 
-#[cfg(debug_assertions)]
-pub(crate) fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+#[cfg(test)]
+fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     write_schema::<crate::config::toml::ServerConfigToml>(output)
 }
 
-#[cfg(debug_assertions)]
-pub(crate) fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+#[cfg(test)]
+fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     write_schema::<crate::config::toml::DeploymentToml>(output)
 }
 
-#[cfg(debug_assertions)]
-pub(crate) fn generate_db_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+#[cfg(test)]
+fn generate_db_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     use std::{
         fs::File,
         io::{BufWriter, Write as _, stdout},
@@ -298,8 +284,8 @@ pub(crate) fn generate_db_schema(output: Option<PathBuf>) -> Result<(), anyhow::
     Ok(())
 }
 
-#[cfg(debug_assertions)]
-pub(crate) fn generate_openapi_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+#[cfg(test)]
+fn generate_openapi_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     use std::{
         fs::File,
         io::{BufWriter, Write as _, stdout},
@@ -318,14 +304,14 @@ pub(crate) fn generate_openapi_schema(output: Option<PathBuf>) -> Result<(), any
     Ok(())
 }
 
-#[cfg(debug_assertions)]
-pub(crate) fn generate_component_metadata_annotation_schema(
+#[cfg(test)]
+fn generate_component_metadata_annotation_schema(
     output: Option<PathBuf>,
 ) -> Result<(), anyhow::Error> {
     write_schema::<crate::oci::ComponentMetadataAnnotation>(output)
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 #[derive(Debug, Serialize)]
 struct CliCommandSchema {
     name: String,
@@ -339,7 +325,7 @@ struct CliCommandSchema {
     subcommands: Vec<CliCommandSchema>,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 #[derive(Debug, Serialize)]
 struct CliArgSchema {
     name: String,
@@ -355,7 +341,7 @@ struct CliArgSchema {
     accepts: Option<CliArgAcceptsSchema>,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 #[derive(Debug, Serialize)]
 struct CliArgAcceptsSchema {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -366,14 +352,14 @@ struct CliArgAcceptsSchema {
     path: Option<bool>,
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn generate_cli_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     let command = <crate::args::Args as clap::CommandFactory>::command();
     let schema = command_to_schema(&command);
     write_json(output, &schema)
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn command_to_schema(command: &clap::Command) -> CliCommandSchema {
     let mut options = Vec::new();
     let mut positionals = Vec::new();
@@ -398,7 +384,7 @@ fn command_to_schema(command: &clap::Command) -> CliCommandSchema {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn arg_to_schema(arg: &clap::Arg) -> CliArgSchema {
     CliArgSchema {
         name: arg_name(arg),
@@ -410,7 +396,7 @@ fn arg_to_schema(arg: &clap::Arg) -> CliArgSchema {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn command_about(command: &clap::Command) -> Option<String> {
     command
         .get_about()
@@ -418,14 +404,14 @@ fn command_about(command: &clap::Command) -> Option<String> {
         .filter(|about| !about.trim().is_empty())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn arg_help(arg: &clap::Arg) -> Option<String> {
     arg.get_help()
         .map(ToString::to_string)
         .filter(|help| !help.trim().is_empty())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn arg_name(arg: &clap::Arg) -> String {
     if let Some(long) = arg.get_long() {
         format!("--{long}")
@@ -434,7 +420,7 @@ fn arg_name(arg: &clap::Arg) -> String {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn arg_value_name(arg: &clap::Arg) -> Option<String> {
     arg.get_num_args()
         .filter(clap::builder::ValueRange::takes_values)
@@ -443,7 +429,7 @@ fn arg_value_name(arg: &clap::Arg) -> Option<String> {
         .map(ToString::to_string)
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn arg_accepts(arg: &clap::Arg) -> Option<CliArgAcceptsSchema> {
     let choices: Vec<String> = arg
         .get_possible_values()
@@ -475,7 +461,7 @@ fn arg_accepts(arg: &clap::Arg) -> Option<CliArgAcceptsSchema> {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn skip_arg(arg: &clap::Arg) -> bool {
     matches!(
         arg.get_action(),
@@ -483,7 +469,7 @@ fn skip_arg(arg: &clap::Arg) -> bool {
     )
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 fn write_json<T: serde::Serialize>(
     output: Option<PathBuf>,
     value: &T,
@@ -894,7 +880,48 @@ async fn write_wit_deps(
 
 #[cfg(test)]
 mod tests {
-    use super::add_token_hash;
+    use super::{
+        add_token_hash, generate_cli_schema, generate_component_metadata_annotation_schema,
+        generate_db_schema, generate_deployment_schema, generate_openapi_schema,
+        generate_server_config_schema,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    #[ignore = "updates committed schema assets"]
+    fn update_toml_schemas() {
+        generate_server_config_schema(Some(PathBuf::from("assets/schemas/toml/server.json")))
+            .unwrap();
+        generate_deployment_schema(Some(PathBuf::from("assets/schemas/toml/deployment.json")))
+            .unwrap();
+    }
+
+    #[test]
+    #[ignore = "updates committed schema assets"]
+    fn update_openapi_schema() {
+        generate_openapi_schema(Some(PathBuf::from("assets/schemas/openapi.json"))).unwrap();
+    }
+
+    #[test]
+    #[ignore = "updates committed schema assets"]
+    fn update_db_schema() {
+        generate_db_schema(Some(PathBuf::from("assets/schemas/db.json"))).unwrap();
+    }
+
+    #[test]
+    #[ignore = "updates committed schema assets"]
+    fn update_cli_schema() {
+        generate_cli_schema(Some(PathBuf::from("assets/schemas/cli.json"))).unwrap();
+    }
+
+    #[test]
+    #[ignore = "updates committed schema assets"]
+    fn update_component_metadata_annotation_schema() {
+        generate_component_metadata_annotation_schema(Some(PathBuf::from(
+            "assets/schemas/oci-metadata-annotation.json",
+        )))
+        .unwrap();
+    }
 
     #[test]
     fn add_token_hash_should_create_and_append() {
