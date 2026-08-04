@@ -1,28 +1,4 @@
-[workspace]
-semver_check = false       # disable API breaking changes checks
-changelog_update = false
-git_release_enable = false
-git_tag_enable = false
-
-[[package]]
-name = "obelisk"
-git_tag_name = "v{{ version }}"
-git_tag_enable = true
-git_release_enable = true
-
-changelog_update = true
-changelog_include = [
-    "obeli-sk-concepts",
-    "obeli-sk-db-common",
-    "obeli-sk-db-postgres",
-    "obeli-sk-db-sqlite",
-    "obeli-sk-deployment-config",
-    "obeli-sk-executor",
-    "obeli-sk-grpc",
-    "obeli-sk-utils",
-    "obeli-sk-val-json",
-    "obeli-sk-wasm-workers",
-]
+# git cliff --unreleased --tag v0.42.0 --prepend CHANGELOG.md
 
 [changelog]
 header = """# Changelog
@@ -36,12 +12,12 @@ body = """
     - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
       {% if commit.breaking %}[**breaking**] {% endif %}\
       {{ commit.message | upper_first }} - \
-      ([{{ commit.id | truncate(length=7, end="") }}]({{ remote.link }}/commit/{{ commit.id }}))\
+      ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/obeli-sk/obelisk/commit/{{ commit.id }}))\
 {% endmacro -%}
 
 {% if version %}\
     {% if previous.version %}\
-        ## [{{ version | trim_start_matches(pat="v") }}]({{ release_link }})
+        ## [{{ version | trim_start_matches(pat="v") }}](https://github.com/obeli-sk/obelisk/compare/{{ previous.version }}...{{ version }})
     {% else %}\
         ## [{{ version | trim_start_matches(pat="v") }}]
     {% endif %}\
@@ -66,6 +42,9 @@ body = """
 {% endfor %}\n
 """
 
+[git]
+conventional_commits = true
+filter_unconventional = false
 commit_parsers = [
     { message = "^feat|^perf", group = "<!-- 0 -->Added" },
     { message = "^fix", group = "<!-- 1 -->Fixed" },
@@ -78,3 +57,4 @@ commit_parsers = [
     { message = "^logging", skip = true },
     { message = "^tracing", skip = true },
 ]
+tag_pattern = "v[0-9].*"
