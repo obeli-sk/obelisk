@@ -187,7 +187,7 @@
                 nixpkgs-fmt
                 pkg-config
                 protobuf
-                release-plz
+                git-cliff
                 wasm-tools
               ];
           };

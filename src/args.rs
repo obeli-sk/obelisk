@@ -289,42 +289,6 @@ pub(crate) enum Deployment {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Generate {
-    /// Generate the server configuration (server.toml) schema in JSON schema format.
-    #[cfg(debug_assertions)]
-    ServerConfigSchema {
-        /// Filename to write the schema to, defaults to <stdout>.
-        output: Option<PathBuf>,
-    },
-    /// Generate the deployment configuration (deployment.toml) schema in JSON schema format.
-    #[cfg(debug_assertions)]
-    DeploymentSchema {
-        /// Filename to write the schema to, defaults to <stdout>.
-        output: Option<PathBuf>,
-    },
-    /// Generate the database storage schema in JSON schema format.
-    #[cfg(debug_assertions)]
-    DbSchema {
-        /// Filename to write the schema to, defaults to <stdout>.
-        output: Option<PathBuf>,
-    },
-    /// Generate the `OpenAPI` schema in JSON format.
-    #[cfg(debug_assertions)]
-    OpenApiSchema {
-        /// Filename to write the schema to, defaults to <stdout>.
-        output: Option<PathBuf>,
-    },
-    /// Generate the CLI shape in JSON format.
-    #[cfg(debug_assertions)]
-    CliSchema {
-        /// Filename to write the schema to, defaults to <stdout>.
-        output: Option<PathBuf>,
-    },
-    /// Generate the OCI component metadata annotation schema in JSON Schema format.
-    #[cfg(debug_assertions)]
-    ComponentMetadataAnnotationSchema {
-        /// Filename to write the schema to, defaults to <stdout>.
-        output: Option<PathBuf>,
-    },
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants).
     WitExtensions {

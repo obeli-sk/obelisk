@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Push all WASM components from obelisk-testing-wasm-local.toml to the Docker Hub
-# and update obelisk-testing-wasm-oci.toml
+# Push all WASM components from deployment-testing-wasm-local.toml to the Docker Hub
+# and update deployment-testing-wasm-oci.toml
 
 set -exuo pipefail
 cd "$(dirname "$0")/.."
@@ -13,8 +13,8 @@ fi
 
 TAG="$1"
 PREFIX="docker.io/getobelisk/"
-SOURCE_TOML="obelisk-testing-wasm-local.toml"
-TARGET_TOML="obelisk-testing-wasm-oci.toml"
+SOURCE_TOML="deployment-testing-wasm-local.toml"
+TARGET_TOML="deployment-testing-wasm-oci.toml"
 
 # Make sure all pushed components are fresh.
 cargo check \

@@ -11,11 +11,10 @@ use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tracing::info;
 
-pub(crate) const OBELISK_HELP_SERVER_TOML: &str = include_str!("../../obelisk-help-server.toml");
+pub(crate) const OBELISK_HELP_SERVER_TOML: &str = include_str!("../../server-help.toml");
 pub(crate) const OBELISK_TRUSTED_SERVER_TOML: &str =
     include_str!("../../server-trusted-template.toml");
-pub(crate) const OBELISK_HELP_DEPLOYMENT_TOML: &str =
-    include_str!("../../obelisk-help-deployment.toml");
+pub(crate) const OBELISK_HELP_DEPLOYMENT_TOML: &str = include_str!("../../deployment-help.toml");
 
 /// Leading `~/`, expanded to the user's home directory. Not `${}` interpolation syntax.
 const HOME_DIR_PREFIX: &str = "~/";

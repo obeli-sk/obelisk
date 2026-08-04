@@ -81,7 +81,7 @@ jobs:
         run: nix develop --command echo
 
       - name: cargo deny
-        run: nix develop --command cargo deny check
+        run: nix develop --command cargo deny --config .config/deny.toml check
 
   clippy:
     name: clippy
