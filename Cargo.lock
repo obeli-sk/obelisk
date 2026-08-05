@@ -3445,6 +3445,7 @@ dependencies = [
 name = "obelisk"
 version = "0.41.0"
 dependencies = [
+ "activity-js-runtime-builder",
  "anyhow",
  "assert_matches",
  "async-trait",
@@ -3526,8 +3527,10 @@ dependencies = [
  "utoipa",
  "utoipa-axum",
  "wasmtime",
+ "webhook-js-runtime-builder",
  "wit-component 0.252.0",
  "wit-parser 0.252.0",
+ "workflow-js-runtime-builder",
 ]
 
 [[package]]
