@@ -17,7 +17,7 @@ pub trait DeadlineTracker: Send + Sync {
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>>;
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome>;
 
     fn close_to_expired(&self) -> bool;
 
@@ -83,9 +83,11 @@ impl DeadlineTracker for DeadlineTrackerTokio {
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>> {
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome> {
         if self.deadline <= tokio::time::Instant::now() {
-            None
+            Err(TimeoutOutcome::Timeout)
+        } else if *self.executor_close_watcher.borrow() {
+            Err(TimeoutOutcome::Cancel)
         } else {
             let expiry = if let Some(max_duration) = max_duration {
                 let max_instant = tokio::time::Instant::now() + max_duration;
@@ -94,10 +96,10 @@ impl DeadlineTracker for DeadlineTrackerTokio {
                 self.deadline_minus_leeway
             };
             let mut executor_close_watcher = self.executor_close_watcher.clone();
-            Some(Box::pin(async move {
+            Ok(Box::pin(async move {
                 tokio::select! {
                     () = tokio::time::sleep_until(expiry) => TimeoutOutcome::Timeout,
-                    _ = executor_close_watcher.wait_for(|&v| v) => TimeoutOutcome::Timeout,
+                    _ = executor_close_watcher.wait_for(|&v| v) => TimeoutOutcome::Cancel,
                 }
             }))
         }
@@ -220,10 +222,12 @@ impl DeadlineTracker for DeadlineTrackerSim {
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>> {
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome> {
         let now = self.clock.now();
         if self.deadline <= now {
-            return None;
+            return Err(TimeoutOutcome::Timeout);
+        } else if *self.executor_close_watcher.borrow() {
+            return Err(TimeoutOutcome::Cancel);
         }
         let expiry = if let Some(max_duration) = max_duration {
             min(add_duration(now, max_duration), self.deadline_minus_leeway)
@@ -235,7 +239,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
         // this call and the first poll are not missed.
         let mut time_watcher = self.clock.subscribe();
         let mut executor_close_watcher = self.executor_close_watcher.clone();
-        Some(Box::pin(async move {
+        Ok(Box::pin(async move {
             loop {
                 if clock.now() >= expiry {
                     return TimeoutOutcome::Timeout;
@@ -243,7 +247,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
                 tokio::select! {
                     // `Err` means the `SimClock` was dropped: time will never advance again.
                     res = time_watcher.changed() => if res.is_err() {
-                        return TimeoutOutcome::Timeout;
+                        return TimeoutOutcome::Cancel;
                     },
                     _ = executor_close_watcher.wait_for(|&v| v) => return TimeoutOutcome::Timeout,
                 }
@@ -350,7 +354,7 @@ impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
     fn track(
         &self,
         _max_duration: Option<Duration>,
-    ) -> Option<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>> {
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome> {
         unreachable!("`track` is not called for the interrupt strategy")
     }
 
