@@ -565,8 +565,7 @@ impl EventHistory {
 
             // Subscribe to the next response.
             // Break on `executor_close_watcher` or when timeout is reached.
-            while let Some(timeout_fut) =
-                self.deadline_tracker.track(self.subscription_interruption)
+            while let Ok(timeout_fut) = self.deadline_tracker.track(self.subscription_interruption)
             {
                 let last_response = self
                     .responses
@@ -609,11 +608,12 @@ impl EventHistory {
                         // if this was caused by `subscription_interruption` or deadline.
                     }
                     Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        unreachable!("tracker only returns timeout")
+                        debug!("Executor is closing");
+                        return Err(ApplyError::InterruptDbUpdated);
                     }
                 }
             }
-            info!("Giving up on waiting for response");
+            debug!("Giving up on waiting for response");
         }
         debug!(join_set_id = %join_next_variant.join_set_id(),  "Interrupting on {join_next_variant:?}");
         Err(ApplyError::InterruptDbUpdated)
