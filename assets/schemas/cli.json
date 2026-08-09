@@ -834,7 +834,7 @@
         },
         {
           "name": "get",
-          "about": "Retrieve a deployment to disk as a re-submittable `deployment.toml` plus its source files",
+          "about": "Retrieve a deployment as editable TOML without generated metadata, plus its source files",
           "options": [
             {
               "name": "--output",
@@ -848,6 +848,10 @@
               "name": "--force",
               "short": "f",
               "help": "Overwrite existing files in the output directory"
+            },
+            {
+              "name": "--include-generated-metadata",
+              "help": "Keep generated content digests and JavaScript module metadata in `deployment.toml`"
             },
             {
               "name": "--api-url",

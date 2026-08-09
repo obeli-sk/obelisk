@@ -248,10 +248,8 @@ pub(crate) enum Deployment {
 
     /// Show a deployment.
     ///
-    /// By default prints the reconstructed `deployment.toml` (with local file references,
-    /// the same TOML `deployment get` writes to disk). Pass a FILE to print a single source
-    /// file as `deployment get` would serialize it, or `--json` to render the stored TOML
-    /// manifest as JSON.
+    /// By default prints the stored deployment manifest. Pass a FILE to print a single source
+    /// file, or `--json` to render the stored TOML manifest as JSON.
     Show {
         /// Deployment ID
         #[arg(value_name = "ID")]
@@ -267,7 +265,7 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
-    /// Retrieve a deployment to disk as a re-submittable `deployment.toml` plus its source files.
+    /// Retrieve a deployment as editable TOML without generated metadata, plus its source files.
     Get {
         /// Deployment ID
         #[arg(value_name = "ID")]
@@ -279,6 +277,9 @@ pub(crate) enum Deployment {
         /// Overwrite existing files in the output directory.
         #[arg(long, short)]
         force: bool,
+        /// Keep generated content digests and JavaScript module metadata in `deployment.toml`.
+        #[arg(long)]
+        include_generated_metadata: bool,
         /// Address of the obelisk server
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
