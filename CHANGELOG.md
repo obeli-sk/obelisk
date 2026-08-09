@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(cli)* `deployment get` omits generated content digests and JavaScript module metadata from the
   exported TOML by default. Pass `--include-generated-metadata` to retain the stored server view.
+  The gRPC and Web APIs accept `include_generated_metadata` when retrieving a deployment.
 
 ## [0.41.0](https://github.com/obeli-sk/obelisk/compare/v0.40.0...v0.41.0)
 

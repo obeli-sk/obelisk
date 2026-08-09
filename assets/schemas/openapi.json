@@ -404,6 +404,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_generated_metadata",
+            "in": "query",
+            "description": "Include server-generated metadata in `deployment_toml`. Omission preserves the stored server view.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {

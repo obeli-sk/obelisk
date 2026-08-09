@@ -3128,6 +3128,7 @@ mod functions {
 mod deployment {
     use crate::{
         command::server::{self, RuntimeConfigAvailability, SwitchDeploymentAction},
+        config::manifest::strip_generated_deployment_metadata,
         server::{
             deployment_summary,
             web_api_server::{
@@ -3416,13 +3417,21 @@ mod deployment {
         }
     }
 
+    #[derive(Debug, Default, Deserialize, IntoParams)]
+    #[into_params(parameter_in = Query)]
+    pub(crate) struct GetDeploymentParams {
+        /// Include server-generated metadata in `deployment_toml`. Omission preserves the stored server view.
+        include_generated_metadata: Option<bool>,
+    }
+
     /// Get a specific deployment by ID
     #[utoipa::path(
         get,
         path = "/v1/deployments/{deployment_id}",
         tag = "deployments",
         params(
-            ("deployment_id" = String, Path, description = "Deployment ID")
+            ("deployment_id" = String, Path, description = "Deployment ID"),
+            GetDeploymentParams
         ),
         responses(
             (status = 200, description = "Deployment details", body = DeploymentRecordSer),
@@ -3432,6 +3441,7 @@ mod deployment {
     #[instrument(skip_all, fields(deployment_id))]
     pub(crate) async fn get_deployment(
         Path(deployment_id): Path<DeploymentId>,
+        Query(params): Query<GetDeploymentParams>,
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,
     ) -> Result<Response, HttpResponse> {
@@ -3440,11 +3450,19 @@ mod deployment {
             .external_api_conn()
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
-        let record = conn
+        let mut record = conn
             .get_deployment(deployment_id)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?
             .ok_or_else(|| HttpResponse::not_found(accept, Some("deployment")))?;
+        if params.include_generated_metadata == Some(false) {
+            record.deployment_toml = strip_generated_deployment_metadata(&record.deployment_toml)
+                .map_err(|err| HttpResponse {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("cannot clean deployment manifest: {err:#}"),
+                accept,
+            })?;
+        }
 
         let ser = DeploymentRecordSer::from(&record);
         Ok(match accept {

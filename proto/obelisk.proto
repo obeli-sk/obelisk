@@ -1288,6 +1288,8 @@ message GcOrphanFilesResponse {
 
 message GetDeploymentRequest {
     DeploymentId deployment_id = 1;
+    // Include server-generated metadata in deployment_toml. Omission preserves the stored server view.
+    optional bool include_generated_metadata = 2;
 }
 message GetDeploymentResponse {
     Deployment deployment = 1;
