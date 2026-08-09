@@ -19,6 +19,13 @@ pub(crate) trait FileProvider: Send + Sync {
     /// expected content hash. Implementations must ensure returned bytes hash
     /// to `digest` when one is supplied.
     async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>>;
+
+    async fn read_js_graph(
+        &self,
+        _entry_path: &str,
+    ) -> anyhow::Result<Option<(String, Vec<(String, String)>)>> {
+        Ok(None)
+    }
 }
 
 /// Reads from the submitter's disk, under the deployment directory.
@@ -35,6 +42,15 @@ impl FileProvider for DiskProvider {
             .with_context(|| format!("cannot read file {full:?}"))?;
         verify_content_digest(&bytes, digest, path)?;
         Ok(bytes)
+    }
+
+    async fn read_js_graph(
+        &self,
+        entry_path: &str,
+    ) -> anyhow::Result<Option<(String, Vec<(String, String)>)>> {
+        let graph =
+            crate::javascript::graph::collect_graph(&self.deployment_dir, entry_path).await?;
+        Ok(Some((graph.entry_path, graph.files.into_iter().collect())))
     }
 }
 

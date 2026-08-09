@@ -132,6 +132,13 @@ expression: components
   {
     "component_id": {
       "component_type": "activity",
+      "name": "test_multifile_activity",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "activity",
       "name": "test_read_env_activity",
       "component_digest": "sha256:<REDACTED>"
     }
@@ -238,6 +245,13 @@ expression: components
     "component_id": {
       "component_type": "webhook_endpoint",
       "name": "test_import_schedule_activity_webhook",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "webhook_endpoint",
+      "name": "test_multifile_webhook",
       "component_digest": "sha256:<REDACTED>"
     }
   },
@@ -364,6 +378,13 @@ expression: components
     "component_id": {
       "component_type": "workflow",
       "name": "test_math_random_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    }
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
+      "name": "test_multifile_workflow",
       "component_digest": "sha256:<REDACTED>"
     }
   },

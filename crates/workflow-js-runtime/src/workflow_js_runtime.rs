@@ -146,6 +146,7 @@ use crate::generated::obelisk::workflow::workflow_support_backtrace::{
 };
 use boa_common::child_error::{ChildError, ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
+use boa_common::graph::{GraphLoadError, register_source_modules};
 use boa_common::helpers::{new_object, parse_ffqn};
 use boa_common::imports::{self, ProxyKind};
 use boa_engine::context::time::{Clock, JsInstant};
@@ -159,7 +160,7 @@ use boa_engine::{
     property::{Attribute, PropertyDescriptor},
 };
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 /// Logger implementation using the generated obelisk:log bindings.
@@ -184,10 +185,10 @@ impl ObeliskLogger for Logger {
     }
 }
 
-// Thread-local storage for JoinSet resources and the JS file name (WASM is single-threaded)
+// Thread-local storage for JoinSet resources and the entry path (WASM is single-threaded)
 thread_local! {
     static JOIN_SETS: RefCell<Vec<Option<JoinSet>>> = const { RefCell::new(Vec::new()) };
-    static JS_FILE_NAME: RefCell<String> = const { RefCell::new(String::new()) };
+    static ENTRY_PATH: RefCell<String> = const { RefCell::new(String::new()) };
     static BACKTRACE_ENABLED: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -218,33 +219,26 @@ fn take_join_set(idx: usize) -> Option<JoinSet> {
 
 /// Capture the current Boa JS stack trace as a `WasmBacktrace`.
 ///
-/// The `module` and `file` fields are populated from `JS_FILE_NAME` (set from
-/// the `js-file-name` parameter passed to `execute`), since JS source is loaded
-/// from memory and Boa does not track a file path for in-memory sources.
+/// The `module` and `file` fields fall back to the entry path stored in
+/// `ENTRY_PATH` when Boa does not attach a `SourcePath` to a frame (synthetic
+/// modules registered for WIT-style host imports don't carry one).
 fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
     if !BACKTRACE_ENABLED.get() {
         return WasmBacktrace { frames: Vec::new() };
     }
     use boa_engine::vm::SourcePath;
-    let js_file_name = JS_FILE_NAME.with(|s| s.borrow().clone());
-    let js_file_name_opt: Option<&str> = if js_file_name.is_empty() {
-        None
-    } else {
-        Some(&js_file_name)
-    };
+    let entry_path = ENTRY_PATH.with(|s| s.borrow().clone());
     let frames = ctx
         .stack_trace()
         .map(|frame| {
             let loc = frame.position();
             let module = match &loc.path {
                 SourcePath::Path(p) => p.display().to_string(),
-                _ => js_file_name_opt
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
+                _ => entry_path.clone(),
             };
             let file = match &loc.path {
                 SourcePath::Path(p) => Some(p.display().to_string()),
-                _ => js_file_name_opt.map(|s| s.to_string()),
+                _ => Some(entry_path.clone()),
             };
             let symbol = FrameSymbol {
                 func_name: None,
@@ -683,21 +677,21 @@ fn create_workflow_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
     }
 }
 
-/// Execute JavaScript code with the given parameters.
+/// Execute a JS module graph with the given parameters.
 ///
-/// `js_file_name` is the source file name used in backtraces (from `__OBELISK_JS_FILE_NAME__`).
+/// `entry_path` names the module in `files` whose default export is invoked
+/// (also used as the source file name in backtraces).
 /// `params_json` is a list of JSON-serialized parameter values.
 /// Each element is passed as a positional argument to the default export function.
 pub fn execute(
-    js_code: &str,
+    entry_path: &str,
+    files: &BTreeMap<String, String>,
     params_json: &[String],
-    js_file_name: Option<String>,
+    backtrace_enabled: bool,
     resolved_imports: Vec<ResolvedInterfaceImports>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
-    BACKTRACE_ENABLED.set(js_file_name.is_some());
-    if let Some(js_file_name) = js_file_name {
-        JS_FILE_NAME.with(|s| *s.borrow_mut() = js_file_name);
-    }
+    BACKTRACE_ENABLED.set(backtrace_enabled);
+    ENTRY_PATH.with(|s| *s.borrow_mut() = entry_path.to_string());
 
     // Flatten typed records into the (specifier → [(js_name, wit_name)]) map
     // that `register_import_modules` expects.
@@ -739,13 +733,29 @@ pub fn execute(
         imports::register_import_modules(&imports, &loader, &mut context, &create_workflow_proxy);
     }
 
-    // Get the default export function from the ES module
-    let default_fn = match get_default_export_workflow(js_code, &mut context) {
+    // Parse every file in the graph and register with the loader.
+    let entry_module = match register_source_modules(&loader, files, entry_path, &mut context) {
+        Ok(module) => module,
+        Err(GraphLoadError::EntryNotFound) => {
+            obelisk_log::error(&format!("entry path `{entry_path}` not found in files"));
+            return Err(JsRuntimeError::EntryNotFound);
+        }
+        Err(GraphLoadError::ParseError { path, message }) => {
+            let msg = format!("module parse error in `{path}`: {message}");
+            obelisk_log::error(&msg);
+            return Err(JsRuntimeError::CannotInstantiate(msg));
+        }
+    };
+
+    // Get the default export function from the entry module
+    let default_fn = match get_default_export_workflow(entry_module, &mut context) {
         Ok(func) => func,
         Err(err) => {
             let msg = match err {
-                EsmErrorWorkflow::ParseError(msg) => format!("module parse error: {msg}"),
-                EsmErrorWorkflow::LoadError(msg) => format!("module load error: {msg}"),
+                EsmErrorWorkflow::LoadError(msg) => {
+                    obelisk_log::error(&format!("module load error: {msg}"));
+                    return Err(JsRuntimeError::UnresolvedImport(msg));
+                }
                 EsmErrorWorkflow::LinkError(msg) => format!("module link error: {msg}"),
                 EsmErrorWorkflow::EvalError(msg) => format!("module eval error: {msg}"),
                 EsmErrorWorkflow::NoDefaultExport => "no default export".to_string(),
@@ -839,7 +849,6 @@ pub fn execute(
 /// Errors that can occur when loading or evaluating an ES module for workflows.
 #[derive(Debug)]
 enum EsmErrorWorkflow {
-    ParseError(String),
     LoadError(String),
     LinkError(String),
     EvalError(String),
@@ -860,14 +869,10 @@ impl EsmErrorWorkflow {
 /// IMPORTANT: `obelisk.*` globals must be set up BEFORE calling this function
 /// so they're available during module evaluation.
 fn get_default_export_workflow(
-    js_code: &str,
+    module: Module,
     context: &mut Context,
 ) -> Result<JsFunction, EsmErrorWorkflow> {
-    // 1. Parse the JS code as an ES Module
-    let module = Module::parse(Source::from_bytes(js_code), None, context)
-        .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::ParseError))?;
-
-    // 2. Load module dependencies (should resolve immediately with no imports)
+    // Load module dependencies
     let load_promise = module.load(context);
     context
         .run_jobs()
@@ -887,12 +892,12 @@ fn get_default_export_workflow(
         }
     }
 
-    // 3. Link the module
+    // Link the module
     module
         .link(context)
         .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::LinkError))?;
 
-    // 4. Evaluate the module
+    // Evaluate the module
     let eval_promise = module
         .evaluate(context)
         .map_err(|err| EsmErrorWorkflow::EvalError(err.to_string()))?;
@@ -914,18 +919,18 @@ fn get_default_export_workflow(
         }
     }
 
-    // 5. Get the module namespace and extract the default export
+    // Get the module namespace and extract the default export
     let namespace = module.namespace(context);
     let default_export = namespace
         .get(js_string!("default"), context)
         .map_err(|err| EsmErrorWorkflow::from_js_error(err, EsmErrorWorkflow::EvalError))?;
 
-    // 6. Check if default export exists
+    // Check if default export exists
     if default_export.is_undefined() {
         return Err(EsmErrorWorkflow::NoDefaultExport);
     }
 
-    // 7. Verify it's a callable function
+    // Verify it's a callable function
     let Some(func) = default_export.as_callable() else {
         return Err(EsmErrorWorkflow::DefaultNotCallable);
     };

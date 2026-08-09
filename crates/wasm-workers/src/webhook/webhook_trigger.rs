@@ -347,8 +347,14 @@ impl WebhookEndpointCompiled {
         // currently consumes pairs as `[js_name, wit_name]` tuples, so we
         // flatten `NamedFnImport` to that shape at the boundary.
         let resolved_imports_json = if let Some(js_config) = &self.config.js_config {
-            let resolved = crate::js_imports::resolve_js_imports(&js_config.source, fn_registry)
-                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+            let mut resolved = std::collections::HashMap::new();
+            for source in js_config.files.values() {
+                let imports = crate::js_imports::resolve_js_imports(source, fn_registry)
+                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+                for (specifier, functions) in imports {
+                    resolved.entry(specifier).or_insert(functions);
+                }
+            }
             if resolved.is_empty() {
                 None
             } else {
@@ -612,8 +618,8 @@ pub struct WebhookEndpointConfig {
 
 #[derive(Debug, Clone)]
 pub struct WebhookEndpointJsConfig {
-    pub source: String,
-    pub file_name: String,
+    pub entry_path: String,
+    pub files: std::collections::BTreeMap<String, String>,
 }
 
 struct WebhookEndpointCtx {
@@ -1821,8 +1827,18 @@ impl WebhookEndpointCtx {
             wasi_ctx.env(&env_var.key, &env_var.val);
         }
         if let Some(js_config) = &config.js_config {
-            wasi_ctx.env("__OBELISK_JS_SOURCE__", &js_config.source);
-            wasi_ctx.env("__OBELISK_JS_FILE_NAME__", &js_config.file_name);
+            let entry_source = js_config
+                .files
+                .get(&js_config.entry_path)
+                .expect("JS module graph must contain its entry");
+            // Keep the legacy variables available to user code for single-file
+            // compatibility. The runtime itself consumes the graph variables below.
+            wasi_ctx.env("__OBELISK_JS_SOURCE__", entry_source);
+            wasi_ctx.env("__OBELISK_JS_FILE_NAME__", &js_config.entry_path);
+            wasi_ctx.env("__OBELISK_JS_ENTRY_PATH__", &js_config.entry_path);
+            let files = serde_json::to_string(&js_config.files.iter().collect::<Vec<_>>())
+                .expect("JS module graph must be serializable");
+            wasi_ctx.env("__OBELISK_JS_FILES__", &files);
             if config.backtrace_persist {
                 wasi_ctx.env("__OBELISK_BACKTRACE_ENABLED__", "true");
             }
@@ -2989,8 +3005,11 @@ pub(crate) mod tests {
                         global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
                         secrets: Arc::new(crate::http_request_policy::NoSecrets),
                         js_config: Some(WebhookEndpointJsConfig {
-                            source: source.to_string(),
-                            file_name: String::new(),
+                            entry_path: "index.js".to_string(),
+                            files: std::collections::BTreeMap::from([(
+                                "index.js".to_string(),
+                                source.to_string(),
+                            )]),
                         }),
                         config_section_hint:
                             crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
@@ -3148,8 +3167,11 @@ pub(crate) mod tests {
                         .into(),
                         secrets: Arc::new(crate::http_request_policy::NoSecrets),
                         js_config: Some(WebhookEndpointJsConfig {
-                            source: source.to_string(),
-                            file_name: String::new(),
+                            entry_path: "index.js".to_string(),
+                            files: std::collections::BTreeMap::from([(
+                                "index.js".to_string(),
+                                source.to_string(),
+                            )]),
                         }),
                         config_section_hint:
                             crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,
@@ -3540,8 +3562,11 @@ pub(crate) mod tests {
                                 crate::http_request_policy::GlobalHttpConfig::default(),
                             secrets: Arc::new(crate::http_request_policy::NoSecrets),
                             js_config: Some(WebhookEndpointJsConfig {
-                                source: js_source.to_string(),
-                                file_name: String::new(),
+                                entry_path: "index.js".to_string(),
+                                files: std::collections::BTreeMap::from([(
+                                    "index.js".to_string(),
+                                    js_source.to_string(),
+                                )]),
                             }),
                             config_section_hint:
                                 crate::http_hooks::ConfigSectionHint::WebhookEndpointJs,

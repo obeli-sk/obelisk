@@ -95,9 +95,9 @@ pub(crate) async fn prepare_deployment_manifest(
         &mut files,
     )
     .await?;
-    collect_script_refs(&mut doc, "activity_js", deployment_dir, &mut files).await?;
-    collect_script_refs(&mut doc, "workflow_js", deployment_dir, &mut files).await?;
-    collect_script_refs(&mut doc, "webhook_endpoint_js", deployment_dir, &mut files).await?;
+    collect_js_refs(&mut doc, "activity_js", deployment_dir, &mut files).await?;
+    collect_js_refs(&mut doc, "workflow_js", deployment_dir, &mut files).await?;
+    collect_js_refs(&mut doc, "webhook_endpoint_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "activity_exec", deployment_dir, &mut files).await?;
 
     let mut seen = HashSet::new();
@@ -270,15 +270,44 @@ fn collect_script_section(
             ManifestScriptLocation::DeploymentFile { path, digest } => {
                 let field_path =
                     format!("{section}[name={}].location", name.as_deref().unwrap_or(""));
-                files.push(DeploymentFileRef {
-                    path,
-                    digest,
-                    field: ManifestFieldRef {
-                        section: section.to_string(),
-                        component_name: name,
-                        field_path,
-                    },
-                });
+                if let Some(module_files) = table.get("module_files").and_then(Item::as_table_like)
+                {
+                    ensure!(
+                        module_files.get(&path).and_then(Item::as_str) == Some(&digest.to_string()),
+                        "{field_path}: module_files must contain the entry path with its content_digest"
+                    );
+                    for (module_path, module_digest) in module_files.iter() {
+                        let module_path = sanitize_deployment_relative_path(module_path)?;
+                        let module_digest = module_digest
+                            .as_str()
+                            .with_context(|| {
+                                format!("{field_path}.module_files[{module_path}] must be a digest")
+                            })?
+                            .parse()
+                            .with_context(|| {
+                                format!("invalid digest for module `{module_path}`")
+                            })?;
+                        files.push(DeploymentFileRef {
+                            path: module_path,
+                            digest: module_digest,
+                            field: ManifestFieldRef {
+                                section: section.to_string(),
+                                component_name: name.clone(),
+                                field_path: format!("{field_path}.module_files"),
+                            },
+                        });
+                    }
+                } else {
+                    files.push(DeploymentFileRef {
+                        path,
+                        digest,
+                        field: ManifestFieldRef {
+                            section: section.to_string(),
+                            component_name: name,
+                            field_path,
+                        },
+                    });
+                }
             }
             ManifestScriptLocation::Inline | ManifestScriptLocation::Oci => {}
         }
@@ -437,6 +466,63 @@ async fn collect_script_refs(
             digest,
             bytes,
         });
+    }
+
+    Ok(())
+}
+
+async fn collect_js_refs(
+    doc: &mut DocumentMut,
+    section: &str,
+    deployment_dir: &Path,
+    files: &mut Vec<DeploymentManifestFile>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+        return Ok(());
+    };
+
+    for table in components.iter_mut() {
+        let has_inline_content = table.get("content").and_then(Item::as_str).is_some();
+        let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
+            continue;
+        };
+        ensure!(
+            !has_inline_content,
+            "exactly one of `location` or `content` must be set for script components"
+        );
+        let Some(entry_path) = deployment_owned_path(raw_location)? else {
+            continue;
+        };
+        let graph = crate::javascript::graph::collect_graph(deployment_dir, &entry_path)
+            .await
+            .with_context(|| format!("cannot collect JS module graph from `{entry_path}`"))?;
+        let entry_source = graph
+            .files
+            .get(&graph.entry_path)
+            .expect("collected graph contains its entry");
+        let entry_digest = content_digest(entry_source.as_bytes());
+        table["content_digest"] = value(entry_digest.to_string());
+
+        if graph.files.len() > 1 {
+            let mut refs = InlineTable::new();
+            for (path, source) in &graph.files {
+                refs.insert(
+                    path,
+                    Value::from(content_digest(source.as_bytes()).to_string()),
+                );
+            }
+            table["module_files"] = Item::Value(Value::InlineTable(refs));
+        } else {
+            table.remove("module_files");
+        }
+
+        for (path, source) in graph.files {
+            files.push(DeploymentManifestFile {
+                path,
+                digest: content_digest(source.as_bytes()),
+                bytes: source.into_bytes(),
+            });
+        }
     }
 
     Ok(())
@@ -770,6 +856,51 @@ ffqn = "ns:pkg/ifc.fn"
         assert_eq!(
             prepared.digest,
             compute_manifest_digest(&prepared.deployment_toml)
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_collects_js_module_graph() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            dir.path().join("src/index.js"),
+            "import { value } from './lib.js'; export default () => value;",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(dir.path().join("src/lib.js"), "export const value = 42;")
+            .await
+            .unwrap();
+        let manifest = r#"
+[[activity_js]]
+name = "a"
+location = "src/index.js"
+ffqn = "ns:pkg/ifc.fn"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+        assert_eq!(prepared.files.len(), 2);
+        assert!(prepared.deployment_toml.contains("module_files"));
+
+        let classified =
+            DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
+        assert_eq!(classified.files.len(), 2);
+
+        let provider = DiskProvider {
+            deployment_dir: dir.path().to_path_buf(),
+        };
+        let resolved = manifest_to_resolved(&prepared.deployment_toml, dir.path(), &provider)
+            .await
+            .unwrap();
+        assert_matches::assert_matches!(
+            &resolved.activities_js[0].location,
+            crate::config::toml::ScriptLocationResolved::Graph { entry_path, files }
+                if entry_path == "src/index.js" && files.len() == 2
         );
     }
 

@@ -28,17 +28,26 @@ use generated::export;
 use generated::exports::obelisk_workflow::workflow_js_runtime::execute::{
     Guest, JsRuntimeError, ResolvedInterfaceImports,
 };
+use std::collections::BTreeMap;
 
 pub struct Component;
 export!(Component with_types_in generated);
 
 impl Guest for Component {
     fn run(
-        js_code: String,
+        entry_path: String,
+        files: Vec<(String, String)>,
         params_json: Vec<String>,
-        js_file_name: Option<String>,
+        backtrace_enabled: bool,
         resolved_imports: Vec<ResolvedInterfaceImports>,
     ) -> Result<Result<String, String>, JsRuntimeError> {
-        workflow_js_runtime::execute(&js_code, &params_json, js_file_name, resolved_imports)
+        let files: BTreeMap<String, String> = files.into_iter().collect();
+        workflow_js_runtime::execute(
+            &entry_path,
+            &files,
+            &params_json,
+            backtrace_enabled,
+            resolved_imports,
+        )
     }
 }

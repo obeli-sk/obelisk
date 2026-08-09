@@ -7,6 +7,7 @@ mod command;
 mod config;
 mod env_vars;
 mod init;
+mod javascript;
 mod oci;
 mod server;
 mod wit_printer;

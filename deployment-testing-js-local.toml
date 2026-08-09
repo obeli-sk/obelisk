@@ -191,3 +191,15 @@ location = "crates/testing/test-programs/js/activity/busy-cpu.js"
 ffqn = "testing:integration/activity-busy-cpu.busy-cpu"
 params = []
 exec.lock_expiry.seconds = 10
+
+# multi file
+[[workflow_js]]
+name = "test_multifile_workflow"
+location = "crates/testing/test-programs/js/workflow/multifile/index.js"
+ffqn = "testing:integration/workflow-multifile.add-three"
+params = [
+  { name = "a", type = "u32" },
+  { name = "b", type = "u32" },
+  { name = "c", type = "u32" },
+]
+return_type = "result<u32, string>"

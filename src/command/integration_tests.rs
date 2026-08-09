@@ -270,6 +270,13 @@ ffqn = "testing:integration/activity-throw-null.throw-null"
 params = []
 return_type = "result<string>"
 
+[[activity_js]]
+name = "test_multifile_activity"
+location = "{ws}/crates/testing/test-programs/js/activity/multifile/index.js"
+ffqn = "testing:integration/activity-multifile.greet"
+params = [{{ name = "name", type = "string" }}]
+return_type = "result<string, string>"
+
 [[workflow_js]]
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
@@ -457,6 +464,17 @@ location = "{ws}/crates/testing/test-programs/js/workflow/return_wrong_type.js"
 ffqn = "testing:integration/workflow-return-wrong-type.return-wrong-type"
 params = []
 return_type = "result<u32>"
+
+[[workflow_js]]
+name = "test_multifile_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/multifile/index.js"
+ffqn = "testing:integration/workflow-multifile.add-three"
+params = [
+  {{ name = "a", type = "u32" }},
+  {{ name = "b", type = "u32" }},
+  {{ name = "c", type = "u32" }},
+]
+return_type = "result<u32, string>"
 
 [[activity_js]]
 name = "test_hmac_sign_verify_activity"
@@ -652,6 +670,11 @@ routes = [{{ methods = ["POST"], route = "/body-json" }}]
 name = "test_body_form_data_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/body_form_data.js"
 routes = [{{ methods = ["POST"], route = "/body-form-data" }}]
+
+[[webhook_endpoint_js]]
+name = "test_multifile_webhook"
+location = "{ws}/crates/testing/test-programs/js/webhook/multifile/index.js"
+routes = [{{ methods = ["GET"], route = "/multifile" }}]
 "#,
     );
     debug!("Deployment TOML:{deployment_contents}");
@@ -2668,9 +2691,13 @@ ffqn = "testing:integration/a.run"
         .expect("valid deployment must persist");
 
     // An invalid deployment: the blob is written, then verification fails, so no
-    // deployment row references it. It becomes an orphan. A JS workflow validates its
-    // source at link time, so a syntax error fails submit.
-    let (_bad_dir, bad) = prepare("workflow_js", "this is @@@ not valid javascript {{{").await;
+    // deployment row references it. The source parses during graph collection, but its
+    // unknown host import fails during workflow linking.
+    let (_bad_dir, bad) = prepare(
+        "workflow_js",
+        "import { missing } from 'testing:integration/activity'; export default () => missing();",
+    )
+    .await;
     let bad_digest = bad.files[0].digest.to_string();
     grpc_client
         .clone()
@@ -4363,6 +4390,54 @@ async fn activity_exec_stream_logs() {
         stderr_entries.len(),
         "expected 2 stderr stream entries, got {}: {stderr_entries:?}",
         stderr_entries.len(),
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_js_multifile() {
+    let server = TestServer::start(test_addr!(120)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/activity-multifile.greet",
+            vec![json!("world")],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "ok": "hello, world!!" })
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn workflow_js_multifile() {
+    let server = TestServer::start(test_addr!(121)).await;
+    let resp = server
+        .submit_follow(
+            "testing:integration/workflow-multifile.add-three",
+            vec![json!(2), json!(3), json!(5)],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    assert_eq!(resp.json::<Value>().await.unwrap(), json!({ "ok": 10 }));
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn webhook_js_multifile() {
+    let server = TestServer::start(test_addr!(122)).await;
+    let resp = server
+        .client
+        .get(format!("{}/multifile", server.webhook_base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "ok": true, "message": "multifile webhook works" })
     );
     server.shutdown().await;
 }

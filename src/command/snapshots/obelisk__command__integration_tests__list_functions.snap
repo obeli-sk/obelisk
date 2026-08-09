@@ -28,6 +28,9 @@ expression: functions
     "ffqn": "testing:integration/activity-throw-null.throw-null"
   },
   {
+    "ffqn": "testing:integration/activity-multifile.greet"
+  },
+  {
     "ffqn": "testing:integration/activity-hmac.hmac-sign-verify"
   },
   {
@@ -134,5 +137,8 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflow-return-wrong-type.return-wrong-type"
+  },
+  {
+    "ffqn": "testing:integration/workflow-multifile.add-three"
   }
 ]

@@ -4,7 +4,7 @@
 
 use crate::wasi_job_executor::WasiJobExecutor;
 use boa_engine::{
-    Context, JsError, JsResult, JsValue, Source,
+    Context, JsError, JsResult, JsValue,
     builtins::promise::PromiseState,
     module::Module,
     object::builtins::{JsFunction, JsPromise},
@@ -15,8 +15,6 @@ use std::rc::Rc;
 /// Errors that can occur when loading or evaluating an ES module.
 #[derive(Debug)]
 pub enum EsmError {
-    /// Module source code could not be parsed.
-    ParseError(String),
     /// Module could not be loaded (e.g., import resolution failed).
     LoadError(String),
     /// Module could not be linked.
@@ -36,33 +34,16 @@ impl EsmError {
     }
 }
 
-/// Parse an ES module and extract its default export as a callable function.
+/// Load, link, evaluate, and extract the default export from a pre-parsed module.
 ///
-/// This function:
-/// 1. Parses the JS code as an ES Module
-/// 2. Loads module dependencies (should resolve immediately with no imports)
-/// 3. Links the module
-/// 4. Evaluates the module
-/// 5. Extracts the `default` export from the module namespace
-/// 6. Verifies it's a callable function
-///
-/// # Arguments
-/// * `js_code` - JavaScript source code with `export default function(...) { ... }`
-/// * `context` - Boa JS context wrapped in RefCell
-/// * `executor` - The WasiJobExecutor for driving async jobs
-///
-/// # Returns
-/// The default export as a `JsFunction`, or an `EsmError` if any step fails.
-pub async fn get_default_export(
-    js_code: &str,
+/// Use this when you already have a `Module` (e.g. obtained by registering a
+/// multi-file graph via [`crate::graph::register_source_modules`]).
+pub async fn get_default_export_from_module(
+    module: Module,
     context: &RefCell<&mut Context>,
     executor: &Rc<WasiJobExecutor>,
 ) -> Result<JsFunction, EsmError> {
-    // 1. Parse the JS code as an ES Module
-    let module = Module::parse(Source::from_bytes(js_code), None, *context.borrow_mut())
-        .map_err(|err| EsmError::from_js_error(err, EsmError::ParseError))?;
-
-    // 2. Load module dependencies
+    // Load module dependencies
     let load_promise = module.load(*context.borrow_mut());
 
     // Drive the load promise to completion using async executor
@@ -84,12 +65,12 @@ pub async fn get_default_export(
         }
     }
 
-    // 3. Link the module
+    // Link the module
     module
         .link(*context.borrow_mut())
         .map_err(|err| EsmError::from_js_error(err, EsmError::LinkError))?;
 
-    // 4. Evaluate the module
+    // Evaluate the module
     let eval_promise = module
         .evaluate(*context.borrow_mut())
         .map_err(|err| EsmError::EvalError(err.to_string()))?;
@@ -113,18 +94,18 @@ pub async fn get_default_export(
         }
     }
 
-    // 5. Get the module namespace and extract the default export
+    // Get the module namespace and extract the default export
     let namespace = module.namespace(*context.borrow_mut());
     let default_export = namespace
         .get(boa_engine::js_string!("default"), *context.borrow_mut())
         .map_err(|err| EsmError::from_js_error(err, EsmError::EvalError))?;
 
-    // 6. Check if default export exists
+    // Check if default export exists
     if default_export.is_undefined() {
         return Err(EsmError::NoDefaultExport);
     }
 
-    // 7. Verify it's a callable function
+    // Verify it's a callable function
     let Some(func) = default_export.as_callable() else {
         return Err(EsmError::DefaultNotCallable);
     };

@@ -477,6 +477,11 @@ impl ActivityExternalComponentConfigResolved {
 pub enum ScriptLocationResolved {
     #[schemars(with = "String")]
     Content { content: String, file_name: String },
+    // backcompat: 0.41 deployments keep using `Content`; graphs use the new explicit shape.
+    Graph {
+        entry_path: String,
+        files: Vec<(String, String)>,
+    },
     /// OCI-sourced script. No `oci://` prefix.
     #[schemars(with = "String")]
     Oci { image: String },

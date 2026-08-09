@@ -1557,6 +1557,10 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
+    /// CAS references for the closed module graph, populated during deployment preparation.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(skip)]
+    pub(crate) module_files: BTreeMap<String, ContentDigest>,
     /// Override the auto-computed component digest used for locking.
     /// If set, this value is used instead of the digest derived from the JS source, ffqn, and params.
     #[serde(default)]
@@ -1594,8 +1598,8 @@ pub(crate) struct ActivityJsComponentConfigToml {
 #[derive(Debug)]
 pub(crate) struct ActivityJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS activities
-    pub(crate) js_source: String,
-    pub(crate) js_file_name: String,
+    pub(crate) js_entry_path: String,
+    pub(crate) js_files: BTreeMap<String, String>,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
@@ -1610,7 +1614,7 @@ impl ActivityJsConfigVerified {
     }
 
     pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-        FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
+        self.js_files.clone().into_iter().collect()
     }
 }
 
@@ -1749,6 +1753,9 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                     program: exec_path,
                     content_digest,
                 })
+            }
+            ScriptLocationResolved::Graph { .. } => {
+                bail!("activity_exec does not support module graphs")
             }
             ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)
@@ -1907,6 +1914,10 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
+    /// CAS references for the closed module graph, populated during deployment preparation.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(skip)]
+    pub(crate) module_files: BTreeMap<String, ContentDigest>,
     /// Override the auto-computed component digest used for locking.
     /// If set, this value is used instead of the digest derived from the JS source, ffqn, and params.
     #[serde(default)]
@@ -1939,8 +1950,8 @@ pub(crate) struct WorkflowJsComponentConfigToml {
 #[derive(Debug)]
 pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS workflows
-    pub(crate) js_source: String,
-    pub(crate) js_file_name: String,
+    pub(crate) js_entry_path: String,
+    pub(crate) js_files: BTreeMap<String, String>,
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
@@ -1954,11 +1965,8 @@ impl WorkflowJsConfigVerified {
         &self.workflow_config.component_id
     }
 
-    pub(crate) fn frame_sources(
-        js_file_name: String,
-        js_source: String,
-    ) -> FrameFilesToSourceContent {
-        FrameFilesToSourceContent::from([(js_file_name, js_source)])
+    pub(crate) fn frame_sources(js_files: BTreeMap<String, String>) -> FrameFilesToSourceContent {
+        js_files.into_iter().collect()
     }
 }
 
@@ -2066,8 +2074,26 @@ impl From<String> for BacktraceSourceToml {
     }
 }
 pub(crate) struct JsContent {
-    pub(crate) source: String,
-    pub(crate) file_name: String,
+    pub(crate) entry_path: String,
+    pub(crate) files: BTreeMap<String, String>,
+}
+
+fn hash_js_graph(hasher: &mut Sha256, entry_path: &str, files: &BTreeMap<String, String>) {
+    if files.len() == 1
+        && let Some((only_path, only_source)) = files.iter().next()
+        && only_path == entry_path
+    {
+        hasher.update(only_source.as_bytes());
+        return;
+    }
+    hasher.update(b"v1\0");
+    for (path, source) in files {
+        hasher.update(path.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(source.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher.update(entry_path.as_bytes());
 }
 
 pub(crate) trait JsLocationResolvedExt {
@@ -2097,19 +2123,20 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                         "content digest mismatch for inline JS `{file_name}`: expected {expected}, got {actual}"
                     );
                 }
-                // Report the basename to the JS engine so stack frames (and the source
-                // lookup keyed by them) use the bare file name. The resolved `file_name`
-                // keeps its deployment-relative subpath for `deployment get` export.
-                let file_name = std::path::Path::new(file_name)
+                // Preserve the historical basename used by single-file stack frames and
+                // backtrace source lookup. True module graphs use deployment-relative keys.
+                let entry_path = std::path::Path::new(file_name)
                     .file_name()
-                    .and_then(|n| n.to_str())
+                    .and_then(|name| name.to_str())
                     .unwrap_or(file_name)
                     .to_string();
-                Ok(JsContent {
-                    source: content.clone(),
-                    file_name,
-                })
+                let files = BTreeMap::from([(entry_path.clone(), content.clone())]);
+                Ok(JsContent { entry_path, files })
             }
+            ScriptLocationResolved::Graph { entry_path, files } => Ok(JsContent {
+                entry_path: entry_path.clone(),
+                files: files.iter().cloned().collect(),
+            }),
             ScriptLocationResolved::Oci { image } => {
                 let oci_ref = oci_client::Reference::from_str(image)
                     .map_err(|e| anyhow::anyhow!("invalid OCI reference in resolved form: {e}"))?;
@@ -2144,7 +2171,10 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                 let source = tokio::fs::read_to_string(&js_path)
                     .await
                     .with_context(|| format!("cannot read cached JS file {js_path:?}"))?;
-                Ok(JsContent { source, file_name })
+                Ok(JsContent {
+                    entry_path: file_name.clone(),
+                    files: BTreeMap::from([(file_name, source)]),
+                })
             }
         }
     }
@@ -2207,8 +2237,8 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
         let JsContent {
-            source: js_source,
-            file_name: js_file_name,
+            entry_path: js_entry_path,
+            files: js_files,
         } = self
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
@@ -2231,7 +2261,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_js:");
-            hasher.update(js_source.as_bytes());
+            hash_js_graph(&mut hasher, &js_entry_path, &js_files);
             hasher.update(self.ffqn.to_string().as_bytes());
             for p in &parsed_params {
                 hasher.update(p.wit_type.as_ref().as_bytes());
@@ -2268,8 +2298,8 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         };
         Ok(ActivityJsConfigVerified {
             wasm_path,
-            js_source,
-            js_file_name,
+            js_entry_path,
+            js_files,
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,
@@ -2393,8 +2423,8 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             })
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
         let JsContent {
-            source: js_source,
-            file_name: js_file_name,
+            entry_path: js_entry_path,
+            files: js_files,
         } = self
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
@@ -2417,7 +2447,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"workflow_js:");
-            hasher.update(js_source.as_bytes());
+            hash_js_graph(&mut hasher, &js_entry_path, &js_files);
             hasher.update(self.ffqn.to_string().as_bytes());
             for p in &parsed_params {
                 hasher.update(p.wit_type.as_ref().as_bytes());
@@ -2445,8 +2475,8 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         };
         Ok(WorkflowJsConfigVerified {
             wasm_path,
-            js_source,
-            js_file_name,
+            js_entry_path,
+            js_files,
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,
@@ -2467,15 +2497,16 @@ async fn resolve_local_refs(
     deployment: DeploymentTomlValidated,
     provider: &dyn FileProvider,
 ) -> anyhow::Result<DeploymentResolved> {
-    let deployment_dir = deployment.deployment_dir.clone();
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
     for (a, name) in deployment.activities_js {
         activities_js.push(ActivityJsComponentConfigResolved {
             location: resolve_script_toml(
-                a.location,
-                a.content,
+                ScriptToml::JavaScript {
+                    location: a.location,
+                    content: a.content,
+                    module_files: a.module_files,
+                },
                 format!("{name}.js"),
-                &deployment_dir,
                 provider,
                 a.content_digest.as_ref(),
             )
@@ -2506,7 +2537,7 @@ async fn resolve_local_refs(
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
-            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider).await?,
+            backtrace: resolve_backtrace(&w.backtrace, provider).await?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
             logs_store_min_level: w.logs_store_min_level,
@@ -2517,10 +2548,12 @@ async fn resolve_local_refs(
     for (w, name) in deployment.workflows_js {
         workflows_js.push(WorkflowJsComponentConfigResolved {
             location: resolve_script_toml(
-                w.location,
-                w.content,
+                ScriptToml::JavaScript {
+                    location: w.location,
+                    content: w.content,
+                    module_files: w.module_files,
+                },
                 format!("{name}.js"),
-                &deployment_dir,
                 provider,
                 w.content_digest.as_ref(),
             )
@@ -2549,7 +2582,7 @@ async fn resolve_local_refs(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars,
-            backtrace: resolve_backtrace(&w.backtrace, &deployment_dir, provider).await?,
+            backtrace: resolve_backtrace(&w.backtrace, provider).await?,
             backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts,
@@ -2561,10 +2594,12 @@ async fn resolve_local_refs(
     for w in deployment.webhooks_js {
         webhooks_js.push(webhook::WebhookJsComponentConfigResolved {
             location: resolve_script_toml(
-                w.location,
-                w.content,
+                ScriptToml::JavaScript {
+                    location: w.location,
+                    content: w.content,
+                    module_files: w.module_files,
+                },
                 format!("{}.js", w.name),
-                &deployment_dir,
                 provider,
                 w.content_digest.as_ref(),
             )
@@ -2585,10 +2620,11 @@ async fn resolve_local_refs(
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
     for (a, name) in deployment.activities_exec {
         let location = resolve_script_toml(
-            a.location,
-            a.content,
+            ScriptToml::Exec {
+                location: a.location,
+                content: a.content,
+            },
             name.to_string(),
-            &deployment_dir,
             provider,
             a.content_digest.as_ref(),
         )
@@ -2702,8 +2738,16 @@ fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Re
         .chain(resolved.workflows_js.iter().map(|c| &c.location))
         .chain(resolved.webhooks_js.iter().map(|c| &c.location));
     for loc in script_locations {
-        if let ScriptLocationResolved::Content { content, file_name } = loc {
-            register(&mut seen, file_name, content)?;
+        match loc {
+            ScriptLocationResolved::Content { content, file_name } => {
+                register(&mut seen, file_name, content)?;
+            }
+            ScriptLocationResolved::Graph { files, .. } => {
+                for (file_name, content) in files {
+                    register(&mut seen, file_name, content)?;
+                }
+            }
+            ScriptLocationResolved::Oci { .. } => {}
         }
     }
 
@@ -2755,6 +2799,23 @@ pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<Str
     Ok(parts.join("/"))
 }
 
+enum ScriptToml {
+    JavaScript {
+        location: Option<JsLocationToml>,
+        content: Option<String>,
+        module_files: BTreeMap<String, ContentDigest>,
+    },
+    Exec {
+        location: Option<JsLocationToml>,
+        content: Option<String>,
+    },
+}
+
+enum ModuleGraphResolution {
+    JavaScript(BTreeMap<String, ContentDigest>),
+    Disabled,
+}
+
 /// Resolve a script source (JS or exec) TOML location to its resolved form.
 ///
 /// - inline `content` → `Content { content, file_name: default_file_name }` (owned).
@@ -2766,15 +2827,33 @@ pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<Str
 /// When `content_digest` is set it is verified here against the relevant bytes (inline
 /// content or the owned file). `Oci` digests are verified at runtime.
 async fn resolve_script_toml(
-    location: Option<JsLocationToml>,
-    content: Option<String>,
+    script: ScriptToml,
     default_file_name: String,
-    _deployment_dir: &Path,
     provider: &dyn FileProvider,
     content_digest: Option<&ContentDigest>,
 ) -> anyhow::Result<ScriptLocationResolved> {
+    let (location, content, module_graph) = match script {
+        ScriptToml::JavaScript {
+            location,
+            content,
+            module_files,
+        } => (
+            location,
+            content,
+            ModuleGraphResolution::JavaScript(module_files),
+        ),
+        ScriptToml::Exec { location, content } => {
+            (location, content, ModuleGraphResolution::Disabled)
+        }
+    };
     match (location, content) {
         (None, Some(content)) => {
+            if let ModuleGraphResolution::JavaScript(module_files) = &module_graph {
+                ensure!(
+                    module_files.is_empty(),
+                    "inline scripts cannot set `module_files`"
+                );
+            }
             verify_content_digest(content.as_bytes(), content_digest, &default_file_name)?;
             Ok(ScriptLocationResolved::Content {
                 content,
@@ -2787,6 +2866,44 @@ async fn resolve_script_toml(
             }
             let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
             let path = sanitize_deployment_relative_path(path)?;
+            if let ModuleGraphResolution::JavaScript(module_files) = module_graph {
+                if !module_files.is_empty() {
+                    let entry_digest = module_files.get(&path).with_context(|| {
+                        format!("module_files for `{path}` does not contain the entry path")
+                    })?;
+                    if let Some(expected) = content_digest {
+                        ensure!(
+                            expected == entry_digest,
+                            "content_digest for `{path}` does not match its module_files digest"
+                        );
+                    }
+                    let mut files = Vec::with_capacity(module_files.len());
+                    for (module_path, digest) in module_files {
+                        let module_path = sanitize_deployment_relative_path(&module_path)?;
+                        let bytes = provider.read(&module_path, Some(&digest)).await?;
+                        let source = String::from_utf8(bytes).with_context(|| {
+                            format!("script file {module_path:?} is not valid UTF-8")
+                        })?;
+                        files.push((module_path, source));
+                    }
+                    return Ok(ScriptLocationResolved::Graph {
+                        entry_path: path,
+                        files,
+                    });
+                }
+                if let Some((entry_path, files)) = provider.read_js_graph(&path).await? {
+                    let entry_source = files
+                        .iter()
+                        .find_map(|(module_path, source)| {
+                            (module_path == &entry_path).then_some(source)
+                        })
+                        .context("collected JS graph does not contain its entry")?;
+                    verify_content_digest(entry_source.as_bytes(), content_digest, &entry_path)?;
+                    if files.len() > 1 {
+                        return Ok(ScriptLocationResolved::Graph { entry_path, files });
+                    }
+                }
+            }
             let content = provider.read(&path, content_digest).await?;
             let content = String::from_utf8(content)
                 .with_context(|| format!("script file {path:?} is not valid UTF-8"))?;
@@ -2795,9 +2912,17 @@ async fn resolve_script_toml(
                 file_name: path,
             })
         }
-        (Some(JsLocationToml::Oci(reference)), None) => Ok(ScriptLocationResolved::Oci {
-            image: reference.to_string(),
-        }),
+        (Some(JsLocationToml::Oci(reference)), None) => {
+            if let ModuleGraphResolution::JavaScript(module_files) = module_graph {
+                ensure!(
+                    module_files.is_empty(),
+                    "OCI scripts cannot set `module_files`"
+                );
+            }
+            Ok(ScriptLocationResolved::Oci {
+                image: reference.to_string(),
+            })
+        }
         (None, None) | (Some(_), Some(_)) => {
             bail!("exactly one of `location` or `content` must be set for script components")
         }
@@ -2806,7 +2931,6 @@ async fn resolve_script_toml(
 
 async fn resolve_backtrace(
     backtrace: &ComponentBacktraceConfig,
-    _deployment_dir: &Path,
     provider: &dyn FileProvider,
 ) -> anyhow::Result<ComponentBacktraceConfigResolved> {
     let mut frame_files_to_sources = HashMap::new();
@@ -3119,7 +3243,7 @@ pub(crate) mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentCommonFetchExt,
         ComponentStdOutputToml, ComponentStdOutputTomlExt, ConfigName, JsContent,
-        JsLocationResolvedExt, JsLocationToml, LogLevelTomlExt, SecretResolver,
+        JsLocationResolvedExt, JsLocationToml, LogLevelTomlExt, SecretResolver, hash_js_graph,
         resolve_allowed_hosts, resolve_env_vars_plaintext, restricted_secret_registry,
         validate_no_env_collision,
     };
@@ -3140,6 +3264,7 @@ pub(crate) mod webhook {
     use serde::{Deserialize, Serialize};
     use sha2::{Digest as _, Sha256};
     use std::{
+        collections::BTreeMap,
         net::SocketAddr,
         path::{Path, PathBuf},
         sync::Arc,
@@ -3253,6 +3378,10 @@ pub(crate) mod webhook {
         #[serde(default)]
         #[schemars(with = "Option<String>")]
         pub(crate) content_digest: Option<ContentDigest>,
+        /// CAS references for the closed module graph, populated during deployment preparation.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        #[schemars(skip)]
+        pub(crate) module_files: BTreeMap<String, ContentDigest>,
         /// The HTTP server to bind this webhook to.
         #[serde(default = "default_external_server_name")]
         pub(crate) http_server: ConfigName,
@@ -3278,8 +3407,8 @@ pub(crate) mod webhook {
     pub(crate) struct WebhookJsConfigVerified {
         pub(crate) wasm_path: Arc<Path>,
         pub(crate) component_id: ComponentId,
-        pub(crate) js_source: String,
-        pub(crate) js_file_name: String,
+        pub(crate) js_entry_path: String,
+        pub(crate) js_files: BTreeMap<String, String>,
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
@@ -3295,7 +3424,7 @@ pub(crate) mod webhook {
 
     impl WebhookJsConfigVerified {
         pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-            FrameFilesToSourceContent::from([(self.js_file_name.clone(), self.js_source.clone())])
+            self.js_files.clone().into_iter().collect()
         }
     }
 
@@ -3392,15 +3521,15 @@ pub(crate) mod webhook {
             secret_registry: &Arc<SecretRegistry>,
         ) -> Result<(ConfigName, WebhookJsConfigVerified), anyhow::Error> {
             let JsContent {
-                source: js_source,
-                file_name: js_file_name,
+                entry_path: js_entry_path,
+                files: js_files,
             } = self
                 .location
                 .get_content(&wasm_cache_dir, self.content_digest.as_ref())
                 .await?;
             let mut hasher = Sha256::new();
             hasher.update(b"webhook_js:");
-            hasher.update(js_source.as_bytes());
+            hash_js_graph(&mut hasher, &js_entry_path, &js_files);
             let hash: [u8; 32] = hasher.finalize().into();
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
@@ -3424,8 +3553,8 @@ pub(crate) mod webhook {
                 WebhookJsConfigVerified {
                     wasm_path,
                     component_id,
-                    js_file_name,
-                    js_source,
+                    js_entry_path,
+                    js_files,
                     routes: self
                         .routes
                         .into_iter()
@@ -4454,6 +4583,18 @@ name = "my_stub"
     mod script_location {
         use super::super::*;
 
+        fn javascript(
+            location: Option<JsLocationToml>,
+            content: Option<String>,
+            module_files: BTreeMap<String, ContentDigest>,
+        ) -> ScriptToml {
+            ScriptToml::JavaScript {
+                location,
+                content,
+                module_files,
+            }
+        }
+
         fn digest_of(bytes: &[u8]) -> ContentDigest {
             let hash: [u8; 32] = Sha256::digest(bytes).into();
             ContentDigest(Digest(hash))
@@ -4470,10 +4611,12 @@ name = "my_stub"
             let dir = tempfile::tempdir().unwrap();
             let provider = disk_provider(dir.path());
             let location = resolve_script_toml(
-                None,
-                Some("export const x = 1;".to_string()),
+                javascript(
+                    None,
+                    Some("export const x = 1;".to_string()),
+                    BTreeMap::new(),
+                ),
                 "foo.js".to_string(),
-                dir.path(),
                 &provider,
                 None,
             )
@@ -4492,14 +4635,16 @@ name = "my_stub"
             let provider = disk_provider(dir.path());
             let sub = dir.path().join("scripts");
             std::fs::create_dir_all(&sub).unwrap();
-            std::fs::write(sub.join("a.js"), "owned content").unwrap();
+            std::fs::write(sub.join("a.js"), "export default 'owned content';").unwrap();
 
             // Bare relative path (implicit `${DEPLOYMENT_DIR}` prefix).
             let location = resolve_script_toml(
-                Some(JsLocationToml::Path("scripts/a.js".to_string())),
-                None,
+                javascript(
+                    Some(JsLocationToml::Path("scripts/a.js".to_string())),
+                    None,
+                    BTreeMap::new(),
+                ),
                 "ignored.js".to_string(),
-                dir.path(),
                 &provider,
                 None,
             )
@@ -4508,7 +4653,7 @@ name = "my_stub"
             assert_matches::assert_matches!(
                 location,
                 ScriptLocationResolved::Content { content, file_name }
-                    if content == "owned content" && file_name == "scripts/a.js"
+                    if content == "export default 'owned content';" && file_name == "scripts/a.js"
             );
         }
 
@@ -4518,15 +4663,17 @@ name = "my_stub"
             let provider = disk_provider(dir.path());
             let sub = dir.path().join("scripts");
             std::fs::create_dir_all(&sub).unwrap();
-            std::fs::write(sub.join("a.js"), "owned content").unwrap();
+            std::fs::write(sub.join("a.js"), "export default 'owned content';").unwrap();
 
             let location = resolve_script_toml(
-                Some(JsLocationToml::Path(
-                    "${DEPLOYMENT_DIR}/scripts/a.js".to_string(),
-                )),
-                None,
+                javascript(
+                    Some(JsLocationToml::Path(
+                        "${DEPLOYMENT_DIR}/scripts/a.js".to_string(),
+                    )),
+                    None,
+                    BTreeMap::new(),
+                ),
                 "ignored.js".to_string(),
-                dir.path(),
                 &provider,
                 None,
             )
@@ -4547,10 +4694,12 @@ name = "my_stub"
             let abs = outside.to_string_lossy().into_owned();
 
             let err = resolve_script_toml(
-                Some(JsLocationToml::Path(abs.clone())),
-                None,
+                javascript(
+                    Some(JsLocationToml::Path(abs.clone())),
+                    None,
+                    BTreeMap::new(),
+                ),
                 "ignored.js".to_string(),
-                root.path(),
                 &provider,
                 None,
             )
@@ -4569,10 +4718,12 @@ name = "my_stub"
             let provider = disk_provider(dir.path());
             for raw in ["../escape.js", "${DEPLOYMENT_DIR}/../escape.js"] {
                 let err = resolve_script_toml(
-                    Some(JsLocationToml::Path(raw.to_string())),
-                    None,
+                    javascript(
+                        Some(JsLocationToml::Path(raw.to_string())),
+                        None,
+                        BTreeMap::new(),
+                    ),
                     "ignored.js".to_string(),
-                    dir.path(),
                     &provider,
                     None,
                 )
@@ -4590,10 +4741,8 @@ name = "my_stub"
             let reference =
                 oci_client::Reference::from_str("docker.io/library/example:latest").unwrap();
             let location = resolve_script_toml(
-                Some(JsLocationToml::Oci(reference)),
-                None,
+                javascript(Some(JsLocationToml::Oci(reference)), None, BTreeMap::new()),
                 "ignored.js".to_string(),
-                dir.path(),
                 &provider,
                 None,
             )
@@ -4614,10 +4763,8 @@ name = "my_stub"
 
             // Matching digest succeeds.
             resolve_script_toml(
-                None,
-                Some(content.to_string()),
+                javascript(None, Some(content.to_string()), BTreeMap::new()),
                 "foo.js".to_string(),
-                dir.path(),
                 &provider,
                 Some(&digest_of(content.as_bytes())),
             )
@@ -4627,10 +4774,8 @@ name = "my_stub"
             // Mismatching digest fails.
             let wrong = digest_of(b"different");
             let err = resolve_script_toml(
-                None,
-                Some(content.to_string()),
+                javascript(None, Some(content.to_string()), BTreeMap::new()),
                 "foo.js".to_string(),
-                dir.path(),
                 &provider,
                 Some(&wrong),
             )
@@ -4647,14 +4792,20 @@ name = "my_stub"
         async fn relative_file_content_digest_verified_at_submit() {
             let dir = tempfile::tempdir().unwrap();
             let provider = disk_provider(dir.path());
-            std::fs::write(dir.path().join("script.js"), "owned content").unwrap();
+            std::fs::write(
+                dir.path().join("script.js"),
+                "export default 'owned content';",
+            )
+            .unwrap();
 
             let wrong = digest_of(b"nope");
             let err = resolve_script_toml(
-                Some(JsLocationToml::Path("script.js".to_string())),
-                None,
+                javascript(
+                    Some(JsLocationToml::Path("script.js".to_string())),
+                    None,
+                    BTreeMap::new(),
+                ),
                 "ignored.js".to_string(),
-                dir.path(),
                 &provider,
                 Some(&wrong),
             )
@@ -4796,7 +4947,7 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, dir.path(), &provider).await.unwrap();
+            let resolved = resolve_backtrace(&bt, &provider).await.unwrap();
             let src = resolved
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
@@ -4822,7 +4973,7 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, dir.path(), &provider).await.unwrap();
+            let resolved = resolve_backtrace(&bt, &provider).await.unwrap();
             let src = resolved
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
@@ -4842,12 +4993,7 @@ name = "my_stub"
                 "frame".to_string(),
                 "${DEPLOYMENT_DIR}/../escape.rs".to_string().into(),
             );
-            let err = format!(
-                "{:#}",
-                resolve_backtrace(&bt, dir.path(), &provider)
-                    .await
-                    .unwrap_err()
-            );
+            let err = format!("{:#}", resolve_backtrace(&bt, &provider).await.unwrap_err());
             assert!(err.contains("`..`"), "unexpected error: {err}");
         }
 
@@ -4863,12 +5009,11 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 abs.to_string_lossy().into_owned().into(),
             );
-            // Deployment dir is unrelated to the absolute source.
             let other_dir = tempfile::tempdir().unwrap();
             let provider = DiskProvider {
                 deployment_dir: other_dir.path().to_path_buf(),
             };
-            let err = resolve_backtrace(&bt, other_dir.path(), &provider)
+            let err = resolve_backtrace(&bt, &provider)
                 .await
                 .unwrap_err()
                 .to_string();

@@ -4,6 +4,7 @@ pub mod child_error;
 pub mod console;
 pub mod crypto;
 pub mod esm;
+pub mod graph;
 pub mod helpers;
 pub mod imports;
 pub mod wasi_fetcher;
