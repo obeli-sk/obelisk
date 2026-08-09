@@ -86,6 +86,10 @@ fn extract_and_verify<'a>(
             .utf8()
             .ok_or_else(|| "import specifier is not valid UTF-8".to_string())?;
 
+        if specifier.starts_with("./") || specifier.starts_with("../") {
+            continue;
+        }
+
         let ifc_fqn = IfcFqnName::from_str(specifier).map_err(|e| {
             format!(
                 "import specifier `{specifier}` is not a WIT interface FQN \

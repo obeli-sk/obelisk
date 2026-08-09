@@ -12,15 +12,26 @@ interface execute {
         wrong-return-type(string),
         /// Function was executed and threw an error, but it did not type check.
         wrong-thrown-type(string),
+        entry-not-found,
+        unresolved-import(string),
     }
 
-    /// Execute JavaScript code as an activity.
+    /// Execute a JavaScript module graph as an activity.
     ///
-    /// The JS code should use ES module syntax with `export default function(...) { ... }`.
-    /// The default export receives params as positional arguments
-    /// (each element is one JSON-serialized parameter value) and returns a string.
+    /// `entry-path` names the file in `files` whose default export is invoked
+    /// (typically `"src/index.js"`). Must be non-empty. The default export
+    /// receives params as positional arguments (each element is one
+    /// JSON-serialized parameter value) and returns a string.
+    ///
+    /// `files` is the closed module graph: every relative `import` reachable
+    /// from `entry-path` MUST resolve to a key (path) in this list. Specifiers
+    /// matching the WIT-style host import shape (`ns:pkg/ifc`) remain external.
     ///
     /// Returns Ok(Ok(string)) on success, Ok(Err(string)) on thrown string/Error,
     /// or Err(js-runtime-error) on type/declaration errors.
-    run: func(js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>;
+    run: func(
+        entry-path: string,
+        files: list<tuple<string, string>>,
+        params-json: list<string>,
+    ) -> result<result<string, string>, js-runtime-error>;
 }

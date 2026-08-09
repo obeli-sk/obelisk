@@ -12,6 +12,8 @@ interface execute {
         wrong-return-type(string),
         /// Function was executed and threw an error, but it did not type check.
         wrong-thrown-type(string),
+        entry-not-found,
+        unresolved-import(string),
     }
 
     /// One ES-module-style imported function within an interface.
@@ -27,11 +29,17 @@ interface execute {
         functions: list<named-fn-import>,
     }
 
-    /// Execute JavaScript code as a workflow.
+    /// Execute a JavaScript module graph as a workflow.
     ///
-    /// The JS code should use ES module syntax with `export default function(...) { ... }`.
-    /// The default export receives params as positional arguments
-    /// (each element is one JSON-serialized parameter value) and returns a string.
+    /// `entry-path` names the file in `files` whose default export is invoked
+    /// (typically `"src/index.js"`). Must be non-empty. The default export
+    /// receives params as positional arguments (each element is one
+    /// JSON-serialized parameter value) and returns a string.
+    ///
+    /// `files` is the closed module graph: every relative `import` reachable
+    /// from `entry-path` MUST resolve to a key (path) in this list. Specifiers
+    /// matching the WIT-style host import shape (`ns:pkg/ifc`) remain external
+    /// and are linked via `resolved-imports`.
     ///
     /// `resolved-imports` lists the JS module imports the host has resolved
     /// against the function registry, grouped by interface. For example:
@@ -42,10 +50,13 @@ interface execute {
     ///
     /// Returns Ok(Ok(result)) on success, Ok(Err(error_message)) on user error,
     /// or Err(js-runtime-error) on runtime error.
+    /// `backtrace-enabled` toggles JS stack-trace capture on host calls (used
+    /// during replay-based backtrace collection, off for a normal run).
     run: func(
-        js-code: string,
+        entry-path: string,
+        files: list<tuple<string, string>>,
         params-json: list<string>,
-        js-file-name: option<string>,
+        backtrace-enabled: bool,
         resolved-imports: list<resolved-interface-imports>,
     ) -> result<result<string, string>, js-runtime-error>;
 }

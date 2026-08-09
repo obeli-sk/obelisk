@@ -111,7 +111,8 @@ use crate::generated::obelisk::webhook::webhook_support_backtrace;
 use boa_common::child_error::{ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
-use boa_common::esm::{EsmError, get_default_export, resolve_promise};
+use boa_common::esm::{EsmError, get_default_export_from_module, resolve_promise};
+use boa_common::graph::{GraphLoadError, register_source_modules};
 use boa_common::helpers::{new_object, parse_ffqn};
 use boa_common::imports::{self, ProxyKind};
 use boa_common::wasi_fetcher::WasiFetcher;
@@ -126,7 +127,7 @@ use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
 use boa_runtime::fetch::response::JsResponse;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use wstd::http::body::Body;
 use wstd::http::{Request, Response, StatusCode};
@@ -155,15 +156,13 @@ impl ObeliskLogger for Logger {
 
 #[wstd::http_server]
 async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
-    // Get JS source from environment
-    let js_source = match std::env::var("__OBELISK_JS_SOURCE__") {
-        Ok(source) => source,
-        Err(_) => {
+    // Load JS module graph from environment.
+    let (entry_path, files) = match read_js_graph_env() {
+        Ok(graph) => graph,
+        Err(msg) => {
             return Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(
-                    "__OBELISK_JS_SOURCE__ environment variable not set",
-                ))?);
+                .body(Body::from(msg))?);
         }
     };
 
@@ -195,16 +194,35 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
     };
     let js_request = JsRequest::with_lazy_body(http_request_head, body_future);
 
-    run_js_handler_async(&js_source, js_request).await
+    run_js_handler_async(&entry_path, &files, js_request).await
+}
+
+/// Read the JS module graph from environment variables.
+///
+/// `__OBELISK_JS_FILES__` holds the JSON `{"<path>": "<source>", ...}` graph;
+/// `__OBELISK_JS_ENTRY_PATH__` names the entry within that graph. Both must
+/// be non-empty: the host guarantees a real path for every module.
+fn read_js_graph_env() -> Result<(String, BTreeMap<String, String>), String> {
+    let entry_path = std::env::var("__OBELISK_JS_ENTRY_PATH__")
+        .map_err(|_| "__OBELISK_JS_ENTRY_PATH__ environment variable not set".to_string())?;
+    let files_json = std::env::var("__OBELISK_JS_FILES__")
+        .map_err(|_| "__OBELISK_JS_FILES__ environment variable not set".to_string())?;
+    let files: BTreeMap<String, String> =
+        serde_json::from_str::<Vec<(String, String)>>(&files_json)
+            .map_err(|e| format!("Failed to parse __OBELISK_JS_FILES__: {e}"))?
+            .into_iter()
+            .collect();
+    Ok((entry_path, files))
 }
 
 /// Run the JS handler and return the HTTP response.
 /// JS-level errors are converted to 500 responses; only transport errors propagate as `Err`.
 async fn run_js_handler_async(
-    js_source: &str,
+    entry_path: &str,
+    files: &BTreeMap<String, String>,
     js_request: JsRequest,
 ) -> Result<Response<Body>, wstd::http::Error> {
-    match run_js_handler_inner(js_source, js_request).await {
+    match run_js_handler_inner(entry_path, files, js_request).await {
         Ok(response) => Ok(response),
         Err(msg) => {
             log::error(&msg);
@@ -339,7 +357,8 @@ fn read_resolved_imports() -> HashMap<String, Vec<(String, String)>> {
 }
 
 async fn run_js_handler_inner(
-    js_source: &str,
+    entry_path: &str,
+    files: &BTreeMap<String, String>,
     js_request: JsRequest,
 ) -> Result<Response<Body>, String> {
     let executor = Rc::new(WasiJobExecutor::default());
@@ -373,6 +392,17 @@ async fn run_js_handler_inner(
         );
     }
 
+    // Parse every file in the graph and register with the loader.
+    let entry_module = match register_source_modules(&loader, files, entry_path, &mut context) {
+        Ok(module) => module,
+        Err(GraphLoadError::EntryNotFound) => {
+            return Err(format!("Entry path `{entry_path}` not found in files"));
+        }
+        Err(GraphLoadError::ParseError { path, message }) => {
+            return Err(format!("Module parse error in `{path}`: {message}"));
+        }
+    };
+
     // Wrap the incoming request as a JS Request object so the handler receives a proper
     // Request object with text(), json(), formData(), method, url, and headers.
     let request_obj = JsRequest::from_data(js_request, &mut context)
@@ -382,10 +412,9 @@ async fn run_js_handler_inner(
     // We need to wrap context in RefCell for the async ESM loading
     let context = RefCell::new(&mut context);
 
-    // Get the default export function from the ES module
-    let default_fn = match get_default_export(js_source, &context, &executor).await {
+    // Get the default export function from the entry module
+    let default_fn = match get_default_export_from_module(entry_module, &context, &executor).await {
         Ok(func) => func,
-        Err(EsmError::ParseError(msg)) => return Err(format!("Module parse error: {msg}")),
         Err(EsmError::LoadError(msg)) => return Err(format!("Module load error: {msg}")),
         Err(EsmError::LinkError(msg)) => return Err(format!("Module link error: {msg}")),
         Err(EsmError::EvalError(msg)) => return Err(format!("Module eval error: {msg}")),
@@ -436,7 +465,7 @@ fn capture_backtrace(ctx: &Context) -> WasmBacktrace {
         return WasmBacktrace { frames: Vec::new() };
     }
     use boa_engine::vm::SourcePath;
-    let js_file_name = std::env::var("__OBELISK_JS_FILE_NAME__").ok();
+    let js_file_name = std::env::var("__OBELISK_JS_ENTRY_PATH__").ok();
     let frames = ctx
         .stack_trace()
         .map(|frame| {

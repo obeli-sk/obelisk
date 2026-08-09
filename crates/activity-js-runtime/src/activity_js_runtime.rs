@@ -29,12 +29,15 @@ use crate::generated::{
 };
 use boa_common::console::{ObeliskLogger, setup_console};
 use boa_common::crypto::setup_crypto;
-use boa_common::esm::{EsmError, get_default_export, resolve_promise};
+use boa_common::esm::{EsmError, get_default_export_from_module, resolve_promise};
+use boa_common::graph::{GraphLoadError, register_source_modules};
 use boa_common::wasi_fetcher::WasiFetcher;
 use boa_common::wasi_job_executor::WasiJobExecutor;
-use boa_engine::{Context, JsResult, JsValue, Source};
+use boa_engine::module::MapModuleLoader;
+use boa_engine::{Context, JsResult, JsValue, Module, Source};
 use boa_runtime::extensions::FetchExtension;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 /// Logger implementation using the generated obelisk:log bindings.
@@ -59,17 +62,21 @@ impl ObeliskLogger for Logger {
     }
 }
 
-/// Execute JavaScript code with the given parameters.
+/// Execute a JS module graph with the given parameters.
 ///
+/// `entry_path` names the file in `files` whose default export is invoked.
 /// `params_json` is a list of JSON-serialized parameter values.
 /// Each element is passed as a positional argument to the default export function.
 pub fn execute(
-    js_code: &str,
+    entry_path: &str,
+    files: &BTreeMap<String, String>,
     params_json: &[String],
 ) -> Result<Result<String, String>, JsRuntimeError> {
     let executor = Rc::new(WasiJobExecutor::default());
+    let loader = Rc::new(MapModuleLoader::new());
     let mut context = Context::builder()
         .job_executor(executor.clone())
+        .module_loader(loader.clone())
         .build()
         .expect("building context must work");
 
@@ -82,26 +89,47 @@ pub fn execute(
     // Set up crypto.subtle
     setup_crypto(&mut context).expect("crypto setup must work");
 
+    // Register all modules in the graph and resolve the entry module.
+    let entry_module = match register_source_modules(&loader, files, entry_path, &mut context) {
+        Ok(module) => module,
+        Err(GraphLoadError::EntryNotFound) => {
+            host_fn_error(&format!("entry path `{entry_path}` not found in files"));
+            return Err(JsRuntimeError::EntryNotFound);
+        }
+        Err(GraphLoadError::ParseError { path, message }) => {
+            let msg = format!("module parse error in `{path}`: {message}");
+            host_fn_error(&msg);
+            return Err(JsRuntimeError::CannotInstantiate(msg));
+        }
+    };
+
     // Run the async execution inside a single wstd reactor
-    wstd::runtime::block_on(execute_async(js_code, params_json, &mut context, &executor))
+    wstd::runtime::block_on(execute_async(
+        entry_module,
+        params_json,
+        &mut context,
+        &executor,
+    ))
 }
 
 /// Async implementation of JS execution.
 async fn execute_async(
-    js_code: &str,
+    entry_module: Module,
     params_json: &[String],
     context: &mut Context,
     executor: &Rc<WasiJobExecutor>,
 ) -> Result<Result<String, String>, JsRuntimeError> {
     let context = RefCell::new(context);
 
-    // Get the default export function from the ES module
-    let default_fn = match get_default_export(js_code, &context, executor).await {
+    // Get the default export function from the entry module
+    let default_fn = match get_default_export_from_module(entry_module, &context, executor).await {
         Ok(func) => func,
         Err(err) => {
             let msg = match err {
-                EsmError::ParseError(msg) => format!("module parse error: {msg}"),
-                EsmError::LoadError(msg) => format!("module load error: {msg}"),
+                EsmError::LoadError(msg) => {
+                    host_fn_error(&format!("module load error: {msg}"));
+                    return Err(JsRuntimeError::UnresolvedImport(msg));
+                }
                 EsmError::LinkError(msg) => format!("module link error: {msg}"),
                 EsmError::EvalError(msg) => format!("module eval error: {msg}"),
                 EsmError::NoDefaultExport => "no default export".to_string(),

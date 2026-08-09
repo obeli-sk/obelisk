@@ -17,7 +17,7 @@ use concepts::{
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::wasm_tools::WasmComponent;
@@ -27,7 +27,8 @@ use val_json::wast_val::{WastVal, WastValWithType};
 /// Compiled JS activity. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct ActivityJsWorkerCompiled {
     inner: ActivityWorkerCompiled,
-    js_source: String,
+    js_entry_path: String,
+    js_files: BTreeMap<String, String>,
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
@@ -36,9 +37,10 @@ pub struct ActivityJsWorkerCompiled {
 }
 
 impl ActivityJsWorkerCompiled {
-    pub fn new(
+    pub fn new_graph(
         inner: ActivityWorkerCompiled,
-        js_source: String,
+        js_entry_path: String,
+        js_files: BTreeMap<String, String>,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
@@ -52,7 +54,8 @@ impl ActivityJsWorkerCompiled {
         )?;
         Ok(Self {
             inner,
-            js_source,
+            js_entry_path,
+            js_files,
             user_ffqn,
             user_params,
             user_return_type,
@@ -93,7 +96,8 @@ impl ActivityJsWorkerCompiled {
                 .into_worker(cancel_registry, log_forwarder_sender, logs_storage_config);
         ActivityJsWorker {
             inner,
-            js_source: self.js_source,
+            js_entry_path: self.js_entry_path,
+            js_files: self.js_files,
             user_ffqn: self.user_ffqn,
             user_params: self.user_params,
             user_return_type: self.user_return_type,
@@ -104,7 +108,8 @@ impl ActivityJsWorkerCompiled {
 
 pub struct ActivityJsWorker {
     inner: ActivityWorker,
-    js_source: String,
+    js_entry_path: String,
+    js_files: BTreeMap<String, String>,
     #[allow(dead_code)] // Will be used for error context in future
     user_ffqn: FunctionFqn,
     user_params: Vec<ParameterType>,
@@ -142,15 +147,29 @@ impl Worker for ActivityJsWorker {
         // Rewrite context to call
         ctx.ffqn =
             FunctionFqn::new_static_tuple(("obelisk-activity:activity-js-runtime/execute", "run"));
-        // run: func(js-code: string, params-json: list<string>) -> result<result<string, string>, js-runtime-error>
+        let files_json = self
+            .js_files
+            .iter()
+            .map(|(path, source)| {
+                serde_json::Value::Array(vec![
+                    serde_json::Value::String(path.clone()),
+                    serde_json::Value::String(source.clone()),
+                ])
+            })
+            .collect();
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(self.js_source.clone()),
+            serde_json::Value::String(self.js_entry_path.clone()),
+            serde_json::Value::Array(files_json),
             serde_json::Value::Array(params_json_list),
         ]);
         ctx.params = Params::from_json_values(
             boa_params,
             [
                 &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
+                    TypeWrapper::String,
+                    TypeWrapper::String,
+                ])))),
                 &TypeWrapper::List(Box::new(TypeWrapper::String)),
             ]
             .into_iter(),
@@ -251,13 +270,13 @@ impl Worker for ActivityJsWorker {
                             version,
                         ))
                     }
-                    "cannot_instantiate" => {
+                    "cannot_instantiate" | "unresolved_import" => {
                         let reason = if let Some(payload) = payload
                             && let WastVal::String(s) = payload.as_ref()
                         {
                             s.clone()
                         } else {
-                            unreachable!("cannot-instantiate carries a string payload")
+                            unreachable!("runtime error carries a string payload")
                         };
                         Err(WorkerError::FatalError(
                             FatalError::CannotInstantiate {
@@ -267,6 +286,13 @@ impl Worker for ActivityJsWorker {
                             version,
                         ))
                     }
+                    "entry_not_found" => Err(WorkerError::FatalError(
+                        FatalError::CannotInstantiate {
+                            reason: "JavaScript entry module was not found".to_string(),
+                            detail: None,
+                        },
+                        version,
+                    )),
                     "execution_failed" => {
                         unreachable!(
                             "execution-failed is injected by a workflow worker, not by activity-js-runtime"
@@ -313,8 +339,26 @@ mod tests {
     use tracing::info_span;
     use val_json::wast_val::WastVal;
 
+    fn new_single_file_worker(
+        inner: ActivityWorkerCompiled,
+        js_source: String,
+        user_ffqn: FunctionFqn,
+        user_params: Vec<ParameterType>,
+        user_return_type: ReturnTypeExtendable,
+    ) -> Result<ActivityJsWorkerCompiled, utils::wasm_tools::DecodeError> {
+        ActivityJsWorkerCompiled::new_graph(
+            inner,
+            "index.js".to_string(),
+            BTreeMap::from([("index.js".to_string(), js_source)]),
+            user_ffqn,
+            user_params,
+            user_return_type,
+        )
+    }
+
     struct JsWorkerBuilder {
         js_source: String,
+        js_graph: Option<(String, BTreeMap<String, String>)>,
         user_ffqn: FunctionFqn,
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
@@ -327,6 +371,7 @@ mod tests {
         fn new(js_source: &str, user_ffqn: FunctionFqn) -> Self {
             Self {
                 js_source: js_source.to_string(),
+                js_graph: None,
                 user_ffqn,
                 user_params: vec![ParameterType {
                     type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
@@ -379,6 +424,17 @@ mod tests {
             self
         }
 
+        fn with_graph(mut self, entry_path: &str, files: &[(&str, &str)]) -> Self {
+            self.js_graph = Some((
+                entry_path.to_string(),
+                files
+                    .iter()
+                    .map(|(path, source)| ((*path).to_string(), (*source).to_string()))
+                    .collect(),
+            ));
+            self
+        }
+
         async fn build(self) -> Arc<dyn Worker> {
             let engine =
                 Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
@@ -422,13 +478,24 @@ mod tests {
             )
             .unwrap();
 
-            let js_compiled = ActivityJsWorkerCompiled::new(
-                compiled,
-                self.js_source,
-                self.user_ffqn,
-                self.user_params,
-                self.user_return_type,
-            )
+            let js_compiled = if let Some((entry_path, files)) = self.js_graph {
+                ActivityJsWorkerCompiled::new_graph(
+                    compiled,
+                    entry_path,
+                    files,
+                    self.user_ffqn,
+                    self.user_params,
+                    self.user_return_type,
+                )
+            } else {
+                new_single_file_worker(
+                    compiled,
+                    self.js_source,
+                    self.user_ffqn,
+                    self.user_params,
+                    self.user_return_type,
+                )
+            }
             .unwrap();
 
             Arc::new(js_compiled.into_worker(
@@ -534,6 +601,38 @@ mod tests {
             WastVal::String(s) => s.clone(),
             other => panic!("expected string, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn run_multi_file_imports() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "greet");
+        let entry = "crates/testing/test-programs/js/activity/multifile/index.js";
+        let helper = "crates/testing/test-programs/js/activity/multifile/lib/greeter.js";
+        let util = "crates/testing/test-programs/js/activity/multifile/lib/util.js";
+        let worker = JsWorkerBuilder::new("", ffqn.clone())
+            .with_graph(
+                entry,
+                &[
+                    (
+                        entry,
+                        "import { greet } from './lib/greeter.js'; export default p => greet(p[0]);",
+                    ),
+                    (
+                        helper,
+                        "import { exclaim } from './util.js'; export const greet = name => exclaim(`hello, ${name}`);",
+                    ),
+                    (util, "export const exclaim = message => message + '!';"),
+                ],
+            )
+            .build()
+            .await;
+
+        let (ctx, _close_tx) = make_worker_context(ffqn, &["world".to_string()]);
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let value = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(value)) => value);
+        assert_eq!(extract_string(&value.value), "hello, world!");
     }
 
     #[tokio::test]

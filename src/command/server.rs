@@ -4172,8 +4172,8 @@ async fn compile_and_link(
                                 global_http_config: global_http_config.clone(),
                                 secrets: webhook_js.secrets,
                                 js_config: Some(WebhookEndpointJsConfig {
-                                    source: webhook_js.js_source,
-                                    file_name: webhook_js.js_file_name.clone(),
+                                    entry_path: webhook_js.js_entry_path,
+                                    files: webhook_js.js_files,
                                 }),
                                 config_section_hint: webhook_js.config_section_hint,
                             };
@@ -4483,7 +4483,6 @@ fn prespawn_activity_js(
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
     let frame_files = activity_js.as_frame_sources();
-
     let inner = ActivityWorkerCompiled::new_with_config(
         runnable_component,
         activity_js.activity_config,
@@ -4493,9 +4492,10 @@ fn prespawn_activity_js(
     )
     .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?;
 
-    let worker = ActivityJsWorkerCompiled::new(
+    let worker = ActivityJsWorkerCompiled::new_graph(
         inner,
-        activity_js.js_source,
+        activity_js.js_entry_path,
+        activity_js.js_files,
         activity_js.ffqn,
         activity_js.params,
         activity_js.return_type,
@@ -4680,10 +4680,10 @@ fn prespawn_workflow_js(
         Now.clone_box(),
     )
     .with_context(|| format!("cannot compile replay JS workflow runtime for {component_id}"))?;
-    let replay_compiled = WorkflowJsWorkerCompiled::new(
+    let replay_compiled = WorkflowJsWorkerCompiled::new_graph(
         replay_inner,
-        workflow_js.js_source.clone(),
-        workflow_js.js_file_name.clone(),
+        workflow_js.js_entry_path.clone(),
+        workflow_js.js_files.clone(),
         &workflow_js.ffqn,
         workflow_js.params.clone(),
         workflow_js.return_type.clone(),
@@ -4698,10 +4698,10 @@ fn prespawn_workflow_js(
     )
     .with_context(|| format!("cannot compile JS workflow runtime for {component_id}"))?;
 
-    let worker = WorkflowJsWorkerCompiled::new(
+    let worker = WorkflowJsWorkerCompiled::new_graph(
         inner,
-        workflow_js.js_source.clone(),
-        workflow_js.js_file_name.clone(),
+        workflow_js.js_entry_path.clone(),
+        workflow_js.js_files.clone(),
         &workflow_js.ffqn,
         workflow_js.params,
         workflow_js.return_type,
@@ -4715,8 +4715,7 @@ fn prespawn_workflow_js(
         workflow_js.logs_store_min_level,
         workflows_lock_extension_leeway,
         wit,
-        workflow_js.js_source,
-        workflow_js.js_file_name,
+        workflow_js.js_files,
     ))
 }
 
@@ -4891,7 +4890,6 @@ impl WorkerCompiled {
         ))
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn new_js_workflow(
         worker: WorkflowJsWorkerCompiled,
         replay_compiled: WorkflowJsWorkerCompiled,
@@ -4899,10 +4897,9 @@ impl WorkerCompiled {
         logs_store_min_level: Option<LogLevel>,
         workflows_lock_extension_leeway: Duration,
         wit: String,
-        js_source: String,
-        js_file_name: String,
+        js_files: std::collections::BTreeMap<String, String>,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
-        let frame_files = WorkflowJsConfigVerified::frame_sources(js_file_name, js_source);
+        let frame_files = WorkflowJsConfigVerified::frame_sources(js_files);
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -5771,6 +5768,9 @@ mod tests {
                 }
                 ScriptLocationResolved::Oci { .. } => {
                     unreachable!("fixture uses only inline/local scripts")
+                }
+                ScriptLocationResolved::Graph { .. } => {
+                    unreachable!("exec scripts cannot be module graphs")
                 }
             })
             .collect::<Vec<_>>();

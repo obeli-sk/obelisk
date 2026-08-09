@@ -24,7 +24,7 @@ use concepts::{
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
@@ -34,8 +34,8 @@ use val_json::wast_val::{WastVal, WastValWithType};
 /// Compiled JS workflow. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct WorkflowJsWorkerCompiled {
     inner: WorkflowWorkerCompiled,
-    js_source: String,
-    js_file_name: String,
+    js_entry_path: String,
+    js_files: BTreeMap<String, String>,
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
@@ -51,6 +51,24 @@ impl WorkflowJsWorkerCompiled {
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
+        Self::new_graph(
+            inner,
+            js_file_name.clone(),
+            BTreeMap::from([(js_file_name, js_source)]),
+            user_ffqn,
+            user_params,
+            user_return_type,
+        )
+    }
+
+    pub fn new_graph(
+        inner: WorkflowWorkerCompiled,
+        js_entry_path: String,
+        js_files: BTreeMap<String, String>,
+        user_ffqn: &FunctionFqn,
+        user_params: Vec<ParameterType>,
+        user_return_type: ReturnTypeExtendable,
+    ) -> Result<Self, utils::wasm_tools::DecodeError> {
         let user_wasm_component = WasmComponent::new_from_fn_signature(
             user_ffqn,
             &user_params,
@@ -60,8 +78,8 @@ impl WorkflowJsWorkerCompiled {
         )?;
         Ok(Self {
             inner,
-            js_source,
-            js_file_name,
+            js_entry_path,
+            js_files,
             user_params,
             user_return_type,
             user_wasm_component,
@@ -97,14 +115,20 @@ impl WorkflowJsWorkerCompiled {
         // Resolve JS imports against the function registry before linking.
         // This validates named imports and resolves namespace imports (`import *`).
         // Parse errors in JS source are caught here early rather than at runtime.
-        let resolved_imports = resolve_js_imports(&self.js_source, fn_registry.as_ref())
-            .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+        let mut resolved_imports = HashMap::new();
+        for source in self.js_files.values() {
+            let imports = resolve_js_imports(source, fn_registry.as_ref())
+                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+            for (specifier, functions) in imports {
+                resolved_imports.entry(specifier).or_insert(functions);
+            }
+        }
 
         let linked = self.inner.link(fn_registry)?;
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
-            js_source: self.js_source,
-            js_file_name: self.js_file_name,
+            js_entry_path: self.js_entry_path,
+            js_files: self.js_files,
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
@@ -115,8 +139,8 @@ impl WorkflowJsWorkerCompiled {
 
 pub struct WorkflowJsWorkerLinked {
     inner: super::workflow_worker::WorkflowWorkerLinked,
-    js_source: String,
-    js_file_name: String,
+    js_entry_path: String,
+    js_files: BTreeMap<String, String>,
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
@@ -142,8 +166,8 @@ impl WorkflowJsWorkerLinked {
         );
         WorkflowJsWorker {
             inner,
-            js_source: self.js_source,
-            js_file_name: self.js_file_name,
+            js_entry_path: self.js_entry_path,
+            js_files: self.js_files,
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_exports_noext,
@@ -154,8 +178,8 @@ impl WorkflowJsWorkerLinked {
 
 pub struct WorkflowJsWorker {
     inner: WorkflowWorker,
-    js_source: String,
-    js_file_name: String,
+    js_entry_path: String,
+    js_files: BTreeMap<String, String>,
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
@@ -186,8 +210,8 @@ impl WorkflowJsWorker {
             .map_err(concepts::storage::DbErrorWrite::from)?;
         let (ffqn, params) = Self::boa_invocation(
             log.params(),
-            self.js_source.clone(),
-            Some(self.js_file_name.clone()),
+            self.js_entry_path.clone(),
+            &self.js_files,
             &self.resolved_imports,
             true,
         );
@@ -226,8 +250,8 @@ impl WorkflowJsWorker {
 
     fn boa_invocation(
         params: &Params,
-        js_source: String,
-        js_file_name: Option<String>,
+        js_entry_path: String,
+        js_files: &BTreeMap<String, String>,
         resolved_imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
         backtrace_enabled: bool,
     ) -> (FunctionFqn, Params) {
@@ -264,16 +288,23 @@ impl WorkflowJsWorker {
             })
             .collect();
 
+        let files_json = js_files
+            .iter()
+            .map(|(path, source)| {
+                serde_json::Value::Array(vec![
+                    serde_json::Value::String(path.clone()),
+                    serde_json::Value::String(source.clone()),
+                ])
+            })
+            .collect();
+
         let ffqn =
             FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
         let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(js_source),
+            serde_json::Value::String(js_entry_path),
+            serde_json::Value::Array(files_json),
             serde_json::Value::Array(params_json_list),
-            if backtrace_enabled {
-                js_file_name.map_or(serde_json::Value::Null, serde_json::Value::String)
-            } else {
-                serde_json::Value::Null
-            },
+            serde_json::Value::Bool(backtrace_enabled),
             serde_json::Value::Array(imports_json),
         ]);
         let named_fn_import_ty = TypeWrapper::Record(IndexMap::from([
@@ -291,8 +322,12 @@ impl WorkflowJsWorker {
             boa_params,
             [
                 &TypeWrapper::String,
+                &TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
+                    TypeWrapper::String,
+                    TypeWrapper::String,
+                ])))),
                 &TypeWrapper::List(Box::new(TypeWrapper::String)),
-                &TypeWrapper::Option(Box::new(TypeWrapper::String)),
+                &TypeWrapper::Bool,
                 &TypeWrapper::List(Box::new(resolved_interface_imports_ty)),
             ]
             .into_iter(),
@@ -319,8 +354,8 @@ impl Worker for WorkflowJsWorker {
         );
         (ctx.ffqn, ctx.params) = Self::boa_invocation(
             &ctx.params,
-            self.js_source.clone(),
-            Some(self.js_file_name.clone()),
+            self.js_entry_path.clone(),
+            &self.js_files,
             &self.resolved_imports,
             false, // backtrace is disabled for regular run
         );
@@ -436,13 +471,13 @@ fn transform_to_outer_result(
                         version,
                     ))
                 }
-                "cannot_instantiate" => {
+                "cannot_instantiate" | "unresolved_import" => {
                     let reason = if let Some(payload) = payload
                         && let WastVal::String(s) = payload.as_ref()
                     {
                         s.clone()
                     } else {
-                        unreachable!("cannot-instantiate carries a string payload")
+                        unreachable!("runtime error carries a string payload")
                     };
                     Err((
                         FatalError::CannotInstantiate {
@@ -452,6 +487,13 @@ fn transform_to_outer_result(
                         version,
                     ))
                 }
+                "entry_not_found" => Err((
+                    FatalError::CannotInstantiate {
+                        reason: "JavaScript entry module was not found".to_string(),
+                        detail: None,
+                    },
+                    version,
+                )),
                 "execution_failed" => {
                     // This variant is returned when a workflow function fails,
                     // e.g., when joinNext returns an error from a child execution.
@@ -531,8 +573,8 @@ impl WorkflowJsWorker {
         let already_finished_result = log.as_finished_result();
         let (ffqn, params) = Self::boa_invocation(
             log.params(),
-            self.js_source.clone(),
-            Some(self.js_file_name.clone()),
+            self.js_entry_path.clone(),
+            &self.js_files,
             &self.resolved_imports,
             backtrace_capture,
         );
@@ -623,8 +665,8 @@ impl WorkflowJsWorker {
         let old_version = log.next_version.clone();
         let (ffqn, params) = Self::boa_invocation(
             log.params(),
-            self.js_source.clone(),
-            Some(self.js_file_name.clone()),
+            self.js_entry_path.clone(),
+            &self.js_files,
             &self.resolved_imports,
             backtrace_capture,
         );
@@ -810,7 +852,7 @@ mod tests {
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
             js_source,
-            String::new(),
+            "index.js".to_string(),
             &user_ffqn,
             default_js_params(),
             user_return_type,
@@ -871,7 +913,7 @@ mod tests {
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
             js_source.to_string(),
-            String::new(),
+            "index.js".to_string(),
             user_ffqn,
             default_js_params(),
             return_type,
@@ -944,7 +986,7 @@ mod tests {
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
             js_source.to_string(),
-            String::new(),
+            "index.js".to_string(),
             user_ffqn,
             default_js_params(),
             default_return_type(),
@@ -1280,7 +1322,7 @@ mod tests {
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
             js_source.to_string(),
-            String::new(),
+            "index.js".to_string(),
             user_ffqn,
             params,
             return_type,

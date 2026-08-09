@@ -3472,6 +3472,7 @@ dependencies = [
  "insta",
  "itertools 0.14.0",
  "jsonwebtoken",
+ "obeli-sk-boa-engine",
  "obeli-sk-concepts",
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
