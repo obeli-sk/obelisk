@@ -6,8 +6,8 @@ use crate::config::toml::{
 use anyhow::{Context, bail, ensure};
 use concepts::ContentDigest;
 use concepts::component_id::Digest;
-use concepts::storage::DeploymentFileRecord;
-use hashbrown::HashSet;
+use concepts::storage::{ComponentFileRole, DeploymentComponentFileRecord, DeploymentFileRecord};
+use hashbrown::{HashMap, HashSet};
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, InlineTable, Item, Value, value};
@@ -100,8 +100,18 @@ pub(crate) async fn prepare_deployment_manifest(
     collect_js_refs(&mut doc, "webhook_endpoint_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "activity_exec", deployment_dir, &mut files).await?;
 
+    let mut paths = HashMap::new();
+    for file in &files {
+        if let Some(previous) = paths.insert(file.path.clone(), file.digest.clone()) {
+            ensure!(
+                previous == file.digest,
+                "deployment path `{}` has conflicting content digests",
+                file.path
+            );
+        }
+    }
     let mut seen = HashSet::new();
-    files.retain(|file| seen.insert(file.digest.clone()));
+    files.retain(|file| seen.insert(file.path.clone()));
 
     let deployment_toml = doc.to_string();
     let digest = compute_manifest_digest(&deployment_toml);
@@ -128,6 +138,14 @@ pub(crate) struct DeploymentManifest {
     #[allow(dead_code)] // consumed by submit/storage paths in later phases
     pub(crate) deployment_toml: String,
     pub(crate) files: Vec<DeploymentFileRef>,
+    pub(crate) component_files: Vec<DeploymentComponentFileRef>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DeploymentComponentFileRef {
+    pub(crate) component_name: String,
+    pub(crate) path: String,
+    pub(crate) role: ComponentFileRole,
 }
 
 /// A deployment-owned file reference: a deployment-relative path and its required
@@ -192,7 +210,8 @@ impl DeploymentManifest {
         deployment_toml: &str,
         deployment_dir: &Path,
     ) -> anyhow::Result<Self> {
-        parse_manifest(deployment_toml, deployment_dir)?;
+        let validated = parse_manifest(deployment_toml, deployment_dir)?;
+        let names = resolved_component_names(&validated);
 
         let doc = deployment_toml
             .parse::<DocumentMut>()
@@ -201,28 +220,96 @@ impl DeploymentManifest {
         // Section order matches the historical record collection so digest
         // deduplication keeps the same first-seen path for colliding contents.
         let mut files = Vec::new();
-        collect_wasm_section(&doc, "activity_wasm", &mut files)?;
-        collect_wasm_section(&doc, "activity_stub", &mut files)?;
-        collect_wasm_section(&doc, "activity_external", &mut files)?;
-        collect_wasm_section(&doc, "workflow_wasm", &mut files)?;
-        collect_backtrace_section(&doc, "workflow_wasm", &mut files)?;
-        collect_wasm_section(&doc, "webhook_endpoint_wasm", &mut files)?;
-        collect_backtrace_section(&doc, "webhook_endpoint_wasm", &mut files)?;
-        collect_script_section(&doc, "activity_js", &mut files)?;
-        collect_script_section(&doc, "workflow_js", &mut files)?;
-        collect_script_section(&doc, "webhook_endpoint_js", &mut files)?;
-        collect_script_section(&doc, "activity_exec", &mut files)?;
+        let mut component_files = Vec::new();
+        collect_wasm_section(
+            &doc,
+            "activity_wasm",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_wasm_section(
+            &doc,
+            "activity_stub",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_wasm_section(
+            &doc,
+            "activity_external",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_wasm_section(
+            &doc,
+            "workflow_wasm",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_backtrace_section(
+            &doc,
+            "workflow_wasm",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_wasm_section(
+            &doc,
+            "webhook_endpoint_wasm",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_backtrace_section(
+            &doc,
+            "webhook_endpoint_wasm",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_script_section(
+            &doc,
+            "activity_js",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_script_section(
+            &doc,
+            "workflow_js",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_script_section(
+            &doc,
+            "webhook_endpoint_js",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
+        collect_script_section(
+            &doc,
+            "activity_exec",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
 
         debug_assert!(
             WASM_SECTIONS.len() + SCRIPT_SECTIONS.len() + BACKTRACE_SECTIONS.len() == 11,
             "section lists drifted from collection order"
         );
 
-        let mut seen = HashSet::new();
-        files.retain(|file| seen.insert(file.digest.clone()));
+        deduplicate_files_by_path(&mut files)?;
+        deduplicate_component_files(&mut component_files)?;
         Ok(Self {
             deployment_toml: deployment_toml.to_string(),
             files,
+            component_files,
         })
     }
 
@@ -238,6 +325,130 @@ impl DeploymentManifest {
             })
             .collect()
     }
+
+    pub(crate) fn component_file_records(&self) -> Vec<DeploymentComponentFileRecord> {
+        self.component_files
+            .iter()
+            .map(|file| DeploymentComponentFileRecord {
+                component_name: file.component_name.clone().into(),
+                path: file.path.clone(),
+                role: file.role,
+            })
+            .collect()
+    }
+}
+
+fn resolved_component_names(
+    deployment: &crate::config::toml::DeploymentTomlValidated,
+) -> HashMap<&'static str, Vec<String>> {
+    HashMap::from([
+        (
+            "activity_wasm",
+            deployment
+                .activities_wasm
+                .iter()
+                .map(|c| c.common.name.to_string())
+                .collect(),
+        ),
+        (
+            "activity_stub",
+            deployment
+                .activities_stub
+                .iter()
+                .map(|(_, n)| n.to_string())
+                .collect(),
+        ),
+        (
+            "activity_external",
+            deployment
+                .activities_external
+                .iter()
+                .map(|(_, n)| n.to_string())
+                .collect(),
+        ),
+        (
+            "activity_js",
+            deployment
+                .activities_js
+                .iter()
+                .map(|(_, n)| n.to_string())
+                .collect(),
+        ),
+        (
+            "activity_exec",
+            deployment
+                .activities_exec
+                .iter()
+                .map(|(_, n)| n.to_string())
+                .collect(),
+        ),
+        (
+            "workflow_wasm",
+            deployment
+                .workflows_wasm
+                .iter()
+                .map(|c| c.common.name.to_string())
+                .collect(),
+        ),
+        (
+            "workflow_js",
+            deployment
+                .workflows_js
+                .iter()
+                .map(|(_, n)| n.to_string())
+                .collect(),
+        ),
+        (
+            "webhook_endpoint_wasm",
+            deployment
+                .webhooks_wasm
+                .iter()
+                .map(|c| c.common.name.to_string())
+                .collect(),
+        ),
+        (
+            "webhook_endpoint_js",
+            deployment
+                .webhooks_js
+                .iter()
+                .map(|c| c.name.to_string())
+                .collect(),
+        ),
+    ])
+}
+
+fn deduplicate_files_by_path(files: &mut Vec<DeploymentFileRef>) -> anyhow::Result<()> {
+    let mut paths = HashMap::new();
+    for file in files.iter() {
+        if let Some(previous) = paths.insert(file.path.clone(), file.digest.clone()) {
+            ensure!(
+                previous == file.digest,
+                "deployment path `{}` has conflicting content digests",
+                file.path
+            );
+        }
+    }
+    let mut seen = HashSet::new();
+    files.retain(|file| seen.insert(file.path.clone()));
+    Ok(())
+}
+
+fn deduplicate_component_files(files: &mut Vec<DeploymentComponentFileRef>) -> anyhow::Result<()> {
+    let mut roles = HashMap::new();
+    for file in files.iter() {
+        let key = (file.component_name.clone(), file.path.clone());
+        if let Some(previous) = roles.insert(key, file.role) {
+            ensure!(
+                previous == file.role,
+                "component `{}` uses `{}` with conflicting roles",
+                file.component_name,
+                file.path
+            );
+        }
+    }
+    let mut seen = HashSet::new();
+    files.retain(|file| seen.insert((file.component_name.clone(), file.path.clone())));
+    Ok(())
 }
 
 fn parse_manifest(
@@ -258,18 +469,19 @@ fn component_name(table: &toml_edit::Table) -> Option<String> {
 fn collect_script_section(
     doc: &DocumentMut,
     section: &str,
+    names: &HashMap<&str, Vec<String>>,
     files: &mut Vec<DeploymentFileRef>,
+    component_files: &mut Vec<DeploymentComponentFileRef>,
 ) -> anyhow::Result<()> {
     let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
         return Ok(());
     };
 
-    for table in components {
-        let name = component_name(table);
+    for (index, table) in components.iter().enumerate() {
+        let name = names[section][index].clone();
         match classify_script_location(table)? {
             ManifestScriptLocation::DeploymentFile { path, digest } => {
-                let field_path =
-                    format!("{section}[name={}].location", name.as_deref().unwrap_or(""));
+                let field_path = format!("{section}[name={name}].location");
                 if let Some(module_files) = table.get("module_files").and_then(Item::as_table_like)
                 {
                     ensure!(
@@ -288,23 +500,41 @@ fn collect_script_section(
                                 format!("invalid digest for module `{module_path}`")
                             })?;
                         files.push(DeploymentFileRef {
-                            path: module_path,
+                            path: module_path.clone(),
                             digest: module_digest,
                             field: ManifestFieldRef {
                                 section: section.to_string(),
-                                component_name: name.clone(),
+                                component_name: Some(name.clone()),
                                 field_path: format!("{field_path}.module_files"),
                             },
+                        });
+                        component_files.push(DeploymentComponentFileRef {
+                            component_name: name.clone(),
+                            role: if module_path == path {
+                                ComponentFileRole::JsEntrypoint
+                            } else {
+                                ComponentFileRole::JsModule
+                            },
+                            path: module_path,
                         });
                     }
                 } else {
                     files.push(DeploymentFileRef {
-                        path,
+                        path: path.clone(),
                         digest,
                         field: ManifestFieldRef {
                             section: section.to_string(),
-                            component_name: name,
+                            component_name: Some(name.clone()),
                             field_path,
+                        },
+                    });
+                    component_files.push(DeploymentComponentFileRef {
+                        component_name: name,
+                        path,
+                        role: if section == "activity_exec" {
+                            ComponentFileRole::ExecProgram
+                        } else {
+                            ComponentFileRole::JsEntrypoint
                         },
                     });
                 }
@@ -319,29 +549,35 @@ fn collect_script_section(
 fn collect_wasm_section(
     doc: &DocumentMut,
     section: &str,
+    names: &HashMap<&str, Vec<String>>,
     files: &mut Vec<DeploymentFileRef>,
+    component_files: &mut Vec<DeploymentComponentFileRef>,
 ) -> anyhow::Result<()> {
     let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
         return Ok(());
     };
 
-    for table in components {
-        let name = component_name(table);
+    for (index, table) in components.iter().enumerate() {
+        let name = names[section][index].clone();
         let Some(raw_location) = table.get("location").and_then(Item::as_str) else {
             continue;
         };
         match classify_wasm_location(raw_location, table.get("content_digest"))? {
             ManifestWasmLocation::DeploymentFile { path, digest } => {
-                let field_path =
-                    format!("{section}[name={}].location", name.as_deref().unwrap_or(""));
+                let field_path = format!("{section}[name={name}].location");
                 files.push(DeploymentFileRef {
-                    path,
+                    path: path.clone(),
                     digest,
                     field: ManifestFieldRef {
                         section: section.to_string(),
-                        component_name: name,
+                        component_name: Some(name.clone()),
                         field_path,
                     },
+                });
+                component_files.push(DeploymentComponentFileRef {
+                    component_name: name,
+                    path,
+                    role: ComponentFileRole::WasmComponent,
                 });
             }
             ManifestWasmLocation::Oci => {}
@@ -354,14 +590,16 @@ fn collect_wasm_section(
 fn collect_backtrace_section(
     doc: &DocumentMut,
     section: &str,
+    names: &HashMap<&str, Vec<String>>,
     files: &mut Vec<DeploymentFileRef>,
+    component_files: &mut Vec<DeploymentComponentFileRef>,
 ) -> anyhow::Result<()> {
     let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
         return Ok(());
     };
 
-    for table in components {
-        let name = component_name(table);
+    for (index, table) in components.iter().enumerate() {
+        let name = names[section][index].clone();
         let Some(sources) = table
             .get("backtrace")
             .and_then(Item::as_table_like)
@@ -385,16 +623,18 @@ fn collect_backtrace_section(
                 &path,
             )?;
             files.push(DeploymentFileRef {
-                path,
+                path: path.clone(),
                 digest,
                 field: ManifestFieldRef {
                     section: format!("{section}.backtrace.sources"),
-                    component_name: name.clone(),
-                    field_path: format!(
-                        "{section}[name={}].backtrace.sources[{key}]",
-                        name.as_deref().unwrap_or("")
-                    ),
+                    component_name: Some(name.clone()),
+                    field_path: format!("{section}[name={name}].backtrace.sources[{key}]"),
                 },
+            });
+            component_files.push(DeploymentComponentFileRef {
+                component_name: name.clone(),
+                path,
+                role: ComponentFileRole::BacktraceSource,
             });
         }
     }
@@ -860,6 +1100,41 @@ ffqn = "ns:pkg/ifc.fn"
     }
 
     #[tokio::test]
+    async fn prepare_preserves_distinct_paths_with_identical_content() {
+        let dir = tempfile::tempdir().unwrap();
+        for component in ["a", "b"] {
+            let component_dir = dir.path().join(component);
+            tokio::fs::create_dir_all(&component_dir).await.unwrap();
+            tokio::fs::write(component_dir.join("lib.js"), "export default 1;")
+                .await
+                .unwrap();
+        }
+        let manifest = r#"
+[[activity_js]]
+name = "a"
+location = "a/lib.js"
+ffqn = "ns:pkg/ifc.a"
+
+[[activity_js]]
+name = "b"
+location = "b/lib.js"
+ffqn = "ns:pkg/ifc.b"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+        assert_eq!(prepared.files.len(), 2);
+        assert_eq!(prepared.files[0].digest, prepared.files[1].digest);
+        assert_ne!(prepared.files[0].path, prepared.files[1].path);
+
+        let classified =
+            DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
+        assert_eq!(classified.files.len(), 2);
+        assert_eq!(classified.component_files.len(), 2);
+    }
+
+    #[tokio::test]
     async fn prepare_collects_js_module_graph() {
         let dir = tempfile::tempdir().unwrap();
         tokio::fs::create_dir_all(dir.path().join("src"))
@@ -890,6 +1165,15 @@ ffqn = "ns:pkg/ifc.fn"
         let classified =
             DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
         assert_eq!(classified.files.len(), 2);
+        assert_eq!(classified.component_files.len(), 2);
+        assert_eq!(
+            classified.component_files[0].role,
+            ComponentFileRole::JsEntrypoint
+        );
+        assert_eq!(
+            classified.component_files[1].role,
+            ComponentFileRole::JsModule
+        );
 
         let provider = DiskProvider {
             deployment_dir: dir.path().to_path_buf(),
@@ -925,6 +1209,14 @@ location = "components/a.wasm"
 
         assert_eq!(prepared.files.len(), 1);
         assert_eq!(prepared.files[0].path, "components/a.wasm");
+        let classified =
+            DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
+        assert_eq!(classified.component_files.len(), 1);
+        assert_eq!(classified.component_files[0].component_name, "a");
+        assert_eq!(
+            classified.component_files[0].role,
+            ComponentFileRole::WasmComponent
+        );
         assert_eq!(prepared.files[0].bytes, b"\0asm");
         assert!(
             prepared

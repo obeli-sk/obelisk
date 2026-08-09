@@ -10,10 +10,11 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
-        ComponentMetadataRecord, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
+        ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
+        ComponentUpgradeReason, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
+        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
@@ -456,6 +457,7 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
         obelisk_version: row.get("obelisk_version")?,
         created_by: row.get("created_by")?,
         files: Vec::new(),
+        component_files: Vec::new(),
     })
 }
 
@@ -498,6 +500,7 @@ fn deployment_component_detail_from_row(
         imports,
         exports,
         wit,
+        files: Vec::new(),
     })
 }
 
@@ -3670,6 +3673,26 @@ impl SqlitePool {
         Ok(())
     }
 
+    fn insert_deployment_component_files_tx(
+        tx: &Transaction,
+        deployment_id: DeploymentId,
+        records: &[DeploymentComponentFileRecord],
+    ) -> Result<(), DbErrorWrite> {
+        let mut stmt = tx
+            .prepare("INSERT INTO t_deployment_component_file (deployment_id, component_name, path, role) VALUES (:deployment_id, :component_name, :path, :role)")
+            .map_err(RusqliteError::from)?;
+        for record in records {
+            stmt.execute(named_params! {
+                ":deployment_id": deployment_id.to_string(),
+                ":component_name": record.component_name.to_string(),
+                ":path": record.path,
+                ":role": record.role.to_string(),
+            })
+            .map_err(RusqliteError::from)?;
+        }
+        Ok(())
+    }
+
     fn compute_file_digest(content: &[u8]) -> ContentDigest {
         let hash: [u8; 32] = Sha256::digest(content).into();
         ContentDigest(Digest(hash))
@@ -4752,7 +4775,7 @@ impl DbExternalApi for SqlitePool {
                      WHERE dc.deployment_id = :deployment_id \
                      ORDER BY dc.component_type, dc.component_name",
                 )?;
-                let rows = stmt
+                let mut rows = stmt
                     .query_map(
                         named_params! { ":deployment_id": deployment_id.to_string() },
                         |row| {
@@ -4762,6 +4785,35 @@ impl DbExternalApi for SqlitePool {
                         },
                     )?
                     .collect::<Result<Vec<_>, _>>()?;
+                let mut file_stmt = tx.prepare(
+                    "SELECT dcf.path, df.digest, f.size, dcf.role FROM t_deployment_component_file dcf \
+                     JOIN t_deployment_file df ON df.deployment_id = dcf.deployment_id AND df.path = dcf.path \
+                     JOIN t_file f ON f.digest = df.digest \
+                     WHERE dcf.deployment_id = :deployment_id AND dcf.component_name = :component_name ORDER BY dcf.path",
+                )?;
+                for component in &mut rows {
+                    component.files = file_stmt
+                        .query_map(
+                            named_params! {
+                                ":deployment_id": deployment_id.to_string(),
+                                ":component_name": component.component_id.name.to_string(),
+                            },
+                            |row| {
+                                let role = row.get::<_, String>("role")?.parse::<ComponentFileRole>()
+                                    .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(err.to_string()))))?;
+                                Ok(DeploymentComponentFileDetail {
+                                    file: DeploymentFileRecord {
+                                        path: row.get("path")?,
+                                        digest: row.get("digest")?,
+                                        size: u64::try_from(row.get::<_, i64>("size")?)
+                                            .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?,
+                                    },
+                                    role,
+                                })
+                            },
+                        )?
+                        .collect::<Result<Vec<_>, _>>()?;
+                }
                 Ok(rows)
             },
             TxType::Other,
@@ -5001,7 +5053,13 @@ impl DbExternalApi for SqlitePool {
                 // Parent row first so the t_deployment_component FK is satisfied within the tx.
                 Self::insert_deployment_tx(tx, &record)?;
                 Self::upsert_component_metadata_tx(tx, &component_metadata)?;
-                Self::insert_deployment_components_tx(tx, deployment_id, &deployment_components)
+                Self::insert_deployment_components_tx(tx, deployment_id, &deployment_components)?;
+                Self::insert_deployment_component_files_tx(
+                    tx,
+                    deployment_id,
+                    &record.component_files,
+                )?;
+                Ok(())
             },
             TxType::MultipleWrites,
             "insert_deployment_with_components",

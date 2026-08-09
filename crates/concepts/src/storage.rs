@@ -1716,6 +1716,7 @@ pub struct DeploymentRecord {
     pub obelisk_version: String,
     pub created_by: Option<String>,
     pub files: Vec<DeploymentFileRecord>,
+    pub component_files: Vec<DeploymentComponentFileRecord>,
 }
 
 impl DeploymentRecord {
@@ -1733,6 +1734,40 @@ pub struct DeploymentFileRecord {
     pub path: String,
     pub digest: ContentDigest,
     pub size: u64,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum ComponentFileRole {
+    WasmComponent,
+    ExecProgram,
+    JsEntrypoint,
+    JsModule,
+    BacktraceSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeploymentComponentFileRecord {
+    pub component_name: StrVariant,
+    pub path: String,
+    pub role: ComponentFileRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeploymentComponentFileDetail {
+    pub file: DeploymentFileRecord,
+    pub role: ComponentFileRole,
 }
 
 #[derive(Debug, Clone)]
@@ -1759,6 +1794,7 @@ pub struct DeploymentComponentDetail {
     pub imports: Vec<PersistedFunctionMetadata>,
     pub exports: Vec<PersistedFunctionMetadata>,
     pub wit: String,
+    pub files: Vec<DeploymentComponentFileDetail>,
 }
 
 #[derive(

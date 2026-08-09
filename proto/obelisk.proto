@@ -160,6 +160,21 @@ message Component {
     ComponentId component_id = 1;
     repeated FunctionDetail exports = 6; // Functions are sorted by their interface name
     repeated FunctionDetail imports = 7; // Functions are sorted by their interface name
+    repeated ComponentFileRef files = 8;
+}
+
+enum ComponentFileRole {
+    COMPONENT_FILE_ROLE_UNSPECIFIED = 0;
+    COMPONENT_FILE_ROLE_WASM_COMPONENT = 1;
+    COMPONENT_FILE_ROLE_EXEC_PROGRAM = 2;
+    COMPONENT_FILE_ROLE_JS_ENTRYPOINT = 3;
+    COMPONENT_FILE_ROLE_JS_MODULE = 4;
+    COMPONENT_FILE_ROLE_BACKTRACE_SOURCE = 5;
+}
+
+message ComponentFileRef {
+    FileRef file = 1;
+    ComponentFileRole role = 2;
 }
 
 enum ComponentType {

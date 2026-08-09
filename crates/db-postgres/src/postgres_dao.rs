@@ -10,10 +10,11 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
-        ComponentMetadataRecord, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeploymentComponentDetail,
+        ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
+        ComponentUpgradeReason, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
+        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
         ExecutionListPagination, ExecutionRequest, ExecutionWithState,
@@ -346,6 +347,7 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         obelisk_version: get(row, "obelisk_version")?,
         created_by: get(row, "created_by")?,
         files: Vec::new(),
+        component_files: Vec::new(),
     })
 }
 
@@ -482,6 +484,20 @@ async fn insert_deployment_components_tx(
     Ok(())
 }
 
+async fn insert_deployment_component_files_tx(
+    tx: &Transaction<'_>,
+    deployment_id: DeploymentId,
+    records: &[DeploymentComponentFileRecord],
+) -> Result<(), DbErrorWrite> {
+    for record in records {
+        tx.execute(
+            "INSERT INTO t_deployment_component_file (deployment_id, component_name, path, role) VALUES ($1, $2, $3, $4)",
+            &[&deployment_id.to_string(), &record.component_name.to_string(), &record.path, &record.role.to_string()],
+        ).await?;
+    }
+    Ok(())
+}
+
 async fn deployment_record_with_files_tx(
     tx: &Transaction<'_>,
     mut record: DeploymentRecord,
@@ -512,6 +528,7 @@ fn deployment_component_detail_from_pg_row(
         imports,
         exports,
         wit,
+        files: Vec::new(),
     })
 }
 
@@ -4874,10 +4891,35 @@ impl DbExternalApi for PostgresConnection {
                 &[&deployment_id.to_string()],
             )
             .await?;
-        tx.commit().await?;
-        rows.iter()
+        let mut components = rows
+            .iter()
             .map(deployment_component_detail_from_pg_row)
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        for component in &mut components {
+            let file_rows = tx
+                .query(
+                    "SELECT dcf.path, df.digest, f.size, dcf.role FROM t_deployment_component_file dcf \
+                     JOIN t_deployment_file df ON df.deployment_id = dcf.deployment_id AND df.path = dcf.path \
+                     JOIN t_file f ON f.digest = df.digest \
+                     WHERE dcf.deployment_id = $1 AND dcf.component_name = $2 ORDER BY dcf.path",
+                    &[&deployment_id.to_string(), &component.component_id.name.to_string()],
+                )
+                .await?;
+            component.files = file_rows
+                .iter()
+                .map(|row| {
+                    let role = get::<String, _>(row, "role")?
+                        .parse::<ComponentFileRole>()
+                        .map_err(|err| DbErrorRead::Generic(consistency_db_err(err.to_string())))?;
+                    Ok(DeploymentComponentFileDetail {
+                        file: deployment_file_record_from_pg_row(row)?,
+                        role,
+                    })
+                })
+                .collect::<Result<Vec<_>, DbErrorRead>>()?;
+        }
+        tx.commit().await?;
+        Ok(components)
     }
 
     #[instrument(skip_all)]
@@ -5077,6 +5119,7 @@ impl DbExternalApi for PostgresConnection {
         insert_deployment_tx(&tx, &record).await?;
         upsert_component_metadata_tx(&tx, &component_metadata).await?;
         insert_deployment_components_tx(&tx, deployment_id, &deployment_components).await?;
+        insert_deployment_component_files_tx(&tx, deployment_id, &record.component_files).await?;
         tx.commit().await?;
         Ok(())
     }

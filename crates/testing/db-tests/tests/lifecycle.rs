@@ -4821,6 +4821,7 @@ async fn deployment_insert_and_get(database: Database) {
         obelisk_version: "0.0.0-test".to_string(),
         created_by: Some("test".to_string()),
         files: Vec::new(),
+        component_files: Vec::new(),
     };
     api_conn.insert_deployment(record).await.unwrap();
 
@@ -4873,6 +4874,7 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
             files: vec![file.clone()],
+            component_files: Vec::new(),
         })
         .await
         .unwrap();
@@ -4956,6 +4958,7 @@ async fn deployment_activate(database: Database) {
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
             files: Vec::new(),
+            component_files: Vec::new(),
         })
         .await
         .unwrap();
@@ -4998,6 +5001,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
             files: Vec::new(),
+            component_files: Vec::new(),
         })
         .await
         .unwrap();
@@ -5017,6 +5021,7 @@ async fn deployment_only_one_active_allowed(database: Database) {
             obelisk_version: "0.0.0-test".to_string(),
             created_by: None,
             files: Vec::new(),
+            component_files: Vec::new(),
         })
         .await
         .unwrap();
@@ -5059,6 +5064,7 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
                 files: Vec::new(),
+                component_files: Vec::new(),
             })
             .await
             .unwrap();
@@ -5127,6 +5133,7 @@ async fn deployment_list(database: Database) {
                 obelisk_version: "0.0.0-test".to_string(),
                 created_by: None,
                 files: Vec::new(),
+                component_files: Vec::new(),
             })
             .await
             .unwrap();
