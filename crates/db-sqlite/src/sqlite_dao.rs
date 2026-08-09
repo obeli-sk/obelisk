@@ -3641,7 +3641,7 @@ impl SqlitePool {
                 ":imports_json": imports_json,
                 ":exports_json": exports_json,
                 ":wit": record.wit.clone(),
-                ":wit_origin": record.wit_origin.clone(),
+                ":wit_origin": record.wit_origin as i16,
             })
             .map_err(RusqliteError::from)?;
         }

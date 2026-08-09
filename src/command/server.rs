@@ -2274,7 +2274,7 @@ fn build_component_metadata_records(
             .into_iter()
             .map(Into::into)
             .collect();
-        let wit_origin = component.wit_origin.to_string();
+        let wit_origin = component.wit_origin;
         match metadata_by_digest.entry(component_digest.clone()) {
             hashbrown::hash_map::Entry::Occupied(occupied) => {
                 let existing = occupied.get();
