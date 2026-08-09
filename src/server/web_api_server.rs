@@ -2625,7 +2625,10 @@ pub(crate) mod components {
         ComponentId, ComponentType, FunctionExtension, FunctionMetadata, ParameterType,
         component_id::ComponentDigest,
         prefixed_ulid::DeploymentId,
-        storage::{DeploymentComponentDetail, PersistedFunctionMetadata, PersistedParameterType},
+        storage::{
+            ComponentFileRole, DeploymentComponentDetail, DeploymentComponentFileDetail,
+            PersistedFunctionMetadata, PersistedParameterType,
+        },
     };
     use itertools::Itertools;
     use std::fmt::{Debug, Write as _};
@@ -2803,6 +2806,7 @@ pub(crate) mod components {
 
                 ComponentConfig {
                     component_id: c.component_id,
+                    files: c.files.into_iter().map(Into::into).collect(),
                     imports: if params.imports {
                         Some(
                             c.imports
@@ -2841,6 +2845,17 @@ pub(crate) mod components {
                             writeln!(output, "  {func}").expect("writing to string");
                         }
                     }
+                    if !component.files.is_empty() {
+                        writeln!(output, " files:").expect("writing to string");
+                        for entry in component.files {
+                            writeln!(
+                                output,
+                                "  {} {} {} {}",
+                                entry.file.path, entry.file.digest, entry.file.size, entry.role
+                            )
+                            .expect("writing to string");
+                        }
+                    }
                 }
                 output.into_response()
             }
@@ -2853,12 +2868,41 @@ pub(crate) mod components {
         /// Component identifier
         #[schema(value_type = Object)]
         component_id: ComponentId,
+        /// Deployment-owned files used by this component.
+        files: Vec<ComponentFileRef>,
         /// Imported functions
         #[serde(skip_serializing_if = "Option::is_none")]
         imports: Option<Vec<FunctionMetadataLite>>,
         /// Exported functions
         #[serde(skip_serializing_if = "Option::is_none")]
         exports: Option<Vec<FunctionMetadataLite>>,
+    }
+
+    #[derive(Serialize, ToSchema)]
+    pub(crate) struct ComponentFileRef {
+        file: ComponentFile,
+        #[schema(value_type = String)]
+        role: ComponentFileRole,
+    }
+
+    #[derive(Serialize, ToSchema)]
+    pub(crate) struct ComponentFile {
+        path: String,
+        digest: String,
+        size: u64,
+    }
+
+    impl From<DeploymentComponentFileDetail> for ComponentFileRef {
+        fn from(value: DeploymentComponentFileDetail) -> Self {
+            Self {
+                file: ComponentFile {
+                    path: value.file.path,
+                    digest: value.file.digest.to_string(),
+                    size: value.file.size,
+                },
+                role: value.role,
+            }
+        }
     }
 
     /// Lightweight function metadata

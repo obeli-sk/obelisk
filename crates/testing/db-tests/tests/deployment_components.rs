@@ -1,7 +1,8 @@
 use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
-    ComponentMetadataRecord, DbExternalApi, DbPoolCloseable, DeploymentComponentRecord,
+    ComponentFileRole, ComponentMetadataRecord, DbExternalApi, DbPoolCloseable,
+    DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentFileRecord,
     DeploymentRecord, DeploymentStatus, PersistedFunctionMetadata,
 };
 use concepts::time::ClockFn;
@@ -39,6 +40,7 @@ fn mk_deployment_record(
         obelisk_version: "0.0.0-test".to_string(),
         created_by: None,
         files: Vec::new(),
+        component_files: Vec::new(),
     }
 }
 
@@ -138,6 +140,7 @@ async fn deployment_components_roundtrip(database: Database) {
     assert_eq!(1, components[0].imports.len());
     assert_eq!(1, components[0].exports.len());
     assert_eq!("package testing:pkg;", components[0].wit);
+    assert!(components[0].files.is_empty());
 
     assert_eq!(
         ComponentType::Workflow,
@@ -149,6 +152,76 @@ async fn deployment_components_roundtrip(database: Database) {
     assert_eq!(1, components[1].exports.len());
     assert_eq!("package testing:pkg-b;", components[1].wit);
 
+    drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_component_files_roundtrip(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let cas = db_pool.cas_conn().await.unwrap();
+    let deployment_id = DeploymentId::generate();
+    let component_digest: ComponentDigest =
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+    let file_digest = cas.write_blob(b"same bytes").await.unwrap();
+    let mut deployment = mk_deployment_record(deployment_id, sim_clock.now());
+    deployment.files = vec![
+        DeploymentFileRecord {
+            path: "a/lib.js".to_string(),
+            digest: file_digest.clone(),
+            size: 0,
+        },
+        DeploymentFileRecord {
+            path: "b/lib.js".to_string(),
+            digest: file_digest.clone(),
+            size: 0,
+        },
+    ];
+    deployment.component_files = vec![DeploymentComponentFileRecord {
+        component_name: "a".into(),
+        path: "a/lib.js".to_string(),
+        role: ComponentFileRole::JsEntrypoint,
+    }];
+
+    api_conn
+        .insert_deployment_with_components(
+            deployment,
+            vec![ComponentMetadataRecord {
+                component_digest: component_digest.clone(),
+                imports: Vec::new(),
+                exports: Vec::new(),
+                wit: "package testing:pkg;".to_string(),
+                wit_origin: "synthesized".to_string(),
+            }],
+            vec![DeploymentComponentRecord {
+                deployment_id,
+                component_name: "a".into(),
+                component_digest,
+                component_type: ComponentType::Activity,
+            }],
+        )
+        .await
+        .unwrap();
+
+    let deployment_files = api_conn.list_deployment_files(deployment_id).await.unwrap();
+    assert_eq!(deployment_files.len(), 2);
+    assert_eq!(deployment_files[0].digest, deployment_files[1].digest);
+    let components = api_conn
+        .list_deployment_components(deployment_id)
+        .await
+        .unwrap();
+    assert_eq!(components[0].files.len(), 1);
+    assert_eq!(components[0].files[0].file, deployment_files[0]);
+    assert_eq!(components[0].files[0].role, ComponentFileRole::JsEntrypoint);
+
+    drop(cas);
     drop(api_conn);
     db_close.close().await;
 }

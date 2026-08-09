@@ -1553,6 +1553,34 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
                 component_id: Some(component.component_id.clone().into()),
                 exports: list_fns(filtered_exports(&component, request.extensions)),
                 imports: list_fns(component.imports),
+                files: component
+                    .files
+                    .into_iter()
+                    .map(|entry| grpc_gen::ComponentFileRef {
+                        file: Some(grpc_gen::FileRef {
+                            path: entry.file.path,
+                            digest: entry.file.digest.to_string(),
+                            size: entry.file.size,
+                        }),
+                        role: match entry.role {
+                            concepts::storage::ComponentFileRole::WasmComponent => {
+                                grpc_gen::ComponentFileRole::WasmComponent as i32
+                            }
+                            concepts::storage::ComponentFileRole::ExecProgram => {
+                                grpc_gen::ComponentFileRole::ExecProgram as i32
+                            }
+                            concepts::storage::ComponentFileRole::JsEntrypoint => {
+                                grpc_gen::ComponentFileRole::JsEntrypoint as i32
+                            }
+                            concepts::storage::ComponentFileRole::JsModule => {
+                                grpc_gen::ComponentFileRole::JsModule as i32
+                            }
+                            concepts::storage::ComponentFileRole::BacktraceSource => {
+                                grpc_gen::ComponentFileRole::BacktraceSource as i32
+                            }
+                        },
+                    })
+                    .collect(),
             };
             grpc_components.push(res_component);
         }

@@ -1927,7 +1927,8 @@
         "type": "object",
         "description": "Component configuration with optional imports/exports",
         "required": [
-          "component_id"
+          "component_id",
+          "files"
         ],
         "properties": {
           "component_id": {
@@ -1944,6 +1945,13 @@
             },
             "description": "Exported functions"
           },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComponentFileRef"
+            },
+            "description": "Deployment-owned files used by this component."
+          },
           "imports": {
             "type": [
               "array",
@@ -1953,6 +1961,42 @@
               "$ref": "#/components/schemas/FunctionMetadataLite"
             },
             "description": "Imported functions"
+          }
+        }
+      },
+      "ComponentFile": {
+        "type": "object",
+        "required": [
+          "path",
+          "digest",
+          "size"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ComponentFileRef": {
+        "type": "object",
+        "required": [
+          "file",
+          "role"
+        ],
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/ComponentFile"
+          },
+          "role": {
+            "type": "string"
           }
         }
       },

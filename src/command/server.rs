@@ -1553,6 +1553,9 @@ async fn prepare_new_deployment_record(
 
     let now = Utc::now();
     let digest = DeploymentRecord::compute_digest(&deployment_toml);
+    let component_files =
+        DeploymentManifest::try_from_toml(&deployment_toml, &cas_deployment_dir())?
+            .component_file_records();
     Ok(DeploymentRecord {
         deployment_id,
         description,
@@ -1564,6 +1567,7 @@ async fn prepare_new_deployment_record(
         obelisk_version: PKG_VERSION.to_string(),
         created_by: Some("server".to_string()),
         files: file_records,
+        component_files,
     })
 }
 
@@ -2642,6 +2646,7 @@ pub(crate) async fn submit_deployment(
             created_by,
             deployment_toml: deployment_toml.to_string(),
             files: manifest.file_records(),
+            component_files: manifest.component_file_records(),
         },
         component_metadata,
         deployment_components,
