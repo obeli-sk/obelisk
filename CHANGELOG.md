@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(cli)* `deployment get` omits generated content digests and JavaScript module metadata from the
+  exported TOML by default. Pass `--include-generated-metadata` to retain the stored server view.
+
 ## [0.41.0](https://github.com/obeli-sk/obelisk/compare/v0.40.0...v0.41.0)
 
 This release adds operator-controlled security boundaries for secrets and outbound HTTP, together

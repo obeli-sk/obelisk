@@ -127,6 +127,67 @@ pub(crate) fn compute_manifest_digest(deployment_toml: &str) -> ContentDigest {
     ContentDigest(Digest(hash))
 }
 
+pub(crate) fn strip_generated_deployment_metadata(deployment_toml: &str) -> anyhow::Result<String> {
+    let mut doc = deployment_toml
+        .parse::<DocumentMut>()
+        .context("cannot parse stored deployment manifest as TOML")?;
+
+    for section in WASM_SECTIONS.iter().chain(SCRIPT_SECTIONS) {
+        let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+            continue;
+        };
+        for table in components.iter_mut() {
+            let is_deployment_owned = table
+                .get("location")
+                .and_then(Item::as_str)
+                .map(deployment_owned_path)
+                .transpose()?
+                .flatten()
+                .is_some();
+            if is_deployment_owned {
+                table.remove("content_digest");
+            }
+        }
+    }
+
+    for section in ["activity_js", "workflow_js", "webhook_endpoint_js"] {
+        let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+            continue;
+        };
+        for table in components.iter_mut() {
+            table.remove("module_files");
+        }
+    }
+
+    for section in BACKTRACE_SECTIONS {
+        let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+            continue;
+        };
+        for table in components.iter_mut() {
+            let Some(sources) = table
+                .get_mut("backtrace")
+                .and_then(Item::as_table_like_mut)
+                .and_then(|backtrace| backtrace.get_mut("sources"))
+                .and_then(Item::as_table_like_mut)
+            else {
+                continue;
+            };
+            for (_, source) in sources.iter_mut() {
+                let Some(path) = backtrace_source_path(source) else {
+                    continue;
+                };
+                if deployment_owned_path(&path)?.is_some()
+                    && let Some(table) = source.as_table_like_mut()
+                {
+                    table.remove("content_digest");
+                }
+            }
+        }
+    }
+
+    Ok(doc.to_string())
+}
+
 /// A validated, digest-bearing projection of a stored deployment manifest.
 ///
 /// This stage carries no file bytes. It proves the manifest is structurally valid
@@ -1189,6 +1250,38 @@ ffqn = "ns:pkg/ifc.fn"
     }
 
     #[tokio::test]
+    async fn export_strips_generated_metadata_and_preserves_formatting() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            dir.path().join("src/index.js"),
+            "import { value } from './lib.js'; export default () => value;",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(dir.path().join("src/lib.js"), "export const value = 42;")
+            .await
+            .unwrap();
+        let manifest = r#"# Keep this comment and layout.
+[[activity_js]]
+name = "a"
+location = "src/index.js"
+ffqn = "ns:pkg/ifc.fn"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+        assert!(prepared.deployment_toml.contains("module_files"));
+        assert!(prepared.deployment_toml.contains("content_digest"));
+
+        let exported = strip_generated_deployment_metadata(&prepared.deployment_toml).unwrap();
+        assert_eq!(exported, manifest);
+    }
+
+    #[tokio::test]
     async fn prepare_fills_relative_wasm_digest_and_collects_blob() {
         let dir = tempfile::tempdir().unwrap();
         tokio::fs::create_dir_all(dir.path().join("components"))
@@ -1303,6 +1396,65 @@ location = "components/w.wasm"
                 .deployment_toml
                 .contains("content_digest = \"sha256:")
         );
+    }
+
+    #[tokio::test]
+    async fn export_strips_local_backtrace_digest_but_keeps_oci_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("components"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(dir.path().join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("components/w.wasm"), b"\0asm")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("src/lib.rs"), "fn workflow() {}")
+            .await
+            .unwrap();
+        let oci_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        let manifest = format!(
+            r#"
+[[workflow_wasm]]
+name = "local"
+location = "components/w.wasm"
+
+[workflow_wasm.backtrace.sources]
+".../src/lib.rs" = {{ path = "src/lib.rs" }}
+
+[[workflow_js]]
+name = "oci"
+location = "oci://docker.io/library/example:latest"
+content_digest = "{oci_digest}"
+ffqn = "ns:pkg/ifc.oci"
+"#
+        );
+
+        let prepared = prepare_deployment_manifest(&manifest, dir.path())
+            .await
+            .unwrap();
+        let exported = strip_generated_deployment_metadata(&prepared.deployment_toml).unwrap();
+        let doc = exported.parse::<DocumentMut>().unwrap();
+        let local = doc["workflow_wasm"]
+            .as_array_of_tables()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(!local.contains_key("content_digest"));
+        let source = &local["backtrace"]["sources"][".../src/lib.rs"];
+        assert!(
+            !source
+                .as_table_like()
+                .unwrap()
+                .contains_key("content_digest")
+        );
+        let oci = doc["workflow_js"]
+            .as_array_of_tables()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert_eq!(oci["content_digest"].as_str(), Some(oci_digest));
     }
 
     #[tokio::test]
