@@ -452,7 +452,7 @@ async fn upsert_component_metadata_tx(
                 &Json(&record.imports),
                 &Json(&record.exports),
                 &record.wit,
-                &record.wit_origin,
+                &(record.wit_origin as i16),
             ],
         )
         .await?;

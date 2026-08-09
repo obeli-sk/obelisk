@@ -86,6 +86,20 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 
+// backcompat: accept component digest overrides until 0.42.
+fn warn_deprecated_component_digest_override(
+    component_name: &str,
+    component_digest: Option<&ComponentDigest>,
+) {
+    if let Some(component_digest) = component_digest {
+        warn!(
+            component_name,
+            %component_digest,
+            "`component_digest` override is deprecated and will be removed in 0.42"
+        );
+    }
+}
+
 #[derive(Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DeploymentToml {
@@ -1354,6 +1368,10 @@ impl ActivityExternalComponentConfigResolvedExt for ActivityExternalComponentCon
                 let expected_content_digest = file.content_digest;
                 let (common, content_digest, wasm_path) =
                     file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
+                warn_deprecated_component_digest_override(
+                    common.name.as_str(),
+                    component_digest_override.as_ref(),
+                );
                 verify_fetched_content_digest(
                     &content_digest,
                     expected_content_digest.as_ref(),
@@ -1493,6 +1511,10 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             expected_content_digest.as_ref(),
             &common.location.to_string(),
         )?;
+        warn_deprecated_component_digest_override(
+            common.name.as_str(),
+            self.component_digest.as_ref(),
+        );
 
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
@@ -1561,8 +1583,8 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
     pub(crate) module_files: BTreeMap<String, ContentDigest>,
-    /// Override the auto-computed component digest used for locking.
-    /// If set, this value is used instead of the digest derived from the JS source, ffqn, and params.
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) component_digest: Option<ComponentDigest>,
@@ -1647,7 +1669,8 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// WIT return type. Defaults to `result`.
     #[serde(default)]
     pub(crate) return_type: Option<String>,
-    /// Override the auto-computed component digest used for locking.
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) component_digest: Option<ComponentDigest>,
@@ -1816,6 +1839,10 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                  `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
             ),
         };
+        warn_deprecated_component_digest_override(
+            self.name.as_str(),
+            self.component_digest.as_ref(),
+        );
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_exec:");
@@ -1918,8 +1945,8 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
     pub(crate) module_files: BTreeMap<String, ContentDigest>,
-    /// Override the auto-computed component digest used for locking.
-    /// If set, this value is used instead of the digest derived from the JS source, ffqn, and params.
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) component_digest: Option<ComponentDigest>,
@@ -1979,8 +2006,8 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
-    /// Override the auto-computed component digest used for locking.
-    /// If set, this value is used instead of the content digest of the WASM file.
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) component_digest: Option<ComponentDigest>,
@@ -2258,6 +2285,10 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
                  `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
             ),
         };
+        warn_deprecated_component_digest_override(
+            self.name.as_str(),
+            self.component_digest.as_ref(),
+        );
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_js:");
@@ -2357,6 +2388,10 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         )
         .await?
         .unwrap_or(wasm_path);
+        warn_deprecated_component_digest_override(
+            common.name.as_str(),
+            self.component_digest.as_ref(),
+        );
         let component_digest = self
             .component_digest
             .unwrap_or(ComponentDigest(content_digest.0));
@@ -2444,6 +2479,10 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
                  `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
             ),
         };
+        warn_deprecated_component_digest_override(
+            self.name.as_str(),
+            self.component_digest.as_ref(),
+        );
         let component_digest = self.component_digest.unwrap_or_else(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"workflow_js:");

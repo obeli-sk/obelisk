@@ -93,7 +93,7 @@
           ]
         },
         "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"
@@ -544,7 +544,7 @@
           ]
         },
         "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"
@@ -602,7 +602,7 @@
           "default": null
         },
         "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
+          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"
@@ -754,7 +754,7 @@
           "default": null
         },
         "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.",
+          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"
@@ -849,7 +849,7 @@
           ]
         },
         "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the content digest of the WASM file.",
+          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"
@@ -1029,7 +1029,7 @@
           "default": null
         },
         "component_digest": {
-          "description": "Override the auto-computed component digest used for locking.\nIf set, this value is used instead of the digest derived from the JS source, ffqn, and params.",
+          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"

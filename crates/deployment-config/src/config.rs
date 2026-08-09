@@ -368,8 +368,8 @@ pub struct ActivityWasmComponentConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub content_digest: Option<ContentDigest>,
-    /// Override the auto-computed component digest used for locking.
-    /// If set, this value is used instead of the content digest of the WASM file.
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub component_digest: Option<ComponentDigest>,
@@ -412,8 +412,8 @@ pub struct ActivityExternalFileConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub content_digest: Option<ContentDigest>,
-    /// Override the auto-computed component digest used for locking.
-    /// If set, this value is used instead of the content digest of the WASM file.
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub component_digest: Option<ComponentDigest>,

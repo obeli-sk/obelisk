@@ -1770,13 +1770,24 @@ pub struct DeploymentComponentFileDetail {
     pub role: ComponentFileRole,
 }
 
+/// Origin of a component's WIT: parsed from WASM or synthesized from type wrappers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, derive_more::TryFrom)]
+#[try_from(repr)]
+#[repr(i16)]
+pub enum WitOrigin {
+    #[display("wasm")]
+    Wasm = 1,
+    #[display("synthesized")]
+    Synthesized = 2,
+}
+
 #[derive(Debug, Clone)]
 pub struct ComponentMetadataRecord {
     pub component_digest: ComponentDigest,
     pub imports: Vec<PersistedFunctionMetadata>,
     pub exports: Vec<PersistedFunctionMetadata>,
     pub wit: String,
-    pub wit_origin: String,
+    pub wit_origin: WitOrigin,
 }
 
 /// Relation between a deployment and its components

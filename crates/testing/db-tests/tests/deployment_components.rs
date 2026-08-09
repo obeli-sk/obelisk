@@ -3,7 +3,7 @@ use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{
     ComponentFileRole, ComponentMetadataRecord, DbExternalApi, DbPoolCloseable,
     DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentFileRecord,
-    DeploymentRecord, DeploymentStatus, PersistedFunctionMetadata,
+    DeploymentRecord, DeploymentStatus, PersistedFunctionMetadata, WitOrigin,
 };
 use concepts::time::ClockFn;
 use concepts::{
@@ -89,7 +89,7 @@ async fn deployment_components_roundtrip(database: Database) {
                     true,
                 ))],
                 wit: "package testing:pkg;".to_string(),
-                wit_origin: "wasm".to_string(),
+                wit_origin: WitOrigin::Wasm,
             },
             ComponentMetadataRecord {
                 component_digest: digest_b.clone(),
@@ -99,7 +99,7 @@ async fn deployment_components_roundtrip(database: Database) {
                     true,
                 ))],
                 wit: "package testing:pkg-b;".to_string(),
-                wit_origin: "synthesized".to_string(),
+                wit_origin: WitOrigin::Synthesized,
             },
         ])
         .await
@@ -198,7 +198,7 @@ async fn deployment_component_files_roundtrip(database: Database) {
                 imports: Vec::new(),
                 exports: Vec::new(),
                 wit: "package testing:pkg;".to_string(),
-                wit_origin: "synthesized".to_string(),
+                wit_origin: WitOrigin::Synthesized,
             }],
             vec![DeploymentComponentRecord {
                 deployment_id,
@@ -257,7 +257,7 @@ async fn component_metadata_deduplicates_by_digest_across_deployments(database: 
                 true,
             ))],
             wit: "package testing:pkg;".to_string(),
-            wit_origin: "wasm".to_string(),
+            wit_origin: WitOrigin::Wasm,
         }])
         .await
         .unwrap();
@@ -333,7 +333,7 @@ async fn deployment_component_insert_is_idempotent(database: Database) {
                 true,
             ))],
             wit: "package testing:pkg;".to_string(),
-            wit_origin: "wasm".to_string(),
+            wit_origin: WitOrigin::Wasm,
         }])
         .await
         .unwrap();
@@ -405,7 +405,7 @@ async fn list_deployment_components_orders_by_type_then_name(database: Database)
             imports: vec![],
             exports: vec![],
             wit: format!("package {};", &digest[7..11]),
-            wit_origin: "wasm".to_string(),
+            wit_origin: WitOrigin::Wasm,
         })
         .collect();
     api_conn.upsert_component_metadata(metadata).await.unwrap();

@@ -22,14 +22,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use tracing::error;
 
-/// Origin of a component's WIT: parsed from a real WASM binary, or synthesized from `TypeWrapper`s.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
-pub enum WitOrigin {
-    #[display("wasm")]
-    Wasm,
-    #[display("synthesized")]
-    Synthesized,
-}
+pub use concepts::storage::WitOrigin;
 
 /// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
