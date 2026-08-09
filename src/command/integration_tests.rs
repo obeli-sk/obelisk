@@ -2343,6 +2343,7 @@ ffqn = "testing:integration/deferred.run"
         .clone()
         .get_deployment(GetDeploymentRequest {
             deployment_id: Some(grpc_id.clone()),
+            include_generated_metadata: None,
         })
         .await
         .expect_err("failed preflight must not persist a deployment");
@@ -2396,12 +2397,33 @@ ffqn = "testing:integration/deferred.run"
     );
 
     // The stored deployment is complete and now exists.
-    grpc_client
+    let stored = grpc_client
         .get_deployment(GetDeploymentRequest {
-            deployment_id: Some(grpc_id),
+            deployment_id: Some(grpc_id.clone()),
+            include_generated_metadata: None,
         })
         .await
-        .expect("stored deployment must exist");
+        .expect("stored deployment must exist")
+        .into_inner()
+        .deployment
+        .unwrap()
+        .deployment_toml
+        .unwrap();
+    assert!(stored.contains("content_digest"));
+
+    let clean = grpc_client
+        .get_deployment(GetDeploymentRequest {
+            deployment_id: Some(grpc_id),
+            include_generated_metadata: Some(false),
+        })
+        .await
+        .expect("clean deployment must be returned")
+        .into_inner()
+        .deployment
+        .unwrap()
+        .deployment_toml
+        .unwrap();
+    assert!(!clean.contains("content_digest"));
 
     server.shutdown().await;
 }
@@ -2614,6 +2636,28 @@ ffqn = "testing:integration/pkg.run"
         .await
         .expect("get deployment failed");
     assert_eq!(resp.status().as_u16(), 200, "stored deployment must exist");
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body["deployment_toml"]
+            .as_str()
+            .unwrap()
+            .contains("content_digest")
+    );
+
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/deployments/{deployment_id}?include_generated_metadata=false",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("get clean deployment failed");
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let clean = body["deployment_toml"].as_str().unwrap();
+    assert!(!clean.contains("content_digest"));
 
     server.shutdown().await;
 }

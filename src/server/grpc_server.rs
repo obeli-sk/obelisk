@@ -5,6 +5,7 @@ use crate::command::server::ServerVerified;
 use crate::command::server::SubmitError;
 use crate::command::server::SwitchDeploymentAction;
 use crate::command::server::{DeploymentContextHandle, DeploymentSwitchManagerHandle};
+use crate::config::manifest::strip_generated_deployment_metadata;
 use crate::server::deployment_summary;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
@@ -1879,11 +1880,17 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        let record = conn
+        let mut record = conn
             .get_deployment(deployment_id)
             .await
             .to_status()?
             .must_exist("deployment")?;
+        if request.include_generated_metadata == Some(false) {
+            record.deployment_toml = strip_generated_deployment_metadata(&record.deployment_toml)
+                .map_err(|err| {
+                tonic::Status::internal(format!("cannot clean deployment manifest: {err:#}"))
+            })?;
+        }
 
         Ok(tonic::Response::new(grpc_gen::GetDeploymentResponse {
             deployment: Some(deployment_record_to_grpc(record)),

@@ -1,9 +1,6 @@
 use crate::args::{self, DeploymentSource};
 use crate::client::ClientStartup;
-use crate::config::manifest::{
-    PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
-    strip_generated_deployment_metadata,
-};
+use crate::config::manifest::{PreparedDeploymentManifest, prepare_deployment_manifest_from_disk};
 use crate::config::toml::sanitize_deployment_relative_path;
 use anyhow::{Context as _, bail};
 use chrono::DateTime;
@@ -189,6 +186,7 @@ impl args::Deployment {
                 let resp = client
                     .get_deployment(grpc_gen::GetDeploymentRequest {
                         deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),
+                        include_generated_metadata: Some(true),
                     })
                     .await?
                     .into_inner();
@@ -234,16 +232,14 @@ impl args::Deployment {
                 let resp = client
                     .get_deployment(grpc_gen::GetDeploymentRequest {
                         deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),
+                        include_generated_metadata: Some(include_generated_metadata),
                     })
                     .await?
                     .into_inner();
                 let dep = resp.deployment.context("deployment not found")?;
-                let mut deployment_toml = dep
+                let deployment_toml = dep
                     .deployment_toml
                     .context("deployment_toml not available")?;
-                if !include_generated_metadata {
-                    deployment_toml = strip_generated_deployment_metadata(&deployment_toml)?;
-                }
 
                 let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
                 tokio::fs::create_dir_all(&output_dir)
