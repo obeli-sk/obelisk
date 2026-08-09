@@ -4890,7 +4890,6 @@ impl WorkerCompiled {
         ))
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn new_js_workflow(
         worker: WorkflowJsWorkerCompiled,
         replay_compiled: WorkflowJsWorkerCompiled,
