@@ -176,10 +176,8 @@ pub(crate) fn strip_generated_deployment_metadata(deployment_toml: &str) -> anyh
                 let Some(path) = backtrace_source_path(source) else {
                     continue;
                 };
-                if deployment_owned_path(&path)?.is_some()
-                    && let Some(table) = source.as_table_like_mut()
-                {
-                    table.remove("content_digest");
+                if deployment_owned_path(&path)?.is_some() {
+                    *source = value(path);
                 }
             }
         }
@@ -1442,12 +1440,9 @@ ffqn = "ns:pkg/ifc.oci"
             .get(0)
             .unwrap();
         assert!(!local.contains_key("content_digest"));
-        let source = &local["backtrace"]["sources"][".../src/lib.rs"];
-        assert!(
-            !source
-                .as_table_like()
-                .unwrap()
-                .contains_key("content_digest")
+        assert_eq!(
+            local["backtrace"]["sources"][".../src/lib.rs"].as_str(),
+            Some("src/lib.rs")
         );
         let oci = doc["workflow_js"]
             .as_array_of_tables()
