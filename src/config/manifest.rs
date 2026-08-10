@@ -161,7 +161,7 @@ fn strip_generated_deployment_metadata_from_doc(doc: &mut DocumentMut) -> anyhow
             continue;
         };
         for table in components.iter_mut() {
-            table.remove("module_files");
+            table.remove("component_files");
         }
     }
 
@@ -547,18 +547,21 @@ fn collect_script_section(
         match classify_script_location(table)? {
             ManifestScriptLocation::DeploymentFile { path, digest } => {
                 let field_path = format!("{section}[name={name}].location");
-                if let Some(module_files) = table.get("module_files").and_then(Item::as_table_like)
+                if let Some(file_digests) =
+                    table.get("component_files").and_then(Item::as_table_like)
                 {
                     ensure!(
-                        module_files.get(&path).and_then(Item::as_str) == Some(&digest.to_string()),
-                        "{field_path}: module_files must contain the entry path with its content_digest"
+                        file_digests.get(&path).and_then(Item::as_str) == Some(&digest.to_string()),
+                        "{field_path}: component_files must contain the entry path with its content_digest"
                     );
-                    for (module_path, module_digest) in module_files.iter() {
+                    for (module_path, module_digest) in file_digests.iter() {
                         let module_path = sanitize_deployment_relative_path(module_path)?;
                         let module_digest = module_digest
                             .as_str()
                             .with_context(|| {
-                                format!("{field_path}.module_files[{module_path}] must be a digest")
+                                format!(
+                                    "{field_path}.component_files[{module_path}] must be a digest"
+                                )
                             })?
                             .parse()
                             .with_context(|| {
@@ -570,7 +573,7 @@ fn collect_script_section(
                             field: ManifestFieldRef {
                                 section: section.to_string(),
                                 component_name: Some(name.clone()),
-                                field_path: format!("{field_path}.module_files"),
+                                field_path: format!("{field_path}.component_files"),
                             },
                         });
                         component_files.push(DeploymentComponentFileRef {
@@ -816,9 +819,9 @@ async fn collect_js_refs(
                     Value::from(content_digest(source.as_bytes()).to_string()),
                 );
             }
-            table["module_files"] = Item::Value(Value::InlineTable(refs));
+            table["component_files"] = Item::Value(Value::InlineTable(refs));
         } else {
-            table.remove("module_files");
+            table.remove("component_files");
         }
 
         for (path, source) in graph.files {
@@ -1230,7 +1233,7 @@ ffqn = "ns:pkg/ifc.fn"
             .await
             .unwrap();
         assert_eq!(prepared.files.len(), 2);
-        assert!(prepared.deployment_toml.contains("module_files"));
+        assert!(prepared.deployment_toml.contains("component_files"));
 
         let classified =
             DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
@@ -1283,7 +1286,7 @@ ffqn = "ns:pkg/ifc.fn"
         let prepared = prepare_deployment_manifest(manifest, dir.path())
             .await
             .unwrap();
-        assert!(prepared.deployment_toml.contains("module_files"));
+        assert!(prepared.deployment_toml.contains("component_files"));
         assert!(prepared.deployment_toml.contains("content_digest"));
 
         let exported = strip_generated_deployment_metadata(&prepared.deployment_toml).unwrap();

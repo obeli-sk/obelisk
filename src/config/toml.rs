@@ -1582,7 +1582,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// CAS references for the closed module graph, populated during deployment preparation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
-    pub(crate) module_files: BTreeMap<String, ContentDigest>,
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
     /// Deprecated override of the auto-computed component digest used for locking.
     /// This option will be removed in 0.42.
     #[serde(default)]
@@ -1944,7 +1944,7 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     /// CAS references for the closed module graph, populated during deployment preparation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
-    pub(crate) module_files: BTreeMap<String, ContentDigest>,
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
     /// Deprecated override of the auto-computed component digest used for locking.
     /// This option will be removed in 0.42.
     #[serde(default)]
@@ -2543,7 +2543,7 @@ async fn resolve_local_refs(
                 ScriptToml::JavaScript {
                     location: a.location,
                     content: a.content,
-                    module_files: a.module_files,
+                    component_files: a.component_files,
                 },
                 format!("{name}.js"),
                 provider,
@@ -2590,7 +2590,7 @@ async fn resolve_local_refs(
                 ScriptToml::JavaScript {
                     location: w.location,
                     content: w.content,
-                    module_files: w.module_files,
+                    component_files: w.component_files,
                 },
                 format!("{name}.js"),
                 provider,
@@ -2636,7 +2636,7 @@ async fn resolve_local_refs(
                 ScriptToml::JavaScript {
                     location: w.location,
                     content: w.content,
-                    module_files: w.module_files,
+                    component_files: w.component_files,
                 },
                 format!("{}.js", w.name),
                 provider,
@@ -2842,7 +2842,7 @@ enum ScriptToml {
     JavaScript {
         location: Option<JsLocationToml>,
         content: Option<String>,
-        module_files: BTreeMap<String, ContentDigest>,
+        component_files: BTreeMap<String, ContentDigest>,
     },
     Exec {
         location: Option<JsLocationToml>,
@@ -2875,11 +2875,11 @@ async fn resolve_script_toml(
         ScriptToml::JavaScript {
             location,
             content,
-            module_files,
+            component_files,
         } => (
             location,
             content,
-            ModuleGraphResolution::JavaScript(module_files),
+            ModuleGraphResolution::JavaScript(component_files),
         ),
         ScriptToml::Exec { location, content } => {
             (location, content, ModuleGraphResolution::Disabled)
@@ -2887,10 +2887,10 @@ async fn resolve_script_toml(
     };
     match (location, content) {
         (None, Some(content)) => {
-            if let ModuleGraphResolution::JavaScript(module_files) = &module_graph {
+            if let ModuleGraphResolution::JavaScript(component_files) = &module_graph {
                 ensure!(
-                    module_files.is_empty(),
-                    "inline scripts cannot set `module_files`"
+                    component_files.is_empty(),
+                    "inline scripts cannot set `component_files`"
                 );
             }
             verify_content_digest(content.as_bytes(), content_digest, &default_file_name)?;
@@ -2905,19 +2905,19 @@ async fn resolve_script_toml(
             }
             let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
             let path = sanitize_deployment_relative_path(path)?;
-            if let ModuleGraphResolution::JavaScript(module_files) = module_graph {
-                if !module_files.is_empty() {
-                    let entry_digest = module_files.get(&path).with_context(|| {
-                        format!("module_files for `{path}` does not contain the entry path")
+            if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
+                if !component_files.is_empty() {
+                    let entry_digest = component_files.get(&path).with_context(|| {
+                        format!("component_files for `{path}` does not contain the entry path")
                     })?;
                     if let Some(expected) = content_digest {
                         ensure!(
                             expected == entry_digest,
-                            "content_digest for `{path}` does not match its module_files digest"
+                            "content_digest for `{path}` does not match its component_files digest"
                         );
                     }
-                    let mut files = Vec::with_capacity(module_files.len());
-                    for (module_path, digest) in module_files {
+                    let mut files = Vec::with_capacity(component_files.len());
+                    for (module_path, digest) in component_files {
                         let module_path = sanitize_deployment_relative_path(&module_path)?;
                         let bytes = provider.read(&module_path, Some(&digest)).await?;
                         let source = String::from_utf8(bytes).with_context(|| {
@@ -2952,10 +2952,10 @@ async fn resolve_script_toml(
             })
         }
         (Some(JsLocationToml::Oci(reference)), None) => {
-            if let ModuleGraphResolution::JavaScript(module_files) = module_graph {
+            if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
                 ensure!(
-                    module_files.is_empty(),
-                    "OCI scripts cannot set `module_files`"
+                    component_files.is_empty(),
+                    "OCI scripts cannot set `component_files`"
                 );
             }
             Ok(ScriptLocationResolved::Oci {
@@ -3420,7 +3420,7 @@ pub(crate) mod webhook {
         /// CAS references for the closed module graph, populated during deployment preparation.
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         #[schemars(skip)]
-        pub(crate) module_files: BTreeMap<String, ContentDigest>,
+        pub(crate) component_files: BTreeMap<String, ContentDigest>,
         /// The HTTP server to bind this webhook to.
         #[serde(default = "default_external_server_name")]
         pub(crate) http_server: ConfigName,
@@ -4625,12 +4625,12 @@ name = "my_stub"
         fn javascript(
             location: Option<JsLocationToml>,
             content: Option<String>,
-            module_files: BTreeMap<String, ContentDigest>,
+            component_files: BTreeMap<String, ContentDigest>,
         ) -> ScriptToml {
             ScriptToml::JavaScript {
                 location,
                 content,
-                module_files,
+                component_files,
             }
         }
 
