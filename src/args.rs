@@ -468,7 +468,7 @@ pub(crate) struct VerifyArgs {
     /// Skip opening the sqlite database and validating its schema.
     #[arg(long)]
     pub(crate) skip_db: bool,
-    /// Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist.
+    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds.
     #[arg(long, requires = "deployment")]
     pub(crate) fix: bool,
 }
@@ -494,7 +494,7 @@ pub(crate) struct DeploymentVerifyArgs {
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
     #[arg(long)]
     pub(crate) suppress_type_checking_errors: bool,
-    /// Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist.
+    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds.
     #[arg(long)]
     pub(crate) fix: bool,
 }

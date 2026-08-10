@@ -132,6 +132,12 @@ pub(crate) fn strip_generated_deployment_metadata(deployment_toml: &str) -> anyh
         .parse::<DocumentMut>()
         .context("cannot parse stored deployment manifest as TOML")?;
 
+    strip_generated_deployment_metadata_from_doc(&mut doc)?;
+
+    Ok(doc.to_string())
+}
+
+fn strip_generated_deployment_metadata_from_doc(doc: &mut DocumentMut) -> anyhow::Result<()> {
     for section in WASM_SECTIONS.iter().chain(SCRIPT_SECTIONS) {
         let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
             continue;
@@ -176,16 +182,14 @@ pub(crate) fn strip_generated_deployment_metadata(deployment_toml: &str) -> anyh
                 let Some(path) = backtrace_source_path(source) else {
                     continue;
                 };
-                if deployment_owned_path(&path)?.is_some()
-                    && let Some(table) = source.as_table_like_mut()
-                {
-                    table.remove("content_digest");
+                if deployment_owned_path(&path)?.is_some() {
+                    *source = value(path);
                 }
             }
         }
     }
 
-    Ok(doc.to_string())
+    Ok(())
 }
 
 /// A validated, digest-bearing projection of a stored deployment manifest.
@@ -1000,8 +1004,13 @@ pub(crate) async fn reconcile_deployment_digests(
         reconcile_backtrace_section(&mut doc, section, &deployment_dir, fix, &mut broken).await?;
     }
 
-    if fix && !broken.is_empty() {
-        tokio::fs::write(deployment_toml_path, doc.to_string())
+    if fix {
+        strip_generated_deployment_metadata_from_doc(&mut doc)?;
+        let fixed_toml = doc.to_string();
+        if fixed_toml == deployment_toml {
+            return Ok(broken);
+        }
+        tokio::fs::write(deployment_toml_path, fixed_toml)
             .await
             .with_context(|| {
                 format!("cannot write fixed deployment manifest {deployment_toml_path:?}")
@@ -1442,12 +1451,9 @@ ffqn = "ns:pkg/ifc.oci"
             .get(0)
             .unwrap();
         assert!(!local.contains_key("content_digest"));
-        let source = &local["backtrace"]["sources"][".../src/lib.rs"];
-        assert!(
-            !source
-                .as_table_like()
-                .unwrap()
-                .contains_key("content_digest")
+        assert_eq!(
+            local["backtrace"]["sources"][".../src/lib.rs"].as_str(),
+            Some("src/lib.rs")
         );
         let oci = doc["workflow_js"]
             .as_array_of_tables()
