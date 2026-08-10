@@ -611,7 +611,10 @@ fn get_ext_pkg_to_ifc_to_details_map(
             let inner_map = pkg_to_ifc_to_details_map
                 .entry(pkg_ifc_fns.ifc_fqn.pkg_fqn_name())
                 .or_default();
-            inner_map.insert(pkg_ifc_fns.ifc_fqn.clone(), pkg_ifc_fns.fns.clone());
+            inner_map
+                .entry(pkg_ifc_fns.ifc_fqn.clone())
+                .or_default()
+                .extend(pkg_ifc_fns.fns.clone());
         }
     }
     pkg_to_ifc_to_details_map
@@ -815,6 +818,7 @@ pub(crate) fn build_primary_resolve(
     // Track already-created interfaces so that multiple PackageIfcFns entries
     // sharing the same interface name get their functions merged into one interface.
     let mut ifc_name_to_id: HashMap<String, InterfaceId> = HashMap::new();
+    let mut ifc_name_to_dedup = HashMap::new();
 
     for &pkg_ifc_fns in ifc_fns_list {
         let ifc_name = pkg_ifc_fns.ifc_fqn.ifc_name().to_string();
@@ -838,18 +842,22 @@ pub(crate) fn build_primary_resolve(
                 .unwrap()
                 .interfaces
                 .insert(ifc_name.clone(), new_id);
-            ifc_name_to_id.insert(ifc_name, new_id);
+            ifc_name_to_id.insert(ifc_name.clone(), new_id);
             new_id
         };
 
-        let mut dedup = HashMap::new();
+        // Type names are scoped to an interface. Keep one allocation map while
+        // merging entries from multiple components, otherwise each entry starts
+        // again at `t0` and later functions can silently point at an earlier,
+        // unrelated type definition.
+        let dedup = ifc_name_to_dedup.entry(ifc_name).or_default();
 
         for (fn_name, fn_metadata) in &pkg_ifc_fns.fns {
             let wit_params: Vec<Param> = fn_metadata
                 .parameter_types
                 .iter()
                 .map(|p| {
-                    let ty = allocate_type(&mut resolve, ifc_id, &p.type_wrapper, &mut dedup);
+                    let ty = allocate_type(&mut resolve, ifc_id, &p.type_wrapper, dedup);
                     Param {
                         name: p.name.as_ref().to_string(),
                         ty,
@@ -859,7 +867,7 @@ pub(crate) fn build_primary_resolve(
                 .collect();
 
             let return_tw = fn_metadata.return_type.type_wrapper();
-            let result_type = allocate_type(&mut resolve, ifc_id, &return_tw, &mut dedup);
+            let result_type = allocate_type(&mut resolve, ifc_id, &return_tw, dedup);
 
             let wit_fn = Function {
                 name: fn_name.to_string(),
@@ -1009,9 +1017,14 @@ impl Display for OutputToString {
 #[cfg(test)]
 mod tests {
     use crate::{wasm_tools::WasmComponent, wasm_tools::strip_wasm_hash, wit::OutputToString};
-    use concepts::ComponentType;
+    use concepts::{
+        ComponentType, FunctionFqn, FunctionMetadata, PackageIfcFns, ParameterTypes, ReturnType,
+        StrVariant,
+    };
+    use indexmap::IndexMap;
     use rstest::rstest;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, str::FromStr};
+    use val_json::type_wrapper::parse_wit_type;
     use wit_component::WitPrinter;
     use wit_parser::{Resolve, UnresolvedPackageGroup};
 
@@ -1077,5 +1090,77 @@ mod tests {
         printer.print(&resolve, main_id, &ids).unwrap(); // verify it parses
         // store original WIT string in snapshots, because that is the `wit()` output.
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_wit")}, {insta::assert_snapshot!(wit)});
+    }
+
+    #[test]
+    fn synthesized_interface_keeps_type_names_unique_across_merged_entries() {
+        fn entry(ffqn: &str, return_type: &str) -> PackageIfcFns {
+            let ffqn = FunctionFqn::from_str(ffqn).unwrap();
+            let metadata = FunctionMetadata {
+                ffqn: ffqn.clone(),
+                parameter_types: ParameterTypes::default(),
+                return_type: ReturnType::detect(
+                    parse_wit_type(return_type).unwrap(),
+                    StrVariant::from(return_type.to_string()),
+                ),
+                extension: None,
+                submittable: true,
+            };
+            PackageIfcFns {
+                ifc_fqn: ffqn.ifc_fqn.clone(),
+                extension: false,
+                fns: IndexMap::from([(ffqn.function_name, metadata)]),
+            }
+        }
+
+        let first = entry(
+            "test:pkg/session.injection",
+            "result<variant { prompt(record { text: string }) }, string>",
+        );
+        let second = entry(
+            "test:pkg/session.record-output",
+            "result<variant { completed(record { duration: u64 }) }, string>",
+        );
+        let pkg_fqn = first.ifc_fqn.pkg_fqn_name();
+        let (resolve, package_id) =
+            super::build_primary_resolve(&pkg_fqn, &[&first, &second], None).unwrap();
+        let mut printer = WitPrinter::new(OutputToString::default());
+        printer.print(&resolve, package_id, &[]).unwrap();
+        let wit = printer.output.to_string();
+
+        assert!(wit.contains("injection: func() -> result<t1, string>"));
+        assert!(wit.contains("record-output: func() -> result<t3, string>"));
+        UnresolvedPackageGroup::parse(PathBuf::new(), &wit).unwrap();
+    }
+
+    #[test]
+    fn synthesized_extension_interface_merges_functions_from_multiple_components() {
+        fn entry(ffqn: &str) -> PackageIfcFns {
+            let ffqn = FunctionFqn::from_str(ffqn).unwrap();
+            let metadata = FunctionMetadata {
+                ffqn: ffqn.clone(),
+                parameter_types: ParameterTypes::default(),
+                return_type: ReturnType::detect(
+                    parse_wit_type("result<string, string>").unwrap(),
+                    StrVariant::from("result<string, string>"),
+                ),
+                extension: Some(concepts::FunctionExtension::Submit),
+                submittable: false,
+            };
+            PackageIfcFns {
+                ifc_fqn: ffqn.ifc_fqn.clone(),
+                extension: true,
+                fns: IndexMap::from([(ffqn.function_name, metadata)]),
+            }
+        }
+
+        let entries = [
+            entry("test:pkg-obelisk-ext/session.first-submit"),
+            entry("test:pkg-obelisk-ext/session.second-submit"),
+        ];
+        let grouped = super::get_ext_pkg_to_ifc_to_details_map(&entries);
+        let functions = grouped.values().next().unwrap().values().next().unwrap();
+
+        assert_eq!(functions.len(), 2);
     }
 }
