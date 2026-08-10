@@ -178,16 +178,30 @@ async fn deployment_component_files_roundtrip(database: Database) {
             size: 0,
         },
         DeploymentFileRecord {
+            path: "a/wit/pkg.wit".to_string(),
+            digest: file_digest.clone(),
+            size: 0,
+        },
+        DeploymentFileRecord {
             path: "b/lib.js".to_string(),
             digest: file_digest.clone(),
             size: 0,
         },
     ];
-    let component_files = vec![DeploymentComponentFileRecord {
-        component_name: "a".into(),
-        path: "a/lib.js".to_string(),
-        role: ComponentFileRole::JsEntrypoint,
-    }];
+    // Cover the `authored` WIT origin and the `wit_source` file role, the enum values
+    // that inline-WIT-folder components introduced (their CHECK constraints predated them).
+    let component_files = vec![
+        DeploymentComponentFileRecord {
+            component_name: "a".into(),
+            path: "a/lib.js".to_string(),
+            role: ComponentFileRole::JsEntrypoint,
+        },
+        DeploymentComponentFileRecord {
+            component_name: "a".into(),
+            path: "a/wit/pkg.wit".to_string(),
+            role: ComponentFileRole::WitSource,
+        },
+    ];
 
     api_conn
         .insert_deployment_with_components(
@@ -197,7 +211,7 @@ async fn deployment_component_files_roundtrip(database: Database) {
                 imports: Vec::new(),
                 exports: Vec::new(),
                 wit: "package testing:pkg;".to_string(),
-                wit_origin: WitOrigin::Synthesized,
+                wit_origin: WitOrigin::Authored,
             }],
             vec![DeploymentComponentRecord {
                 deployment_id,
@@ -211,15 +225,15 @@ async fn deployment_component_files_roundtrip(database: Database) {
         .unwrap();
 
     let deployment_files = api_conn.list_deployment_files(deployment_id).await.unwrap();
-    assert_eq!(deployment_files.len(), 2);
-    assert_eq!(deployment_files[0].digest, deployment_files[1].digest);
+    assert_eq!(deployment_files.len(), 3);
     let components = api_conn
         .list_deployment_components(deployment_id)
         .await
         .unwrap();
-    assert_eq!(components[0].files.len(), 1);
-    assert_eq!(components[0].files[0].file, deployment_files[0]);
-    assert_eq!(components[0].files[0].role, ComponentFileRole::JsEntrypoint);
+    let roles: Vec<_> = components[0].files.iter().map(|f| f.role).collect();
+    assert_eq!(components[0].files.len(), 2);
+    assert!(roles.contains(&ComponentFileRole::JsEntrypoint));
+    assert!(roles.contains(&ComponentFileRole::WitSource));
 
     drop(cas);
     drop(api_conn);
