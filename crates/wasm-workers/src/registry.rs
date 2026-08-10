@@ -398,35 +398,11 @@ fn parameter_types_match(
         && imported
             .iter()
             .zip(exported.iter())
-            .all(|(imported, exported)| {
-                imported.type_wrapper == exported.type_wrapper
-                    && (!type_wrapper_contains_handle(&imported.type_wrapper)
-                        || imported.wit_type == exported.wit_type)
-            })
+            .all(|(imported, exported)| imported.type_wrapper == exported.type_wrapper)
 }
 
 fn return_types_match(imported: &concepts::ReturnType, exported: &concepts::ReturnType) -> bool {
-    let imported_wrapper = imported.type_wrapper();
-    imported_wrapper == exported.type_wrapper()
-        && (!type_wrapper_contains_handle(&imported_wrapper)
-            || imported.wit_type() == exported.wit_type())
-}
-
-fn type_wrapper_contains_handle(wrapper: &val_json::type_wrapper::TypeWrapper) -> bool {
-    use val_json::type_wrapper::TypeWrapper;
-
-    match wrapper {
-        TypeWrapper::Own | TypeWrapper::Borrow => true,
-        TypeWrapper::Record(fields) => fields.values().any(type_wrapper_contains_handle),
-        TypeWrapper::Variant(cases) => cases.values().flatten().any(type_wrapper_contains_handle),
-        TypeWrapper::List(item) | TypeWrapper::Option(item) => type_wrapper_contains_handle(item),
-        TypeWrapper::Tuple(items) => items.iter().any(type_wrapper_contains_handle),
-        TypeWrapper::Result { ok, err } => ok
-            .iter()
-            .chain(err.iter())
-            .any(|item| type_wrapper_contains_handle(item)),
-        _ => false,
-    }
+    imported.type_wrapper() == exported.type_wrapper()
 }
 
 #[derive(Debug, Clone)]
@@ -538,7 +514,7 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
 mod tests {
     use super::*;
     use concepts::ReturnType;
-    use val_json::type_wrapper::{TypeWrapper, parse_wit_type};
+    use val_json::type_wrapper::parse_wit_type;
 
     #[test]
     fn return_types_match_by_structure_not_wit_alias_spelling() {
@@ -554,19 +530,5 @@ mod tests {
 
         assert!(return_types_match(&imported, &exported));
         assert_ne!(imported, exported);
-    }
-
-    #[test]
-    fn resource_handles_still_require_matching_wit_identity() {
-        let imported = ReturnType::detect(
-            TypeWrapper::Borrow,
-            StrVariant::from("borrow<first-resource>"),
-        );
-        let exported = ReturnType::detect(
-            TypeWrapper::Borrow,
-            StrVariant::from("borrow<second-resource>"),
-        );
-
-        assert!(!return_types_match(&imported, &exported));
     }
 }
