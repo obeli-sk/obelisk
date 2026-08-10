@@ -105,7 +105,7 @@
             },
             {
               "name": "--fix",
-              "help": "Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist"
+              "help": "Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds"
             }
           ]
         }
@@ -906,7 +906,7 @@
             },
             {
               "name": "--fix",
-              "help": "Rewrite mismatched deployment digests and, when `--server-config` is passed, its exec allowlist"
+              "help": "Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds"
             }
           ]
         }
