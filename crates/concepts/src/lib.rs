@@ -1709,21 +1709,21 @@ impl ReturnType {
     }
 }
 
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
-)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, derive_more::Display)]
+#[derive_where::derive_where(PartialEq)]
 #[display("{wit_type}")]
 pub struct ReturnTypeNonExtendable {
     pub type_wrapper: TypeWrapper,
+    #[derive_where(skip)]
     pub wit_type: StrVariant,
 }
 
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, derive_more::Display,
-)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, derive_more::Display)]
+#[derive_where::derive_where(PartialEq)]
 #[display("{wit_type}")]
 pub struct ReturnTypeExtendable {
     pub type_wrapper_tl: TypeWrapperTopLevel,
+    #[derive_where(skip)]
     pub wit_type: StrVariant,
 }
 
@@ -1743,6 +1743,7 @@ pub struct ParameterType {
     #[derive_where(skip)]
     // Names are read from how a component names the parameter and thus might differ between export and import.
     pub name: StrVariant,
+    #[derive_where(skip)]
     pub wit_type: StrVariant,
 }
 

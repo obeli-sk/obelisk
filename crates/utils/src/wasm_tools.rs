@@ -18,7 +18,10 @@ use tracing::{debug, error, info, instrument, trace, warn};
 use tracing_error::SpanTrace;
 use val_json::type_wrapper::{TypeKey, TypeWrapper};
 use wit_component::{ComponentEncoder, WitPrinter};
-use wit_parser::{InterfaceId, PackageId, Param, Resolve, World, WorldKey, decoding::DecodedWasm};
+use wit_parser::{
+    Function, InterfaceId, PackageId, Param, Resolve, Type, TypeDefKind, TypeId, World, WorldKey,
+    decoding::DecodedWasm,
+};
 
 #[derive(derive_more::Debug, Clone)]
 pub struct WasmComponent {
@@ -899,6 +902,71 @@ impl ProcessingKind {
             ProcessingKind::ExportsSubmittable | ProcessingKind::ExportsOfActivityStub
         )
     }
+
+    fn label(self) -> &'static str {
+        if self.is_export() { "export" } else { "import" }
+    }
+}
+
+fn function_uses_resources(resolve: &Resolve, function: &Function) -> bool {
+    fn type_uses_resources(
+        resolve: &Resolve,
+        ty: Type,
+        visited: &mut hashbrown::HashSet<TypeId>,
+    ) -> bool {
+        let Type::Id(id) = ty else {
+            return false;
+        };
+        if !visited.insert(id) {
+            return false;
+        }
+
+        match &resolve.types[id].kind {
+            TypeDefKind::Resource | TypeDefKind::Handle(_) => true,
+            TypeDefKind::Record(record) => record
+                .fields
+                .iter()
+                .any(|field| type_uses_resources(resolve, field.ty, visited)),
+            TypeDefKind::Tuple(tuple) => tuple
+                .types
+                .iter()
+                .any(|ty| type_uses_resources(resolve, *ty, visited)),
+            TypeDefKind::Variant(variant) => variant.cases.iter().any(|case| {
+                case.ty
+                    .is_some_and(|ty| type_uses_resources(resolve, ty, visited))
+            }),
+            TypeDefKind::Option(ty)
+            | TypeDefKind::List(ty)
+            | TypeDefKind::FixedLengthList(ty, _)
+            | TypeDefKind::Type(ty) => type_uses_resources(resolve, *ty, visited),
+            TypeDefKind::Result(result) => result
+                .ok
+                .iter()
+                .chain(result.err.iter())
+                .any(|ty| type_uses_resources(resolve, *ty, visited)),
+            TypeDefKind::Map(key, value) => {
+                type_uses_resources(resolve, *key, visited)
+                    || type_uses_resources(resolve, *value, visited)
+            }
+            TypeDefKind::Future(ty) | TypeDefKind::Stream(ty) => {
+                ty.is_some_and(|ty| type_uses_resources(resolve, ty, visited))
+            }
+            TypeDefKind::Flags(_) | TypeDefKind::Enum(_) | TypeDefKind::Unknown => false,
+        }
+    }
+
+    if function.kind.resource().is_some() {
+        return true;
+    }
+
+    let mut visited = hashbrown::HashSet::new();
+    function
+        .params
+        .iter()
+        .any(|param| type_uses_resources(resolve, param.ty, &mut visited))
+        || function
+            .result
+            .is_some_and(|ty| type_uses_resources(resolve, ty, &mut visited))
 }
 
 fn populate_ifcs_with_compatible_fns(
@@ -955,6 +1023,17 @@ fn populate_ifcs_with_compatible_fns(
         let mut fns = IndexMap::new();
         for (function_name, function) in &ifc.functions {
             let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
+            if function_uses_resources(resolve, function) {
+                if processing_kind.is_export()
+                    || !matches!(package.namespace.as_str(), "wasi" | "obelisk")
+                {
+                    warn!(
+                        "Ignoring {} {ffqn} because resource types are unsupported",
+                        processing_kind.label()
+                    );
+                }
+                continue;
+            }
             let return_type = if let Some(return_type) = function.result {
                 let mut printer = WitPrinter::default();
                 let wit_type = printer
@@ -984,8 +1063,6 @@ fn populate_ifcs_with_compatible_fns(
             match (return_type, processing_kind.is_export()) {
                 (Some(return_type @ ReturnType::Extendable(_)), true)
                 | (Some(return_type), false) => {
-                    let ffqn =
-                        FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
                     let parameter_types = ParameterTypes({
                         let mut params = Vec::new();
                         for Param {
@@ -1178,6 +1255,36 @@ pub(crate) mod tests {
             .collect::<hashbrown::HashMap<_, _>>();
             insta::with_settings!({ sort_maps => true,  snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
         }
+    }
+
+    #[test]
+    fn resource_functions_are_ignored() {
+        let wit = r"
+            package test:resources;
+
+            interface api {
+                resource token {
+                    constructor();
+                    ping: func();
+                }
+
+                type token-handle = own<token>;
+                take: func(value: borrow<token>) -> result;
+                take-alias: func(value: token-handle) -> result;
+                take-nested: func(value: option<token-handle>) -> result;
+                valid: func(value: string) -> result;
+            }
+
+            world test {
+                export api;
+            }
+        ";
+
+        let component = WasmComponent::new_from_wit_string(wit, ComponentType::Activity).unwrap();
+        let exports = component.exported_functions(false);
+
+        assert_eq!(exports.len(), 1);
+        assert_eq!(exports[0].ffqn.to_string(), "test:resources/api.valid");
     }
 
     #[rstest]
