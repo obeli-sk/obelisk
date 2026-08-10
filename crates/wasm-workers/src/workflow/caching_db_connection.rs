@@ -562,6 +562,8 @@ impl WorkflowDbConnection for CachingDbConnection {
     }
 
     #[instrument(level = tracing::Level::DEBUG, skip(self))]
+    // A write needs flushing when continuing requires an actor outside the in-memory
+    // workflow state to observe it.
     async fn flush_non_blocking_event_cache(
         &mut self,
         current_time: DateTime<Utc>,
