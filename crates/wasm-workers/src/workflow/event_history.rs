@@ -1972,7 +1972,11 @@ impl EventHistory {
                 expires_at_if_new,
                 wasm_backtrace,
             }) => {
-                debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
+                // An already-due delay (e.g. `sleep(now)`) is fulfilled in the same
+                // transaction, so the workflow resumes without waiting for the
+                // expired-timers watcher to append the delay response.
+                let already_due = expires_at_if_new <= called_at;
+                debug!(%delay_id, %join_set_id, already_due, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
@@ -1986,7 +1990,7 @@ impl EventHistory {
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::DelayRequest {
-                        delay_id,
+                        delay_id: delay_id.clone(),
                         expires_at: expires_at_if_new,
                         schedule_at,
                         paused: false,
@@ -1999,7 +2003,7 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
                 let event = HistoryEvent::JoinNext {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     run_expires_at: lock_expires_at,
                     closing: false,
                     requested_ffqn: None,
@@ -2011,20 +2015,37 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
 
-                db_connection
-                    .append_batch(
-                        history_events
-                            .first()
-                            .expect("blocking delay has three events")
-                            .1
-                            .clone(),
-                        called_at,
-                        vec![join_set, delay_req, join_next],
-                        db_connection.execution_id().clone(),
-                        wasm_backtrace,
-                        &self.locked_event.component_id,
-                    )
-                    .await?;
+                let batch_version = history_events
+                    .first()
+                    .expect("blocking delay has three events")
+                    .1
+                    .clone();
+                let batch = vec![join_set, delay_req, join_next];
+                if already_due {
+                    db_connection
+                        .append_batch_with_delay_response(
+                            batch_version,
+                            called_at,
+                            batch,
+                            db_connection.execution_id().clone(),
+                            join_set_id,
+                            delay_id,
+                            wasm_backtrace,
+                            &self.locked_event.component_id,
+                        )
+                        .await?;
+                } else {
+                    db_connection
+                        .append_batch(
+                            batch_version,
+                            called_at,
+                            batch,
+                            db_connection.execution_id().clone(),
+                            wasm_backtrace,
+                            &self.locked_event.component_id,
+                        )
+                        .await?;
+                }
 
                 Ok(history_events)
             }

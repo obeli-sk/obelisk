@@ -875,6 +875,14 @@ message CapturedWrite {
     repeated CreateExecutionRequest child_requests = 5;
     repeated CapturedBacktrace backtraces = 6;
   }
+  message AppendBatchWithDelayResponse {
+    repeated ExecutionEvent events = 1;
+    ExecutionId execution_id = 2;
+    uint32 version = 3;
+    JoinSetId join_set_id = 4;
+    string delay_id = 5;
+    repeated CapturedBacktrace backtraces = 6;
+  }
   message AppendStubResponse {
     ExecutionId execution_id = 1;
     uint32 version = 2;
@@ -900,6 +908,7 @@ message CapturedWrite {
     AppendBatchCreateNewExecution append_batch_create_new_execution = 3;
     AppendStubResponse append_stub_response = 4;
     AppendFinished append_finished = 5;
+    AppendBatchWithDelayResponse append_batch_with_delay_response = 6;
   }
 }
 

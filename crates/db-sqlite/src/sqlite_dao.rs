@@ -5420,6 +5420,64 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
+    async fn append_batch_with_delay_response(
+        &self,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+    ) -> Result<AppendBatchResponse, DbErrorWrite> {
+        debug!("append_batch_with_delay_response");
+        trace!(?batch, "append_batch_with_delay_response");
+        assert!(!batch.is_empty(), "Empty batch request");
+
+        let (version, notifiers) = self
+            .transaction(
+                move |tx| {
+                    let mut version = version.clone();
+                    let mut notifier = None;
+                    for append_request in &batch {
+                        let (v, n) =
+                            Self::append(tx, &execution_id, append_request.clone(), version)?;
+                        version = v;
+                        notifier = Some(n);
+                    }
+                    // Appending the response unblocks the just-written `JoinNext` and deletes
+                    // the `t_delay` row the `DelayRequest` inserted, all in this transaction.
+                    let response_notifier = Self::append_response(
+                        tx,
+                        &execution_id,
+                        JoinSetResponseEventOuter {
+                            created_at: current_time,
+                            event: JoinSetResponseEvent {
+                                join_set_id: join_set_id.clone(),
+                                event: JoinSetResponse::DelayFinished {
+                                    delay_id: delay_id.clone(),
+                                    result: Ok(()),
+                                },
+                            },
+                        },
+                    )?;
+                    Ok::<_, DbErrorWrite>((
+                        version,
+                        vec![
+                            notifier.expect("checked that the batch is not empty"),
+                            response_notifier,
+                        ],
+                    ))
+                },
+                TxType::MultipleWrites,
+                "append_batch_with_delay_response",
+            )
+            .await?;
+
+        self.notify_all(notifiers, current_time);
+        Ok(version)
+    }
+
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %version))]
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>,

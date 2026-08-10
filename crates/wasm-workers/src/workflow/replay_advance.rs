@@ -43,6 +43,7 @@ impl ReplayAdvanceable {
         self.captured_writes.iter().find_map(|w| match w {
             CapturedDbWrite::Append { version, .. }
             | CapturedDbWrite::AppendBatch { version, .. }
+            | CapturedDbWrite::AppendBatchWithDelayResponse { version, .. }
             | CapturedDbWrite::AppendBatchCreateNewExecution { version, .. }
             | CapturedDbWrite::AppendFinished { version, .. } => Some(version),
             CapturedDbWrite::AppendStubResponse { .. } => None,
@@ -73,6 +74,7 @@ impl ReplayAdvanceable {
                 let requests: &[concepts::storage::AppendRequest] = match w {
                     CapturedDbWrite::Append { req, .. } => std::slice::from_ref(req),
                     CapturedDbWrite::AppendBatch { batch, .. }
+                    | CapturedDbWrite::AppendBatchWithDelayResponse { batch, .. }
                     | CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
                     CapturedDbWrite::AppendStubResponse { events, .. } => &events.batch,
                     CapturedDbWrite::AppendFinished { .. } => &[],
@@ -279,6 +281,26 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
                 .collect(),
             execution_id,
             version,
+            backtraces: vec![],
+        },
+        CapturedDbWrite::AppendBatchWithDelayResponse {
+            current_time: _,
+            batch,
+            execution_id,
+            version,
+            join_set_id,
+            delay_id,
+            backtraces: _,
+        } => CapturedDbWrite::AppendBatchWithDelayResponse {
+            current_time: DateTime::UNIX_EPOCH,
+            batch: batch
+                .into_iter()
+                .map(normalize_append_request_for_matching)
+                .collect(),
+            execution_id,
+            version,
+            join_set_id,
+            delay_id,
             backtraces: vec![],
         },
         CapturedDbWrite::AppendBatchCreateNewExecution {

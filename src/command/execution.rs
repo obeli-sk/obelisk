@@ -998,7 +998,12 @@ fn pause_delays_in_replay(advance_request: &mut AdvanceRequestSer) {
             | crate::server::web_api_server::CapturedWriteSer::AppendStubResponse {
                 events, ..
             } => pause_delays_in_events(events),
-            crate::server::web_api_server::CapturedWriteSer::AppendFinished { .. } => {}
+            // An already-due `sleep(now)` is resolved in the same transaction; there is
+            // no pending delay to pause.
+            crate::server::web_api_server::CapturedWriteSer::AppendBatchWithDelayResponse {
+                ..
+            }
+            | crate::server::web_api_server::CapturedWriteSer::AppendFinished { .. } => {}
         }
     }
 }

@@ -9,8 +9,8 @@ use crate::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentId, ExecutionId,
-    prefixed_ulid::ExecutionIdDerived,
+    ComponentId, ExecutionId, JoinSetId,
+    prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, AppendRequest, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
         DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, LogInfoAppendRow, ResponseCursor,
@@ -66,6 +66,19 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite>;
+
+    #[expect(clippy::too_many_arguments)]
+    async fn append_batch_with_delay_response(
+        &mut self,
+        version: Version,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite>;
@@ -333,6 +346,31 @@ impl WorkflowDbConnection for CachingDbConnection {
         self.flush_non_blocking_event_cache(current_time).await?;
         self.db_connection
             .append_batch(current_time, batch, execution_id, version)
+            .await?;
+        Ok(())
+    }
+
+    async fn append_batch_with_delay_response(
+        &mut self,
+        version: Version,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+        _wasm_backtrace: Option<storage::WasmBacktrace>,
+        _component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
+        self.flush_non_blocking_event_cache(current_time).await?;
+        self.db_connection
+            .append_batch_with_delay_response(
+                current_time,
+                batch,
+                execution_id,
+                version,
+                join_set_id,
+                delay_id,
+            )
             .await?;
         Ok(())
     }

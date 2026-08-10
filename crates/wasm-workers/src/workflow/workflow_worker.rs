@@ -492,6 +492,7 @@ impl WorkflowWorker {
         backtraces.extend(writes.into_iter().flat_map(|write| match write.write {
             CapturedDbWrite::Append { backtraces, .. }
             | CapturedDbWrite::AppendBatch { backtraces, .. }
+            | CapturedDbWrite::AppendBatchWithDelayResponse { backtraces, .. }
             | CapturedDbWrite::AppendBatchCreateNewExecution { backtraces, .. }
             | CapturedDbWrite::AppendStubResponse { backtraces, .. } => backtraces,
             CapturedDbWrite::AppendFinished { .. } => Vec::new(),
@@ -2798,21 +2799,23 @@ pub(crate) mod tests {
                 .len();
             assert_eq!(1, worker_tasks);
         }
-        let blocked_until = {
+        // An already-due `sleep(now)` is fulfilled in the same transaction, so the
+        // execution is immediately pending instead of blocked on the join set.
+        let scheduled_at = {
             let pending_state = db_connection
                 .get_pending_state(&execution_id)
                 .await
                 .unwrap()
                 .pending_state;
-            assert_matches!(pending_state, PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {lock_expires_at, .. }) => lock_expires_at)
+            assert_matches!(pending_state, PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. }) => scheduled_at)
         };
-        assert_eq!(sim_clock.now(), blocked_until);
-        // expired_timers_watcher should see the AsyncDelay and send the response.
+        assert_eq!(sim_clock.now(), scheduled_at);
+        // The delay response is already appended, so the watcher has nothing to do.
         {
             let timer = expired_timers_watcher::tick_test(db_connection.as_ref(), sim_clock.now())
                 .await
                 .unwrap();
-            assert_eq!(1, timer.expired_async_timers);
+            assert_eq!(0, timer.expired_async_timers);
         }
         // Reexecute the worker
         {

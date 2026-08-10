@@ -2087,6 +2087,26 @@ pub fn captured_write_to_grpc(write: CapturedDbWrite) -> grpc_gen::CapturedWrite
                     backtraces: backtraces.into_iter().map(Into::into).collect(),
                 },
             ),
+            CapturedDbWrite::AppendBatchWithDelayResponse {
+                current_time: _,
+                batch,
+                execution_id,
+                version,
+                join_set_id,
+                delay_id,
+                backtraces,
+            } => grpc_gen::captured_write::Write::AppendBatchWithDelayResponse(
+                grpc_gen::captured_write::AppendBatchWithDelayResponse {
+                    events: append_requests_to_grpc_events(batch, version.0),
+                    execution_id: Some(grpc_gen::ExecutionId {
+                        id: execution_id.to_string(),
+                    }),
+                    version: version.0,
+                    join_set_id: Some(join_set_id.into()),
+                    delay_id: delay_id.to_string(),
+                    backtraces: backtraces.into_iter().map(Into::into).collect(),
+                },
+            ),
             CapturedDbWrite::AppendStubResponse {
                 events,
                 response,
@@ -2201,6 +2221,33 @@ pub fn captured_write_from_grpc(
                     .into_iter()
                     .map(CreateRequest::try_from)
                     .collect::<Result<Vec<_>, _>>()?,
+                backtraces: batch
+                    .backtraces
+                    .into_iter()
+                    .map(BacktraceInfo::try_from)
+                    .collect::<Result<Vec<BacktraceInfo>, _>>()?,
+            })
+        }
+        grpc_gen::captured_write::Write::AppendBatchWithDelayResponse(batch) => {
+            Ok(CapturedDbWrite::AppendBatchWithDelayResponse {
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                batch: batch
+                    .events
+                    .into_iter()
+                    .map(append_request_from_grpc_event)
+                    .collect::<Result<Vec<_>, _>>()?,
+                execution_id: batch
+                    .execution_id
+                    .argument_must_exist("execution_id")?
+                    .try_into()?,
+                version: Version::new(batch.version),
+                join_set_id: batch
+                    .join_set_id
+                    .argument_must_exist("join_set_id")?
+                    .try_into()?,
+                delay_id: DelayId::from_str(&batch.delay_id).map_err(|err| {
+                    tonic::Status::invalid_argument(format!("invalid delay_id - {err}"))
+                })?,
                 backtraces: batch
                     .backtraces
                     .into_iter()
