@@ -457,7 +457,6 @@ fn deployment_record_from_row(row: &Row<'_>) -> rusqlite::Result<DeploymentRecor
         obelisk_version: row.get("obelisk_version")?,
         created_by: row.get("created_by")?,
         files: Vec::new(),
-        component_files: Vec::new(),
     })
 }
 
@@ -5046,6 +5045,7 @@ impl DbExternalApi for SqlitePool {
         record: DeploymentRecord,
         component_metadata: Vec<ComponentMetadataRecord>,
         deployment_components: Vec<DeploymentComponentRecord>,
+        deployment_component_files: Vec<DeploymentComponentFileRecord>,
     ) -> Result<(), DbErrorWrite> {
         let deployment_id = record.deployment_id;
         self.transaction(
@@ -5057,7 +5057,7 @@ impl DbExternalApi for SqlitePool {
                 Self::insert_deployment_component_files_tx(
                     tx,
                     deployment_id,
-                    &record.component_files,
+                    &deployment_component_files,
                 )?;
                 Ok(())
             },

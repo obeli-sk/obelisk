@@ -1,4 +1,4 @@
-use crate::config::file_provider::FileProvider;
+use crate::config::file_provider::{DiskProvider, FileProvider};
 use crate::config::toml::{
     DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
     strip_deployment_dir_prefix,
@@ -99,6 +99,9 @@ pub(crate) async fn prepare_deployment_manifest(
     collect_js_refs(&mut doc, "workflow_js", deployment_dir, &mut files).await?;
     collect_js_refs(&mut doc, "webhook_endpoint_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "activity_exec", deployment_dir, &mut files).await?;
+    for section in WIT_SECTIONS {
+        collect_wit_refs(&mut doc, section, deployment_dir, &mut files).await?;
+    }
 
     let mut paths = HashMap::new();
     for file in &files {
@@ -156,12 +159,19 @@ fn strip_generated_deployment_metadata_from_doc(doc: &mut DocumentMut) -> anyhow
         }
     }
 
-    for section in ["activity_js", "workflow_js", "webhook_endpoint_js"] {
+    for section in [
+        "activity_js",
+        "workflow_js",
+        "webhook_endpoint_js",
+        "activity_exec",
+        "activity_stub",
+        "activity_external",
+    ] {
         let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
             continue;
         };
         for table in components.iter_mut() {
-            table.remove("module_files");
+            table.remove("component_files");
         }
     }
 
@@ -266,6 +276,13 @@ const SCRIPT_SECTIONS: &[&str] = &[
     "webhook_endpoint_js",
     "activity_exec",
 ];
+const WIT_SECTIONS: &[&str] = &[
+    "activity_js",
+    "activity_exec",
+    "workflow_js",
+    "activity_stub",
+    "activity_external",
+];
 
 impl DeploymentManifest {
     /// Parse and structurally validate `deployment_toml`, then classify every
@@ -342,6 +359,10 @@ impl DeploymentManifest {
             &mut files,
             &mut component_files,
         )?;
+
+        for section in WIT_SECTIONS {
+            collect_wit_section(&doc, section, &names, &mut files, &mut component_files)?;
+        }
         collect_script_section(
             &doc,
             "workflow_js",
@@ -547,40 +568,88 @@ fn collect_script_section(
         match classify_script_location(table)? {
             ManifestScriptLocation::DeploymentFile { path, digest } => {
                 let field_path = format!("{section}[name={name}].location");
-                if let Some(module_files) = table.get("module_files").and_then(Item::as_table_like)
+                if let Some(file_digests) =
+                    table.get("component_files").and_then(Item::as_table_like)
                 {
-                    ensure!(
-                        module_files.get(&path).and_then(Item::as_str) == Some(&digest.to_string()),
-                        "{field_path}: module_files must contain the entry path with its content_digest"
-                    );
-                    for (module_path, module_digest) in module_files.iter() {
+                    let wit_prefix = table
+                        .get("wit")
+                        .and_then(Item::as_str)
+                        .map(sanitize_deployment_relative_path)
+                        .transpose()?
+                        .map(|root| format!("{root}/"));
+                    let mut script_file_count = 0;
+                    let mut found_entry = false;
+                    for (module_path, module_digest) in file_digests.iter() {
                         let module_path = sanitize_deployment_relative_path(module_path)?;
+                        if wit_prefix
+                            .as_ref()
+                            .is_some_and(|prefix| module_path.starts_with(prefix))
+                        {
+                            continue;
+                        }
+                        script_file_count += 1;
                         let module_digest = module_digest
                             .as_str()
                             .with_context(|| {
-                                format!("{field_path}.module_files[{module_path}] must be a digest")
+                                format!(
+                                    "{field_path}.component_files[{module_path}] must be a digest"
+                                )
                             })?
                             .parse()
                             .with_context(|| {
                                 format!("invalid digest for module `{module_path}`")
                             })?;
+                        if module_path == path {
+                            ensure!(
+                                module_digest == digest,
+                                "{field_path}: component_files entry digest does not match content_digest"
+                            );
+                            found_entry = true;
+                        }
                         files.push(DeploymentFileRef {
                             path: module_path.clone(),
                             digest: module_digest,
                             field: ManifestFieldRef {
                                 section: section.to_string(),
                                 component_name: Some(name.clone()),
-                                field_path: format!("{field_path}.module_files"),
+                                field_path: format!("{field_path}.component_files"),
                             },
                         });
                         component_files.push(DeploymentComponentFileRef {
                             component_name: name.clone(),
-                            role: if module_path == path {
+                            role: if section == "activity_exec" {
+                                ComponentFileRole::ExecProgram
+                            } else if module_path == path {
                                 ComponentFileRole::JsEntrypoint
                             } else {
                                 ComponentFileRole::JsModule
                             },
                             path: module_path,
+                        });
+                    }
+                    if script_file_count > 0 {
+                        ensure!(
+                            found_entry,
+                            "{field_path}: component_files must contain the entry path with its content_digest"
+                        );
+                    } else {
+                        files.push(DeploymentFileRef {
+                            path: path.clone(),
+                            digest,
+                            field: ManifestFieldRef {
+                                section: section.to_string(),
+                                component_name: Some(name.clone()),
+                                field_path,
+                            },
+                        });
+                        component_files.push(DeploymentComponentFileRef {
+                            component_name: name,
+                            path,
+                            role: if section == "activity_exec" {
+                                ComponentFileRole::ExecProgram
+                            } else {
+                                ComponentFileRole::JsEntrypoint
+                            },
                         });
                     }
                 } else {
@@ -608,6 +677,64 @@ fn collect_script_section(
         }
     }
 
+    Ok(())
+}
+
+fn collect_wit_section(
+    doc: &DocumentMut,
+    section: &str,
+    names: &HashMap<&str, Vec<String>>,
+    files: &mut Vec<DeploymentFileRef>,
+    component_files: &mut Vec<DeploymentComponentFileRef>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get(section).and_then(Item::as_array_of_tables) else {
+        return Ok(());
+    };
+    for (index, table) in components.iter().enumerate() {
+        let Some(raw_root) = table.get("wit").and_then(Item::as_str) else {
+            continue;
+        };
+        let root = sanitize_deployment_relative_path(raw_root)?;
+        let prefix = format!("{root}/");
+        let name = names[section][index].clone();
+        let field_path = format!("{section}[name={name}].wit");
+        let file_digests = table
+            .get("component_files")
+            .and_then(Item::as_table_like)
+            .with_context(|| format!("{field_path}: missing generated component_files"))?;
+        let mut found = false;
+        for (path, digest) in file_digests.iter() {
+            let path = sanitize_deployment_relative_path(path)?;
+            if !path.starts_with(&prefix) {
+                continue;
+            }
+            ensure!(
+                Path::new(&path).extension().and_then(|ext| ext.to_str()) == Some("wit"),
+                "{field_path}: non-WIT file in WIT source set: `{path}`"
+            );
+            let digest = digest
+                .as_str()
+                .with_context(|| format!("{field_path}.component_files[{path}] must be a digest"))?
+                .parse()
+                .with_context(|| format!("invalid digest for WIT source `{path}`"))?;
+            found = true;
+            files.push(DeploymentFileRef {
+                path: path.clone(),
+                digest,
+                field: ManifestFieldRef {
+                    section: section.to_string(),
+                    component_name: Some(name.clone()),
+                    field_path: field_path.clone(),
+                },
+            });
+            component_files.push(DeploymentComponentFileRef {
+                component_name: name.clone(),
+                path,
+                role: ComponentFileRole::WitSource,
+            });
+        }
+        ensure!(found, "{field_path}: no parser-selected WIT files found");
+    }
     Ok(())
 }
 
@@ -816,9 +943,9 @@ async fn collect_js_refs(
                     Value::from(content_digest(source.as_bytes()).to_string()),
                 );
             }
-            table["module_files"] = Item::Value(Value::InlineTable(refs));
+            table["component_files"] = Item::Value(Value::InlineTable(refs));
         } else {
-            table.remove("module_files");
+            table.remove("component_files");
         }
 
         for (path, source) in graph.files {
@@ -830,6 +957,62 @@ async fn collect_js_refs(
         }
     }
 
+    Ok(())
+}
+
+async fn collect_wit_refs(
+    doc: &mut DocumentMut,
+    section: &str,
+    deployment_dir: &Path,
+    files: &mut Vec<DeploymentManifestFile>,
+) -> anyhow::Result<()> {
+    let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
+        return Ok(());
+    };
+    let provider = DiskProvider {
+        deployment_dir: deployment_dir.to_path_buf(),
+    };
+    for table in components.iter_mut() {
+        let Some(raw_root) = table.get("wit").and_then(Item::as_str) else {
+            continue;
+        };
+        let root = sanitize_deployment_relative_path(raw_root)?;
+        let parsed_files = provider
+            .read_wit_files(&root, &std::collections::BTreeMap::new())
+            .await?;
+
+        let mut refs = InlineTable::new();
+        if let Some(existing) = table.get("component_files").and_then(Item::as_table_like) {
+            for (path, digest) in existing.iter() {
+                let normalized_path = sanitize_deployment_relative_path(path)?;
+                refs.insert(
+                    &normalized_path,
+                    digest
+                        .as_value()
+                        .with_context(|| format!("component_files[{path}] must be a digest"))?
+                        .clone(),
+                );
+            }
+        }
+        for (path, source) in parsed_files {
+            let bytes = source.into_bytes();
+            let digest = content_digest(&bytes);
+            if let Some(previous) = refs.get(&path).and_then(Value::as_str) {
+                ensure!(
+                    previous == digest.to_string(),
+                    "deployment path `{path}` has conflicting content digests"
+                );
+            }
+            refs.insert(&path, Value::from(digest.to_string()));
+            files.push(DeploymentManifestFile {
+                path,
+                digest,
+                bytes,
+            });
+        }
+        table["wit"] = value(root);
+        table["component_files"] = Item::Value(Value::InlineTable(refs));
+    }
     Ok(())
 }
 
@@ -1170,6 +1353,123 @@ ffqn = "ns:pkg/ifc.fn"
     }
 
     #[tokio::test]
+    async fn prepare_collects_only_parser_selected_wit_files() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("wit/ignored"))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            dir.path().join("wit/main.wit"),
+            r"
+                package example:agent;
+                interface api {
+                    record request { prompt: string }
+                    run: func(request: request) -> result<request, string>;
+                }
+                world agent { export api; }
+            ",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(
+            dir.path().join("wit/ignored/not-part-of-package.wit"),
+            "package ignored:file; interface unused {}",
+        )
+        .await
+        .unwrap();
+        let manifest = r#"
+[[activity_js]]
+name = "agent"
+content = "export default () => null;"
+ffqn = "example:agent/api.run"
+wit = "wit"
+"#;
+
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            prepared
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            ["wit/main.wit"]
+        );
+        assert!(!prepared.deployment_toml.contains("not-part-of-package"));
+
+        let classified =
+            DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
+        assert_eq!(classified.component_files.len(), 1);
+        assert_eq!(
+            classified.component_files[0].role,
+            ComponentFileRole::WitSource
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_wit_symlink_escape() {
+        #[cfg(unix)]
+        {
+            let deployment = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            tokio::fs::write(
+                outside.path().join("main.wit"),
+                "package example:escape; interface api {} world app { export api; }",
+            )
+            .await
+            .unwrap();
+            std::os::unix::fs::symlink(outside.path(), deployment.path().join("wit")).unwrap();
+            let manifest = r#"
+[[activity_js]]
+content = "export default () => null;"
+ffqn = "example:escape/api.run"
+wit = "wit"
+"#;
+            let error = prepare_deployment_manifest(manifest, deployment.path())
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("outside the deployment directory"),
+                "{error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_rejects_absolute_wit_and_mixed_interface_modes() {
+        let directory = tempfile::tempdir().unwrap();
+        let absolute = format!(
+            r##"
+[[activity_exec]]
+content = "#!/bin/sh"
+ffqn = "example:agent/api.run"
+wit = {:?}
+"##,
+            directory.path()
+        );
+        assert!(
+            prepare_deployment_manifest(&absolute, directory.path())
+                .await
+                .is_err()
+        );
+
+        let mixed = r#"
+[[activity_js]]
+content = "export default () => null;"
+ffqn = "example:agent/api.run"
+wit = "wit"
+params = [{ name = "request", type = "string" }]
+"#;
+        assert!(
+            prepare_deployment_manifest(mixed, directory.path())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn prepare_preserves_distinct_paths_with_identical_content() {
         let dir = tempfile::tempdir().unwrap();
         for component in ["a", "b"] {
@@ -1230,7 +1530,7 @@ ffqn = "ns:pkg/ifc.fn"
             .await
             .unwrap();
         assert_eq!(prepared.files.len(), 2);
-        assert!(prepared.deployment_toml.contains("module_files"));
+        assert!(prepared.deployment_toml.contains("component_files"));
 
         let classified =
             DeploymentManifest::try_from_toml(&prepared.deployment_toml, Path::new("")).unwrap();
@@ -1283,7 +1583,7 @@ ffqn = "ns:pkg/ifc.fn"
         let prepared = prepare_deployment_manifest(manifest, dir.path())
             .await
             .unwrap();
-        assert!(prepared.deployment_toml.contains("module_files"));
+        assert!(prepared.deployment_toml.contains("component_files"));
         assert!(prepared.deployment_toml.contains("content_digest"));
 
         let exported = strip_generated_deployment_metadata(&prepared.deployment_toml).unwrap();

@@ -52,7 +52,7 @@ impl ActivityJsWorkerCompiled {
             ComponentType::Activity,
             "js-activity",
         )?;
-        Ok(Self {
+        Ok(Self::new_graph_with_wasm_component(
             inner,
             js_entry_path,
             js_files,
@@ -60,7 +60,28 @@ impl ActivityJsWorkerCompiled {
             user_params,
             user_return_type,
             user_wasm_component,
-        })
+        ))
+    }
+
+    #[must_use]
+    pub fn new_graph_with_wasm_component(
+        inner: ActivityWorkerCompiled,
+        js_entry_path: String,
+        js_files: BTreeMap<String, String>,
+        user_ffqn: FunctionFqn,
+        user_params: Vec<ParameterType>,
+        user_return_type: ReturnTypeExtendable,
+        user_wasm_component: WasmComponent,
+    ) -> Self {
+        Self {
+            inner,
+            js_entry_path,
+            js_files,
+            user_ffqn,
+            user_params,
+            user_return_type,
+            user_wasm_component,
+        }
     }
 
     #[must_use]

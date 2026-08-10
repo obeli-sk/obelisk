@@ -420,15 +420,38 @@ pub struct ActivityExternalFileConfigToml {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct ActivityStubExtInlineConfigResolved {
     pub name: ConfigName,
     #[schemars(with = "String")]
     pub ffqn: FunctionFqn,
-    #[serde(default)]
+    #[serde(flatten)]
+    pub interface: FunctionInterfaceResolved,
+}
+
+/// Authored WIT files belonging to a deployment component.
+#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WitSourceResolved {
+    /// Deployment-relative root supplied by the author.
+    pub root: String,
+    /// Parser-selected deployment-relative WIT paths and their contents.
+    pub files: Vec<(String, String)>,
+}
+
+#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct InlineFunctionInterfaceResolved {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Vec<JsParamToml>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_type: Option<String>,
+}
+
+#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
+#[serde(untagged)]
+pub enum FunctionInterfaceResolved {
+    Authored { wit: WitSourceResolved },
+    Inline(InlineFunctionInterfaceResolved),
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -516,14 +539,14 @@ impl ComponentBacktraceConfigResolved {
 
 /// Resolved form of `ActivityJsComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct ActivityJsComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
-    pub params: Vec<JsParamToml>,
+    #[serde(flatten)]
+    pub interface: FunctionInterfaceResolved,
     pub exec: ExecConfigToml,
     pub max_retries: u32,
     pub retry_exp_backoff: DurationConfig,
@@ -532,19 +555,17 @@ pub struct ActivityJsComponentConfigResolved {
     pub logs_store_min_level: LogLevelToml,
     pub env_vars: Vec<EnvVarConfig>,
     pub allowed_hosts: Vec<AllowedHostToml>,
-    pub return_type: Option<String>,
 }
 
 /// Resolved form of `ActivityExecComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct ActivityExecComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub ffqn: FunctionFqn,
-    pub params: Vec<JsParamToml>,
-    pub return_type: Option<String>,
+    #[serde(flatten)]
+    pub interface: FunctionInterfaceResolved,
     pub component_digest: Option<ComponentDigest>,
     pub exec: ExecConfigToml,
     pub max_retries: u32,
@@ -615,19 +636,18 @@ pub struct WorkflowWasmComponentConfigResolved {
 
 /// Resolved form of `WorkflowJsComponentConfigToml`.
 #[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct WorkflowJsComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
-    pub params: Vec<JsParamToml>,
+    #[serde(flatten)]
+    pub interface: FunctionInterfaceResolved,
     pub exec: ExecConfigToml,
     pub retry_exp_backoff: DurationConfig,
     pub blocking_strategy: BlockingStrategyConfigToml,
     pub logs_store_min_level: LogLevelToml,
-    pub return_type: Option<String>,
     pub lock_extension: bool,
 }
 

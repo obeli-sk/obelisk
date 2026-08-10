@@ -67,9 +67,10 @@ pub(crate) use deployment_config::config::{
     ActivityStubFileConfigToml, ActivityWasmComponentConfigToml, AllowedHostToml,
     BacktraceSourceResolved, BlockingStrategyConfigToml, ComponentBacktraceConfigResolved,
     ComponentCommon, ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentResolved,
-    DurationConfig, DurationConfigOptional, ExecConfigToml, InflightSemaphore, JsParamToml,
-    LockingStrategy, LogLevelToml, MethodsInput, MethodsInputStar, OCI_SCHEMA_PREFIX, ReplaceIn,
-    ScriptLocationResolved, Unlimited, WorkflowJsComponentConfigResolved,
+    DurationConfig, DurationConfigOptional, ExecConfigToml, FunctionInterfaceResolved,
+    InflightSemaphore, InlineFunctionInterfaceResolved, JsParamToml, LockingStrategy, LogLevelToml,
+    MethodsInput, MethodsInputStar, OCI_SCHEMA_PREFIX, ReplaceIn, ScriptLocationResolved,
+    Unlimited, WitSourceResolved, WorkflowJsComponentConfigResolved,
     WorkflowWasmComponentConfigResolved, default_lock_extension, default_max_output_bytes,
     default_max_retries, default_retry_exp_backoff,
 };
@@ -178,6 +179,7 @@ impl DeploymentToml {
     ) -> Result<DeploymentTomlValidated, anyhow::Error> {
         self.expand_deployment_dir_prefix(deployment_dir)?;
         self.normalize_oci_locations()?;
+        self.validate_wit_sources()?;
 
         // Build the name→type index and check for duplicates.
         let mut component_names_to_types = hashbrown::HashMap::new();
@@ -283,6 +285,39 @@ impl DeploymentToml {
             component_names_to_types,
             deployment_dir: deployment_dir.to_path_buf(),
         })
+    }
+
+    fn validate_wit_sources(&self) -> anyhow::Result<()> {
+        fn validate(section: &str, interface: &FunctionInterfaceToml) -> anyhow::Result<()> {
+            if let FunctionInterfaceToml::Authored(AuthoredFunctionInterfaceToml { wit }) =
+                interface
+            {
+                sanitize_deployment_relative_path(wit)
+                    .with_context(|| format!("invalid `{section}.wit`"))?;
+            }
+            Ok(())
+        }
+
+        for config in &self.activities_js {
+            validate("activity_js", &config.interface)?;
+        }
+        for config in &self.activities_exec {
+            validate("activity_exec", &config.interface)?;
+        }
+        for config in &self.workflows_js {
+            validate("workflow_js", &config.interface)?;
+        }
+        for config in &self.activities_stub {
+            if let ActivityStubComponentConfigToml::Inline(inline) = config {
+                validate("activity_stub", &inline.interface)?;
+            }
+        }
+        for config in &self.activities_external {
+            if let ActivityExternalComponentConfigToml::Inline(inline) = config {
+                validate("activity_external", &inline.interface)?;
+            }
+        }
+        Ok(())
     }
 
     // Resolve optional names from FFQN.
@@ -1187,17 +1222,41 @@ impl LogLevelTomlExt for LogLevelToml {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ActivityStubExtInlineConfigToml {
     /// Component name. Optional — defaults to `{ifc_name}.{function_name}` from `ffqn`.
     #[serde(default)]
     pub(crate) name: Option<ConfigName>,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
-    #[serde(default)]
+    /// Generated CAS references for the parser-selected WIT files.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(skip)]
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
+    #[serde(flatten)]
+    pub(crate) interface: FunctionInterfaceToml,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuthoredFunctionInterfaceToml {
+    /// Authored WIT directory containing the exported `ffqn`.
+    pub(crate) wit: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InlineFunctionInterfaceToml {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) params: Option<Vec<JsParamToml>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) return_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub(crate) enum FunctionInterfaceToml {
+    Authored(AuthoredFunctionInterfaceToml),
+    Inline(InlineFunctionInterfaceToml),
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -1225,12 +1284,100 @@ pub(crate) struct ActivityStubExtInlineConfigVerified {
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
+    pub(crate) user_wasm_component: Option<WasmComponent>,
+}
+
+struct VerifiedFunctionInterface {
+    params: Vec<concepts::ParameterType>,
+    return_type: concepts::ReturnTypeExtendable,
+    authored_component: Option<WasmComponent>,
+}
+
+fn verify_function_interface(
+    interface: FunctionInterfaceResolved,
+    ffqn: &FunctionFqn,
+    component_type: ComponentType,
+    default_params: Vec<concepts::ParameterType>,
+    default_return_type: &str,
+) -> anyhow::Result<VerifiedFunctionInterface> {
+    match interface {
+        FunctionInterfaceResolved::Inline(InlineFunctionInterfaceResolved {
+            params,
+            return_type,
+        }) => {
+            let params = match params {
+                None => default_params,
+                Some(params) => params
+                    .iter()
+                    .map(|param| {
+                        let type_wrapper = val_json::type_wrapper::parse_wit_type(&param.wit_type)
+                            .map_err(|err| {
+                                anyhow!("invalid param type `{}`: {err}", param.wit_type)
+                            })?;
+                        Ok(concepts::ParameterType {
+                            type_wrapper,
+                            name: StrVariant::from(param.name.clone()),
+                            wit_type: StrVariant::from(param.wit_type.clone()),
+                        })
+                    })
+                    .collect::<anyhow::Result<_>>()?,
+            };
+            let return_type_str = return_type.as_deref().unwrap_or(default_return_type);
+            let type_wrapper = val_json::type_wrapper::parse_wit_type(return_type_str)
+                .map_err(|err| anyhow!("invalid return_type `{return_type_str}`: {err}"))?;
+            let return_type = concepts::ReturnType::detect(
+                type_wrapper,
+                StrVariant::from(return_type_str.to_string()),
+            );
+            let ReturnType::Extendable(return_type) = return_type else {
+                bail!(
+                    "return_type must be `result`, `result<T>`, `result<T, string>`, or \
+                     `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
+                )
+            };
+            Ok(VerifiedFunctionInterface {
+                params,
+                return_type,
+                authored_component: None,
+            })
+        }
+        FunctionInterfaceResolved::Authored { wit } => {
+            let temporary = tempfile::tempdir().context("cannot create temporary WIT directory")?;
+            for (path, source) in &wit.files {
+                let path = sanitize_deployment_relative_path(path)?;
+                let destination = temporary.path().join(path);
+                let parent = destination.parent().expect("WIT path has a parent");
+                std::fs::create_dir_all(parent)?;
+                std::fs::write(&destination, source)?;
+            }
+            let root = sanitize_deployment_relative_path(&wit.root)?;
+            let component = WasmComponent::new_from_wit_folder_for_ffqn(
+                temporary.path().join(root),
+                component_type,
+                ffqn,
+            )?;
+            let exports = component.exported_functions(false);
+            ensure!(
+                exports.len() == 1 && exports[0].ffqn == *ffqn,
+                "authored WIT must expose exactly selected function `{ffqn}`"
+            );
+            let metadata = &exports[0];
+            let ReturnType::Extendable(return_type) = &metadata.return_type else {
+                bail!("authored WIT function `{ffqn}` must return an extendable result")
+            };
+            Ok(VerifiedFunctionInterface {
+                params: metadata.parameter_types.0.clone(),
+                return_type: return_type.clone(),
+                authored_component: Some(component),
+            })
+        }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) enum ActivityStubConfigVerified {
     File(ActivityStubExtConfigVerified),
-    Inline(ActivityStubExtInlineConfigVerified),
+    Inline(Box<ActivityStubExtInlineConfigVerified>),
 }
 
 pub(crate) trait ActivityStubComponentConfigResolvedExt {
@@ -1272,45 +1419,22 @@ impl ActivityStubComponentConfigResolvedExt for ActivityStubComponentConfigResol
             }
             Self::Inline(inline) => {
                 let ffqn = inline.ffqn;
-                let parsed_params = match inline.params {
-                    None => {
-                        vec![concepts::ParameterType {
-                            type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
-                                val_json::type_wrapper::TypeWrapper::String,
-                            )),
-                            name: StrVariant::Static("params"),
-                            wit_type: StrVariant::Static("list<string>"),
-                        }]
-                    }
-                    Some(params) => params
-                        .iter()
-                        .map(|p| {
-                            let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                                .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                            Ok(concepts::ParameterType {
-                                type_wrapper: tw,
-                                name: StrVariant::from(p.name.clone()),
-                                wit_type: StrVariant::from(p.wit_type.clone()),
-                            })
-                        })
-                        .collect::<Result<Vec<_>, anyhow::Error>>()?,
-                };
-
-                const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
-                let return_type_str = inline.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
-                let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
-                    .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-                let return_type = concepts::ReturnType::detect(
-                    return_type_tw,
-                    StrVariant::from(return_type_str.to_string()),
-                );
-                let return_type = match return_type {
-                    ReturnType::Extendable(rt) => rt,
-                    ReturnType::NonExtendable(_) => bail!(
-                        "return_type must be `result`, `result<T>`, `result<T, string>`, or \
-                         `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
-                    ),
-                };
+                let default_params = vec![concepts::ParameterType {
+                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                        val_json::type_wrapper::TypeWrapper::String,
+                    )),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }];
+                let verified = verify_function_interface(
+                    inline.interface,
+                    &ffqn,
+                    ComponentType::ActivityStub,
+                    default_params,
+                    "result<string, string>",
+                )?;
+                let parsed_params = verified.params;
+                let return_type = verified.return_type;
 
                 // Compute component digest: SHA256 of prefix + ffqn + params + return_type
                 let mut hasher = Sha256::new();
@@ -1320,6 +1444,9 @@ impl ActivityStubComponentConfigResolvedExt for ActivityStubComponentConfigResol
                     hasher.update(p.wit_type.as_ref().as_bytes());
                 }
                 hasher.update(return_type.wit_type.as_bytes());
+                if let Some(component) = &verified.authored_component {
+                    hasher.update(component.wit().as_bytes());
+                }
                 let hash: [u8; 32] = hasher.finalize().into();
                 let component_digest = ComponentDigest(Digest(hash));
 
@@ -1329,14 +1456,15 @@ impl ActivityStubComponentConfigResolvedExt for ActivityStubComponentConfigResol
                     component_digest,
                 )?;
 
-                Ok(ActivityStubConfigVerified::Inline(
+                Ok(ActivityStubConfigVerified::Inline(Box::new(
                     ActivityStubExtInlineConfigVerified {
                         component_id,
                         ffqn,
                         params: parsed_params,
                         return_type,
+                        user_wasm_component: verified.authored_component,
                     },
-                ))
+                )))
             }
         }
     }
@@ -1344,7 +1472,7 @@ impl ActivityStubComponentConfigResolvedExt for ActivityStubComponentConfigResol
 #[derive(Debug)]
 pub(crate) enum ActivityExternalConfigVerified {
     File(ActivityStubExtConfigVerified),
-    Inline(ActivityStubExtInlineConfigVerified),
+    Inline(Box<ActivityStubExtInlineConfigVerified>),
 }
 
 pub(crate) trait ActivityExternalComponentConfigResolvedExt {
@@ -1393,45 +1521,22 @@ impl ActivityExternalComponentConfigResolvedExt for ActivityExternalComponentCon
             }
             Self::Inline(inline) => {
                 let ffqn = inline.ffqn;
-                let parsed_params = match inline.params {
-                    None => {
-                        vec![concepts::ParameterType {
-                            type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
-                                val_json::type_wrapper::TypeWrapper::String,
-                            )),
-                            name: StrVariant::Static("params"),
-                            wit_type: StrVariant::Static("list<string>"),
-                        }]
-                    }
-                    Some(params) => params
-                        .iter()
-                        .map(|p| {
-                            let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                                .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                            Ok(concepts::ParameterType {
-                                type_wrapper: tw,
-                                name: StrVariant::from(p.name.clone()),
-                                wit_type: StrVariant::from(p.wit_type.clone()),
-                            })
-                        })
-                        .collect::<Result<Vec<_>, anyhow::Error>>()?,
-                };
-
-                const DEFAULT_RETURN_TYPE: &str = "result<string, string>";
-                let return_type_str = inline.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
-                let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
-                    .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-                let return_type = concepts::ReturnType::detect(
-                    return_type_tw,
-                    StrVariant::from(return_type_str.to_string()),
-                );
-                let return_type = match return_type {
-                    ReturnType::Extendable(rt) => rt,
-                    ReturnType::NonExtendable(_) => bail!(
-                        "return_type must be `result`, `result<T>`, `result<T, string>`, or \
-                         `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
-                    ),
-                };
+                let default_params = vec![concepts::ParameterType {
+                    type_wrapper: val_json::type_wrapper::TypeWrapper::List(Box::new(
+                        val_json::type_wrapper::TypeWrapper::String,
+                    )),
+                    name: StrVariant::Static("params"),
+                    wit_type: StrVariant::Static("list<string>"),
+                }];
+                let verified = verify_function_interface(
+                    inline.interface,
+                    &ffqn,
+                    ComponentType::Activity,
+                    default_params,
+                    "result<string, string>",
+                )?;
+                let parsed_params = verified.params;
+                let return_type = verified.return_type;
 
                 // Compute component digest: SHA256 of prefix + ffqn + params + return_type
                 let mut hasher = Sha256::new();
@@ -1441,6 +1546,9 @@ impl ActivityExternalComponentConfigResolvedExt for ActivityExternalComponentCon
                     hasher.update(p.wit_type.as_ref().as_bytes());
                 }
                 hasher.update(return_type.wit_type.as_bytes());
+                if let Some(component) = &verified.authored_component {
+                    hasher.update(component.wit().as_bytes());
+                }
                 let hash: [u8; 32] = hasher.finalize().into();
                 let component_digest = ComponentDigest(Digest(hash));
 
@@ -1450,14 +1558,15 @@ impl ActivityExternalComponentConfigResolvedExt for ActivityExternalComponentCon
                     component_digest,
                 )?;
 
-                Ok(ActivityExternalConfigVerified::Inline(
+                Ok(ActivityExternalConfigVerified::Inline(Box::new(
                     ActivityStubExtInlineConfigVerified {
                         component_id,
                         ffqn,
                         params: parsed_params,
                         return_type,
+                        user_wasm_component: verified.authored_component,
                     },
-                ))
+                )))
             }
         }
     }
@@ -1562,7 +1671,6 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ActivityJsComponentConfigToml {
     /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
     #[serde(default)]
@@ -1582,7 +1690,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// CAS references for the closed module graph, populated during deployment preparation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
-    pub(crate) module_files: BTreeMap<String, ContentDigest>,
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
     /// Deprecated override of the auto-computed component digest used for locking.
     /// This option will be removed in 0.42.
     #[serde(default)]
@@ -1593,8 +1701,9 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Custom parameters for the JS function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
     /// Defaults to no parameters.
-    #[serde(default)]
-    pub(crate) params: Vec<JsParamToml>,
+    /// The synthesized return type must be `result<T, string>`.
+    #[serde(flatten)]
+    pub(crate) interface: FunctionInterfaceToml,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -1612,10 +1721,6 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
-    /// WIT return type. Defaults to `result`.
-    /// Must be `result<T, string>` — the error type must be `string` since JS throws strings.
-    #[serde(default)]
-    pub(crate) return_type: Option<String>,
 }
 #[derive(Debug)]
 pub(crate) struct ActivityJsConfigVerified {
@@ -1625,6 +1730,7 @@ pub(crate) struct ActivityJsConfigVerified {
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
+    pub(crate) user_wasm_component: Option<WasmComponent>,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -1643,7 +1749,6 @@ impl ActivityJsConfigVerified {
 // --- activity_exec config ---
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ActivityExecComponentConfigToml {
     /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
     #[serde(default)]
@@ -1660,15 +1765,16 @@ pub(crate) struct ActivityExecComponentConfigToml {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
+    /// Generated CAS references for parser-selected WIT files.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(skip)]
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the exec activity.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
-    #[serde(default)]
-    pub(crate) params: Vec<JsParamToml>,
-    /// WIT return type. Defaults to `result`.
-    #[serde(default)]
-    pub(crate) return_type: Option<String>,
+    #[serde(flatten)]
+    pub(crate) interface: FunctionInterfaceToml,
     /// Deprecated override of the auto-computed component digest used for locking.
     /// This option will be removed in 0.42.
     #[serde(default)]
@@ -1811,34 +1917,15 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         secret_registry: &Arc<SecretRegistry>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error> {
-        let parsed_params = self
-            .params
-            .iter()
-            .map(|p| {
-                let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                    .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                Ok(concepts::ParameterType {
-                    type_wrapper: tw,
-                    name: StrVariant::from(p.name.clone()),
-                    wit_type: StrVariant::from(p.wit_type.clone()),
-                })
-            })
-            .collect::<Result<Vec<_>, anyhow::Error>>()?;
-        const DEFAULT_RETURN_TYPE: &str = "result";
-        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
-        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
-            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-        let return_type = concepts::ReturnType::detect(
-            return_type_tw,
-            StrVariant::from(return_type_str.to_string()),
-        );
-        let return_type = match return_type {
-            ReturnType::Extendable(rt) => rt,
-            ReturnType::NonExtendable(_) => bail!(
-                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
-                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
-            ),
-        };
+        let verified = verify_function_interface(
+            self.interface,
+            &self.ffqn,
+            ComponentType::Activity,
+            Vec::new(),
+            "result",
+        )?;
+        let parsed_params = verified.params;
+        let return_type = verified.return_type;
         warn_deprecated_component_digest_override(
             self.name.as_str(),
             self.component_digest.as_ref(),
@@ -1852,6 +1939,9 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                 hasher.update(p.wit_type.as_ref().as_bytes());
             }
             hasher.update(return_type.wit_type.as_bytes());
+            if let Some(component) = &verified.authored_component {
+                hasher.update(component.wit().as_bytes());
+            }
             let hash: [u8; 32] = hasher.finalize().into();
             ComponentDigest(Digest(hash))
         });
@@ -1883,6 +1973,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,
+            user_wasm_component: verified.authored_component,
             env_vars,
             max_output_bytes: self.max_output_bytes,
             forward_stdout: self.forward_stdout.into_std_output_config(),
@@ -1906,6 +1997,7 @@ pub(crate) struct ActivityExecConfigVerified {
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
+    pub(crate) user_wasm_component: Option<WasmComponent>,
     pub(crate) env_vars: Arc<[EnvVar]>,
     pub(crate) max_output_bytes: u64,
     pub(crate) forward_stdout: Option<StdOutputConfig>,
@@ -1924,7 +2016,6 @@ impl ActivityExecConfigVerified {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowJsComponentConfigToml {
     /// Component name. Optional when `ffqn` is specified — defaults to `{ifc_name}.{function_name}`.
     #[serde(default)]
@@ -1944,7 +2035,7 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     /// CAS references for the closed module graph, populated during deployment preparation.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
-    pub(crate) module_files: BTreeMap<String, ContentDigest>,
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
     /// Deprecated override of the auto-computed component digest used for locking.
     /// This option will be removed in 0.42.
     #[serde(default)]
@@ -1955,8 +2046,9 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     /// Custom parameters for the JS workflow function.
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
     /// Defaults to no parameters.
-    #[serde(default)]
-    pub(crate) params: Vec<JsParamToml>,
+    /// The synthesized return type must be an extendable `result`.
+    #[serde(flatten)]
+    pub(crate) interface: FunctionInterfaceToml,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
@@ -1967,11 +2059,6 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) lock_extension: bool,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
-    /// WIT return type. Defaults to `result`.
-    /// Must be `result`, `result<T>`, `result<T, string>`, or
-    /// `result<T, variant { execution-failed, ... }>`.
-    #[serde(default)]
-    pub(crate) return_type: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1982,6 +2069,7 @@ pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) ffqn: FunctionFqn,
     pub(crate) params: Vec<concepts::ParameterType>,
     pub(crate) return_type: concepts::ReturnTypeExtendable,
+    pub(crate) user_wasm_component: Option<WasmComponent>,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -2250,19 +2338,15 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
-        let parsed_params = self
-            .params
-            .iter()
-            .map(|p| {
-                let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                    .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                Ok(concepts::ParameterType {
-                    type_wrapper: tw,
-                    name: StrVariant::from(p.name.clone()),
-                    wit_type: StrVariant::from(p.wit_type.clone()),
-                })
-            })
-            .collect::<Result<Vec<_>, anyhow::Error>>()?;
+        let verified = verify_function_interface(
+            self.interface,
+            &self.ffqn,
+            ComponentType::Activity,
+            Vec::new(),
+            "result",
+        )?;
+        let parsed_params = verified.params;
+        let return_type = verified.return_type;
         let JsContent {
             entry_path: js_entry_path,
             files: js_files,
@@ -2270,21 +2354,6 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
             .await?;
-        const DEFAULT_RETURN_TYPE: &str = "result";
-        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
-        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
-            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-        let return_type = concepts::ReturnType::detect(
-            return_type_tw,
-            StrVariant::from(return_type_str.to_string()),
-        );
-        let return_type = match return_type {
-            ReturnType::Extendable(rt) => rt,
-            ReturnType::NonExtendable(_) => bail!(
-                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
-                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
-            ),
-        };
         warn_deprecated_component_digest_override(
             self.name.as_str(),
             self.component_digest.as_ref(),
@@ -2298,6 +2367,9 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
                 hasher.update(p.wit_type.as_ref().as_bytes());
             }
             hasher.update(return_type.wit_type.as_bytes());
+            if let Some(component) = &verified.authored_component {
+                hasher.update(component.wit().as_bytes());
+            }
             let hash: [u8; 32] = hasher.finalize().into();
             ComponentDigest(Digest(hash))
         });
@@ -2334,6 +2406,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,
+            user_wasm_component: verified.authored_component,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
@@ -2444,19 +2517,15 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         wasm_cache_dir: Arc<Path>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
-        let parsed_params = self
-            .params
-            .iter()
-            .map(|p| {
-                let tw = val_json::type_wrapper::parse_wit_type(&p.wit_type)
-                    .map_err(|e| anyhow!("invalid param type `{}`: {e}", p.wit_type))?;
-                Ok(concepts::ParameterType {
-                    type_wrapper: tw,
-                    name: StrVariant::from(p.name.clone()),
-                    wit_type: StrVariant::from(p.wit_type.clone()),
-                })
-            })
-            .collect::<Result<Vec<_>, anyhow::Error>>()?;
+        let verified = verify_function_interface(
+            self.interface,
+            &self.ffqn,
+            ComponentType::Workflow,
+            Vec::new(),
+            "result",
+        )?;
+        let parsed_params = verified.params;
+        let return_type = verified.return_type;
         let JsContent {
             entry_path: js_entry_path,
             files: js_files,
@@ -2464,21 +2533,6 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
             .await?;
-        const DEFAULT_RETURN_TYPE: &str = "result";
-        let return_type_str = self.return_type.as_deref().unwrap_or(DEFAULT_RETURN_TYPE);
-        let return_type_tw = val_json::type_wrapper::parse_wit_type(return_type_str)
-            .map_err(|e| anyhow!("invalid return_type `{return_type_str}`: {e}"))?;
-        let return_type = concepts::ReturnType::detect(
-            return_type_tw,
-            StrVariant::from(return_type_str.to_string()),
-        );
-        let return_type = match return_type {
-            ReturnType::Extendable(rt) => rt,
-            ReturnType::NonExtendable(_) => bail!(
-                "return_type must be `result`, `result<T>`, `result<T, string>`, or \
-                 `result<T, variant {{ execution-failed, ... }}>`, got `{return_type_str}`"
-            ),
-        };
         warn_deprecated_component_digest_override(
             self.name.as_str(),
             self.component_digest.as_ref(),
@@ -2492,6 +2546,9 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
                 hasher.update(p.wit_type.as_ref().as_bytes());
             }
             hasher.update(return_type.wit_type.as_bytes());
+            if let Some(component) = &verified.authored_component {
+                hasher.update(component.wit().as_bytes());
+            }
             let hash: [u8; 32] = hasher.finalize().into();
             ComponentDigest(Digest(hash))
         });
@@ -2519,6 +2576,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             ffqn: self.ffqn,
             params: parsed_params,
             return_type,
+            user_wasm_component: verified.authored_component,
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
@@ -2537,13 +2595,15 @@ async fn resolve_local_refs(
     provider: &dyn FileProvider,
 ) -> anyhow::Result<DeploymentResolved> {
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
-    for (a, name) in deployment.activities_js {
+    for (mut a, name) in deployment.activities_js {
+        let interface =
+            resolve_function_interface(a.interface, &mut a.component_files, provider).await?;
         activities_js.push(ActivityJsComponentConfigResolved {
             location: resolve_script_toml(
                 ScriptToml::JavaScript {
                     location: a.location,
                     content: a.content,
-                    module_files: a.module_files,
+                    component_files: a.component_files,
                 },
                 format!("{name}.js"),
                 provider,
@@ -2554,7 +2614,7 @@ async fn resolve_local_refs(
             content_digest: a.content_digest,
             component_digest: a.component_digest,
             ffqn: a.ffqn,
-            params: a.params,
+            interface,
             exec: a.exec,
             max_retries: a.max_retries,
             retry_exp_backoff: a.retry_exp_backoff,
@@ -2563,7 +2623,6 @@ async fn resolve_local_refs(
             logs_store_min_level: a.logs_store_min_level,
             env_vars: a.env_vars,
             allowed_hosts: a.allowed_hosts,
-            return_type: a.return_type,
         });
     }
 
@@ -2584,13 +2643,15 @@ async fn resolve_local_refs(
     }
 
     let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
-    for (w, name) in deployment.workflows_js {
+    for (mut w, name) in deployment.workflows_js {
+        let interface =
+            resolve_function_interface(w.interface, &mut w.component_files, provider).await?;
         workflows_js.push(WorkflowJsComponentConfigResolved {
             location: resolve_script_toml(
                 ScriptToml::JavaScript {
                     location: w.location,
                     content: w.content,
-                    module_files: w.module_files,
+                    component_files: w.component_files,
                 },
                 format!("{name}.js"),
                 provider,
@@ -2601,13 +2662,12 @@ async fn resolve_local_refs(
             content_digest: w.content_digest,
             component_digest: w.component_digest,
             ffqn: w.ffqn,
-            params: w.params,
+            interface,
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
             lock_extension: w.lock_extension,
             logs_store_min_level: w.logs_store_min_level,
-            return_type: w.return_type,
         });
     }
 
@@ -2636,7 +2696,7 @@ async fn resolve_local_refs(
                 ScriptToml::JavaScript {
                     location: w.location,
                     content: w.content,
-                    module_files: w.module_files,
+                    component_files: w.component_files,
                 },
                 format!("{}.js", w.name),
                 provider,
@@ -2657,7 +2717,13 @@ async fn resolve_local_refs(
     }
 
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
-    for (a, name) in deployment.activities_exec {
+    for (mut a, name) in deployment.activities_exec {
+        let interface =
+            resolve_function_interface(a.interface, &mut a.component_files, provider).await?;
+        ensure!(
+            a.component_files.is_empty(),
+            "activity_exec component_files contains files not selected by its WIT"
+        );
         let location = resolve_script_toml(
             ScriptToml::Exec {
                 location: a.location,
@@ -2673,8 +2739,7 @@ async fn resolve_local_refs(
             location,
             content_digest: a.content_digest,
             ffqn: a.ffqn,
-            params: a.params,
-            return_type: a.return_type,
+            interface,
             component_digest: a.component_digest,
             exec: a.exec,
             max_retries: a.max_retries,
@@ -2690,42 +2755,52 @@ async fn resolve_local_refs(
     }
 
     // Build resolved stubs/externals with their names filled in.
-    let activities_stub = deployment
-        .activities_stub
-        .into_iter()
-        .map(|(c, name)| match c {
+    let mut activities_stub = Vec::with_capacity(deployment.activities_stub.len());
+    for (c, name) in deployment.activities_stub {
+        activities_stub.push(match c {
             ActivityStubComponentConfigToml::File(f) => {
                 ActivityStubComponentConfigResolved::File(f)
             }
-            ActivityStubComponentConfigToml::Inline(i) => {
+            ActivityStubComponentConfigToml::Inline(mut i) => {
+                let interface =
+                    resolve_function_interface(i.interface, &mut i.component_files, provider)
+                        .await?;
+                ensure!(
+                    i.component_files.is_empty(),
+                    "activity_stub component_files contains files not selected by its WIT"
+                );
                 ActivityStubComponentConfigResolved::Inline(ActivityStubExtInlineConfigResolved {
                     name,
                     ffqn: i.ffqn,
-                    params: i.params,
-                    return_type: i.return_type,
+                    interface,
                 })
             }
-        })
-        .collect();
-    let activities_external = deployment
-        .activities_external
-        .into_iter()
-        .map(|(c, name)| match c {
+        });
+    }
+    let mut activities_external = Vec::with_capacity(deployment.activities_external.len());
+    for (c, name) in deployment.activities_external {
+        activities_external.push(match c {
             ActivityExternalComponentConfigToml::File(f) => {
                 ActivityExternalComponentConfigResolved::File(f)
             }
-            ActivityExternalComponentConfigToml::Inline(i) => {
+            ActivityExternalComponentConfigToml::Inline(mut i) => {
+                let interface =
+                    resolve_function_interface(i.interface, &mut i.component_files, provider)
+                        .await?;
+                ensure!(
+                    i.component_files.is_empty(),
+                    "activity_external component_files contains files not selected by its WIT"
+                );
                 ActivityExternalComponentConfigResolved::Inline(
                     ActivityStubExtInlineConfigResolved {
                         name,
                         ffqn: i.ffqn,
-                        params: i.params,
-                        return_type: i.return_type,
+                        interface,
                     },
                 )
             }
-        })
-        .collect();
+        });
+    }
 
     let resolved = DeploymentResolved {
         source_path: None,
@@ -2742,6 +2817,40 @@ async fn resolve_local_refs(
     };
     validate_owned_source_file_names(&resolved)?;
     Ok(resolved)
+}
+
+async fn resolve_function_interface(
+    interface: FunctionInterfaceToml,
+    component_files: &mut BTreeMap<String, ContentDigest>,
+    provider: &dyn FileProvider,
+) -> anyhow::Result<FunctionInterfaceResolved> {
+    let root = match interface {
+        FunctionInterfaceToml::Authored(AuthoredFunctionInterfaceToml { wit }) => wit,
+        FunctionInterfaceToml::Inline(InlineFunctionInterfaceToml {
+            params,
+            return_type,
+        }) => {
+            return Ok(FunctionInterfaceResolved::Inline(
+                InlineFunctionInterfaceResolved {
+                    params,
+                    return_type,
+                },
+            ));
+        }
+    };
+    let root = sanitize_deployment_relative_path(&root)?;
+    let files = provider.read_wit_files(&root, component_files).await?;
+    let prefix = format!("{root}/");
+    for (path, _) in &files {
+        ensure!(
+            path.starts_with(&prefix),
+            "parsed WIT file `{path}` is outside configured WIT directory `{root}`"
+        );
+        component_files.remove(path);
+    }
+    Ok(FunctionInterfaceResolved::Authored {
+        wit: WitSourceResolved { root, files },
+    })
 }
 
 /// Reject deployments where two deployment-owned source files (inline/owned scripts and
@@ -2842,7 +2951,7 @@ enum ScriptToml {
     JavaScript {
         location: Option<JsLocationToml>,
         content: Option<String>,
-        module_files: BTreeMap<String, ContentDigest>,
+        component_files: BTreeMap<String, ContentDigest>,
     },
     Exec {
         location: Option<JsLocationToml>,
@@ -2875,11 +2984,11 @@ async fn resolve_script_toml(
         ScriptToml::JavaScript {
             location,
             content,
-            module_files,
+            component_files,
         } => (
             location,
             content,
-            ModuleGraphResolution::JavaScript(module_files),
+            ModuleGraphResolution::JavaScript(component_files),
         ),
         ScriptToml::Exec { location, content } => {
             (location, content, ModuleGraphResolution::Disabled)
@@ -2887,10 +2996,10 @@ async fn resolve_script_toml(
     };
     match (location, content) {
         (None, Some(content)) => {
-            if let ModuleGraphResolution::JavaScript(module_files) = &module_graph {
+            if let ModuleGraphResolution::JavaScript(component_files) = &module_graph {
                 ensure!(
-                    module_files.is_empty(),
-                    "inline scripts cannot set `module_files`"
+                    component_files.is_empty(),
+                    "inline scripts cannot set `component_files`"
                 );
             }
             verify_content_digest(content.as_bytes(), content_digest, &default_file_name)?;
@@ -2905,19 +3014,19 @@ async fn resolve_script_toml(
             }
             let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
             let path = sanitize_deployment_relative_path(path)?;
-            if let ModuleGraphResolution::JavaScript(module_files) = module_graph {
-                if !module_files.is_empty() {
-                    let entry_digest = module_files.get(&path).with_context(|| {
-                        format!("module_files for `{path}` does not contain the entry path")
+            if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
+                if !component_files.is_empty() {
+                    let entry_digest = component_files.get(&path).with_context(|| {
+                        format!("component_files for `{path}` does not contain the entry path")
                     })?;
                     if let Some(expected) = content_digest {
                         ensure!(
                             expected == entry_digest,
-                            "content_digest for `{path}` does not match its module_files digest"
+                            "content_digest for `{path}` does not match its component_files digest"
                         );
                     }
-                    let mut files = Vec::with_capacity(module_files.len());
-                    for (module_path, digest) in module_files {
+                    let mut files = Vec::with_capacity(component_files.len());
+                    for (module_path, digest) in component_files {
                         let module_path = sanitize_deployment_relative_path(&module_path)?;
                         let bytes = provider.read(&module_path, Some(&digest)).await?;
                         let source = String::from_utf8(bytes).with_context(|| {
@@ -2952,10 +3061,10 @@ async fn resolve_script_toml(
             })
         }
         (Some(JsLocationToml::Oci(reference)), None) => {
-            if let ModuleGraphResolution::JavaScript(module_files) = module_graph {
+            if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
                 ensure!(
-                    module_files.is_empty(),
-                    "OCI scripts cannot set `module_files`"
+                    component_files.is_empty(),
+                    "OCI scripts cannot set `component_files`"
                 );
             }
             Ok(ScriptLocationResolved::Oci {
@@ -3420,7 +3529,7 @@ pub(crate) mod webhook {
         /// CAS references for the closed module graph, populated during deployment preparation.
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         #[schemars(skip)]
-        pub(crate) module_files: BTreeMap<String, ContentDigest>,
+        pub(crate) component_files: BTreeMap<String, ContentDigest>,
         /// The HTTP server to bind this webhook to.
         #[serde(default = "default_external_server_name")]
         pub(crate) http_server: ConfigName,
@@ -4456,8 +4565,10 @@ name = "my_stub"
                 },
                 content_digest: None,
                 ffqn: "testing:integration/exec-secret.expose".parse().unwrap(),
-                params: vec![],
-                return_type: Some("result<string, string>".into()),
+                interface: FunctionInterfaceResolved::Inline(InlineFunctionInterfaceResolved {
+                    params: Some(vec![]),
+                    return_type: Some("result<string, string>".into()),
+                }),
                 component_digest: None,
                 exec: ExecConfigToml::default(),
                 max_retries: default_max_retries(),
@@ -4481,8 +4592,10 @@ name = "my_stub"
                 location,
                 content_digest,
                 ffqn: "testing:integration/exec-secret.expose".parse().unwrap(),
-                params: vec![],
-                return_type: Some("result<string, string>".into()),
+                interface: FunctionInterfaceResolved::Inline(InlineFunctionInterfaceResolved {
+                    params: Some(vec![]),
+                    return_type: Some("result<string, string>".into()),
+                }),
                 component_digest: None,
                 exec: ExecConfigToml::default(),
                 max_retries: default_max_retries(),
@@ -4625,12 +4738,12 @@ name = "my_stub"
         fn javascript(
             location: Option<JsLocationToml>,
             content: Option<String>,
-            module_files: BTreeMap<String, ContentDigest>,
+            component_files: BTreeMap<String, ContentDigest>,
         ) -> ScriptToml {
             ScriptToml::JavaScript {
                 location,
                 content,
-                module_files,
+                component_files,
             }
         }
 
@@ -4871,7 +4984,10 @@ name = "my_stub"
                 content_digest: None,
                 component_digest: None,
                 ffqn: "ns:pkg/ifc.fn".parse().unwrap(),
-                params: vec![],
+                interface: FunctionInterfaceResolved::Inline(InlineFunctionInterfaceResolved {
+                    params: Some(vec![]),
+                    return_type: None,
+                }),
                 exec: ExecConfigToml::default(),
                 max_retries: default_max_retries(),
                 retry_exp_backoff: default_retry_exp_backoff(),
@@ -4880,7 +4996,6 @@ name = "my_stub"
                 logs_store_min_level: LogLevelToml::default(),
                 env_vars: vec![],
                 allowed_hosts: vec![],
-                return_type: None,
             }
         }
 

@@ -3328,6 +3328,7 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "strum 0.28.0",
+ "tempfile",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-webhook-builder",
  "test-programs-fibo-workflow-builder",

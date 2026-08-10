@@ -170,6 +170,7 @@ enum ComponentFileRole {
     COMPONENT_FILE_ROLE_JS_ENTRYPOINT = 3;
     COMPONENT_FILE_ROLE_JS_MODULE = 4;
     COMPONENT_FILE_ROLE_BACKTRACE_SOURCE = 5;
+    COMPONENT_FILE_ROLE_WIT_SOURCE = 6;
 }
 
 message ComponentFileRef {
@@ -1086,6 +1087,7 @@ message ListDeploymentsRequest {
     bool include_execution_counts = 5;
     // Populate `DeploymentSummary.component_summary`.
     bool include_component_summary = 6;
+    // TODO bool include_file refs
 }
 
 enum DeploymentStatus {
@@ -1142,7 +1144,7 @@ message Deployment {
     DeploymentStatus status = 2;
     google.protobuf.Timestamp created_at = 3;
     optional google.protobuf.Timestamp last_active_at = 4;
-    // Verbatim deployment manifest (`deployment.toml`). Present when requested.
+    // deployment manifest (`deployment.toml`). Present when requested.
     optional string deployment_toml = 5;
     optional string description = 6;
     // Content digest = sha256(deployment_toml).

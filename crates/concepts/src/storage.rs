@@ -1545,6 +1545,7 @@ pub trait DbExternalApi: DbConnection {
         record: DeploymentRecord,
         component_metadata: Vec<ComponentMetadataRecord>,
         deployment_components: Vec<DeploymentComponentRecord>,
+        deployment_component_files: Vec<DeploymentComponentFileRecord>,
     ) -> Result<(), DbErrorWrite>;
 
     /// Return deployment file digests referenced by this deployment but absent from the CAS.
@@ -1721,11 +1722,10 @@ pub struct DeploymentRecord {
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
     pub status: DeploymentStatus,
-    pub deployment_toml: String, // Verbatim `deployment.toml` manifest
+    pub deployment_toml: String, // `deployment.toml` manifest that client enriched with generated metadata like `content_digest`, see `prepare_deployment_manifest`.
     pub obelisk_version: String,
     pub created_by: Option<String>,
     pub files: Vec<DeploymentFileRecord>,
-    pub component_files: Vec<DeploymentComponentFileRecord>,
 }
 
 impl DeploymentRecord {
@@ -1764,6 +1764,7 @@ pub enum ComponentFileRole {
     JsEntrypoint,
     JsModule,
     BacktraceSource,
+    WitSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1788,6 +1789,8 @@ pub enum WitOrigin {
     Wasm = 1,
     #[display("synthesized")]
     Synthesized = 2,
+    #[display("authored")]
+    Authored = 3,
 }
 
 #[derive(Debug, Clone)]

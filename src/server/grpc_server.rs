@@ -1579,6 +1579,9 @@ impl grpc_gen::function_repository_server::FunctionRepository for GrpcServer {
                             concepts::storage::ComponentFileRole::BacktraceSource => {
                                 grpc_gen::ComponentFileRole::BacktraceSource as i32
                             }
+                            concepts::storage::ComponentFileRole::WitSource => {
+                                grpc_gen::ComponentFileRole::WitSource as i32
+                            }
                         },
                     })
                     .collect(),

@@ -10,6 +10,7 @@ use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ConfigName;
 use crate::config::toml::DeploymentTomlValidated;
 use crate::config::toml::DurationConfig;
+use crate::config::toml::FunctionInterfaceToml;
 use crate::config::toml::JsLocationToml;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::config::wasm_cache_metadata_dir;
@@ -174,6 +175,7 @@ fn find_component_for_push(
                     bail!("component '{name}' must set exactly one of `location` or `content`");
                 }
             };
+            let (params, return_type) = synthesized_interface(&cfg.interface)?;
             Ok(ComponentPushData::Js {
                 source,
                 metadata: ComponentMetadataAnnotation::ActivityJs {
@@ -181,8 +183,8 @@ fn find_component_for_push(
                     allowed_hosts: cfg.allowed_hosts.clone(),
                     lock_duration: Some(cfg.exec.lock_expiry),
                     ffqn: cfg.ffqn.clone(),
-                    params: cfg.params.clone(),
-                    return_type: cfg.return_type.clone(),
+                    params,
+                    return_type,
                 },
             })
         }
@@ -205,13 +207,14 @@ fn find_component_for_push(
                     bail!("component '{name}' must set exactly one of `location` or `content`");
                 }
             };
+            let (params, return_type) = synthesized_interface(&cfg.interface)?;
             Ok(ComponentPushData::Js {
                 source,
                 metadata: ComponentMetadataAnnotation::WorkflowJs {
                     lock_duration: Some(cfg.exec.lock_expiry),
                     ffqn: cfg.ffqn.clone(),
-                    params: cfg.params.clone(),
-                    return_type: cfg.return_type.clone(),
+                    params,
+                    return_type,
                 },
             })
         }
@@ -261,14 +264,15 @@ fn find_component_for_push(
                     bail!("component '{name}' must set exactly one of `location` or `content`");
                 }
             };
+            let (params, return_type) = synthesized_interface(&cfg.interface)?;
             Ok(ComponentPushData::Exec {
                 script,
                 metadata: ComponentMetadataAnnotation::ActivityExec {
                     env_vars: cfg.env_vars.iter().map(env_var_key).collect(),
                     lock_duration: Some(cfg.exec.lock_expiry),
                     ffqn: cfg.ffqn.clone(),
-                    params: cfg.params.clone(),
-                    return_type: cfg.return_type.clone(),
+                    params,
+                    return_type,
                     max_output_bytes: cfg.max_output_bytes,
                     secrets: cfg.secrets.clone(),
                     params_via_stdin: cfg.params_via_stdin,
@@ -279,6 +283,20 @@ fn find_component_for_push(
         | TomlComponentType::ActivityStub
         | TomlComponentType::Cron) => {
             bail!("component type `{other}` does not support push")
+        }
+    }
+}
+
+fn synthesized_interface(
+    interface: &FunctionInterfaceToml,
+) -> anyhow::Result<(Vec<crate::config::toml::JsParamToml>, Option<String>)> {
+    match interface {
+        FunctionInterfaceToml::Inline(inline) => Ok((
+            inline.params.clone().unwrap_or_default(),
+            inline.return_type.clone(),
+        )),
+        FunctionInterfaceToml::Authored(_) => {
+            bail!("`component push` does not support deployment-authored WIT directories")
         }
     }
 }
@@ -920,10 +938,14 @@ mod tests {
             "my_js_activity"
         );
         assert_eq!(act.ffqn.to_string(), "my-pkg:my-iface/my-ifc.my-fn");
-        assert_eq!(act.return_type.as_deref(), Some("result<string>"));
-        assert_eq!(act.params.len(), 1);
-        assert_eq!(act.params[0].name, "input");
-        assert_eq!(act.params[0].wit_type, "string");
+        let FunctionInterfaceToml::Inline(interface) = &act.interface else {
+            panic!("expected synthesized interface")
+        };
+        assert_eq!(interface.return_type.as_deref(), Some("result<string>"));
+        let params = interface.params.as_ref().expect("params set");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "input");
+        assert_eq!(params[0].wit_type, "string");
         assert_eq!(act.env_vars.len(), 1);
         assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(10)));
     }
@@ -980,7 +1002,10 @@ mod tests {
         assert!(act.content.is_none());
         assert_eq!(act.content_digest, Some(content_digest));
         assert_eq!(act.ffqn.to_string(), "my-pkg:my-iface/my-ifc.my-fn");
-        assert_eq!(act.params.len(), 1);
+        let FunctionInterfaceToml::Inline(interface) = &act.interface else {
+            panic!("expected synthesized interface")
+        };
+        assert_eq!(interface.params.as_ref().expect("params set").len(), 1);
         assert_eq!(act.max_output_bytes, 1024);
         assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(3)));
     }

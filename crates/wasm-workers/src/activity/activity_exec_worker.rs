@@ -75,7 +75,7 @@ impl ActivityExecWorkerCompiled {
             ComponentType::Activity,
             "exec-activity",
         )?;
-        Ok(Self {
+        Ok(Self::new_with_wasm_component(
             program,
             user_ffqn,
             user_params,
@@ -87,7 +87,37 @@ impl ActivityExecWorkerCompiled {
             secrets,
             params_via_stdin,
             user_wasm_component,
-        })
+        ))
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new_with_wasm_component(
+        program: PathBuf,
+        user_ffqn: FunctionFqn,
+        user_params: Vec<ParameterType>,
+        user_return_type: ReturnTypeExtendable,
+        env_vars: Arc<[EnvVar]>,
+        max_output_bytes: u64,
+        forward_stdout: Option<StdOutputConfig>,
+        forward_stderr: Option<StdOutputConfig>,
+        secrets: Option<ExecSecrets>,
+        params_via_stdin: bool,
+        user_wasm_component: WasmComponent,
+    ) -> Self {
+        Self {
+            program,
+            user_ffqn,
+            user_params,
+            user_return_type,
+            env_vars,
+            max_output_bytes,
+            forward_stdout,
+            forward_stderr,
+            secrets,
+            params_via_stdin,
+            user_wasm_component,
+        }
     }
 
     #[must_use]

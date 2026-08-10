@@ -39,6 +39,7 @@ concepts = { workspace = true, features = ["test"] }
 insta.workspace = true
 rstest.workspace = true
 serde.workspace = true
+tempfile.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-webhook-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
