@@ -193,9 +193,24 @@ pub(crate) enum CacheableDbEvent {
     },
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "boxing every non-blocking event would add an allocation to the hot path"
+)]
+enum CachedDbWrite {
+    NonBlocking(CacheableDbEvent),
+    BatchWithDelayResponse {
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        version: Version,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+    },
+}
+
 pub(crate) struct CachingBuffer {
-    pub(crate) non_blocking_event_batch_size: usize,
-    pub(crate) non_blocking_event_batch: Vec<CacheableDbEvent>,
+    write_batch_size: usize,
+    writes: Vec<CachedDbWrite>,
 }
 impl CachingBuffer {
     pub(crate) fn new(
@@ -211,8 +226,8 @@ impl CachingBuffer {
             None
         } else {
             Some(CachingBuffer {
-                non_blocking_event_batch_size,
-                non_blocking_event_batch: Vec::with_capacity(non_blocking_event_batch_size),
+                write_batch_size: non_blocking_event_batch_size,
+                writes: Vec::with_capacity(non_blocking_event_batch_size),
             })
         }
     }
@@ -243,8 +258,8 @@ impl WorkflowDbConnection for CachingDbConnection {
     ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &mut self.caching_buffer {
             caching_buffer
-                .non_blocking_event_batch
-                .push(non_blocking_event);
+                .writes
+                .push(CachedDbWrite::NonBlocking(non_blocking_event));
             self.flush_non_blocking_event_cache_if_full(called_at)
                 .await?;
         } else {
@@ -361,17 +376,30 @@ impl WorkflowDbConnection for CachingDbConnection {
         _wasm_backtrace: Option<storage::WasmBacktrace>,
         _component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
-        self.flush_non_blocking_event_cache(current_time).await?;
-        self.db_connection
-            .append_batch_with_delay_response(
-                current_time,
-                batch,
-                execution_id,
-                version,
-                join_set_id,
-                delay_id,
-            )
-            .await?;
+        if let Some(caching_buffer) = &mut self.caching_buffer {
+            caching_buffer
+                .writes
+                .push(CachedDbWrite::BatchWithDelayResponse {
+                    current_time,
+                    batch,
+                    version,
+                    join_set_id,
+                    delay_id,
+                });
+            self.flush_non_blocking_event_cache_if_full(current_time)
+                .await?;
+        } else {
+            self.db_connection
+                .append_batch_with_delay_response(
+                    current_time,
+                    batch,
+                    execution_id,
+                    version,
+                    join_set_id,
+                    delay_id,
+                )
+                .await?;
+        }
         Ok(())
     }
 
@@ -506,18 +534,15 @@ impl WorkflowDbConnection for CachingDbConnection {
         execution_id: &ExecutionId,
     ) -> Result<CreateRequest, DbErrorRead> {
         if let Some(caching_buffer) = &self.caching_buffer
-            && let Some(found) = caching_buffer
-                .non_blocking_event_batch
-                .iter()
-                .find_map(|event| match event {
-                    CacheableDbEvent::SubmitChildExecution {
-                        request,
-                        version,
-                        child_req,
-                        backtrace,
-                    } if child_req.execution_id == *execution_id => Some(child_req.clone()),
-                    _ => None,
-                })
+            && let Some(found) = caching_buffer.writes.iter().find_map(|event| match event {
+                CachedDbWrite::NonBlocking(CacheableDbEvent::SubmitChildExecution {
+                    request: _,
+                    version: _,
+                    child_req,
+                    backtrace: _,
+                }) if child_req.execution_id == *execution_id => Some(child_req.clone()),
+                _ => None,
+            })
         {
             return Ok(found);
         }
@@ -542,79 +567,39 @@ impl WorkflowDbConnection for CachingDbConnection {
         current_time: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &mut self.caching_buffer
-            && !caching_buffer.non_blocking_event_batch.is_empty()
+            && !caching_buffer.writes.is_empty()
         {
             debug!("Flushing the non-blocking event cache started");
-            let mut batches = Vec::with_capacity(caching_buffer.non_blocking_event_batch.len());
-            let mut childs = Vec::with_capacity(caching_buffer.non_blocking_event_batch.len());
-            let mut first_version = None;
-            for non_blocking in caching_buffer.non_blocking_event_batch.drain(..) {
-                match non_blocking {
-                    CacheableDbEvent::SubmitChildExecution {
-                        request,
-                        version,
-                        child_req,
-                        backtrace: _,
+            let cached_writes = std::mem::take(&mut caching_buffer.writes);
+            let mut non_blocking_batch = Vec::new();
+            for cached_write in cached_writes {
+                match cached_write {
+                    CachedDbWrite::NonBlocking(non_blocking) => {
+                        non_blocking_batch.push(non_blocking);
                     }
-                    | CacheableDbEvent::Schedule {
-                        request,
+                    CachedDbWrite::BatchWithDelayResponse {
+                        current_time,
+                        batch,
                         version,
-                        child_req,
-                        backtrace: _,
+                        join_set_id,
+                        delay_id,
                     } => {
-                        if first_version.is_none() {
-                            first_version.replace(version);
-                        }
-                        childs.push(child_req);
-                        batches.push(request);
-                    }
-                    CacheableDbEvent::JoinSetCreate {
-                        request,
-                        version,
-                        backtrace: _,
-                    }
-                    | CacheableDbEvent::Persist {
-                        request,
-                        version,
-                        backtrace: _,
-                    }
-                    | CacheableDbEvent::SubmitDelay {
-                        request,
-                        version,
-                        backtrace: _,
-                    }
-                    | CacheableDbEvent::JoinNextTry {
-                        request,
-                        version,
-                        backtrace: _,
-                    }
-                    | CacheableDbEvent::ScheduleError {
-                        request,
-                        version,
-                        backtrace: _,
-                    }
-                    | CacheableDbEvent::SubmitChildExecutionError {
-                        request,
-                        version,
-                        backtrace: _,
-                    } => {
-                        if first_version.is_none() {
-                            first_version.replace(version);
-                        }
-                        batches.push(request);
+                        self.flush_non_blocking_batch(current_time, &mut non_blocking_batch)
+                            .await?;
+                        self.db_connection
+                            .append_batch_with_delay_response(
+                                current_time,
+                                batch,
+                                self.execution_id.clone(),
+                                version,
+                                join_set_id,
+                                delay_id,
+                            )
+                            .await?;
                     }
                 }
             }
-            assert!(!batches.is_empty());
-            self.db_connection
-                .append_batch_create_new_execution(
-                    current_time,
-                    batches,
-                    self.execution_id.clone(),
-                    first_version.expect("checked that !non_blocking_event_batch.is_empty()"),
-                    childs,
-                    vec![],
-                )
+            self.flush_non_blocking_batch(current_time, &mut non_blocking_batch)
                 .await?;
 
             debug!("Flushing the non-blocking event cache finished");
@@ -623,14 +608,99 @@ impl WorkflowDbConnection for CachingDbConnection {
     }
 }
 
+impl CachingDbConnection {
+    async fn flush_non_blocking_batch(
+        &self,
+        current_time: DateTime<Utc>,
+        non_blocking_batch: &mut Vec<CacheableDbEvent>,
+    ) -> Result<(), DbErrorWrite> {
+        if non_blocking_batch.is_empty() {
+            return Ok(());
+        }
+
+        let mut batches = Vec::with_capacity(non_blocking_batch.len());
+        let mut childs = Vec::with_capacity(non_blocking_batch.len());
+        let mut first_version = None;
+        for non_blocking in non_blocking_batch.drain(..) {
+            match non_blocking {
+                CacheableDbEvent::SubmitChildExecution {
+                    request,
+                    version,
+                    child_req,
+                    backtrace: _,
+                }
+                | CacheableDbEvent::Schedule {
+                    request,
+                    version,
+                    child_req,
+                    backtrace: _,
+                } => {
+                    if first_version.is_none() {
+                        first_version.replace(version);
+                    }
+                    childs.push(child_req);
+                    batches.push(request);
+                }
+                CacheableDbEvent::JoinSetCreate {
+                    request,
+                    version,
+                    backtrace: _,
+                }
+                | CacheableDbEvent::Persist {
+                    request,
+                    version,
+                    backtrace: _,
+                }
+                | CacheableDbEvent::SubmitDelay {
+                    request,
+                    version,
+                    backtrace: _,
+                }
+                | CacheableDbEvent::JoinNextTry {
+                    request,
+                    version,
+                    backtrace: _,
+                }
+                | CacheableDbEvent::ScheduleError {
+                    request,
+                    version,
+                    backtrace: _,
+                }
+                | CacheableDbEvent::SubmitChildExecutionError {
+                    request,
+                    version,
+                    backtrace: _,
+                } => {
+                    if first_version.is_none() {
+                        first_version.replace(version);
+                    }
+                    batches.push(request);
+                }
+            }
+        }
+        assert!(!batches.is_empty());
+        self.db_connection
+            .append_batch_create_new_execution(
+                current_time,
+                batches,
+                self.execution_id.clone(),
+                first_version.expect("checked that non_blocking_batch is not empty"),
+                childs,
+                vec![],
+            )
+            .await?;
+        Ok(())
+    }
+}
+
 impl Drop for CachingDbConnection {
     fn drop(&mut self) {
         if let Some(caching_buffer) = &self.caching_buffer
-            && !caching_buffer.non_blocking_event_batch.is_empty()
+            && !caching_buffer.writes.is_empty()
         {
             warn!(
                 execution_id = %self.execution_id,
-                cache_len = caching_buffer.non_blocking_event_batch.len(),
+                cache_len = caching_buffer.writes.len(),
                 "CachingDbConnection dropped with non-empty cache"
             );
         }
@@ -643,8 +713,7 @@ impl CachingDbConnection {
         current_time: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite> {
         if let Some(caching_buffer) = &self.caching_buffer {
-            let too_many = caching_buffer.non_blocking_event_batch.len()
-                >= caching_buffer.non_blocking_event_batch_size;
+            let too_many = caching_buffer.writes.len() >= caching_buffer.write_batch_size;
             if too_many {
                 self.flush_non_blocking_event_cache(current_time).await?;
             }
