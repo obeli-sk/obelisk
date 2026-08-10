@@ -902,10 +902,6 @@ impl ProcessingKind {
             ProcessingKind::ExportsSubmittable | ProcessingKind::ExportsOfActivityStub
         )
     }
-
-    fn label(self) -> &'static str {
-        if self.is_export() { "export" } else { "import" }
-    }
 }
 
 fn function_uses_resources(resolve: &Resolve, function: &Function) -> bool {
@@ -1023,17 +1019,6 @@ fn populate_ifcs_with_compatible_fns(
         let mut fns = IndexMap::new();
         for (function_name, function) in &ifc.functions {
             let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
-            if function_uses_resources(resolve, function) {
-                if processing_kind.is_export()
-                    || !matches!(package.namespace.as_str(), "wasi" | "obelisk")
-                {
-                    warn!(
-                        "Ignoring {} {ffqn} because resource types are unsupported",
-                        processing_kind.label()
-                    );
-                }
-                continue;
-            }
             let return_type = if let Some(return_type) = function.result {
                 let mut printer = WitPrinter::default();
                 let wit_type = printer
@@ -1059,10 +1044,13 @@ fn populate_ifcs_with_compatible_fns(
             };
 
             let return_type_valid = matches!(return_type, Some(ReturnType::Extendable(_)));
+            let export_supported = processing_kind.is_export()
+                && return_type_valid
+                && !function_uses_resources(resolve, function);
 
-            match (return_type, processing_kind.is_export()) {
-                (Some(return_type @ ReturnType::Extendable(_)), true)
-                | (Some(return_type), false) => {
+            match (return_type, processing_kind.is_export(), export_supported) {
+                (Some(return_type @ ReturnType::Extendable(_)), true, true)
+                | (Some(return_type), false, _) => {
                     let parameter_types = ParameterTypes({
                         let mut params = Vec::new();
                         for Param {
@@ -1122,14 +1110,12 @@ fn populate_ifcs_with_compatible_fns(
                         },
                     );
                 }
-                (Some(return_type), true)
-                    if processing_kind.is_export()
-                        && !return_type_valid
-                        && !ifc_fqn.starts_with("wasi:http/incoming-handler@") =>
+                (Some(_return_type), true, true)
+                    if !ifc_fqn.starts_with("wasi:http/incoming-handler@") =>
                 {
                     // Warn if this is export and a function return type is not compatible.
                     // Mute warnings for `incoming-handlers`, exported by webhooks.
-                    warn!("Ignoring export {ffqn} with unsupported return type {return_type:?}");
+                    warn!("Ignoring export {ffqn} with unsupported WIT signature");
                 }
                 _ => {}
             }
