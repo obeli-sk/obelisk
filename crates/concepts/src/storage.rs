@@ -1722,7 +1722,7 @@ pub struct DeploymentRecord {
     /// Set when the deployment becomes Active; None if it has never been active.
     pub last_active_at: Option<DateTime<Utc>>,
     pub status: DeploymentStatus,
-    pub deployment_toml: String, // Verbatim `deployment.toml` manifest
+    pub deployment_toml: String, // `deployment.toml` manifest that client enriched with generated metadata like `content_digest`, see `prepare_deployment_manifest`.
     pub obelisk_version: String,
     pub created_by: Option<String>,
     pub files: Vec<DeploymentFileRecord>,
