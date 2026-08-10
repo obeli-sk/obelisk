@@ -1353,6 +1353,30 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
         }
         Ok(bytes)
     }
+
+    async fn read_wit_files(
+        &self,
+        root: &str,
+        known_files: &std::collections::BTreeMap<String, ContentDigest>,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let files = self.inner.read_wit_files(root, known_files).await?;
+        let mut seen = self
+            .seen
+            .lock()
+            .expect("RecordingCasProvider mutex poisoned");
+        for (path, source) in &files {
+            let digest = known_files
+                .get(path)
+                .expect("CAS WIT reader only returns known files");
+            seen.push(concepts::storage::DeploymentFileRecord {
+                path: path.clone(),
+                digest: digest.clone(),
+                size: u64::try_from(source.len()).expect("file length fits u64"),
+            });
+        }
+        drop(seen);
+        Ok(files)
+    }
 }
 
 /// Resolve a stored verbatim TOML manifest by reading its referenced blobs from the CAS,
@@ -3735,13 +3759,13 @@ impl DeploymentVerified {
                 for result in stub_results {
                     match result {
                         ActivityStubConfigVerified::File(ext) => activities_stub_ext.push(ext),
-                        ActivityStubConfigVerified::Inline(inline) => activities_stub_ext_inline.push(inline),
+                        ActivityStubConfigVerified::Inline(inline) => activities_stub_ext_inline.push(*inline),
                     }
                 }
                 for result in external_results {
                     match result {
                         ActivityExternalConfigVerified::File(ext) => activities_stub_ext.push(ext),
-                        ActivityExternalConfigVerified::Inline(inline) => activities_stub_ext_inline.push(inline),
+                        ActivityExternalConfigVerified::Inline(inline) => activities_stub_ext_inline.push(*inline),
                     }
                 }
                 let workflows = workflow_results.into_iter().collect::<Result<Result<Vec<_>, _>, _>>()??;
@@ -4066,6 +4090,7 @@ async fn compile_and_link(
                         &stub.ffqn,
                         &stub.params,
                         &stub.return_type,
+                        stub.user_wasm_component,
                     )?;
                     Ok(CompiledComponent::ActivityStubOrExternal { component_config })
                 })
@@ -4353,14 +4378,21 @@ fn compile_activity_inline(
     ffqn: &FunctionFqn,
     params: &[ParameterType],
     return_type: &ReturnTypeExtendable,
+    authored_component: Option<WasmComponent>,
 ) -> Result<ComponentConfig, utils::wasm_tools::DecodeError> {
-    let wasm_component = WasmComponent::new_from_fn_signature(
-        ffqn,
-        params,
-        return_type,
-        ComponentType::ActivityStub,
-        "stub-activity",
-    )?;
+    let (wasm_component, wit_origin) = match authored_component {
+        Some(component) => (component, WitOrigin::Authored),
+        None => (
+            WasmComponent::new_from_fn_signature(
+                ffqn,
+                params,
+                return_type,
+                ComponentType::ActivityStub,
+                "stub-activity",
+            )?,
+            WitOrigin::Synthesized,
+        ),
+    };
     let wit_text_with_extensions = wasm_component.wit();
     let exports_ext = wasm_component.exim.get_exports(true).to_vec();
     let exports_hierarchy_ext = wasm_component.exim.get_exports_hierarchy_ext().to_vec();
@@ -4373,7 +4405,7 @@ fn compile_activity_inline(
         imports: vec![],
         workflow_or_activity_config: Some(component_config_importable),
         wit: wit_text_with_extensions,
-        wit_origin: WitOrigin::Synthesized,
+        wit_origin,
     })
 }
 
@@ -4505,14 +4537,30 @@ fn prespawn_activity_js(
     )
     .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?;
 
-    let worker = ActivityJsWorkerCompiled::new_graph(
-        inner,
-        activity_js.js_entry_path,
-        activity_js.js_files,
-        activity_js.ffqn,
-        activity_js.params,
-        activity_js.return_type,
-    )
+    let wit_origin = if activity_js.user_wasm_component.is_some() {
+        WitOrigin::Authored
+    } else {
+        WitOrigin::Synthesized
+    };
+    let worker = match activity_js.user_wasm_component {
+        Some(component) => Ok(ActivityJsWorkerCompiled::new_graph_with_wasm_component(
+            inner,
+            activity_js.js_entry_path,
+            activity_js.js_files,
+            activity_js.ffqn,
+            activity_js.params,
+            activity_js.return_type,
+            component,
+        )),
+        None => ActivityJsWorkerCompiled::new_graph(
+            inner,
+            activity_js.js_entry_path,
+            activity_js.js_files,
+            activity_js.ffqn,
+            activity_js.params,
+            activity_js.return_type,
+        ),
+    }
     .with_context(|| format!("cannot create JS activity worker for {component_id}"))?;
     let wit = worker.wit();
 
@@ -4522,6 +4570,7 @@ fn prespawn_activity_js(
         wit,
         activity_js.logs_store_min_level,
         frame_files,
+        wit_origin,
     ))
 }
 
@@ -4537,18 +4586,38 @@ fn prespawn_activity_exec(
     // `secrets` key of the stdin JSON document at execution time.
     let secrets = activity_exec.secrets;
 
-    let worker = ActivityExecWorkerCompiled::new(
-        program,
-        activity_exec.ffqn,
-        activity_exec.params,
-        activity_exec.return_type,
-        activity_exec.env_vars,
-        activity_exec.max_output_bytes,
-        activity_exec.forward_stdout,
-        activity_exec.forward_stderr,
-        secrets,
-        activity_exec.params_via_stdin,
-    )
+    let wit_origin = if activity_exec.user_wasm_component.is_some() {
+        WitOrigin::Authored
+    } else {
+        WitOrigin::Synthesized
+    };
+    let worker = match activity_exec.user_wasm_component {
+        Some(component) => Ok(ActivityExecWorkerCompiled::new_with_wasm_component(
+            program,
+            activity_exec.ffqn,
+            activity_exec.params,
+            activity_exec.return_type,
+            activity_exec.env_vars,
+            activity_exec.max_output_bytes,
+            activity_exec.forward_stdout,
+            activity_exec.forward_stderr,
+            secrets,
+            activity_exec.params_via_stdin,
+            component,
+        )),
+        None => ActivityExecWorkerCompiled::new(
+            program,
+            activity_exec.ffqn,
+            activity_exec.params,
+            activity_exec.return_type,
+            activity_exec.env_vars,
+            activity_exec.max_output_bytes,
+            activity_exec.forward_stdout,
+            activity_exec.forward_stderr,
+            secrets,
+            activity_exec.params_via_stdin,
+        ),
+    }
     .with_context(|| format!("cannot create exec activity worker for {component_id}"))?;
     let wit = worker.wit();
 
@@ -4557,6 +4626,7 @@ fn prespawn_activity_exec(
         activity_exec.exec_config,
         wit,
         activity_exec.logs_store_min_level,
+        wit_origin,
     ))
 }
 
@@ -4685,6 +4755,11 @@ fn prespawn_workflow_js(
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     let engine = engines.workflow_engine.clone();
+    let wit_origin = if workflow_js.user_wasm_component.is_some() {
+        WitOrigin::Authored
+    } else {
+        WitOrigin::Synthesized
+    };
 
     let replay_inner = WorkflowWorkerCompiled::new_with_config(
         runnable_component.clone(),
@@ -4693,14 +4768,24 @@ fn prespawn_workflow_js(
         Now.clone_box(),
     )
     .with_context(|| format!("cannot compile replay JS workflow runtime for {component_id}"))?;
-    let replay_compiled = WorkflowJsWorkerCompiled::new_graph(
-        replay_inner,
-        workflow_js.js_entry_path.clone(),
-        workflow_js.js_files.clone(),
-        &workflow_js.ffqn,
-        workflow_js.params.clone(),
-        workflow_js.return_type.clone(),
-    )
+    let replay_compiled = match &workflow_js.user_wasm_component {
+        Some(component) => Ok(WorkflowJsWorkerCompiled::new_graph_with_wasm_component(
+            replay_inner,
+            workflow_js.js_entry_path.clone(),
+            workflow_js.js_files.clone(),
+            workflow_js.params.clone(),
+            workflow_js.return_type.clone(),
+            component.clone(),
+        )),
+        None => WorkflowJsWorkerCompiled::new_graph(
+            replay_inner,
+            workflow_js.js_entry_path.clone(),
+            workflow_js.js_files.clone(),
+            &workflow_js.ffqn,
+            workflow_js.params.clone(),
+            workflow_js.return_type.clone(),
+        ),
+    }
     .with_context(|| format!("cannot create replay JS workflow worker for {component_id}"))?;
 
     let inner = WorkflowWorkerCompiled::new_with_config(
@@ -4711,14 +4796,24 @@ fn prespawn_workflow_js(
     )
     .with_context(|| format!("cannot compile JS workflow runtime for {component_id}"))?;
 
-    let worker = WorkflowJsWorkerCompiled::new_graph(
-        inner,
-        workflow_js.js_entry_path.clone(),
-        workflow_js.js_files.clone(),
-        &workflow_js.ffqn,
-        workflow_js.params,
-        workflow_js.return_type,
-    )
+    let worker = match workflow_js.user_wasm_component {
+        Some(component) => Ok(WorkflowJsWorkerCompiled::new_graph_with_wasm_component(
+            inner,
+            workflow_js.js_entry_path.clone(),
+            workflow_js.js_files.clone(),
+            workflow_js.params,
+            workflow_js.return_type,
+            component,
+        )),
+        None => WorkflowJsWorkerCompiled::new_graph(
+            inner,
+            workflow_js.js_entry_path.clone(),
+            workflow_js.js_files.clone(),
+            &workflow_js.ffqn,
+            workflow_js.params,
+            workflow_js.return_type,
+        ),
+    }
     .with_context(|| format!("cannot create JS workflow worker for {component_id}"))?;
     let wit = worker.wit();
     Ok(WorkerCompiled::new_js_workflow(
@@ -4729,6 +4824,7 @@ fn prespawn_workflow_js(
         workflows_lock_extension_leeway,
         wit,
         workflow_js.js_files,
+        wit_origin,
     ))
 }
 
@@ -4806,6 +4902,7 @@ impl WorkerCompiled {
         wit: String,
         logs_store_min_level: Option<LogLevel>,
         frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
+        wit_origin: WitOrigin,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -4815,7 +4912,7 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            wit_origin: WitOrigin::Synthesized,
+            wit_origin,
         };
         (
             WorkerCompiled {
@@ -4833,6 +4930,7 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         wit: String,
         logs_store_min_level: Option<LogLevel>,
+        wit_origin: WitOrigin,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
@@ -4842,7 +4940,7 @@ impl WorkerCompiled {
             }),
             imports: vec![],
             wit,
-            wit_origin: WitOrigin::Synthesized,
+            wit_origin,
         };
         (
             WorkerCompiled {
@@ -4903,6 +5001,7 @@ impl WorkerCompiled {
         ))
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn new_js_workflow(
         worker: WorkflowJsWorkerCompiled,
         replay_compiled: WorkflowJsWorkerCompiled,
@@ -4911,6 +5010,7 @@ impl WorkerCompiled {
         workflows_lock_extension_leeway: Duration,
         wit: String,
         js_files: std::collections::BTreeMap<String, String>,
+        wit_origin: WitOrigin,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
         let frame_files = WorkflowJsConfigVerified::frame_sources(js_files);
         let component = ComponentConfig {
@@ -4921,7 +5021,7 @@ impl WorkerCompiled {
             }),
             imports: worker.imported_functions().to_vec(),
             wit,
-            wit_origin: WitOrigin::Synthesized,
+            wit_origin,
         };
         (
             WorkerCompiled {
@@ -5460,7 +5560,7 @@ mod tests {
             rt
         };
 
-        let config = compile_activity_inline(component_id, &ffqn, &params, &ret_type)
+        let config = compile_activity_inline(component_id, &ffqn, &params, &ret_type, None)
             .expect("compile must succeed");
 
         // The synthesized WIT must re-parse: the world lives in a dedicated `root:component`

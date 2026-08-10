@@ -111,6 +111,9 @@
 # location = "path/to/source.js"
 # location = "oci://docker.io/repo/image:tag"
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
+## Function interface: either reference an authored WIT directory, or use `params` and `return_type` below.
+## The selected `ffqn` must be exported by the default world. Authored records and other named types are preserved.
+# wit = "path/to/wit"
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
 # params = [
@@ -159,6 +162,8 @@
 ## Optional content digest of the exec script. Useful for verifying OCI-backed or local script contents.
 # content_digest = "sha256:..."
 # ffqn = "namespace:package/interface.function" # Required. Fully qualified function name.
+## Function interface: either reference an authored WIT directory, or use `params` and `return_type` below.
+# wit = "path/to/wit"
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
 # params = [
@@ -209,6 +214,8 @@
 # [[activity_external]]
 # name = "my-external-activity"              # Optional. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 # ffqn = "namespace:package/interface.function"
+## Alternatively, preserve authored named types by referencing a WIT directory. Mutually exclusive with `params` and `return_type`.
+# wit = "path/to/wit"
 # params = [{ name = "id", type = "u64" }]
 ## WIT return type. Defaults to `result<string, string>`.
 ## Must be `result`, `result<T>`, `result<T, string>`, or
@@ -238,6 +245,8 @@
 # [[activity_stub]]
 # name = "my-stub"                           # Optional. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 # ffqn = "namespace:package/interface.function"
+## Alternatively, preserve authored named types by referencing a WIT directory. Mutually exclusive with `params` and `return_type`.
+# wit = "path/to/wit"
 # params = [{ name = "id", type = "u64" }]
 ## WIT return type. Defaults to `result<string, string>`.
 ## Must be `result`, `result<T>`, `result<T, string>`, or
@@ -288,6 +297,8 @@
 # location = "path/to/workflow.js"
 # location = "oci://docker.io/repo/image:tag"
 # ffqn = "namespace:package/interface@version.function" # Required. Fully qualified function name.
+## Function interface: either reference an authored WIT directory, or use `params` and `return_type` below.
+# wit = "path/to/wit"
 ## Custom parameters. If omitted, defaults to no parameters.
 ## Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`, `option<u64>`).
 # params = [

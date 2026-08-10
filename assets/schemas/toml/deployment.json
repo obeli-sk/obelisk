@@ -474,7 +474,36 @@
         },
         "ffqn": {
           "type": "string"
+        }
+      },
+      "required": [
+        "ffqn"
+      ],
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthoredFunctionInterfaceToml"
         },
+        {
+          "$ref": "#/$defs/InlineFunctionInterfaceToml"
+        }
+      ]
+    },
+    "AuthoredFunctionInterfaceToml": {
+      "type": "object",
+      "properties": {
+        "wit": {
+          "description": "Authored WIT directory containing the exported `ffqn`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "wit"
+      ]
+    },
+    "InlineFunctionInterfaceToml": {
+      "type": "object",
+      "properties": {
         "params": {
           "type": [
             "array",
@@ -482,21 +511,16 @@
           ],
           "items": {
             "$ref": "#/$defs/JsParamToml"
-          },
-          "default": null
+          }
         },
         "return_type": {
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "ffqn"
-      ]
+      "additionalProperties": false
     },
     "JsParamToml": {
       "description": "A parameter declaration for a JS activity function.",
@@ -612,14 +636,6 @@
         "ffqn": {
           "type": "string"
         },
-        "params": {
-          "description": "Custom parameters for the JS function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsParamToml"
-          },
-          "default": []
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -672,19 +688,18 @@
             "$ref": "#/$defs/AllowedHostToml"
           },
           "default": []
-        },
-        "return_type": {
-          "description": "WIT return type. Defaults to `result`.\nMust be `result<T, string>` — the error type must be `string` since JS throws strings.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         }
       },
-      "additionalProperties": false,
       "required": [
         "ffqn"
+      ],
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthoredFunctionInterfaceToml"
+        },
+        {
+          "$ref": "#/$defs/InlineFunctionInterfaceToml"
+        }
       ]
     },
     "JsLocationToml": {
@@ -736,22 +751,6 @@
         },
         "ffqn": {
           "type": "string"
-        },
-        "params": {
-          "description": "Custom parameters for the exec activity.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsParamToml"
-          },
-          "default": []
-        },
-        "return_type": {
-          "description": "WIT return type. Defaults to `result`.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         },
         "component_digest": {
           "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
@@ -827,9 +826,16 @@
           "default": false
         }
       },
-      "additionalProperties": false,
       "required": [
         "ffqn"
+      ],
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthoredFunctionInterfaceToml"
+        },
+        {
+          "$ref": "#/$defs/InlineFunctionInterfaceToml"
+        }
       ]
     },
     "WorkflowWasmComponentConfigToml": {
@@ -1039,14 +1045,6 @@
         "ffqn": {
           "type": "string"
         },
-        "params": {
-          "description": "Custom parameters for the JS workflow function.\nEach entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).\nDefaults to no parameters.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/JsParamToml"
-          },
-          "default": []
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -1078,19 +1076,18 @@
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
           "default": "debug"
-        },
-        "return_type": {
-          "description": "WIT return type. Defaults to `result`.\nMust be `result`, `result<T>`, `result<T, string>`, or\n`result<T, variant { execution-failed, ... }>`.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         }
       },
-      "additionalProperties": false,
       "required": [
         "ffqn"
+      ],
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthoredFunctionInterfaceToml"
+        },
+        {
+          "$ref": "#/$defs/InlineFunctionInterfaceToml"
+        }
       ]
     },
     "WebhookWasmComponentConfigToml": {

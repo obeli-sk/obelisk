@@ -712,6 +712,26 @@ async fn generate_wit_deps(
             WitOrigin::Synthesized => {
                 synthesized_exports.extend(importable.exports_hierarchy_ext.iter().cloned());
             }
+            WitOrigin::Authored => {
+                let requested_pkgs: Vec<PkgFqn> = importable
+                    .exports_hierarchy_ext
+                    .iter()
+                    .map(|ifc_fns| ifc_fns.ifc_fqn.pkg_fqn_name())
+                    .collect::<hashbrown::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                crate::wit_printer::process_pkg_with_deps(
+                    &component.wit,
+                    &requested_pkgs,
+                    &mut pkg_to_wit,
+                )
+                .with_context(|| {
+                    format!(
+                        "cannot extract authored WIT packages from {}",
+                        component.component_id
+                    )
+                })?;
+            }
             WitOrigin::Wasm => {
                 let requested_pkgs: Vec<PkgFqn> = importable
                     .exports_hierarchy_ext

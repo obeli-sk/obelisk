@@ -1764,6 +1764,7 @@ pub enum ComponentFileRole {
     JsEntrypoint,
     JsModule,
     BacktraceSource,
+    WitSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1788,6 +1789,8 @@ pub enum WitOrigin {
     Wasm = 1,
     #[display("synthesized")]
     Synthesized = 2,
+    #[display("authored")]
+    Authored = 3,
 }
 
 #[derive(Debug, Clone)]

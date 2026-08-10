@@ -28,6 +28,7 @@ pub struct WasmComponent {
     pub exim: ExIm,
     resolve: Resolve, // always post `rebuild_resolve`, so safe for wit printing.
     main_pkg_id: PackageId,
+    authored_wit: Option<String>,
 }
 
 impl WasmComponent {
@@ -133,6 +134,7 @@ impl WasmComponent {
             exim,
             resolve,
             main_pkg_id,
+            authored_wit: None,
         })
     }
 
@@ -180,6 +182,7 @@ impl WasmComponent {
             exim,
             resolve,
             main_pkg_id,
+            authored_wit: None,
         })
     }
 
@@ -224,6 +227,7 @@ impl WasmComponent {
             exim,
             resolve,
             main_pkg_id,
+            authored_wit: None,
         })
     }
 
@@ -263,6 +267,85 @@ impl WasmComponent {
             exim,
             resolve,
             main_pkg_id,
+            authored_wit: None,
+        })
+    }
+
+    /// Parse an authored WIT directory while exposing only the selected function to Obelisk.
+    pub fn new_from_wit_folder_for_ffqn(
+        path: impl AsRef<Path>,
+        component_type: ComponentType,
+        ffqn: &FunctionFqn,
+    ) -> Result<Self, DecodeError> {
+        let path = path.as_ref();
+        let mut resolve = Resolve::default();
+        let (main_pkg_id, _) = resolve.push_dir(path).map_err(|source| {
+            DecodeError::new_with_source(
+                format!("cannot parse the WIT directory of {path:?}"),
+                source,
+            )
+        })?;
+        let world_id = resolve
+            .select_world(&[main_pkg_id], None)
+            .map_err(|source| {
+                DecodeError::new_with_source(
+                    format!("cannot select the default world of {path:?}"),
+                    source,
+                )
+            })?;
+        let world = resolve
+            .worlds
+            .get(world_id)
+            .expect("world was found by wit-parser");
+        let full_exim_lite =
+            Self::create_exim_lite(&resolve, world, has_submittable_exports(component_type))?;
+        let mut exim_lite = full_exim_lite.clone();
+        for interface in &mut exim_lite.exports {
+            if interface.ifc_fqn == ffqn.ifc_fqn {
+                interface
+                    .fns
+                    .retain(|function_name, _| function_name == &ffqn.function_name);
+            } else {
+                interface.fns.clear();
+            }
+        }
+        exim_lite
+            .exports
+            .retain(|interface| !interface.fns.is_empty());
+        if exim_lite.exports.len() != 1 || exim_lite.exports[0].fns.len() != 1 {
+            return Err(DecodeError::new_without_source(format!(
+                "WIT directory {path:?} does not export selected function `{ffqn}`"
+            )));
+        }
+        let full_exim = ExIm::decode(full_exim_lite, component_type)?;
+        let (authored_resolve, authored_main_pkg_id) =
+            crate::wit::rebuild_resolve(&full_exim, resolve.clone(), main_pkg_id).map_err(
+                |err| {
+                    DecodeError::new_with_source(
+                        format!("cannot rebuild full authored resolve from {path:?}"),
+                        err,
+                    )
+                },
+            )?;
+        let authored_wit =
+            authored_wit_without_extension_world_exports(&authored_resolve, authored_main_pkg_id)
+                .map_err(|err| {
+                DecodeError::new_with_source(
+                    format!("cannot print authored WIT from {path:?}"),
+                    err,
+                )
+            })?;
+
+        let exim = ExIm::decode(exim_lite, component_type)?;
+        let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
+            .map_err(|err| {
+                DecodeError::new_with_source(format!("cannot rebuild resolve from {path:?}"), err)
+            })?;
+        Ok(Self {
+            exim,
+            resolve,
+            main_pkg_id,
+            authored_wit: Some(authored_wit),
         })
     }
 
@@ -286,6 +369,9 @@ impl WasmComponent {
     /// resolve is printable, so `WitPrinter::print` on it a second time is infallible.
     #[must_use]
     pub fn wit(&self) -> String {
+        if let Some(wit) = &self.authored_wit {
+            return wit.clone();
+        }
         crate::wit::wit(&self.resolve, self.main_pkg_id)
             .expect("WitPrinter on a post-rebuild_resolve Resolve cannot fail")
     }
@@ -390,6 +476,35 @@ impl WasmComponent {
         )?;
         Ok(ExImLite { imports, exports })
     }
+}
+
+fn authored_wit_without_extension_world_exports(
+    resolve: &Resolve,
+    main_pkg_id: PackageId,
+) -> anyhow::Result<String> {
+    let mut resolve = resolve.clone();
+    let extension_interfaces: hashbrown::HashSet<_> = resolve
+        .interfaces
+        .iter()
+        .filter_map(|(id, interface)| {
+            let package = interface.package.and_then(|id| resolve.packages.get(id))?;
+            from_wit_package_name_to_pkg_fqn(&package.name)
+                .split_ext()
+                .is_some()
+                .then_some(id)
+        })
+        .collect();
+    let world_ids: Vec<_> = resolve.packages[main_pkg_id]
+        .worlds
+        .values()
+        .copied()
+        .collect();
+    for world_id in world_ids {
+        resolve.worlds[world_id].exports.retain(|_, item| {
+            !matches!(item, wit_parser::WorldItem::Interface { id, .. } if extension_interfaces.contains(id))
+        });
+    }
+    crate::wit::wit(&resolve, main_pkg_id)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -882,7 +997,7 @@ impl ExIm {
 }
 
 // Only contains functions with result types of ResultType::Compatible
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ExImLite {
     imports: Vec<PackageIfcFns>,
     // Only no-ext functions in exports, guarded by DecodeError::ExportingExt
@@ -1152,7 +1267,7 @@ pub(crate) fn strip_wasm_hash(filename: &str) -> String {
 pub(crate) mod tests {
     use super::{populate_ifcs_with_compatible_fns, strip_wasm_hash};
     use crate::wasm_tools::{ExOrIm, ProcessingKind, WasmComponent, world_interfaces};
-    use concepts::ComponentType;
+    use concepts::{ComponentType, FunctionFqn};
     use rstest::rstest;
     use std::path::PathBuf;
     use wit_parser::decoding::DecodedWasm;
@@ -1328,6 +1443,40 @@ pub(crate) mod tests {
             WasmComponent::new_from_wit_string(wit, ComponentType::Activity).unwrap();
         let exports = user_wasm_component.exported_functions(false).to_vec();
         insta::assert_debug_snapshot!(exports);
+    }
+
+    #[test]
+    fn authored_wit_selection_preserves_named_types() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("agent.wit"),
+            r"
+                package example:agent;
+                interface api {
+                    record request { prompt: string }
+                    run: func(request: request) -> result<request, string>;
+                    ignored: func() -> result;
+                }
+                world agent { export api; }
+            ",
+        )
+        .unwrap();
+        let ffqn: FunctionFqn = "example:agent/api.run".parse().unwrap();
+        let component = WasmComponent::new_from_wit_folder_for_ffqn(
+            directory.path(),
+            ComponentType::Activity,
+            &ffqn,
+        )
+        .unwrap();
+
+        assert_eq!(component.exported_functions(false).len(), 1);
+        assert_eq!(component.exported_functions(false)[0].ffqn, ffqn);
+        let wit = component.wit();
+        assert!(wit.contains("record request"), "{wit}");
+        assert!(wit.contains("ignored: func"), "{wit}");
+        assert!(wit.contains("example:agent-obelisk-ext"), "{wit}");
+        assert!(wit.contains("ignored-submit"), "{wit}");
+        assert!(!wit.contains(" t0"), "{wit}");
     }
 
     const CANCELLABLE_WIT: &str = "
