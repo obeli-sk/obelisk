@@ -27,6 +27,24 @@ pub enum ReplayResponse {
 }
 
 /// Preview writes captured by replay that can be supplied to `advance`.
+///
+/// Replay stops collecting when later captured writes could depend on information
+/// that is authoritative only after the preceding write is applied.
+///
+/// For `sleep(now)`, advance does not trust the timestamp supplied in the captured
+/// write. It recomputes and applies the actual time, so the sleep write ends the
+/// captured-write list. A subsequent replay observes that authoritative time before
+/// continuing.
+///
+/// For a stub response, replay cannot predict whether writing the response will
+/// succeed or conflict. It captures the stub-response write and stops. Only after
+/// that write succeeds does a subsequent replay capture the parent stub history
+/// event.
+///
+/// Ordinary non-blocking writes can remain in the same captured-write list when they
+/// expose no unapplied result to subsequent workflow code. `JoinNextTry` can also
+/// continue because its result is derived from already trusted replay state and its
+/// recorded outcome is validated exactly.
 #[derive(Debug, Clone)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
 pub struct ReplayAdvanceable {
@@ -43,6 +61,7 @@ impl ReplayAdvanceable {
         self.captured_writes.iter().find_map(|w| match w {
             CapturedDbWrite::Append { version, .. }
             | CapturedDbWrite::AppendBatch { version, .. }
+            | CapturedDbWrite::AppendBatchWithDelayResponse { version, .. }
             | CapturedDbWrite::AppendBatchCreateNewExecution { version, .. }
             | CapturedDbWrite::AppendFinished { version, .. } => Some(version),
             CapturedDbWrite::AppendStubResponse { .. } => None,
@@ -73,6 +92,7 @@ impl ReplayAdvanceable {
                 let requests: &[concepts::storage::AppendRequest] = match w {
                     CapturedDbWrite::Append { req, .. } => std::slice::from_ref(req),
                     CapturedDbWrite::AppendBatch { batch, .. }
+                    | CapturedDbWrite::AppendBatchWithDelayResponse { batch, .. }
                     | CapturedDbWrite::AppendBatchCreateNewExecution { batch, .. } => batch,
                     CapturedDbWrite::AppendStubResponse { events, .. } => &events.batch,
                     CapturedDbWrite::AppendFinished { .. } => &[],
@@ -279,6 +299,26 @@ fn normalize_captured_write_for_matching(write: CapturedDbWrite) -> CapturedDbWr
                 .collect(),
             execution_id,
             version,
+            backtraces: vec![],
+        },
+        CapturedDbWrite::AppendBatchWithDelayResponse {
+            current_time: _,
+            batch,
+            execution_id,
+            version,
+            join_set_id,
+            delay_id,
+            backtraces: _,
+        } => CapturedDbWrite::AppendBatchWithDelayResponse {
+            current_time: DateTime::UNIX_EPOCH,
+            batch: batch
+                .into_iter()
+                .map(normalize_append_request_for_matching)
+                .collect(),
+            execution_id,
+            version,
+            join_set_id,
+            delay_id,
             backtraces: vec![],
         },
         CapturedDbWrite::AppendBatchCreateNewExecution {

@@ -1675,6 +1675,16 @@ pub(crate) enum CapturedWriteSer {
         child_requests: Vec<CreateRequestSer>,
         backtraces: Vec<backtrace::BacktraceInfoSer>,
     },
+    AppendBatchWithDelayResponse {
+        #[schema(value_type = Vec<Object>)]
+        events: Vec<concepts::storage::AppendRequest>,
+        execution_id: String,
+        version: u32,
+        join_set_id: String,
+        delay_id: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        backtraces: Vec<backtrace::BacktraceInfoSer>,
+    },
     AppendStubResponse {
         execution_id: String,
         version: u32,
@@ -1741,6 +1751,25 @@ impl From<concepts::storage::CapturedDbWrite> for CapturedWriteSer {
                 execution_id: execution_id.to_string(),
                 version: version.0,
                 child_requests: child_req.into_iter().map(CreateRequestSer::from).collect(),
+                backtraces: backtraces
+                    .into_iter()
+                    .map(backtrace::BacktraceInfoSer::from)
+                    .collect(),
+            },
+            CapturedDbWrite::AppendBatchWithDelayResponse {
+                current_time: _,
+                batch,
+                execution_id,
+                version,
+                join_set_id,
+                delay_id,
+                backtraces,
+            } => CapturedWriteSer::AppendBatchWithDelayResponse {
+                events: batch,
+                execution_id: execution_id.to_string(),
+                version: version.0,
+                join_set_id: join_set_id.to_string(),
+                delay_id: delay_id.to_string(),
                 backtraces: backtraces
                     .into_iter()
                     .map(backtrace::BacktraceInfoSer::from)
@@ -1833,6 +1862,31 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
                     .into_iter()
                     .map(concepts::storage::CreateRequest::try_from)
                     .collect::<Result<Vec<_>, _>>()?,
+                backtraces: backtraces
+                    .into_iter()
+                    .map(concepts::storage::BacktraceInfo::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
+            CapturedWriteSer::AppendBatchWithDelayResponse {
+                events,
+                execution_id,
+                version,
+                join_set_id,
+                delay_id,
+                backtraces,
+            } => Ok(Self::AppendBatchWithDelayResponse {
+                current_time: DateTime::UNIX_EPOCH, // will be replaced in `advance`
+                batch: events,
+                execution_id: execution_id
+                    .parse()
+                    .map_err(|err| format!("invalid execution_id - {err}"))?,
+                version: Version::new(version),
+                join_set_id: join_set_id
+                    .parse()
+                    .map_err(|err| format!("invalid join_set_id - {err}"))?,
+                delay_id: delay_id
+                    .parse()
+                    .map_err(|err| format!("invalid delay_id - {err}"))?,
                 backtraces: backtraces
                     .into_iter()
                     .map(concepts::storage::BacktraceInfo::try_from)

@@ -1133,6 +1133,15 @@ pub enum CapturedDbWrite {
         version: Version,
         backtraces: Vec<BacktraceInfo>,
     },
+    AppendBatchWithDelayResponse {
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+        backtraces: Vec<BacktraceInfo>,
+    },
     AppendBatchCreateNewExecution {
         current_time: DateTime<Utc>,
         batch: Vec<AppendRequest>,
@@ -1974,6 +1983,20 @@ pub trait DbConnection: DbExecutor {
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
+    ) -> Result<AppendBatchResponse, DbErrorWrite>;
+
+    /// Append a blocking one-off delay batch (`JoinSetCreate`, `DelayRequest`, `JoinNext`)
+    /// for a delay that is already due (e.g. `sleep(now)`) together with its `DelayFinished`
+    /// response, in a single transaction. This unblocks the `JoinNext` immediately, so the
+    /// workflow resumes without a round trip through the expired-timers watcher.
+    async fn append_batch_with_delay_response(
+        &self,
+        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
     ) -> Result<AppendBatchResponse, DbErrorWrite>;
 
     /// Append one or more events to the parent execution log, and create zero or more child execution logs.

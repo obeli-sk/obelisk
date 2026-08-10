@@ -1851,6 +1851,51 @@
           {
             "type": "object",
             "required": [
+              "events",
+              "execution_id",
+              "version",
+              "join_set_id",
+              "delay_id",
+              "type"
+            ],
+            "properties": {
+              "backtraces": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/BacktraceInfoSer"
+                }
+              },
+              "delay_id": {
+                "type": "string"
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "execution_id": {
+                "type": "string"
+              },
+              "join_set_id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "append_batch_with_delay_response"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "execution_id",
               "version",
               "events",

@@ -81,6 +81,11 @@ enum ChildReturnValue {
     Persist,
 }
 
+struct AppendedBlockingEvents {
+    history_events: Vec<(HistoryEvent, Version)>,
+    known_response: Option<ChildReturnValue>,
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum ProcessingStatus {
     Unprocessed,
@@ -515,7 +520,10 @@ impl EventHistory {
         let join_next_variant = event_call.join_next_variant();
         let keys = event_call.as_keys();
         // Create and append HistoryEvents.
-        let history_events = self
+        let AppendedBlockingEvents {
+            history_events,
+            mut known_response,
+        } = self
             .append_to_db_blocking(
                 event_call,
                 version,
@@ -537,19 +545,31 @@ impl EventHistory {
 
         let last_key_idx = keys.len() - 1;
         for (idx, key) in keys.into_iter().enumerate() {
-            let res = self.process_event_by_key(&key)?;
-            if idx == last_key_idx
-                && let FindMatchingResponse::Found { value: res, .. } = res
-            {
-                // Last key was marked as processed.
-                assert_eq!(
-                    Processed,
-                    self.event_history
-                        .last()
-                        .expect("checked that `history_events` is not empty")
-                        .1
-                );
-                return Ok(res);
+            let response = self.process_event_by_key(&key)?;
+            if idx == last_key_idx {
+                match (response, known_response.take()) {
+                    (FindMatchingResponse::Found { value, .. }, None) => {
+                        assert_eq!(
+                            Processed,
+                            self.event_history
+                                .last()
+                                .expect("checked that `history_events` is not empty")
+                                .1
+                        );
+                        return Ok(value);
+                    }
+                    (FindMatchingResponse::FoundRequestButNotResponse { .. }, Some(value)) => {
+                        self.event_history
+                            .last_mut()
+                            .expect("checked that `history_events` is not empty")
+                            .1 = Processed;
+                        return Ok(value);
+                    }
+                    (_, Some(_)) => {
+                        unreachable!("a locally resolved blocking event must await its response")
+                    }
+                    _ => {}
+                }
             }
         }
         // Now either wait or interrupt.
@@ -1764,7 +1784,7 @@ impl EventHistory {
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<Vec<(HistoryEvent, Version)>, DbErrorWrite> {
+    ) -> Result<AppendedBlockingEvents, DbErrorWrite> {
         trace!("append_to_db_blocking {}", version);
         match event_call {
             EventCallBlocking::JoinNext(JoinNext {
@@ -1800,7 +1820,10 @@ impl EventHistory {
                         &self.locked_event.component_id,
                     )
                     .await?;
-                Ok(history_events)
+                Ok(AppendedBlockingEvents {
+                    history_events,
+                    known_response: None,
+                })
             }
 
             EventCallBlocking::JoinSetClose(JoinSetClose {
@@ -1842,7 +1865,10 @@ impl EventHistory {
                         &self.locked_event.component_id,
                     )
                     .await?;
-                Ok(history_events)
+                Ok(AppendedBlockingEvents {
+                    history_events,
+                    known_response: None,
+                })
             }
 
             EventCallBlocking::JoinNextRequestingFfqn(JoinNextRequestingFfqn {
@@ -1881,7 +1907,10 @@ impl EventHistory {
                     )
                     .await?;
 
-                Ok(history_events)
+                Ok(AppendedBlockingEvents {
+                    history_events,
+                    known_response: None,
+                })
             }
 
             EventCallBlocking::OneOffChildExecutionRequest(OneOffChildExecutionRequest {
@@ -1962,7 +1991,10 @@ impl EventHistory {
                     )
                     .await?;
 
-                Ok(history_events)
+                Ok(AppendedBlockingEvents {
+                    history_events,
+                    known_response: None,
+                })
             }
 
             EventCallBlocking::OneOffDelayRequest(OneOffDelayRequest {
@@ -1972,7 +2004,11 @@ impl EventHistory {
                 expires_at_if_new,
                 wasm_backtrace,
             }) => {
-                debug!(%delay_id, %join_set_id, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
+                // An already-due delay (e.g. `sleep(now)`) is fulfilled in the same
+                // transaction, so the workflow resumes without waiting for the
+                // expired-timers watcher to append the delay response.
+                let already_due = expires_at_if_new <= called_at;
+                debug!(%delay_id, %join_set_id, already_due, "BlockingDelayRequest: Flushing and appending JoinSet,DelayRequest,JoinNext");
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSetCreate {
                     join_set_id: join_set_id.clone(),
@@ -1986,7 +2022,7 @@ impl EventHistory {
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id: join_set_id.clone(),
                     request: JoinSetRequest::DelayRequest {
-                        delay_id,
+                        delay_id: delay_id.clone(),
                         expires_at: expires_at_if_new,
                         schedule_at,
                         paused: false,
@@ -1999,7 +2035,7 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
                 let event = HistoryEvent::JoinNext {
-                    join_set_id,
+                    join_set_id: join_set_id.clone(),
                     run_expires_at: lock_expires_at,
                     closing: false,
                     requested_ffqn: None,
@@ -2011,22 +2047,52 @@ impl EventHistory {
                     event: ExecutionRequest::HistoryEvent { event },
                 };
 
-                db_connection
-                    .append_batch(
-                        history_events
-                            .first()
-                            .expect("blocking delay has three events")
-                            .1
-                            .clone(),
-                        called_at,
-                        vec![join_set, delay_req, join_next],
-                        db_connection.execution_id().clone(),
-                        wasm_backtrace,
-                        &self.locked_event.component_id,
-                    )
-                    .await?;
+                let batch_version = history_events
+                    .first()
+                    .expect("blocking delay has three events")
+                    .1
+                    .clone();
+                let batch = vec![join_set, delay_req, join_next];
+                if already_due {
+                    db_connection
+                        .append_batch_with_delay_response(
+                            batch_version,
+                            called_at,
+                            batch,
+                            db_connection.execution_id().clone(),
+                            join_set_id,
+                            delay_id,
+                            wasm_backtrace,
+                            &self.locked_event.component_id,
+                        )
+                        .await?;
+                } else {
+                    db_connection
+                        .append_batch(
+                            batch_version,
+                            called_at,
+                            batch,
+                            db_connection.execution_id().clone(),
+                            wasm_backtrace,
+                            &self.locked_event.component_id,
+                        )
+                        .await?;
+                }
 
-                Ok(history_events)
+                let known_response = (already_due
+                    && matches!(
+                        self.join_next_blocking_strategy,
+                        JoinNextBlockingStrategy::Await { .. }
+                    ))
+                .then_some(ChildReturnValue::OneOffDelay {
+                    scheduled_at: expires_at_if_new,
+                    result: Ok(()),
+                });
+
+                Ok(AppendedBlockingEvents {
+                    history_events,
+                    known_response,
+                })
             }
         }
     }
@@ -3457,8 +3523,8 @@ mod tests {
     use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
     use crate::workflow::event_history::{
         ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn, JoinNextTry,
-        JoinNextTryError, JoinSetCreate, Schedule, ScheduleIntent, Stub, StubIntent, StubParams,
-        SubmitChildIntent, SubmitDelay,
+        JoinNextTryError, JoinSetCreate, OneOffDelayRequest, Schedule, ScheduleIntent, Stub,
+        StubIntent, StubParams, SubmitChildIntent, SubmitDelay,
     };
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
@@ -3489,6 +3555,66 @@ mod tests {
 
     pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn1");
     pub const MOCK_FFQN_2: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn2");
+
+    #[tokio::test]
+    async fn already_due_one_off_delays_are_resolved_before_cache_flush() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+        let initial_version = db_connection.get(&execution_id).await.unwrap().next_version;
+
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id.clone(),
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 100,
+                },
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+
+        for name in ["first", "second"] {
+            let result = OneOffDelayRequest::apply(
+                HistoryEventScheduleAt::Now,
+                Some(name.to_owned()),
+                sim_clock.now(),
+                None,
+                &mut event_history,
+                &mut event_call_cursor,
+                &mut *caching_db_connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(Ok(sim_clock.now()), result);
+        }
+
+        let unflushed_log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(initial_version, unflushed_log.next_version);
+        assert!(unflushed_log.responses.is_empty());
+
+        caching_db_connection
+            .flush_non_blocking_event_cache(sim_clock.now())
+            .await
+            .unwrap();
+
+        let flushed_log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(
+            Version::new(initial_version.0 + 6),
+            flushed_log.next_version
+        );
+        assert_eq!(2, flushed_log.responses.len());
+
+        drop(db_connection);
+        drop(caching_db_connection);
+        db_close.close().await;
+    }
 
     #[rstest]
     #[tokio::test]

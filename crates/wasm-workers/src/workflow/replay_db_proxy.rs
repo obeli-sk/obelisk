@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use concepts::storage::DbErrorStubResponse;
 use concepts::{
     ComponentId, ExecutionId, JoinSetId,
-    prefixed_ulid::ExecutionIdDerived,
+    prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
         CapturedDbWrite, CreateRequest, DbConnection, DbErrorRead, DbErrorReadWithTimeout,
@@ -144,6 +144,11 @@ pub(crate) fn bump_versions_for_execution(
                 version,
                 ..
             }
+            | CapturedDbWrite::AppendBatchWithDelayResponse {
+                execution_id,
+                version,
+                ..
+            }
             | CapturedDbWrite::AppendBatchCreateNewExecution {
                 execution_id,
                 version,
@@ -225,6 +230,30 @@ async fn apply_captured_write(
         } => {
             let result = conn
                 .append_batch(current_time, batch, execution_id, version)
+                .await?;
+            if !backtraces.is_empty() {
+                conn.append_backtrace_batch(backtraces).await?;
+            }
+            Ok(Some(result))
+        }
+        CapturedDbWrite::AppendBatchWithDelayResponse {
+            current_time,
+            batch,
+            execution_id,
+            version,
+            join_set_id,
+            delay_id,
+            backtraces,
+        } => {
+            let result = conn
+                .append_batch_with_delay_response(
+                    current_time,
+                    batch,
+                    execution_id,
+                    version,
+                    join_set_id,
+                    delay_id,
+                )
                 .await?;
             if !backtraces.is_empty() {
                 conn.append_backtrace_batch(backtraces).await?;
@@ -601,6 +630,40 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
             version,
             backtraces,
         });
+        Ok(())
+    }
+
+    async fn append_batch_with_delay_response(
+        &mut self,
+        version: Version,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+        wasm_backtrace: Option<storage::WasmBacktrace>,
+        component_id: &ComponentId,
+    ) -> Result<(), DbErrorWrite> {
+        assert_eq!(self.execution_id, execution_id);
+        let next = next_version(&version, batch.len());
+        for request in &batch {
+            assert!(
+                !is_closing_join_next(request),
+                "closing join next is not appended using `append_batch_with_delay_response`"
+            );
+        }
+        let backtraces =
+            make_backtrace(&execution_id, component_id, &version, &next, wasm_backtrace);
+        self.collector
+            .push_write(CapturedDbWrite::AppendBatchWithDelayResponse {
+                current_time,
+                batch,
+                execution_id,
+                version,
+                join_set_id,
+                delay_id,
+                backtraces,
+            });
         Ok(())
     }
 
