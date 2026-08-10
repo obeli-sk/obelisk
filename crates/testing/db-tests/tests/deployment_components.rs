@@ -40,7 +40,6 @@ fn mk_deployment_record(
         obelisk_version: "0.0.0-test".to_string(),
         created_by: None,
         files: Vec::new(),
-        component_files: Vec::new(),
     }
 }
 
@@ -184,7 +183,7 @@ async fn deployment_component_files_roundtrip(database: Database) {
             size: 0,
         },
     ];
-    deployment.component_files = vec![DeploymentComponentFileRecord {
+    let component_files = vec![DeploymentComponentFileRecord {
         component_name: "a".into(),
         path: "a/lib.js".to_string(),
         role: ComponentFileRole::JsEntrypoint,
@@ -206,6 +205,7 @@ async fn deployment_component_files_roundtrip(database: Database) {
                 component_digest,
                 component_type: ComponentType::Activity,
             }],
+            component_files,
         )
         .await
         .unwrap();

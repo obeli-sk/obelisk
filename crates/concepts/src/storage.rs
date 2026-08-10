@@ -1545,6 +1545,7 @@ pub trait DbExternalApi: DbConnection {
         record: DeploymentRecord,
         component_metadata: Vec<ComponentMetadataRecord>,
         deployment_components: Vec<DeploymentComponentRecord>,
+        deployment_component_files: Vec<DeploymentComponentFileRecord>,
     ) -> Result<(), DbErrorWrite>;
 
     /// Return deployment file digests referenced by this deployment but absent from the CAS.
@@ -1725,7 +1726,6 @@ pub struct DeploymentRecord {
     pub obelisk_version: String,
     pub created_by: Option<String>,
     pub files: Vec<DeploymentFileRecord>,
-    pub component_files: Vec<DeploymentComponentFileRecord>,
 }
 
 impl DeploymentRecord {

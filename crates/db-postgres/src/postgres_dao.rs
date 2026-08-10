@@ -347,7 +347,6 @@ fn deployment_record_from_pg_row(row: &Row) -> Result<DeploymentRecord, DbErrorR
         obelisk_version: get(row, "obelisk_version")?,
         created_by: get(row, "created_by")?,
         files: Vec::new(),
-        component_files: Vec::new(),
     })
 }
 
@@ -5163,6 +5162,7 @@ impl DbExternalApi for PostgresConnection {
         record: DeploymentRecord,
         component_metadata: Vec<ComponentMetadataRecord>,
         deployment_components: Vec<DeploymentComponentRecord>,
+        deployment_component_files: Vec<DeploymentComponentFileRecord>,
     ) -> Result<(), DbErrorWrite> {
         let deployment_id = record.deployment_id;
         let mut client_guard = self.client.lock().await;
@@ -5171,7 +5171,8 @@ impl DbExternalApi for PostgresConnection {
         insert_deployment_tx(&tx, &record).await?;
         upsert_component_metadata_tx(&tx, &component_metadata).await?;
         insert_deployment_components_tx(&tx, deployment_id, &deployment_components).await?;
-        insert_deployment_component_files_tx(&tx, deployment_id, &record.component_files).await?;
+        insert_deployment_component_files_tx(&tx, deployment_id, &deployment_component_files)
+            .await?;
         tx.commit().await?;
         Ok(())
     }

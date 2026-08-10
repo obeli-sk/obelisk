@@ -92,6 +92,7 @@ use concepts::storage::DbErrorWriteNonRetriable;
 use concepts::storage::DbExternalApi;
 use concepts::storage::DbPool;
 use concepts::storage::DbPoolCloseable;
+use concepts::storage::DeploymentComponentFileRecord;
 use concepts::storage::DeploymentComponentRecord;
 use concepts::storage::DeploymentFileRecord;
 use concepts::storage::EnqueueOutcome;
@@ -1533,7 +1534,7 @@ async fn prepare_new_deployment_record(
     deployment_toml: String,
     files: Vec<DeploymentManifestFile>,
     description: Option<String>,
-) -> anyhow::Result<DeploymentRecord> {
+) -> anyhow::Result<(DeploymentRecord, Vec<DeploymentComponentFileRecord>)> {
     // Upload referenced blobs to the CAS first, so a later restart can resolve from it.
     let cas = db_pool
         .cas_conn()
@@ -1556,19 +1557,21 @@ async fn prepare_new_deployment_record(
     let component_files =
         DeploymentManifest::try_from_toml(&deployment_toml, &cas_deployment_dir())?
             .component_file_records();
-    Ok(DeploymentRecord {
-        deployment_id,
-        description,
-        digest,
-        created_at: now,
-        last_active_at: None,
-        status: DeploymentStatus::Inactive,
-        deployment_toml,
-        obelisk_version: PKG_VERSION.to_string(),
-        created_by: Some("server".to_string()),
-        files: file_records,
+    Ok((
+        DeploymentRecord {
+            deployment_id,
+            description,
+            digest,
+            created_at: now,
+            last_active_at: None,
+            status: DeploymentStatus::Inactive,
+            deployment_toml,
+            obelisk_version: PKG_VERSION.to_string(),
+            created_by: Some("server".to_string()),
+            files: file_records,
+        },
         component_files,
-    })
+    ))
 }
 
 type DbClose = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -1760,7 +1763,7 @@ pub(crate) async fn run_internal(
     .instrument(span.clone())
     .await?;
     // Persist a freshly created deployment only now that it has compiled and verified, matching the submit path.
-    if let Some(record) = new_deployment_record {
+    if let Some((record, component_files)) = new_deployment_record {
         let api_conn = db_pool
             .external_api_conn()
             .await
@@ -1770,7 +1773,12 @@ pub(crate) async fn run_internal(
             &compiled_and_linked.component_registry_ro,
         );
         api_conn
-            .insert_deployment_with_components(record, component_metadata, deployment_components)
+            .insert_deployment_with_components(
+                record,
+                component_metadata,
+                deployment_components,
+                component_files,
+            )
             .await
             .context("cannot insert deployment")?;
         api_conn
@@ -2646,10 +2654,10 @@ pub(crate) async fn submit_deployment(
             created_by,
             deployment_toml: deployment_toml.to_string(),
             files: manifest.file_records(),
-            component_files: manifest.component_file_records(),
         },
         component_metadata,
         deployment_components,
+        manifest.component_file_records(),
     )
     .await
     .map_err(anyhow::Error::from)?;
