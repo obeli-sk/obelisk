@@ -347,7 +347,7 @@ impl EventHistory {
             .count()
     }
 
-    /// Returns `WorkflowFunctionError` that is interpreted for interrupt etc. by the worker.
+    /// Returns `WorkflowFunctionError` that is unwrapped from trap by the worker.
     async fn apply(
         &mut self,
         event_call: EventCallKind,

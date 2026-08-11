@@ -2021,7 +2021,7 @@ impl ServerVerified {
         config: ServerConfigToml,
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<ServerVerified, anyhow::Error> {
-        trace!("Using server toml: {config:#?}");
+        debug!("Using server toml: {config:#?}");
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
