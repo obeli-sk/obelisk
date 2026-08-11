@@ -549,6 +549,7 @@ impl ExecTask {
                             executor_close_watcher
                         )
                         .await;
+                        debug!("run_worker finished with {res:?}");
                         if let Err(db_error) = res {
                             error!("Got db error `{db_error:?}`, expecting watcher to mark execution as timed out");
                         }
@@ -639,7 +640,7 @@ impl ExecTask {
             unlock_expiry_on_limit_reached,
         )? {
             Some(append) => {
-                trace!("Appending {append:?}");
+                debug!("Appending {append:?}");
                 let db_exec = db_pool.db_exec_conn().await?;
                 append.append(db_exec.as_ref()).await
             }
@@ -984,22 +985,24 @@ impl Append {
 
             db_exec
                 .append_batch_respond_to_parent(events, response, self.created_at)
-                .await?;
+                .await
+                .map(|_| ())
         } else {
             let res = db_exec
                 .append(self.execution_id, self.version, self.primary_event)
                 .await;
             match res {
-                Ok(_)
-                | Err(DbErrorWrite::NonRetriable(
-                    DbErrorWriteNonRetriable::UnlockedCannotBeAppended(_),
+                Ok(_) => Ok(()),
+                Err(DbErrorWrite::NonRetriable(
+                    DbErrorWriteNonRetriable::UnlockedCannotBeAppended(reason),
                 )) => {
                     // Ignore unsuccessful `Unlocked`
+                    debug!("Ignoring unlock failed - {reason}");
+                    Ok(())
                 }
-                Err(err) => return Err(err),
+                Err(err) => Err(err),
             }
         }
-        Ok(())
     }
 }
 

@@ -30,7 +30,7 @@ pub type WorkerResult = Result<WorkerResultOk, WorkerError>;
 
 #[derive(Debug, derive_more::Display)]
 pub enum WorkerResultOk {
-    #[display("db updated by worker or watcher")]
+    #[display("db updated, not finished")]
     DbUpdatedByWorkerOrWatcher,
     /// The execution run has returned a valid `retval`. Activity with retry budget returning `err` will be retried by the executor.
     #[display("{_0}")]
@@ -38,7 +38,7 @@ pub enum WorkerResultOk {
 }
 
 #[derive(Debug, derive_more::Display)]
-#[display("{retval}")]
+#[display("finished at v{version}")]
 pub struct RunFinished {
     pub retval: SupportedFunctionReturnValue,
     pub version: Version,

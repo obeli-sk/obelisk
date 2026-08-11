@@ -370,7 +370,7 @@ impl EventHistory {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
             Err(PreemptRequested::ExecutorClosing) => {
-                info!("Executor closing detected in host function call");
+                info!("Executor closing detected in check_preempt");
                 return Err(ApplyError::ExecutorClosing);
             }
         }
