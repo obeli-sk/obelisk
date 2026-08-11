@@ -1800,6 +1800,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: &ExecutionId,
         pagination: Option<Pagination<u32>>,
+        join_set: Option<&JoinSetId>,
     ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
         // TODO: Add test
         let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
@@ -1834,6 +1835,10 @@ impl SqlitePool {
         if is_desc {
             sql = format!("SELECT * FROM ({sql}) ORDER BY seq ASC");
         }
+        if let Some(join_set) = join_set {
+            sql = format!("SELECT * FROM ({sql}) WHERE join_set_id = :join_set_id ORDER BY seq");
+            params.push((":join_set_id", Box::new(join_set.to_string())));
+        }
         params.push((":execution_id", Box::new(execution_id.to_string())));
         tx.prepare(&sql)?
             .query_map::<_, &[(&'static str, &dyn ToSql)], _>(
@@ -1846,6 +1851,44 @@ impl SqlitePool {
             )?
             .collect::<Result<Vec<_>, rusqlite::Error>>()
             .map_err(DbErrorRead::from)
+    }
+
+    fn get_response_scan_cursor(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        pagination: Pagination<u32>,
+        max_cursor: ResponseCursor,
+    ) -> Result<ResponseCursor, DbErrorRead> {
+        if pagination.length() == 0 {
+            return Ok(ResponseCursor(*pagination.cursor()));
+        }
+        let aggregate = if pagination.is_desc() { "MIN" } else { "MAX" };
+        let order = if pagination.is_desc() { "DESC" } else { "ASC" };
+        let sql = format!(
+            "SELECT {aggregate}(seq) FROM (\
+                SELECT r.seq FROM t_join_set_response r \
+                LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+                WHERE r.execution_id = :execution_id \
+                AND (r.finished_version = l.version OR r.child_execution_id IS NULL) \
+                AND r.seq {rel} :cursor ORDER BY r.seq {order} LIMIT :length\
+            )",
+            rel = pagination.rel(),
+        );
+        let scanned: Option<u32> = tx.query_row(
+            &sql,
+            rusqlite::named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":cursor": pagination.cursor(),
+                ":length": pagination.length(),
+            },
+            |row| row.get(0),
+        )?;
+        Ok(ResponseCursor(scanned.unwrap_or_else(
+            || match pagination {
+                Pagination::NewerThan { cursor, .. } => cursor.max(max_cursor.0),
+                Pagination::OlderThan { .. } => 0,
+            },
+        )))
     }
 
     fn parse_response_with_cursor(
@@ -1972,7 +2015,7 @@ impl SqlitePool {
             })
         })?;
 
-        let responses = Self::list_responses(tx, execution_id, None)?;
+        let responses = Self::list_responses(tx, execution_id, None, None)?;
         trace!("Responses: {responses:?}");
 
         // Update `t_state`
@@ -2726,7 +2769,7 @@ impl SqlitePool {
             return Err(DbErrorRead::NotFound);
         }
         let combined_state = Self::get_combined_state(tx, execution_id)?;
-        let responses = Self::list_responses(tx, execution_id, None)?;
+        let responses = Self::list_responses(tx, execution_id, None, None)?;
         Ok(concepts::storage::ExecutionLog {
             execution_id: execution_id.clone(),
             events,
@@ -4898,19 +4941,25 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn list_responses(
+    async fn list_responses_filtered(
         &self,
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
+        join_set: Option<&JoinSetId>,
     ) -> Result<ListResponsesResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
+        let join_set = join_set.cloned();
         self.transaction(
             move |tx| {
-                let responses = Self::list_responses(tx, &execution_id, Some(pagination))?;
                 let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
+                let scan_cursor =
+                    Self::get_response_scan_cursor(tx, &execution_id, pagination, max_cursor)?;
+                let responses =
+                    Self::list_responses(tx, &execution_id, Some(pagination), join_set.as_ref())?;
                 Ok(ListResponsesResponse {
                     responses,
                     max_cursor,
+                    scan_cursor,
                 })
             },
             TxType::Other, // read only
@@ -4945,7 +4994,8 @@ impl DbExternalApi for SqlitePool {
                     },
                     req_include_backtrace_id,
                 )?;
-                let responses = Self::list_responses(tx, &execution_id, Some(resp_pagination))?;
+                let responses =
+                    Self::list_responses(tx, &execution_id, Some(resp_pagination), None)?;
                 let max_version = Self::get_max_version(tx, &execution_id)?;
                 let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
                 Ok(ExecutionWithStateRequestsResponses {

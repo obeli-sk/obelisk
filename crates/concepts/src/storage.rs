@@ -311,6 +311,7 @@ pub struct ListExecutionEventsResponse {
 pub struct ListResponsesResponse {
     pub responses: Vec<ResponseWithCursor>,
     pub max_cursor: ResponseCursor,
+    pub scan_cursor: ResponseCursor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */, schemars::JsonSchema)]
@@ -1497,6 +1498,16 @@ pub trait DbExternalApi: DbConnection {
         &self,
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
+    ) -> Result<ListResponsesResponse, DbErrorRead> {
+        self.list_responses_filtered(execution_id, pagination, None)
+            .await
+    }
+
+    async fn list_responses_filtered(
+        &self,
+        execution_id: &ExecutionId,
+        pagination: Pagination<u32>,
+        join_set: Option<&JoinSetId>,
     ) -> Result<ListResponsesResponse, DbErrorRead>;
 
     async fn list_execution_events_responses(
