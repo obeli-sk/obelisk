@@ -628,8 +628,8 @@ impl EventHistory {
                         // if this was caused by `subscription_interruption` or deadline.
                     }
                     Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        debug!("Executor is closing");
-                        return Err(ApplyError::InterruptDbUpdated);
+                        info!("Executor is closing detected in subscribe_to_next_responses");
+                        return Err(ApplyError::ExecutorClosing);
                     }
                 }
             }
