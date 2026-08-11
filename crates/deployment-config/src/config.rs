@@ -631,6 +631,8 @@ pub struct WorkflowWasmComponentConfigResolved {
     pub backtrace: ComponentBacktraceConfigResolved,
     pub stub_wasi: bool,
     pub lock_extension: bool,
+    #[serde(default = "default_lock_extension_leeway")]
+    pub lock_extension_leeway: DurationConfig,
     pub logs_store_min_level: LogLevelToml,
 }
 
@@ -649,6 +651,8 @@ pub struct WorkflowJsComponentConfigResolved {
     pub blocking_strategy: BlockingStrategyConfigToml,
     pub logs_store_min_level: LogLevelToml,
     pub lock_extension: bool,
+    #[serde(default = "default_lock_extension_leeway")]
+    pub lock_extension_leeway: DurationConfig,
 }
 
 pub mod webhook {
@@ -830,6 +834,11 @@ pub const fn default_tick_sleep() -> DurationConfig {
 #[must_use]
 pub const fn default_lock_extension() -> bool {
     true
+}
+
+#[must_use]
+pub const fn default_lock_extension_leeway() -> DurationConfig {
+    DurationConfig::Milliseconds(100)
 }
 
 #[must_use]

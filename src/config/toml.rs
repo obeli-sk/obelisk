@@ -71,8 +71,8 @@ pub(crate) use deployment_config::config::{
     InflightSemaphore, InlineFunctionInterfaceResolved, JsParamToml, LockingStrategy, LogLevelToml,
     MethodsInput, MethodsInputStar, OCI_SCHEMA_PREFIX, ReplaceIn, ScriptLocationResolved,
     Unlimited, WitSourceResolved, WorkflowJsComponentConfigResolved,
-    WorkflowWasmComponentConfigResolved, default_lock_extension, default_max_output_bytes,
-    default_max_retries, default_retry_exp_backoff,
+    WorkflowWasmComponentConfigResolved, default_lock_extension, default_lock_extension_leeway,
+    default_max_output_bytes, default_max_retries, default_retry_exp_backoff,
 };
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
@@ -878,16 +878,13 @@ impl WasmGlobalConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    #[serde(default = "default_workflows_lock_extension_leeway")]
-    pub(crate) lock_extension_leeway: DurationConfig,
-}
-impl Default for WorkflowsGlobalConfigToml {
-    fn default() -> WorkflowsGlobalConfigToml {
-        WorkflowsGlobalConfigToml {
-            lock_extension_leeway: default_workflows_lock_extension_leeway(),
-        }
-    }
+    /// Deprecated: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]`
+    /// instead. When set, it overrides the per-workflow value for every workflow. Will be
+    /// removed in 0.42.
+    #[serde(default)]
+    pub(crate) lock_extension_leeway: Option<DurationConfig>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -2057,6 +2054,9 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     pub(crate) blocking_strategy: BlockingStrategyConfigToml,
     #[serde(default = "default_lock_extension")]
     pub(crate) lock_extension: bool,
+    /// Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.
+    #[serde(default = "default_lock_extension_leeway")]
+    pub(crate) lock_extension_leeway: DurationConfig,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
 }
@@ -2073,6 +2073,7 @@ pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
+    pub(crate) lock_extension_leeway: Duration,
 }
 
 impl WorkflowJsConfigVerified {
@@ -2111,6 +2112,9 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
     pub(crate) stub_wasi: bool,
     #[serde(default = "default_lock_extension")]
     pub(crate) lock_extension: bool,
+    /// Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.
+    #[serde(default = "default_lock_extension_leeway")]
+    pub(crate) lock_extension_leeway: DurationConfig,
     #[serde(default)]
     pub(crate) logs_store_min_level: LogLevelToml,
 }
@@ -2302,6 +2306,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
     pub(crate) logs_store_min_level: Option<LogLevel>,
+    pub(crate) lock_extension_leeway: Duration,
 }
 
 impl WorkflowConfigVerified {
@@ -2496,6 +2501,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             )?,
             frame_files_to_sources,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
+            lock_extension_leeway: self.lock_extension_leeway.into(),
         })
     }
 }
@@ -2584,6 +2590,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
+            lock_extension_leeway: self.lock_extension_leeway.into(),
         })
     }
 }
@@ -2638,6 +2645,7 @@ async fn resolve_local_refs(
             backtrace: resolve_backtrace(&w.backtrace, provider).await?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
+            lock_extension_leeway: w.lock_extension_leeway,
             logs_store_min_level: w.logs_store_min_level,
         });
     }
@@ -2667,6 +2675,7 @@ async fn resolve_local_refs(
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
             lock_extension: w.lock_extension,
+            lock_extension_leeway: w.lock_extension_leeway,
             logs_store_min_level: w.logs_store_min_level,
         });
     }
@@ -4042,9 +4051,6 @@ fn default_console_style() -> LoggingStyle {
 
 fn default_sqlite_queue_capacity() -> usize {
     SqliteConfig::default().queue_capacity
-}
-fn default_workflows_lock_extension_leeway() -> DurationConfig {
-    DurationConfig::Milliseconds(100)
 }
 fn default_timers_watcher_enabled() -> bool {
     true

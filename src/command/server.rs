@@ -2009,7 +2009,9 @@ pub(crate) struct ServerVerified {
 struct ServerVerifiedLaunch {
     engines: Engines,
     build_semaphore: Option<u64>,
-    workflows_lock_extension_leeway: Duration,
+    /// Deprecated server-wide override; when set, applies to every workflow. See
+    /// `WorkflowsGlobalConfigToml::lock_extension_leeway`.
+    deprecated_workflows_lock_extension_leeway: Option<Duration>,
 }
 
 impl ServerVerified {
@@ -2019,7 +2021,7 @@ impl ServerVerified {
         config: ServerConfigToml,
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<ServerVerified, anyhow::Error> {
-        trace!("Using server toml: {config:#?}");
+        debug!("Using server toml: {config:#?}");
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -2042,8 +2044,18 @@ impl ServerVerified {
             });
         }
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
-        let workflows_lock_extension_leeway =
-            config.workflows_global_config.lock_extension_leeway.into();
+        // backcompat: 0.41 - `[workflows] lock_extension_leeway` moved to per-workflow config; remove this override in 0.42.
+        let deprecated_workflows_lock_extension_leeway: Option<Duration> = config
+            .workflows_global_config
+            .lock_extension_leeway
+            .map(Into::into);
+        if deprecated_workflows_lock_extension_leeway.is_some() {
+            warn!(
+                "`[workflows] lock_extension_leeway` is deprecated and will be removed in 0.42; \
+                 set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]` \
+                 instead. While set, it overrides the per-workflow value for every workflow."
+            );
+        }
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
         let global_executor_instance_limiter = config
             .wasm_global_config
@@ -2070,7 +2082,7 @@ impl ServerVerified {
             launch: ServerVerifiedLaunch {
                 engines,
                 build_semaphore,
-                workflows_lock_extension_leeway,
+                deprecated_workflows_lock_extension_leeway,
             },
             allow_exec_activities: config.allow_exec_activities,
             http_servers,
@@ -2152,7 +2164,7 @@ impl ServerCompiledLinked {
             fuel,
             global_http_config,
             server_verified.build_semaphore,
-            server_verified.workflows_lock_extension_leeway,
+            server_verified.deprecated_workflows_lock_extension_leeway,
             termination_watcher,
             suppress_linking_errors,
         )
@@ -3924,7 +3936,7 @@ async fn compile_and_link(
     fuel: Option<u64>,
     global_http_config: GlobalHttpConfig,
     build_semaphore: Option<u64>,
-    workflows_lock_extension_leeway: Duration,
+    deprecated_workflows_lock_extension_leeway: Option<Duration>,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
@@ -4104,7 +4116,9 @@ async fn compile_and_link(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
-                    prespawn_workflow_wasm(workflow, &engines, workflows_lock_extension_leeway)
+                    let leeway = deprecated_workflows_lock_extension_leeway
+                        .unwrap_or(workflow.lock_extension_leeway);
+                    prespawn_workflow_wasm(workflow, &engines, leeway)
                     .map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
@@ -4123,7 +4137,9 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
-                    prespawn_workflow_js(workflow_js, &engines,workflow_js_runnable, workflows_lock_extension_leeway)
+                    let leeway = deprecated_workflows_lock_extension_leeway
+                        .unwrap_or(workflow_js.lock_extension_leeway);
+                    prespawn_workflow_js(workflow_js, &engines, workflow_js_runnable, leeway)
                         .map(|(worker, component_config, frame_files)| {
                             CompiledComponent::ActivityOrWorkflow {
                                 worker,
