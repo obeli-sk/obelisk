@@ -21,8 +21,8 @@ use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
-    SupportedFunctionReturnValue,
+    ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId, JoinSetKind,
+    StrVariant, SupportedFunctionReturnValue,
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
@@ -1217,9 +1217,11 @@ mod logs {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ExecutionResponsesParams {
+    /// Filter by an exact named join-set name
+    join_set: Option<String>,
     /// Cursor for pagination
     cursor: Option<u32>,
-    /// Number of responses to return
+    /// Maximum number of execution-wide responses to scan
     length: Option<u16>,
     /// Include the cursor item in results
     #[serde(default)]
@@ -1238,6 +1240,9 @@ struct ExecutionResponsesResponse {
     /// Maximum cursor in the response
     #[schema(value_type = u32)]
     max_cursor: ResponseCursor,
+    /// Execution-wide cursor reached in the requested direction
+    #[schema(value_type = u32)]
+    scan_cursor: ResponseCursor,
 }
 /// Get execution responses (join set responses)
 #[utoipa::path(
@@ -1266,6 +1271,11 @@ async fn execution_responses(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     let length = params.length.unwrap_or(DEFAULT_LENGTH);
+    let join_set = params
+        .join_set
+        .map(|name| JoinSetId::new(JoinSetKind::Named, StrVariant::from(name)))
+        .transpose()
+        .map_err(|err| HttpResponse::bad_request(accept, err.to_string()))?;
     let pagination = match params.direction {
         PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
             length,
@@ -1279,7 +1289,7 @@ async fn execution_responses(
         },
     };
     let result = conn
-        .list_responses(&execution_id, pagination)
+        .list_responses_filtered(&execution_id, pagination, join_set.as_ref())
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
 
@@ -1289,6 +1299,7 @@ async fn execution_responses(
             &ExecutionResponsesResponse {
                 responses: result.responses,
                 max_cursor: result.max_cursor,
+                scan_cursor: result.scan_cursor,
             },
         ),
         AcceptHeader::Text => {

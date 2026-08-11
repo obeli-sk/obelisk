@@ -1644,6 +1644,7 @@ async fn list_responses(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
     pagination: Option<Pagination<u32>>,
+    join_set: Option<&JoinSetId>,
 ) -> Result<Vec<ResponseWithCursor>, DbErrorRead> {
     // Helper to manage params dynamically
     let mut params: Vec<Box<dyn ToSql + Send + Sync>> = Vec::new();
@@ -1697,6 +1698,12 @@ async fn list_responses(
         sql = format!("SELECT * FROM ({sql}) AS sub ORDER BY seq ASC");
     }
 
+    if let Some(join_set) = join_set {
+        let p_join_set = add_param(Box::new(join_set.to_string()));
+        sql =
+            format!("SELECT * FROM ({sql}) AS page WHERE join_set_id = {p_join_set} ORDER BY seq");
+    }
+
     let params_refs: Vec<&(dyn ToSql + Sync)> = params
         .iter()
         .map(|p| p.as_ref() as &(dyn ToSql + Sync))
@@ -1713,6 +1720,50 @@ async fn list_responses(
     }
 
     Ok(results)
+}
+
+async fn get_response_scan_cursor(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+    pagination: Pagination<u32>,
+    max_cursor: ResponseCursor,
+) -> Result<ResponseCursor, DbErrorRead> {
+    if pagination.length() == 0 {
+        return Ok(ResponseCursor(*pagination.cursor()));
+    }
+    let aggregate = if pagination.is_desc() { "MIN" } else { "MAX" };
+    let order = if pagination.is_desc() { "DESC" } else { "ASC" };
+    let sql = format!(
+        "SELECT {aggregate}(seq) AS scan_cursor FROM (\
+            SELECT r.seq FROM t_join_set_response r \
+            LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
+            WHERE r.execution_id = $1 \
+            AND (r.finished_version = l.version OR r.child_execution_id IS NULL) \
+            AND r.seq {rel} $2 ORDER BY r.seq {order} LIMIT $3\
+        ) AS scanned",
+        rel = pagination.rel(),
+    );
+    let row = tx
+        .query_one(
+            &sql,
+            &[
+                &execution_id.to_string(),
+                &i64::from(*pagination.cursor()),
+                &i64::from(pagination.length()),
+            ],
+        )
+        .await?;
+    let scanned = get::<Option<i64>, _>(&row, "scan_cursor")?
+        .map(|cursor| {
+            u32::try_from(cursor).map_err(|_| consistency_db_err("seq must fit into u32"))
+        })
+        .transpose()?;
+    Ok(ResponseCursor(scanned.unwrap_or_else(
+        || match pagination {
+            Pagination::NewerThan { cursor, .. } => cursor.max(max_cursor.0),
+            Pagination::OlderThan { .. } => 0,
+        },
+    )))
 }
 
 async fn list_logs_tx(
@@ -2253,7 +2304,7 @@ async fn lock_single_execution(
         })
     })?;
 
-    let responses = list_responses(tx, execution_id, None).await?;
+    let responses = list_responses(tx, execution_id, None, None).await?;
     trace!("Responses: {responses:?}");
 
     // Update t_state
@@ -3043,7 +3094,7 @@ async fn get_execution_log(
     }
 
     let combined_state = get_combined_state(tx, execution_id).await?;
-    let responses = list_responses(tx, execution_id, None).await?;
+    let responses = list_responses(tx, execution_id, None, None).await?;
 
     Ok(concepts::storage::ExecutionLog {
         execution_id: execution_id.clone(),
@@ -5033,21 +5084,25 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    async fn list_responses(
+    async fn list_responses_filtered(
         &self,
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
+        join_set: Option<&JoinSetId>,
     ) -> Result<ListResponsesResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let responses = list_responses(&tx, execution_id, Some(pagination)).await?;
         let max_cursor = get_max_response_cursor(&tx, execution_id).await?;
+        let scan_cursor =
+            get_response_scan_cursor(&tx, execution_id, pagination, max_cursor).await?;
+        let responses = list_responses(&tx, execution_id, Some(pagination), join_set).await?;
 
         tx.commit().await?;
         Ok(ListResponsesResponse {
             responses,
             max_cursor,
+            scan_cursor,
         })
     }
 
@@ -5079,7 +5134,7 @@ impl DbExternalApi for PostgresConnection {
         )
         .await?;
 
-        let responses = list_responses(&tx, execution_id, Some(resp_pagination)).await?;
+        let responses = list_responses(&tx, execution_id, Some(resp_pagination), None).await?;
         let max_version = get_max_version(&tx, execution_id).await?;
         let max_cursor = get_max_response_cursor(&tx, execution_id).await?;
 

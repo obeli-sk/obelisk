@@ -1289,6 +1289,15 @@
             }
           },
           {
+            "name": "join_set",
+            "in": "query",
+            "description": "Filter by an exact named join-set name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
             "description": "Cursor for pagination",
@@ -1302,7 +1311,7 @@
           {
             "name": "length",
             "in": "query",
-            "description": "Number of responses to return",
+            "description": "Maximum number of execution-wide responses to scan",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2449,7 +2458,8 @@
         "description": "Response containing execution responses",
         "required": [
           "responses",
-          "max_cursor"
+          "max_cursor",
+          "scan_cursor"
         ],
         "properties": {
           "max_cursor": {
@@ -2464,6 +2474,12 @@
               "type": "object"
             },
             "description": "List of responses with cursors"
+          },
+          "scan_cursor": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Execution-wide cursor reached in the requested direction",
+            "minimum": 0
           }
         }
       },

@@ -4332,6 +4332,122 @@ async fn append_delay_response(
         .unwrap();
 }
 
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn test_list_responses_filters_exact_named_join_set_in_database(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection_test().await.unwrap();
+    let api_conn = db_pool.external_api_conn().await.unwrap();
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+        })
+        .await
+        .unwrap();
+    let mut version = lock(
+        db_connection.as_ref(),
+        &execution_id,
+        &sim_clock,
+        ExecutorId::generate(),
+        sim_clock.now() + Duration::from_millis(100),
+        RunId::generate(),
+    )
+    .await;
+    let target = JoinSetId::new(JoinSetKind::Named, StrVariant::Static("session-events")).unwrap();
+    let same_name_one_off =
+        JoinSetId::new(JoinSetKind::OneOff, StrVariant::Static("session-events")).unwrap();
+    let unrelated = JoinSetId::new(JoinSetKind::Named, StrVariant::Static("operator")).unwrap();
+    for join_set_id in [&target, &same_name_one_off, &unrelated] {
+        create_join_set(
+            &execution_id,
+            &mut version,
+            join_set_id.clone(),
+            sim_clock.now(),
+            db_connection.as_ref(),
+        )
+        .await;
+    }
+    for (index, join_set_id) in [same_name_one_off, unrelated, target.clone()]
+        .iter()
+        .enumerate()
+    {
+        append_delay_response(
+            db_connection.as_ref(),
+            &execution_id,
+            join_set_id,
+            &mut version,
+            index as u64 + 1,
+            sim_clock.now(),
+        )
+        .await;
+    }
+
+    let first_page = api_conn
+        .list_responses_filtered(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 2,
+                cursor: 0,
+                including_cursor: false,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+    assert!(first_page.responses.is_empty());
+    assert_eq!(ResponseCursor(2), first_page.scan_cursor);
+    assert_eq!(ResponseCursor(3), first_page.max_cursor);
+
+    let second_page = api_conn
+        .list_responses_filtered(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 2,
+                cursor: first_page.scan_cursor.0,
+                including_cursor: false,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+    assert_eq!(1, second_page.responses.len());
+    assert_eq!(ResponseCursor(3), second_page.responses[0].cursor);
+    assert_eq!(ResponseCursor(3), second_page.scan_cursor);
+
+    let exhausted = api_conn
+        .list_responses_filtered(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 2,
+                cursor: second_page.scan_cursor.0,
+                including_cursor: false,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+    assert!(exhausted.responses.is_empty());
+    assert_eq!(ResponseCursor(3), exhausted.scan_cursor);
+
+    drop(api_conn);
+    drop(db_connection);
+    db_close.close().await;
+}
+
 /// Two executions with interleaved responses must each observe contiguous 1-based
 /// cursors, independent of the global insertion order.
 #[expand_enum_database]
