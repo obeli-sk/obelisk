@@ -878,19 +878,13 @@ impl WasmGlobalConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub(crate) struct WorkflowsGlobalConfigToml {
     /// Deprecated: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]`
     /// instead. When set, it overrides the per-workflow value for every workflow. Will be
     /// removed in 0.42.
     #[serde(default)]
     pub(crate) lock_extension_leeway: Option<DurationConfig>,
-}
-impl Default for WorkflowsGlobalConfigToml {
-    fn default() -> WorkflowsGlobalConfigToml {
-        WorkflowsGlobalConfigToml {
-            lock_extension_leeway: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
