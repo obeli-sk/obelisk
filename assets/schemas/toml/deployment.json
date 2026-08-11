@@ -900,6 +900,13 @@
           "type": "boolean",
           "default": true
         },
+        "lock_extension_leeway": {
+          "description": "Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
           "default": "debug"
@@ -1072,6 +1079,13 @@
         "lock_extension": {
           "type": "boolean",
           "default": true
+        },
+        "lock_extension_leeway": {
+          "description": "Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
         },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",

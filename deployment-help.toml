@@ -267,6 +267,8 @@
 
 ## Automatic lock extension, enabled by default
 # lock_extension = true
+## Starts extending the lock a little before it expires, specifically at expires_at minus the configured leeway.
+# lock_extension_leeway.milliseconds = 100
 
 ## Blocking strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory until its execution lock expires or the response arrives.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
@@ -317,6 +319,7 @@
 ## Retry customization: same as workflow_wasm.
 # retry_exp_backoff.milliseconds = 100
 # lock_extension = true
+# lock_extension_leeway.milliseconds = 100
 # blocking_strategy = "await"
 # logs_store_min_level = "debug"             # One of "off"|"trace"|"debug"|"info"|"warn"|"error"
 

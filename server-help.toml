@@ -99,7 +99,7 @@
 
 ## Global Workflow Configuration
 # [workflows]
-# lock_extension_leeway.milliseconds = 100 # Starts extending the lock a little before it expires, specifically at expires_at minus the configured leeway.
+# lock_extension_leeway.milliseconds = 100 # Deprecated, removed in 0.42: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]` instead. While set, it overrides the per-workflow value for every workflow.
 # subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
 
 # [wasm.codegen_cache]
