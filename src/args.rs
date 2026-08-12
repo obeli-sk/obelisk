@@ -195,7 +195,7 @@ pub(crate) enum Deployment {
         #[arg(short, long, default_value = "http://127.0.0.1:5005")]
         api_url: String,
     },
-    /// Submit (if a file is given) and hot-redeploy immediately. Fails if not possible.
+    /// Submit (if a file is given) and apply immediately. Fails if not possible.
     Apply {
         /// Path to a deployment TOML file, or an existing deployment ID.
         #[arg(

@@ -1219,7 +1219,7 @@ impl TestServer {
                     id: deployment_id.to_string(),
                 }),
                 runtime_config_check: RuntimeConfigCheck::Strict as i32,
-                hot_redeploy: true,
+                apply: true,
             })
             .await
             .expect("switch_deployment failed")
@@ -1236,6 +1236,7 @@ impl TestServer {
                 self.base_url
             ))
             .header("Accept", "application/json")
+            // backcompat: 0.41.0 - exercises the `hot_redeploy` alias of `apply`
             .json(&json!({ "hot_redeploy": true }))
             .send()
             .await
@@ -1399,7 +1400,7 @@ impl TestDeployClient {
                     .switch_deployment(SwitchDeploymentRequest {
                         deployment_id: Some(GrpcDeploymentId { id: second_id }),
                         runtime_config_check: RuntimeConfigCheck::Strict as i32,
-                        hot_redeploy: true,
+                        apply: true,
                     })
                     .await
                     .unwrap()
@@ -2495,12 +2496,12 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
         .switch_deployment(SwitchDeploymentRequest {
             deployment_id: Some(stored_grpc_id.clone()),
             runtime_config_check: RuntimeConfigCheck::AllowUnavailable as i32,
-            hot_redeploy: true,
+            apply: true,
         })
         .await
         .expect_err("hot redeploy must reject allow-unavailable-runtime-config");
     assert_eq!(
-        "argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `hot_redeploy = true`",
+        "argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `apply = true`",
         status.message()
     );
 
@@ -2510,7 +2511,7 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
         .switch_deployment(SwitchDeploymentRequest {
             deployment_id: Some(stored_grpc_id),
             runtime_config_check: RuntimeConfigCheck::Strict as i32,
-            hot_redeploy: true,
+            apply: true,
         })
         .await
         .expect_err("strict hot redeploy must fail on the missing env var");

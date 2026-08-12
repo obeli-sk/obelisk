@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(api)* The switch-deployment flag `hot_redeploy` is renamed to `apply` across the gRPC and Web
+  APIs, matching the `deployment apply` CLI verb. The protobuf field number is unchanged, so binary
+  gRPC (and gRPC-web) stays wire-compatible; the Web API keeps accepting the old `hot_redeploy` JSON
+  key as an alias.
 - *(cli)* `deployment get` omits generated content digests and JavaScript module metadata from the
   exported TOML by default. Pass `--include-generated-metadata` to retain the stored server view.
   The gRPC and Web APIs accept `include_generated_metadata` when retrieving a deployment.

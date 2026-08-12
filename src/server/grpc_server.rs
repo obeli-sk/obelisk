@@ -1778,9 +1778,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .argument_must_exist("deployment_id")?
             .try_into()?;
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-        let action = if request.hot_redeploy {
+        let action = if request.apply {
             if runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable {
-                return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `hot_redeploy = true`".to_string()));
+                return Err(tonic::Status::invalid_argument("argument `runtime_config_check = RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE` cannot be used with `apply = true`".to_string()));
             }
             SwitchDeploymentAction::Activate
         } else {

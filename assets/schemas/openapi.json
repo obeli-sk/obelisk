@@ -2403,11 +2403,11 @@
         "properties": {
           "allow_unavailable_runtime_config": {
             "type": "boolean",
-            "description": "Tolerate runtime requirements unavailable on this server while verifying.\nRejected for a hot redeploy."
+            "description": "Tolerate runtime requirements unavailable on this server while verifying.\nRejected when applying the deployment without restart."
           },
-          "hot_redeploy": {
+          "apply": {
             "type": "boolean",
-            "description": "Hot redeploy without restart"
+            "description": "Apply deployment without restart"
           }
         }
       },
