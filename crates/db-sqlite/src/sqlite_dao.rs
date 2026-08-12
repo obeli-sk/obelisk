@@ -2294,9 +2294,21 @@ impl SqlitePool {
                             )?;
                         return Ok((next_version, notifier));
                     }
-                    PendingState::BlockedByJoinSet(_) => {
-                        return Err(DbErrorWrite::NonRetriable(
-                            DbErrorWriteNonRetriable::UnlockedCannotBeAppended("blocked"),
+                    PendingState::BlockedByJoinSet(blocked) => {
+                        debug!(
+                            "blocked: {blocked:?}, setting lock_expires_at to {}",
+                            unlocked.unlocked_at
+                        );
+                        return Ok((
+                            Self::update_state_blocked(
+                                tx,
+                                execution_id,
+                                &appending_version,
+                                &blocked.join_set_id,
+                                unlocked.unlocked_at, // Update `lock_expires_at`
+                                blocked.closing,
+                            )?,
+                            AppendNotifier::default(),
                         ));
                     }
                     PendingState::Paused(_) => {
@@ -5744,7 +5756,7 @@ impl DbConnection for SqlitePool {
         delay_id: DelayId,
         result: Result<(), ()>,
     ) -> Result<AppendDelayResponseOutcome, DbErrorWrite> {
-        debug!("append_delay_response");
+        trace!("append_delay_response");
         let event = JoinSetResponseEventOuter {
             created_at,
             event: JoinSetResponseEvent {
@@ -5915,7 +5927,7 @@ impl DbConnection for SqlitePool {
                     .collect::<Result<Vec<_>, _>>()?;
                 expired_timers.extend(expired.into_iter().flatten());
                 if !expired_timers.is_empty() {
-                    debug!("get_expired_timers found {expired_timers:?}");
+                    trace!("get_expired_timers found {expired_timers:?}");
                 }
                 Ok(expired_timers)
             },
