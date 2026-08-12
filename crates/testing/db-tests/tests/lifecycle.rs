@@ -1770,11 +1770,11 @@ async fn create_join_set(
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn cannot_append_unlocked_to_blocked_execution(database: Database) {
+async fn append_unlocked_to_blocked_execution_updates_lock_expiry(database: Database) {
     set_up();
     let sim_clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
-    let db_connection = db_pool.connection().await.unwrap();
+    let db_connection = db_pool.connection_test().await.unwrap();
 
     let execution_id = ExecutionId::generate();
     db_connection
@@ -1815,6 +1815,11 @@ async fn cannot_append_unlocked_to_blocked_execution(database: Database) {
     )
     .await;
 
+    // Block on the join set with a warm lease far in the future: while warm, the
+    // worker polls in memory and no other worker may pick the execution up until
+    // `lock_expires_at`, because a later response schedules it at
+    // `max(lock_expires_at, response_created_at)`.
+    let warm_lease_expires_at = sim_clock.now() + Duration::from_secs(10);
     version = db_connection
         .append(
             execution_id.clone(),
@@ -1823,8 +1828,8 @@ async fn cannot_append_unlocked_to_blocked_execution(database: Database) {
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::JoinNext {
-                        join_set_id,
-                        run_expires_at: sim_clock.now() + lock_expiry,
+                        join_set_id: join_set_id.clone(),
+                        run_expires_at: warm_lease_expires_at,
                         closing: false,
                         requested_ffqn: Some(SOME_FFQN),
                     },
@@ -1834,23 +1839,69 @@ async fn cannot_append_unlocked_to_blocked_execution(database: Database) {
         .await
         .unwrap();
 
-    let err = db_connection
+    // The executor is closing, so it unlocks the blocked execution: the state stays
+    // blocked but `lock_expires_at` drops to the unlock time, releasing the warm lease.
+    let unlocked_at = sim_clock.now();
+    db_connection
         .append(
-            execution_id,
+            execution_id.clone(),
             version,
             AppendRequest {
-                created_at: sim_clock.now(),
+                created_at: unlocked_at,
                 event: ExecutionRequest::Unlocked(Unlocked {
-                    unlocked_at: sim_clock.now(),
-                    reason: "should fail".into(),
+                    unlocked_at,
+                    reason: "executor closing".into(),
                 }),
             },
         )
         .await
-        .unwrap_err();
+        .unwrap();
+
+    let pending_state = db_connection
+        .get_pending_state(&execution_id)
+        .await
+        .unwrap()
+        .pending_state;
     assert_matches!(
-        err,
-        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::UnlockedCannotBeAppended(_))
+        pending_state,
+        PendingState::BlockedByJoinSet(PendingStateBlockedByJoinSet {
+            lock_expires_at,
+            closing: false,
+            ..
+        })
+        if lock_expires_at == unlocked_at
+    );
+
+    // A child response now schedules the execution at the response time, not the old
+    // warm deadline: with the lease released, another executor picks it up promptly.
+    sim_clock.move_time_forward(Duration::from_secs(1));
+    let response_at = sim_clock.now();
+    assert!(response_at < warm_lease_expires_at);
+    db_connection
+        .append_response(
+            response_at,
+            execution_id.clone(),
+            JoinSetResponseEvent {
+                join_set_id: join_set_id.clone(),
+                event: JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id: execution_id.next_level(&join_set_id),
+                    finished_version: Version(1),
+                    result: concepts::SupportedFunctionReturnValue::Ok(None),
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    let pending_state = db_connection
+        .get_pending_state(&execution_id)
+        .await
+        .unwrap()
+        .pending_state;
+    assert_matches!(
+        pending_state,
+        PendingState::PendingAt(PendingStatePendingAt { scheduled_at, .. })
+        if scheduled_at == response_at
     );
 
     drop(db_connection);
