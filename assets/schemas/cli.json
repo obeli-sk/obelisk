@@ -742,7 +742,7 @@
         },
         {
           "name": "apply",
-          "about": "Submit (if a file is given) and hot-redeploy immediately. Fails if not possible",
+          "about": "Submit (if a file is given) and apply immediately. Fails if not possible",
           "options": [
             {
               "name": "--empty",

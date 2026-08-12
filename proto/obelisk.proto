@@ -1195,10 +1195,10 @@ enum RuntimeConfigCheck {
 message SwitchDeploymentRequest {
     DeploymentId deployment_id = 1;
     // Runtime config availability policy applied while verifying the deployment.
-    // A hot redeploy rejects RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE.
+    // Setting `apply = true` rejects RUNTIME_CONFIG_CHECK_ALLOW_UNAVAILABLE.
     RuntimeConfigCheck runtime_config_check = 2;
-    // Perform a hot redeployment (reload running components without restart).
-    bool hot_redeploy = 3;
+    // Apply the deployment immediately without restart.
+    bool apply = 3;
 }
 message SwitchDeploymentResponse {
     enum Outcome {

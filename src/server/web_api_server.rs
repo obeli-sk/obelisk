@@ -3916,12 +3916,12 @@ mod deployment {
     #[derive(Deserialize, ToSchema)]
     pub struct DeploymentSwitchPayload {
         /// Tolerate runtime requirements unavailable on this server while verifying.
-        /// Rejected for a hot redeploy.
+        /// Rejected when applying the deployment without restart.
         #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
-        /// Hot redeploy without restart
-        #[serde(default)]
-        pub hot_redeploy: bool,
+        /// Apply deployment without restart
+        #[serde(default, alias = "hot_redeploy")] // backcompat: 0.41.0
+        pub apply: bool,
     }
 
     /// Switch the active deployment
@@ -3947,11 +3947,11 @@ mod deployment {
         Json(payload): Json<DeploymentSwitchPayload>,
     ) -> Result<Response, HttpResponse> {
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-        let action = if payload.hot_redeploy {
+        let action = if payload.apply {
             if payload.allow_unavailable_runtime_config {
                 return Err(HttpResponse::bad_request(
                     accept,
-                    "`allow_unavailable_runtime_config = true` not allowed with `hot_redeploy = true`"
+                    "`allow_unavailable_runtime_config = true` not allowed with `apply = true`"
                         .to_string(),
                 ));
             }

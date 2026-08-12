@@ -521,7 +521,7 @@ async fn switch_deployment(
         .switch_deployment(grpc_gen::SwitchDeploymentRequest {
             deployment_id: Some(grpc_gen::DeploymentId::from(id)),
             runtime_config_check: runtime_config_check.into(),
-            hot_redeploy: command == SwitchCommand::Apply,
+            apply: command == SwitchCommand::Apply,
         })
         .await?
         .into_inner();
