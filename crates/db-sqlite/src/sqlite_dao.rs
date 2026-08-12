@@ -2270,12 +2270,15 @@ impl SqlitePool {
 
             ExecutionRequest::Unlocked(unlocked) => {
                 match &combined_state.execution_with_state.pending_state {
-                    PendingState::PendingAt(_) => {
+                    PendingState::PendingAt(pending_at)
+                        if unlocked.unlocked_at >= pending_at.scheduled_at =>
+                    // proposed unlock is equal or later than pending_at, no need to write it.
+                    {
                         return Err(DbErrorWrite::NonRetriable(
                             DbErrorWriteNonRetriable::UnlockedCannotBeAppended("pending"),
                         ));
                     }
-                    PendingState::Locked(_) => {
+                    PendingState::Locked(_) | PendingState::PendingAt(_) => {
                         let (next_version, notifier) =
                             Self::update_state_pending_after_event_appended(
                                 tx,
