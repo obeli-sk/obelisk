@@ -1640,12 +1640,12 @@ impl Worker for WorkflowWorker {
         .await;
         worker_span.in_scope(|| match res {
             Ok((Either::Left(ok), _)) => {
-                info!("Execution run finished");
+                info!("Workflow run finished: {ok}");
                 WorkerResult::Ok(ok)
             }
             Ok((Either::Right(_), _)) => unreachable!("not replaying"),
             Err(workflow_err) => {
-                info!("Execution run finished with an error");
+                info!("Workflow run finished with error: {workflow_err}");
                 WorkerResult::Err(WorkerError::from(workflow_err))
             }
         })

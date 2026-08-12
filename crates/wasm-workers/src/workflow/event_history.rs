@@ -370,7 +370,7 @@ impl EventHistory {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
             Err(PreemptRequested::ExecutorClosing) => {
-                info!("Executor closing detected in host function call");
+                info!("Executor closing detected in check_preempt");
                 return Err(ApplyError::ExecutorClosing);
             }
         }
@@ -628,8 +628,8 @@ impl EventHistory {
                         // if this was caused by `subscription_interruption` or deadline.
                     }
                     Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        debug!("Executor is closing");
-                        return Err(ApplyError::InterruptDbUpdated);
+                        info!("Executor is closing detected in subscribe_to_next_responses");
+                        return Err(ApplyError::ExecutorClosing);
                     }
                 }
             }

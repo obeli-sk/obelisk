@@ -21,6 +21,7 @@ use std::{sync::Arc, time::Duration};
 use tracing::Instrument;
 use tracing::Level;
 use tracing::info_span;
+use tracing::trace;
 use tracing::warn;
 use tracing::{debug, info, instrument};
 
@@ -188,7 +189,7 @@ pub(crate) async fn tick(
                 join_set_id,
                 delay_id,
             }) => {
-                debug!(%execution_id, %join_set_id, %delay_id, created_at = %executed_at, "Appending delay response");
+                trace!(%execution_id, %join_set_id, %delay_id, created_at = %executed_at, "Appending delay response");
                 let res = db_connection
                     .append_delay_response(
                         executed_at,
