@@ -1839,7 +1839,7 @@ async fn append_unlocked_to_blocked_execution_updates_lock_expiry(database: Data
         .await
         .unwrap();
 
-    // The execution is interrupted, so it unlocks the blocked execution: the state stays
+    // The executor is closing, so it unlocks the blocked execution: the state stays
     // blocked but `lock_expires_at` drops to the unlock time, releasing the warm lease.
     let unlocked_at = sim_clock.now();
     db_connection
@@ -1850,7 +1850,7 @@ async fn append_unlocked_to_blocked_execution_updates_lock_expiry(database: Data
                 created_at: unlocked_at,
                 event: ExecutionRequest::Unlocked(Unlocked {
                     unlocked_at,
-                    reason: "execution interrupt".into(),
+                    reason: "executor closing".into(),
                 }),
             },
         )

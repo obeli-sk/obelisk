@@ -226,8 +226,8 @@ impl Worker for ActivityWorker {
                         Ok(worker_res_ok) => {
                             info!(duration = ?stopwatch_for_reporting.elapsed(), "Run finished: {worker_res_ok}");
                         }
-                        Err(WorkerError::ExecutionInterrupt(_)) => {
-                            info!("Execution interrupted");
+                        Err(WorkerError::ExecutorClosing(_)) => {
+                            info!("Executor closing");
                         }
                         Err(err) => {
                             info!(%err, duration = ?stopwatch_for_reporting.elapsed(), "Run finished with an error");
@@ -264,9 +264,9 @@ impl Worker for ActivityWorker {
                 return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, version));
             }
             _ = execution_interrupt_watcher.changed() => {
-                debug!("Execution interrupted");
+                debug!("Executor closing");
                 // Executor will append the Unlocked event.
-                return WorkerResult::Err(WorkerError::ExecutionInterrupt(version.clone()))
+                return WorkerResult::Err(WorkerError::ExecutorClosing(version.clone()))
             }
         }
     }

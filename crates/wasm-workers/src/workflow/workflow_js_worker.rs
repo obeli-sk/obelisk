@@ -2803,11 +2803,11 @@ mod tests {
     }
 
     /// When a pause or cancel RPC signals a locally-running JS workflow via
-    /// `signal_workflow_interrupt`, the worker must be interrupted
-    /// (`ExecutionInterrupt`) and write an `Unlocked` event, exactly like the
-    /// executor-close signal, without waiting for the lock deadline. This drives the
-    /// per-execution `CancelRegistry` interrupt path rather than the executor-wide
-    /// close watcher.
+    /// `signal_workflow_interrupt` (`InterruptKind::PauseOrCancel`), the worker must
+    /// stop promptly without waiting for the lock deadline and append nothing
+    /// (`WorkerResultOk::DbUpdatedByWorkerOrWatcher`): the durable Paused/Cancelling
+    /// event is written out of band by the endpoint, so unlike the executor-close
+    /// signal the worker must not append an `Unlocked`.
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
@@ -2876,8 +2876,8 @@ mod tests {
             .await;
 
         // `signal_workflow_interrupt` is a no-op until `run()` registers the execution,
-        // so retry until the worker observes it (blocked in the first `obelisk.sleep`),
-        // wakes, and writes `Unlocked`. The loop is aborted once the worker task exits.
+        // so retry until the worker (blocked in the first `obelisk.sleep`) observes it
+        // and returns; the loop is aborted once the worker task exits.
         let signaller = tokio::spawn({
             let cancel_registry = cancel_registry.clone();
             let execution_id = execution_id.clone();
@@ -2891,15 +2891,22 @@ mod tests {
         progress.wait_for_tasks().await;
         signaller.abort();
 
+        // A `PauseOrCancel` interrupt appends nothing; an `Unlocked` would be the
+        // executor-closing disposition.
         let log = db_connection.get(&execution_id).await.unwrap();
         let has_unlocked = log
             .events
             .iter()
             .any(|e| matches!(e.event, ExecutionRequest::Unlocked(_)));
         assert!(
-            has_unlocked,
-            "expected Unlocked event from pause interrupt, got: {:?}",
+            !has_unlocked,
+            "pause/cancel interrupt must not append Unlocked, got: {:?}",
             log.events
+        );
+        assert!(
+            !log.pending_state.is_finished(),
+            "execution must not be finished, got: {:?}",
+            log.pending_state
         );
         drop(db_connection);
         db_close.close().await;

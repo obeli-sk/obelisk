@@ -5,19 +5,30 @@ use std::{cmp::min, pin::Pin, time::Duration};
 use tokio::sync::watch;
 use tracing::{trace, warn};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InterruptKind {
+    /// Send [`WorkerError::ExecutorClosing`]
+    ExecutorClosing,
+    /// Send [`WorkerResultOk::DbUpdatedByWorkerOrWatcher`], the pause/cancel RPC must have appended the event.
+    PauseOrCancel,
+}
+
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
     /// Host functions must check whether the execution was interrupted.
     fn check_preempt(&self) -> Result<(), PreemptRequested>;
 
     /// Called after the workflow made progress and is now blocked waiting for a response.
-    /// Return a future that resolves on deadline. If `max_duration` is specified, the future resolves
-    /// at deadline or after this duration, whatever expires first.
-    /// Return `None` if expired.
+    /// Returns a future that resolves once the caller should stop waiting (deadline, or
+    /// an interrupt via the generic `TimeoutOutcome::Cancel`); the caller then re-calls
+    /// `track`, whose `Err` reports the concrete reason. If `max_duration` is specified,
+    /// the future resolves at deadline or after this duration, whichever comes first.
+    /// `Err` means the caller must not block: the lock deadline already passed, or the
+    /// run is being interrupted (`TrackPrecheck::Interrupt` carries the kind).
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome>;
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TrackPrecheck>;
 
     fn close_to_expired(&self) -> bool;
 
@@ -29,14 +40,24 @@ pub trait DeadlineTracker: Send + Sync {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PreemptRequested {
-    #[error("execution interrupt")]
-    ExecutionInterrupt,
+    #[error("execution interrupt: {0:?}")]
+    Interrupt(InterruptKind),
+}
+
+/// Reason `track` declined to return a waiting future.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum TrackPrecheck {
+    #[error("lock deadline reached")]
+    LockDeadlineReached,
+    #[error("execution interrupt: {0:?}")]
+    Interrupt(InterruptKind),
 }
 
 pub trait DeadlineTrackerFactory: Send + Sync {
-    /// `execution_interrupt_watcher` is the executor-wide shutdown signal;
-    /// `local_interrupt_watcher` is the per-execution pause/cancel signal. Either
-    /// firing interrupts the run as `ExecutionInterrupt`.
+    /// `execution_interrupt_watcher` is the executor-wide shutdown signal
+    /// (`InterruptKind::ExecutorClosing`); `local_interrupt_watcher` is the
+    /// per-execution pause/cancel signal (`InterruptKind::PauseOrCancel`). Either
+    /// firing interrupts the run; the kind decides the disposition.
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
@@ -58,11 +79,11 @@ pub struct LockAlreadyExpired {
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum EpochCallbackError {
+pub(crate) enum EpochCallbackError {
     #[error("lock expired")]
     LockExpired,
-    #[error("execution interrupt")]
-    ExecutionInterrupt,
+    #[error("execution interrupt: {0:?}")]
+    Interrupt(InterruptKind),
 }
 
 pub(crate) struct DeadlineTrackerTokio {
@@ -74,17 +95,33 @@ pub(crate) struct DeadlineTrackerTokio {
     local_interrupt_watcher: watch::Receiver<bool>,
 }
 
+fn interrupt_kind_from_watchers(
+    execution_interrupt_watcher: &watch::Receiver<bool>,
+    local_interrupt_watcher: &watch::Receiver<bool>,
+) -> Option<InterruptKind> {
+    if *execution_interrupt_watcher.borrow() {
+        Some(InterruptKind::ExecutorClosing)
+    } else if *local_interrupt_watcher.borrow() {
+        Some(InterruptKind::PauseOrCancel)
+    } else {
+        None
+    }
+}
+
 impl DeadlineTrackerTokio {
-    fn interrupt_requested(&self) -> bool {
-        *self.execution_interrupt_watcher.borrow() || *self.local_interrupt_watcher.borrow()
+    fn interrupt_kind(&self) -> Option<InterruptKind> {
+        interrupt_kind_from_watchers(
+            &self.execution_interrupt_watcher,
+            &self.local_interrupt_watcher,
+        )
     }
 }
 
 #[async_trait]
 impl DeadlineTracker for DeadlineTrackerTokio {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
-        if self.interrupt_requested() {
-            Err(PreemptRequested::ExecutionInterrupt)
+        if let Some(kind) = self.interrupt_kind() {
+            Err(PreemptRequested::Interrupt(kind))
         } else {
             Ok(())
         }
@@ -93,11 +130,11 @@ impl DeadlineTracker for DeadlineTrackerTokio {
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome> {
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TrackPrecheck> {
         if self.deadline <= tokio::time::Instant::now() {
-            Err(TimeoutOutcome::Timeout)
-        } else if self.interrupt_requested() {
-            Err(TimeoutOutcome::Cancel)
+            Err(TrackPrecheck::LockDeadlineReached)
+        } else if let Some(kind) = self.interrupt_kind() {
+            Err(TrackPrecheck::Interrupt(kind))
         } else {
             let expiry = if let Some(max_duration) = max_duration {
                 let max_instant = tokio::time::Instant::now() + max_duration;
@@ -122,8 +159,8 @@ impl DeadlineTracker for DeadlineTrackerTokio {
     }
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        if self.interrupt_requested() {
-            Err(EpochCallbackError::ExecutionInterrupt)
+        if let Some(kind) = self.interrupt_kind() {
+            Err(EpochCallbackError::Interrupt(kind))
         } else if self.deadline <= tokio::time::Instant::now() {
             Err(EpochCallbackError::LockExpired)
         } else {
@@ -224,8 +261,11 @@ fn add_duration(time: DateTime<Utc>, duration: Duration) -> DateTime<Utc> {
 
 #[cfg(test)]
 impl DeadlineTrackerSim {
-    fn interrupt_requested(&self) -> bool {
-        *self.execution_interrupt_watcher.borrow() || *self.local_interrupt_watcher.borrow()
+    fn interrupt_kind(&self) -> Option<InterruptKind> {
+        interrupt_kind_from_watchers(
+            &self.execution_interrupt_watcher,
+            &self.local_interrupt_watcher,
+        )
     }
 }
 
@@ -233,8 +273,8 @@ impl DeadlineTrackerSim {
 #[async_trait]
 impl DeadlineTracker for DeadlineTrackerSim {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
-        if self.interrupt_requested() {
-            Err(PreemptRequested::ExecutionInterrupt)
+        if let Some(kind) = self.interrupt_kind() {
+            Err(PreemptRequested::Interrupt(kind))
         } else {
             Ok(())
         }
@@ -243,12 +283,12 @@ impl DeadlineTracker for DeadlineTrackerSim {
     fn track(
         &self,
         max_duration: Option<Duration>,
-    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome> {
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TrackPrecheck> {
         let now = self.clock.now();
         if self.deadline <= now {
-            return Err(TimeoutOutcome::Timeout);
-        } else if self.interrupt_requested() {
-            return Err(TimeoutOutcome::Cancel);
+            return Err(TrackPrecheck::LockDeadlineReached);
+        } else if let Some(kind) = self.interrupt_kind() {
+            return Err(TrackPrecheck::Interrupt(kind));
         }
         let expiry = if let Some(max_duration) = max_duration {
             min(add_duration(now, max_duration), self.deadline_minus_leeway)
@@ -283,8 +323,8 @@ impl DeadlineTracker for DeadlineTrackerSim {
     }
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        if self.interrupt_requested() {
-            Err(EpochCallbackError::ExecutionInterrupt)
+        if let Some(kind) = self.interrupt_kind() {
+            Err(EpochCallbackError::Interrupt(kind))
         } else if self.deadline <= self.clock.now() {
             Err(EpochCallbackError::LockExpired)
         } else {
@@ -380,7 +420,7 @@ impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
     fn track(
         &self,
         _max_duration: Option<Duration>,
-    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome> {
+    ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TrackPrecheck> {
         unreachable!("`track` is not called for the interrupt strategy")
     }
 

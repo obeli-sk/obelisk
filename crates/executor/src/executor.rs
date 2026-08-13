@@ -777,10 +777,10 @@ impl ExecTask {
                 let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
 
                 let (primary_event, child_finished, version) = match err {
-                    WorkerError::ExecutionInterrupt(version) => {
+                    WorkerError::ExecutorClosing(version) => {
                         let primary_event = ExecutionRequest::Unlocked(Unlocked {
                             unlocked_at: result_obtained_at,
-                            reason: "execution interrupt".into(),
+                            reason: "executor closing".into(),
                         });
                         (primary_event, None, version)
                     }

@@ -18,10 +18,9 @@ use tracing::{Instrument, debug, info, info_span};
 /// cancellation intent to db (whether registered or not) and triggers the token.
 /// Workflow worker tasks register a per-execution interrupt watch (pruned by `tick`
 /// once the run drops its receiver); the pause and cancel RPCs call
-/// `signal_workflow_interrupt` to give up the lock of a locally-running workflow
-/// (`ExecutionInterrupt`) without waiting for the lock deadline. The durable pause
-/// or cancel write is what makes the outcome correct; this signal only saves the
-/// wasted work on this node.
+/// `signal_workflow_interrupt` after their durable write. The write is what takes
+/// effect (it dooms the run's next db append); the signal only stops the run early so
+/// it stops burning CPU, returning `DbUpdatedByWorkerOrWatcher` without appending.
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
     running_workflows: Arc<Mutex<hashbrown::HashMap<ExecutionId, watch::Sender<bool>>>>,

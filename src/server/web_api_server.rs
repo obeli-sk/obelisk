@@ -664,7 +664,8 @@ async fn execution_cancel(
                 .cancel_workflow_with_retries(&execution_id, executed_at)
                 .await;
             if outcome.is_ok() {
-                // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
+                // Best-effort CPU saver: the write above already cancels it; a locally-running
+                // workflow would otherwise burn CPU until its next db append fails on that write.
                 state
                     .cancel_registry
                     .signal_workflow_interrupt(&execution_id);
@@ -712,7 +713,8 @@ async fn execution_pause(
     conn.pause_execution(&execution_id, paused_at)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
+    // Best-effort CPU saver: the write above already pauses it; a locally-running
+    // workflow would otherwise burn CPU until its next db append fails on that write.
     state
         .cancel_registry
         .signal_workflow_interrupt(&execution_id);
@@ -2428,7 +2430,7 @@ async fn execution_advance(
                 AdvanceError::DbError(db_err) => {
                     return Err(ErrorWrapper(db_err, accept).into());
                 }
-                err @ (AdvanceError::ExecutionInterrupt | AdvanceError::LimitReached { .. }) => {
+                err @ (AdvanceError::ExecutorClosing | AdvanceError::LimitReached { .. }) => {
                     AdvanceErrorSer::Transient(err.to_string())
                 }
             };

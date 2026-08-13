@@ -14,7 +14,7 @@ use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
-use crate::workflow::deadline_tracker::EpochCallbackError;
+use crate::workflow::deadline_tracker::{EpochCallbackError, InterruptKind};
 use crate::workflow::event_history::{
     JoinSetCreate, ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitChildIntent,
 };
@@ -73,8 +73,8 @@ pub(crate) enum WorkflowFunctionError {
     DbError(DbErrorWrite),
     #[error("lock expired")]
     LockExpired,
-    #[error("execution interrupt")]
-    ExecutionInterrupt,
+    #[error("execution interrupt: {0:?}")]
+    Interrupt(InterruptKind),
     #[error("replay interrupt")]
     ReplayInterrupt,
 }
@@ -86,7 +86,7 @@ pub(crate) enum WorkerPartialResult {
     // retriable:
     InterruptDbUpdated,
     LockExpired,
-    ExecutionInterrupt,
+    Interrupt(InterruptKind),
     DbError(DbErrorWrite),
 }
 
@@ -118,7 +118,7 @@ impl WorkflowFunctionError {
                 WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
             }
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
-            WorkflowFunctionError::ExecutionInterrupt => WorkerPartialResult::ExecutionInterrupt,
+            WorkflowFunctionError::Interrupt(kind) => WorkerPartialResult::Interrupt(kind),
             WorkflowFunctionError::ReplayInterrupt => WorkerPartialResult::ReplayWaitingForResponse,
         }
     }
@@ -135,7 +135,7 @@ impl From<ApplyError> for WorkflowFunctionError {
             ApplyError::ConstraintViolation(reason) => {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
-            ApplyError::ExecutionInterrupt => WorkflowFunctionError::ExecutionInterrupt,
+            ApplyError::Interrupt(kind) => WorkflowFunctionError::Interrupt(kind),
             ApplyError::ReplayInterrupt => WorkflowFunctionError::ReplayInterrupt,
         }
     }
@@ -3122,7 +3122,7 @@ pub(crate) mod tests {
                 WorkerPartialResult::DbError(db_err) => {
                     Err(executor::worker::WorkerError::DbError(db_err))
                 }
-                WorkerPartialResult::LockExpired | WorkerPartialResult::ExecutionInterrupt => {
+                WorkerPartialResult::LockExpired | WorkerPartialResult::Interrupt(_) => {
                     unreachable!()
                 }
             }

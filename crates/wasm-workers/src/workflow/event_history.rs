@@ -7,7 +7,7 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::deadline_tracker::PreemptRequested;
+use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested, TrackPrecheck};
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
@@ -39,7 +39,6 @@ use concepts::storage::ResponseWithCursor;
 use concepts::storage::ScheduleRequestError;
 use concepts::storage::StubError;
 use concepts::storage::StubRetValHash;
-use concepts::storage::TimeoutOutcome;
 use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
@@ -104,8 +103,8 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
-    #[error("execution interrupt")]
-    ExecutionInterrupt,
+    #[error("execution interrupt: {0:?}")]
+    Interrupt(InterruptKind),
     #[error("replay interrupt")]
     ReplayInterrupt,
 }
@@ -374,9 +373,9 @@ impl EventHistory {
     ) -> Result<ChildReturnValue, ApplyError> {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
-            Err(PreemptRequested::ExecutionInterrupt) => {
-                info!("Execution interrupt detected in check_preempt");
-                return Err(ApplyError::ExecutionInterrupt);
+            Err(PreemptRequested::Interrupt(kind)) => {
+                info!("Execution interrupt detected in check_preempt: {kind:?}");
+                return Err(ApplyError::Interrupt(kind));
             }
         }
 
@@ -601,10 +600,18 @@ impl EventHistory {
             debug!(join_set_id = %join_next_variant.join_set_id(), "Waiting for {join_next_variant:?}");
             let key = join_next_variant.as_key();
 
-            // Subscribe to the next response.
-            // Break on `execution_interrupt_watcher` or when timeout is reached.
-            while let Ok(timeout_fut) = self.deadline_tracker.track(self.subscription_interruption)
-            {
+            // Subscribe to the next response, waking on an interrupt or the deadline.
+            loop {
+                // `track` reports the concrete reason it declines to wait; its future
+                // (below) resolves opaquely, so re-`track` after each wake to classify.
+                let timeout_fut = match self.deadline_tracker.track(self.subscription_interruption) {
+                    Ok(timeout_fut) => timeout_fut,
+                    Err(TrackPrecheck::LockDeadlineReached) => break,
+                    Err(TrackPrecheck::Interrupt(kind)) => {
+                        info!("Execution interrupt detected while waiting for a response: {kind:?}");
+                        return Err(ApplyError::Interrupt(kind));
+                    }
+                };
                 let last_response = self
                     .responses
                     .last()
@@ -641,14 +648,8 @@ impl EventHistory {
                     Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
                         return Err(ApplyError::DbError(DbErrorWrite::from(err)));
                     }
-                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
-                        // Let the next iteration of the loop decide
-                        // if this was caused by `subscription_interruption` or deadline.
-                    }
-                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        info!("Execution interrupt detected in subscribe_to_next_responses");
-                        return Err(ApplyError::ExecutionInterrupt);
-                    }
+                    // Woke on deadline or interrupt; the next `track` classifies which.
+                    Err(DbErrorReadWithTimeout::Timeout(_)) => {}
                 }
             }
             debug!("Giving up on waiting for response");

@@ -1614,9 +1614,10 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead>;
 
-    /// Pause an execution. Only pending executions can be paused.
+    /// Pause an execution.
     /// If the execution is an activity and is currently in `PendingState::Locked`, implementations must
-    /// append `ExecutionRequest::Unlocked` to avoid affecting failed attempt count, before appending `ExecutionRequest::Paused`.
+    /// reject the write, otherwise a running activity will be considered terminated, which can break
+    /// structured concurrency guarantees.
     async fn pause_execution(
         &self,
         execution_id: &ExecutionId,
