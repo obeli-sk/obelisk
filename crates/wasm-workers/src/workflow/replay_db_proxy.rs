@@ -790,6 +790,10 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         // noop
         Ok(())
     }
+
+    fn captured_writes_collected(&self) -> Option<usize> {
+        Some(self.collector.preview.len())
+    }
 }
 
 #[cfg(test)]

@@ -878,13 +878,32 @@ impl WasmGlobalConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-#[derive(Default)]
 pub(crate) struct WorkflowsGlobalConfigToml {
     /// Deprecated: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]`
     /// instead. When set, it overrides the per-workflow value for every workflow. Will be
     /// removed in 0.42.
     #[serde(default)]
     pub(crate) lock_extension_leeway: Option<DurationConfig>,
+    /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
+    /// stops and returns that many writes as an advanceable prefix; advancing them and replaying
+    /// again resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved
+    /// `joinNextTry` poll loop, whose replay never blocks) advanceable in bounded batches instead
+    /// of collecting captured writes forever.
+    #[serde(default = "default_max_replay_captured_writes")]
+    pub(crate) max_replay_captured_writes: usize,
+}
+
+impl Default for WorkflowsGlobalConfigToml {
+    fn default() -> Self {
+        Self {
+            lock_extension_leeway: None,
+            max_replay_captured_writes: default_max_replay_captured_writes(),
+        }
+    }
+}
+
+const fn default_max_replay_captured_writes() -> usize {
+    100
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -2485,6 +2504,8 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             fuel,
             lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
             subscription_interruption,
+            // Only the replay-purposed config bounds captured writes; see `replay_workflow_config`.
+            max_replay_captured_writes: None,
         };
         let frame_files_to_sources = self.backtrace.into_frame_files();
         let retry_config = ComponentRetryConfig {
@@ -2570,6 +2591,8 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             fuel: None,
             lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
             subscription_interruption: None,
+            // Only the replay-purposed config bounds captured writes; see `replay_workflow_config`.
+            max_replay_captured_writes: None,
         };
         let retry_config = ComponentRetryConfig {
             max_retries: None,

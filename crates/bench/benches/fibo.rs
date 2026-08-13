@@ -200,6 +200,7 @@ mod bench {
                     fuel: None,
                     lock_extension: None,
                     subscription_interruption: None,
+                    max_replay_captured_writes: None,
                 },
                 workflow_engine,
                 clock_fn.clone_box(),

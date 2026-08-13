@@ -171,6 +171,9 @@ pub(crate) struct EventHistory {
     last_oneoff_id: Option<JoinSetResponseId>,
     // Last one-off child execution (call-json / direct call), for `last-direct-call-id`.
     last_direct_call_id: Option<ExecutionIdDerived>,
+
+    // Upper bound on captured writes a replay pass may collect. `None` outside replay.
+    max_replay_captured_writes: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -223,6 +226,7 @@ impl EventHistory {
         subscription_interruption: Option<Duration>,
         worker_span: Span,
         replaying_unfinished_execution: bool,
+        max_replay_captured_writes: Option<usize>,
     ) -> EventHistory {
         EventHistory {
             replaying_unfinished_execution,
@@ -250,6 +254,7 @@ impl EventHistory {
             last_response_by_join_set: HashMap::default(),
             last_oneoff_id: None,
             last_direct_call_id: None,
+            max_replay_captured_writes,
         }
     }
 
@@ -394,6 +399,19 @@ impl EventHistory {
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}");
+
+        // A non-terminating workflow (e.g. a `joinNextTry` busy loop on a response that is never
+        // injected) would collect captured writes forever during replay, since the replay deadline
+        // never expires the lock. Once the collection hits the bound, interrupt replay so the writes
+        // gathered so far are returned as an advanceable prefix; advancing them and replaying again
+        // resumes collection from the persisted tip, stepping the workflow forward N writes at a time.
+        if let Some(max) = self.max_replay_captured_writes
+            && let Some(collected) = db_connection.captured_writes_collected()
+            && collected >= max
+        {
+            debug!("Reached replay captured-write limit of {max}, interrupting replay");
+            return Err(ApplyError::ReplayInterrupt);
+        }
 
         let wasm_backtrace = event_call.wasm_backtrace().cloned();
         match self.find_matching_atomic(&event_call)? {
@@ -4546,6 +4564,7 @@ mod tests {
             None, // subscription_interruption
             info_span!("worker-test"),
             false, // replaying_unfinished_execution
+            None,  // max_replay_captured_writes
         );
 
         (

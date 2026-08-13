@@ -123,6 +123,10 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         &mut self,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbErrorWrite>;
+
+    fn captured_writes_collected(&self) -> Option<usize> {
+        None
+    }
 }
 
 pub(crate) struct CachingDbConnection {

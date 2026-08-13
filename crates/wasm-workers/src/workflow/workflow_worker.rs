@@ -67,6 +67,10 @@ pub struct WorkflowConfig {
     pub lock_extension: Option<Duration>,
     // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
     pub subscription_interruption: Option<Duration>,
+    /// Upper bound on captured writes collected during a single replay pass. Only set on
+    /// replay-purposed configs (`JoinNextBlockingStrategy::Interrupt`); `None` disables the
+    /// bound. Stops a non-terminating workflow from collecting captured writes forever.
+    pub max_replay_captured_writes: Option<usize>,
 }
 
 pub struct WorkflowWorkerCompiled {
@@ -665,6 +669,7 @@ impl WorkflowWorker {
             view.config.subscription_interruption,
             view.logs_storage_config,
             is_replay,
+            view.config.max_replay_captured_writes,
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -1869,6 +1874,7 @@ pub(crate) mod tests {
                         fuel: None,
                         lock_extension: None,
                         subscription_interruption: None,
+                        max_replay_captured_writes: None,
                     },
                     workflow_engine,
                     clock_fn.clone_box(),
@@ -1908,6 +1914,7 @@ pub(crate) mod tests {
             fuel: None,
             lock_extension: None,
             subscription_interruption: None,
+            max_replay_captured_writes: None,
         };
         WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
