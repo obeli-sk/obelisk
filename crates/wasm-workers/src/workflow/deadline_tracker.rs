@@ -69,7 +69,7 @@ pub struct LockAlreadyExpired {
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
-pub(crate) enum EpochCallbackError {
+pub enum EpochCallbackError {
     #[error("lock expired")]
     LockExpired,
     #[error("execution interrupt: {0:?}")]
