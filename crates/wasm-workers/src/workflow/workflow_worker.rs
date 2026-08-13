@@ -519,7 +519,9 @@ impl JoinSetCloseError {
                 version,
                 db_connection,
             },
-            JoinSetCloseError::ExecutionInterrupt(version) => WorkflowError::ExecutionInterrupt(version),
+            JoinSetCloseError::ExecutionInterrupt(version) => {
+                WorkflowError::ExecutionInterrupt(version)
+            }
         }
     }
 }
@@ -586,7 +588,8 @@ impl WorkflowWorker {
         };
         debug!("Execution replay of kind `{replay_kind}` started");
 
-        let (_execution_interrupt_sender, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
+        let (_execution_interrupt_sender, execution_interrupt_watcher) =
+            tokio::sync::watch::channel(false);
         let parent = log.parent();
 
         let ctx = WorkerContext {
@@ -693,10 +696,10 @@ impl WorkflowWorker {
         backtrace_capture: bool,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
-        let deadline_tracker = match view
-            .deadline_factory
-            .create(ctx.locked_event.lock_expires_at, ctx.execution_interrupt_watcher)
-        {
+        let deadline_tracker = match view.deadline_factory.create(
+            ctx.locked_event.lock_expires_at,
+            ctx.execution_interrupt_watcher,
+        ) {
             Ok(deadline_tracker) => deadline_tracker,
             Err(lock_already_expired) => {
                 ctx.worker_span.in_scope(|| {

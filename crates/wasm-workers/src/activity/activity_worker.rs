@@ -1236,7 +1236,8 @@ pub(crate) mod tests {
 
         let executed_at = sim_clock.now();
         let version = Version::new(10);
-        let (_execution_interrupt_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
+        let (_execution_interrupt_tx, execution_interrupt_watcher) =
+            tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
@@ -1294,7 +1295,8 @@ pub(crate) mod tests {
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
         let version = Version::new(10);
-        let (_execution_interrupt_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
+        let (_execution_interrupt_tx, execution_interrupt_watcher) =
+            tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
