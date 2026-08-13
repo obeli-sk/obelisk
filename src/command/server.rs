@@ -185,8 +185,8 @@ use wasm_workers::workflow::deadline_tracker::{
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerCompiled;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
-use wasm_workers::workflow::workflow_worker::JoinNextBlockingStrategy;
 use wasm_workers::workflow::workflow_worker::WorkflowConfig;
+use wasm_workers::workflow::workflow_worker::WorkflowConfigMode;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 use wasmtime::Engine;
@@ -4801,7 +4801,7 @@ fn prespawn_workflow_js(
 
     let replay_inner = WorkflowWorkerCompiled::new_with_config(
         runnable_component.clone(),
-        replay_workflow_config(&component_id, max_replay_captured_writes),
+        replay_workflow_config(&workflow_js.workflow_config, max_replay_captured_writes),
         engine.clone(),
         Now.clone_box(),
     )
@@ -4866,20 +4866,20 @@ fn prespawn_workflow_js(
     ))
 }
 
-/// Replay-purposed [`WorkflowConfig`]: Interrupt strategy, stubbed WASI, no lock
-/// extension, no subscription interruption, no fuel limit.
+/// Replay-purposed [`WorkflowConfig`] derived from the real config: `Replay` mode (forces the
+/// `Interrupt` strategy) bounded by `max_replay_captured_writes`, inheriting `stub_wasi` and `fuel`
+/// from the real config so replay behaves like the real run.
 fn replay_workflow_config(
-    component_id: &ComponentId,
+    real_config: &WorkflowConfig,
     max_replay_captured_writes: usize,
 ) -> WorkflowConfig {
     WorkflowConfig {
-        component_id: component_id.clone(),
-        join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-        stub_wasi: true,
-        fuel: None,
-        lock_extension: None, // does not matter for the `Interrupt` strategy.
-        subscription_interruption: None, // does not matter for the `Interrupt` strategy.
-        max_replay_captured_writes: Some(max_replay_captured_writes),
+        component_id: real_config.component_id.clone(),
+        stub_wasi: real_config.stub_wasi,
+        fuel: real_config.fuel,
+        mode: WorkflowConfigMode::Replay {
+            max_replay_captured_writes,
+        },
     }
 }
 
@@ -5007,10 +5007,7 @@ impl WorkerCompiled {
     > {
         let replay_compiled = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
-            replay_workflow_config(
-                &workflow.workflow_config.component_id,
-                max_replay_captured_writes,
-            ),
+            replay_workflow_config(&workflow.workflow_config, max_replay_captured_writes),
             engine.clone(),
             Now.clone_box(),
         )?;

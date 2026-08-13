@@ -56,6 +56,7 @@ use wasm_workers::{
     std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
+        WorkflowConfigMode,
     },
 };
 use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
@@ -2499,13 +2500,13 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         )?;
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
             stub_wasi: self.stub_wasi,
             fuel,
-            lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
-            subscription_interruption,
-            // Only the replay-purposed config bounds captured writes; see `replay_workflow_config`.
-            max_replay_captured_writes: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
+                lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
+                subscription_interruption,
+            },
         };
         let frame_files_to_sources = self.backtrace.into_frame_files();
         let retry_config = ComponentRetryConfig {
@@ -2586,13 +2587,13 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         )?;
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
             stub_wasi: false,
             fuel: None,
-            lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
-            subscription_interruption: None,
-            // Only the replay-purposed config bounds captured writes; see `replay_workflow_config`.
-            max_replay_captured_writes: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
+                lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
+                subscription_interruption: None,
+            },
         };
         let retry_config = ComponentRetryConfig {
             max_retries: None,

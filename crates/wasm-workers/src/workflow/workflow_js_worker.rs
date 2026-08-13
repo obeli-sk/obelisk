@@ -743,7 +743,9 @@ mod tests {
         DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
     };
     use crate::workflow::workflow_worker::tests::write_stub_response;
-    use crate::workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig};
+    use crate::workflow::workflow_worker::{
+        JoinNextBlockingStrategy, WorkflowConfig, WorkflowConfigMode,
+    };
     use assert_matches::assert_matches;
     use chrono::DateTime;
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest, Digest};
@@ -855,12 +857,12 @@ mod tests {
         use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
         let config = WorkflowConfig {
             component_id,
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: true,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
-            max_replay_captured_writes,
+            mode: WorkflowConfigMode::Replay {
+                // `None` in tests means effectively unbounded.
+                max_replay_captured_writes: max_replay_captured_writes.unwrap_or(usize::MAX),
+            },
         };
         let compiled = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
@@ -916,12 +918,13 @@ mod tests {
 
         let config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: false,
             fuel: None,
-            lock_extension: Some(Duration::from_secs(1)),
-            subscription_interruption: None,
-            max_replay_captured_writes: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+                lock_extension: Some(Duration::from_secs(1)),
+                subscription_interruption: None,
+            },
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config(
@@ -994,12 +997,13 @@ mod tests {
 
         let config = WorkflowConfig {
             component_id,
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: false,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
-            max_replay_captured_writes: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+                lock_extension: None,
+                subscription_interruption: None,
+            },
         };
 
         let compiled =
@@ -1327,12 +1331,13 @@ mod tests {
 
         let config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy,
             stub_wasi: false,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
-            max_replay_captured_writes: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy,
+                lock_extension: None,
+                subscription_interruption: None,
+            },
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config(

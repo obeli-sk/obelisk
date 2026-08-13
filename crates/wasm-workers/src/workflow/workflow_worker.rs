@@ -60,17 +60,68 @@ pub use deployment_config::config::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
 #[derive(Clone, Debug)]
 pub struct WorkflowConfig {
     pub component_id: ComponentId,
-    pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub stub_wasi: bool,
     pub fuel: Option<u64>,
-    // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
-    pub lock_extension: Option<Duration>,
-    // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
-    pub subscription_interruption: Option<Duration>,
-    /// Upper bound on captured writes collected during a single replay pass. Only set on
-    /// replay-purposed configs (`JoinNextBlockingStrategy::Interrupt`); `None` disables the
-    /// bound. Stops a non-terminating workflow from collecting captured writes forever.
-    pub max_replay_captured_writes: Option<usize>,
+    /// Fields that differ between a normal run and a replay pass. `stub_wasi` and `fuel` are
+    /// shared (a replay-purposed config inherits them from the real config).
+    pub mode: WorkflowConfigMode,
+}
+
+#[derive(Clone, Debug)]
+pub enum WorkflowConfigMode {
+    /// Normal execution: writes are persisted to the database.
+    Real {
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
+        lock_extension: Option<Duration>,
+        // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
+        subscription_interruption: Option<Duration>,
+    },
+    /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
+    /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
+    /// writes a single pass returns, keeping a non-terminating workflow advanceable in batches.
+    Replay { max_replay_captured_writes: usize },
+}
+
+impl WorkflowConfig {
+    /// Blocking strategy for a normal run. Replay always uses `Interrupt`, forced in `prepare_func`.
+    fn join_next_blocking_strategy(&self) -> JoinNextBlockingStrategy {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                join_next_blocking_strategy,
+                ..
+            } => *join_next_blocking_strategy,
+            WorkflowConfigMode::Replay { .. } => JoinNextBlockingStrategy::Interrupt,
+        }
+    }
+
+    fn lock_extension(&self) -> Option<Duration> {
+        match &self.mode {
+            WorkflowConfigMode::Real { lock_extension, .. } => *lock_extension,
+            WorkflowConfigMode::Replay { .. } => None,
+        }
+    }
+
+    fn subscription_interruption(&self) -> Option<Duration> {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                subscription_interruption,
+                ..
+            } => *subscription_interruption,
+            WorkflowConfigMode::Replay { .. } => None,
+        }
+    }
+
+    /// Captured-write bound. `None` for a real config (an unbounded auto-upgrade replay); `Some`
+    /// only for a replay-purposed config.
+    fn max_replay_captured_writes(&self) -> Option<usize> {
+        match &self.mode {
+            WorkflowConfigMode::Real { .. } => None,
+            WorkflowConfigMode::Replay {
+                max_replay_captured_writes,
+            } => Some(*max_replay_captured_writes),
+        }
+    }
 }
 
 pub struct WorkflowWorkerCompiled {
@@ -650,6 +701,18 @@ impl WorkflowWorker {
         };
 
         let seed = ctx.execution_id.random_seed();
+        // Replay always runs with the `Interrupt` strategy and ignores lock extension / subscription
+        // interruption, regardless of whether the source config is `Real` (auto-upgrade) or `Replay`.
+        let (join_next_blocking_strategy, lock_extension, subscription_interruption) =
+            if is_replay.is_some() {
+                (JoinNextBlockingStrategy::Interrupt, None, None)
+            } else {
+                (
+                    view.config.join_next_blocking_strategy(),
+                    view.config.lock_extension(),
+                    view.config.subscription_interruption(),
+                )
+            };
         let workflow_ctx = WorkflowCtx::new(
             view.deployment_id,
             db_connection,
@@ -658,18 +721,18 @@ impl WorkflowWorker {
             ctx.responses,
             seed,
             view.clock_fn,
-            view.config.join_next_blocking_strategy,
+            join_next_blocking_strategy,
             ctx.worker_span,
             backtrace_capture,
             deadline_tracker,
             view.fn_registry,
             view.cancel_registry,
             ctx.locked_event,
-            view.config.lock_extension,
-            view.config.subscription_interruption,
+            lock_extension,
+            subscription_interruption,
             view.logs_storage_config,
             is_replay,
-            view.config.max_replay_captured_writes,
+            view.config.max_replay_captured_writes(),
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -1078,11 +1141,11 @@ impl WorkflowWorker {
         ),
         ReplayInternalError,
     > {
-        let mut replay_config = self.config.clone();
-        replay_config.join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
+        // `prepare_func` forces the `Interrupt` strategy for replay (`is_replay.is_some()`), so a
+        // `Real` config (auto-upgrade) and a `Replay` config both replay correctly without cloning.
         let view = WorkflowWorkerView {
             deployment_id: self.deployment_id,
-            config: &replay_config,
+            config: &self.config,
             engine: &self.engine,
             clock_fn: self.clock_fn.clone_box(),
             exported_ffqn_to_index: &self.exported_ffqn_to_index,
@@ -1617,7 +1680,7 @@ impl Worker for WorkflowWorker {
         let db_connection = Box::new(CachingDbConnection::new(
             self.db_pool.connection().await.unwrap(),
             ctx.execution_id.clone(),
-            CachingBuffer::new(self.config.join_next_blocking_strategy),
+            CachingBuffer::new(self.config.join_next_blocking_strategy()),
         ));
         let worker_span = ctx.worker_span.clone();
         worker_span.in_scope(|| {
@@ -1869,12 +1932,13 @@ pub(crate) mod tests {
                     runnable_component.clone(),
                     WorkflowConfig {
                         component_id,
-                        join_next_blocking_strategy,
                         stub_wasi: false,
                         fuel: None,
-                        lock_extension: None,
-                        subscription_interruption: None,
-                        max_replay_captured_writes: None,
+                        mode: WorkflowConfigMode::Real {
+                            join_next_blocking_strategy,
+                            lock_extension: None,
+                            subscription_interruption: None,
+                        },
                     },
                     workflow_engine,
                     clock_fn.clone_box(),
@@ -1909,12 +1973,11 @@ pub(crate) mod tests {
     ) -> WorkflowWorker {
         let config = WorkflowConfig {
             component_id,
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: true,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
-            max_replay_captured_writes: None,
+            mode: WorkflowConfigMode::Replay {
+                max_replay_captured_writes: usize::MAX, // effectively unbounded for tests
+            },
         };
         WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
