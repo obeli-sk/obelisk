@@ -3592,6 +3592,7 @@ mod tests {
                 deadline_tracker_factory_test(&sim_clock),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 100,
+                    subscription_interruption: None,
                 },
                 TestingFnRegistry::new_from_components(vec![]),
             )
@@ -3637,7 +3638,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn regular_join_next_child(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100, subscription_interruption: None })]
         second_run_strategy: JoinNextBlockingStrategy,
     ) {
         test_utils::set_up();
@@ -3744,7 +3745,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn start_async_respond_then_join_next(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         const CHILD_RESP: SupportedFunctionReturnValue =
@@ -4166,6 +4167,7 @@ mod tests {
                     deadline_tracker_factory_test(&sim_clock),
                     JoinNextBlockingStrategy::Await {
                         non_blocking_event_batching: 0,
+                        subscription_interruption: None,
                     },
                     fn_registry.clone(),
                 )
@@ -4267,6 +4269,7 @@ mod tests {
                     deadline_tracker_factory_test(&sim_clock),
                     JoinNextBlockingStrategy::Await {
                         non_blocking_event_batching: 0,
+                        subscription_interruption: None,
                     },
                     fn_registry.clone(),
                 )
@@ -4324,6 +4327,7 @@ mod tests {
                     deadline_tracker_factory_test(&sim_clock),
                     JoinNextBlockingStrategy::Await {
                         non_blocking_event_batching: 0,
+                        subscription_interruption: None,
                     },
                     fn_registry.clone(),
                 )
@@ -4365,7 +4369,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn trimmed_second_execution_should_result_in_nondeterminism_detected(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100, subscription_interruption: None })]
         second_run_strategy: JoinNextBlockingStrategy,
     ) {
         test_utils::set_up();

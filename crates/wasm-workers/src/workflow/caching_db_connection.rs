@@ -223,6 +223,7 @@ impl CachingBuffer {
         let non_blocking_event_batch_size = match join_next_blocking_strategy {
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
+                subscription_interruption: _,
             } => non_blocking_event_batching as usize,
             JoinNextBlockingStrategy::Interrupt => 0,
         };

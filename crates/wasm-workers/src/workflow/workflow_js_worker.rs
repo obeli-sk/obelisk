@@ -923,7 +923,6 @@ mod tests {
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
                 lock_extension: Some(Duration::from_secs(1)),
-                subscription_interruption: None,
             },
         };
 
@@ -1002,7 +1001,6 @@ mod tests {
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
                 lock_extension: None,
-                subscription_interruption: None,
             },
         };
 
@@ -1336,7 +1334,6 @@ mod tests {
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy,
                 lock_extension: None,
-                subscription_interruption: None,
             },
         };
 
@@ -2360,6 +2357,7 @@ mod tests {
             "session",
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
+                subscription_interruption: None,
             },
         )
         .await;

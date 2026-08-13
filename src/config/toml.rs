@@ -2140,10 +2140,16 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
 }
 
 pub(crate) trait BlockingStrategyConfigTomlExt {
-    fn into_blocking_strategy(self) -> JoinNextBlockingStrategy;
+    fn into_blocking_strategy(
+        self,
+        subscription_interruption: Option<Duration>,
+    ) -> JoinNextBlockingStrategy;
 }
 impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
-    fn into_blocking_strategy(self) -> JoinNextBlockingStrategy {
+    fn into_blocking_strategy(
+        self,
+        subscription_interruption: Option<Duration>,
+    ) -> JoinNextBlockingStrategy {
         use deployment_config::config::{
             BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
             BlockingStrategyConfigSimple,
@@ -2155,6 +2161,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
                 },
             )) => JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
+                subscription_interruption,
             },
             BlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Interrupt) => {
                 JoinNextBlockingStrategy::Interrupt
@@ -2162,6 +2169,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
             BlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Await) => {
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                    subscription_interruption,
                 }
             }
         }
@@ -2503,9 +2511,10 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             stub_wasi: self.stub_wasi,
             fuel,
             mode: WorkflowConfigMode::Real {
-                join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
+                join_next_blocking_strategy: self
+                    .blocking_strategy
+                    .into_blocking_strategy(subscription_interruption),
                 lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
-                subscription_interruption,
             },
         };
         let frame_files_to_sources = self.backtrace.into_frame_files();
@@ -2594,9 +2603,10 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             stub_wasi: false,
             fuel,
             mode: WorkflowConfigMode::Real {
-                join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
+                join_next_blocking_strategy: self
+                    .blocking_strategy
+                    .into_blocking_strategy(subscription_interruption),
                 lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
-                subscription_interruption,
             },
         };
         let retry_config = ComponentRetryConfig {
@@ -4236,7 +4246,7 @@ strategy = "interrupt"
 
             // Verify From impl result
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Interrupt
             );
         }
@@ -4256,9 +4266,10 @@ strategy = "await"
 
             // Verify From impl result (uses default batching)
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Await {
-                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
+                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                    subscription_interruption: None,
                 }
             );
         }
@@ -4281,9 +4292,10 @@ strategy = { kind = "await" }
 
             // Verify From impl result (uses default batching)
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Await {
-                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
+                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                    subscription_interruption: None,
                 }
             );
         }
@@ -4306,9 +4318,10 @@ strategy = { kind = "await", non_blocking_event_batching = 99 }
 
             // Verify From impl result (uses custom batching)
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Await {
-                    non_blocking_event_batching: 99
+                    non_blocking_event_batching: 99,
+                    subscription_interruption: None,
                 }
             );
         }

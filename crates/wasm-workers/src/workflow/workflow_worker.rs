@@ -52,7 +52,12 @@ pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
-    Await { non_blocking_event_batching: u32 },
+    Await {
+        non_blocking_event_batching: u32,
+        /// Caps how long a blocking `join-next` waits before re-polling the database for
+        /// responses; needed as a fallback for Postgres' local-only subscription mechanism.
+        subscription_interruption: Option<Duration>,
+    },
 }
 
 pub use deployment_config::config::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
@@ -74,8 +79,6 @@ pub enum WorkflowConfigMode {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
         lock_extension: Option<Duration>,
-        // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
-        subscription_interruption: Option<Duration>,
     },
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
     /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
@@ -105,10 +108,14 @@ impl WorkflowConfig {
     fn subscription_interruption(&self) -> Option<Duration> {
         match &self.mode {
             WorkflowConfigMode::Real {
-                subscription_interruption,
+                join_next_blocking_strategy:
+                    JoinNextBlockingStrategy::Await {
+                        subscription_interruption,
+                        ..
+                    },
                 ..
             } => *subscription_interruption,
-            WorkflowConfigMode::Replay { .. } => None,
+            WorkflowConfigMode::Real { .. } | WorkflowConfigMode::Replay { .. } => None,
         }
     }
 
@@ -1937,7 +1944,6 @@ pub(crate) mod tests {
                         mode: WorkflowConfigMode::Real {
                             join_next_blocking_strategy,
                             lock_extension: None,
-                            subscription_interruption: None,
                         },
                     },
                     workflow_engine,
@@ -2057,7 +2063,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity(
         db: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
@@ -2191,7 +2197,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn fiboa_submit_json_workflow(
         db: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
@@ -2918,7 +2924,7 @@ pub(crate) mod tests {
     // TODO: Test await interleaving with timer - execution should finished in one go.
     async fn sleep_should_be_persisted_after_executor_restart(
         database: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         const SLEEP_MILLIS: u32 = 100;
@@ -3402,7 +3408,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn scheduling_should_work(
         db: db_tests::Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10, subscription_interruption: None })]
         join_next_strategy: JoinNextBlockingStrategy,
     ) {
         const SLEEP_DURATION: Duration = Duration::from_millis(100);

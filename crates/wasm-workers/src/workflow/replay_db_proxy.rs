@@ -864,6 +864,7 @@ mod tests {
                 parent_execution_id.clone(),
                 CachingBuffer::new(JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 100,
+                    subscription_interruption: None,
                 }),
             )),
             ConnectionMode::Replay => Box::new(ReplayWorkflowDbConnection::new(
