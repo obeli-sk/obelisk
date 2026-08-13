@@ -4302,7 +4302,7 @@ pub(crate) struct HttpResponse {
 impl HttpResponse {
     fn from_cancel_execution_outcome(outcome: CancelOutcome, accept: AcceptHeader) -> Self {
         match outcome {
-            CancelOutcome::Cancelled => HttpResponse {
+            CancelOutcome::CancelRequested => HttpResponse {
                 status: StatusCode::OK,
                 message: "cancellation requested".to_string(),
                 accept,
@@ -4322,7 +4322,7 @@ impl HttpResponse {
 
     fn from_cancel_outcome(outcome: CancelOutcome, accept: AcceptHeader) -> Self {
         match outcome {
-            CancelOutcome::Cancelled => HttpResponse {
+            CancelOutcome::CancelRequested => HttpResponse {
                 status: StatusCode::OK,
                 message: "cancelled".to_string(),
                 accept,

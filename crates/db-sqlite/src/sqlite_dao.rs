@@ -290,7 +290,7 @@ enum TxType {
     Other,          // Read only or a single write LTX. Continue the PhyTx if LTX returns error.
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CancellationFfqnCheck {
     Required,
     Skipped,
@@ -4106,7 +4106,7 @@ impl SqlitePool {
         combined_state: &CombinedState,
         ffqn_check: CancellationFfqnCheck,
     ) -> Result<CancelOutcome, DbErrorWrite> {
-        if matches!(ffqn_check, CancellationFfqnCheck::Required) {
+        if ffqn_check == CancellationFfqnCheck::Required {
             combined_state.assert_cancellable_workflow_ffqn()?;
         }
         Self::append(
@@ -4118,7 +4118,7 @@ impl SqlitePool {
             },
             combined_state.get_next_version_assert_not_finished(),
         )?;
-        Ok(CancelOutcome::Cancelled)
+        Ok(CancelOutcome::CancelRequested)
     }
 
     fn append_activity_cancellation_requested_tx(
@@ -4136,20 +4136,20 @@ impl SqlitePool {
                         ),
                     )
                 {
-                    return Ok(CancelOutcome::Cancelled);
+                    Ok(CancelOutcome::CancelRequested)
+                } else {
+                    Ok(CancelOutcome::AlreadyFinished)
                 }
-                return Ok(CancelOutcome::AlreadyFinished);
             }
-            PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
-            _ => {}
+            PendingState::Cancelling(_) => Ok(CancelOutcome::CancelRequested),
+            _all_other_states => Self::append_cancellation_requested(
+                tx,
+                execution_id,
+                cancelled_at,
+                combined_state,
+                CancellationFfqnCheck::Skipped,
+            ),
         }
-        Self::append_cancellation_requested(
-            tx,
-            execution_id,
-            cancelled_at,
-            combined_state,
-            CancellationFfqnCheck::Skipped,
-        )
     }
 }
 

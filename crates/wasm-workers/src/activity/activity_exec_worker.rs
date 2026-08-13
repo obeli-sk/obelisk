@@ -352,9 +352,9 @@ impl Worker for ActivityExecWorker {
         let mut child_stderr = child.stderr.take().expect("stderr was piped");
 
         // Register cancellation token.
-        let cancel_token = self
+        let cancellation_token = self
             .cancel_registry
-            .activity_obtain_interrupt_token(ctx.execution_id.clone());
+            .activity_obtain_cancellation_token(ctx.execution_id.clone());
 
         // Skip stdout collection when return_type is `result` (unit ok and err variants).
         let max_stdout_bytes = if self.user_return_type.type_wrapper_tl.is_result_of_units() {
@@ -364,7 +364,7 @@ impl Worker for ActivityExecWorker {
         };
         let result = tokio::select! {
             biased;
-            _signal = cancel_token => {
+            _signal = cancellation_token => {
                 // The token fires only on cancellation (CancelRegistry::cancel_activity is its
                 // sole trigger). Kill and reap the child before finalizing; the executor appends
                 // the terminal only if still `cancelling`.

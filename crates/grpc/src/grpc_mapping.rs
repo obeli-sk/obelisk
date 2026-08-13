@@ -1806,7 +1806,7 @@ impl From<HttpClientTrace> for grpc_gen::HttpClientTrace {
 impl From<CancelOutcome> for grpc_gen::cancel_execution_response::CancelExecutionOutcome {
     fn from(value: CancelOutcome) -> Self {
         match value {
-            CancelOutcome::Cancelled => {
+            CancelOutcome::CancelRequested => {
                 grpc_gen::cancel_execution_response::CancelExecutionOutcome::CancellationRequested
             }
             CancelOutcome::AlreadyFinished => {
@@ -1822,7 +1822,7 @@ impl From<CancelOutcome> for grpc_gen::cancel_execution_response::CancelExecutio
 impl From<CancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome {
     fn from(value: CancelOutcome) -> Self {
         match value {
-            CancelOutcome::Cancelled => {
+            CancelOutcome::CancelRequested => {
                 grpc_gen::cancel_delay_response::CancelDelayOutcome::Cancelled
             }
             CancelOutcome::AlreadyFinished => {

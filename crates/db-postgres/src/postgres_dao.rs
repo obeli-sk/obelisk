@@ -1368,7 +1368,7 @@ async fn append_cancellation_requested(
     )
     .await?;
     tx.commit().await?;
-    Ok(CancelOutcome::Cancelled)
+    Ok(CancelOutcome::CancelRequested)
 }
 
 async fn cancel_workflow_tx(
@@ -1403,11 +1403,11 @@ async fn append_activity_cancellation_requested_tx(
                     ExecutionFailureKind::Cancelled,
                 ))
             {
-                return Ok(CancelOutcome::Cancelled);
+                return Ok(CancelOutcome::CancelRequested);
             }
             return Ok(CancelOutcome::AlreadyFinished);
         }
-        PendingState::Cancelling(_) => return Ok(CancelOutcome::Cancelled),
+        PendingState::Cancelling(_) => return Ok(CancelOutcome::CancelRequested),
         _ => {}
     }
     append_cancellation_requested(

@@ -13,7 +13,7 @@ use tracing::{Instrument, debug, info, info_span};
 
 #[derive(Clone)]
 /// All currently running activities and workflows in this process.
-/// Activity worker tasks register themselves and listen on an interruption token;
+/// Activity worker tasks register themselves and listen on a cancellation token;
 /// cancel RPCs and workflow workers call `cancel_activity`, which writes durable
 /// cancellation intent to db (whether registered or not) and triggers the token.
 /// Workflow worker tasks register a per-execution interrupt watch (pruned by `tick`
@@ -22,12 +22,12 @@ use tracing::{Instrument, debug, info, info_span};
 /// effect (it dooms the run's next db append); the signal only stops the run early so
 /// it stops burning CPU, returning `DbUpdatedByWorkerOrWatcher` without appending.
 pub struct CancelRegistry {
-    tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
+    activity_cancellation_tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
     running_workflows: Arc<Mutex<hashbrown::HashMap<ExecutionId, watch::Sender<bool>>>>,
 }
 
 struct ActivityInfo {
-    interrupt_sender: oneshot::Sender<()>,
+    cancellation_sender: oneshot::Sender<()>,
 }
 
 impl Default for CancelRegistry {
@@ -40,7 +40,7 @@ impl CancelRegistry {
     #[must_use]
     pub fn new() -> CancelRegistry {
         CancelRegistry {
-            tokens: Arc::default(),
+            activity_cancellation_tokens: Arc::default(),
             running_workflows: Arc::default(),
         }
     }
@@ -63,10 +63,10 @@ impl CancelRegistry {
     }
 
     fn tick(&self) {
-        self.tokens
+        self.activity_cancellation_tokens
             .lock()
             .unwrap()
-            .retain(|_exe, info| !info.interrupt_sender.is_closed());
+            .retain(|_exe, info| !info.cancellation_sender.is_closed());
         // A workflow's receiver lives in its deadline tracker for the run's
         // lifetime, so `is_closed` prunes the entry once the run ends/traps.
         self.running_workflows
@@ -75,13 +75,13 @@ impl CancelRegistry {
             .retain(|_exe, sender| !sender.is_closed());
     }
 
-    pub(crate) fn activity_obtain_interrupt_token(
+    pub(crate) fn activity_obtain_cancellation_token(
         &self,
         execution_id: ExecutionId,
     ) -> oneshot::Receiver<()> {
-        let mut guard = self.tokens.lock().unwrap();
-        let (interrupt_sender, receiver) = oneshot::channel();
-        guard.insert(execution_id, ActivityInfo { interrupt_sender });
+        let mut guard = self.activity_cancellation_tokens.lock().unwrap();
+        let (cancellation_sender, receiver) = oneshot::channel();
+        guard.insert(execution_id, ActivityInfo { cancellation_sender });
         receiver
     }
 
@@ -118,14 +118,14 @@ impl CancelRegistry {
         let outcome = db_connection
             .cancel_activity_with_retries(execution_id, cancelled_at)
             .await?;
-        if outcome == CancelOutcome::Cancelled {
+        if outcome == CancelOutcome::CancelRequested {
             // Sending the signal is best effort, the activity might not be registered yet.
             let info = {
-                let mut guard = self.tokens.lock().unwrap();
+                let mut guard = self.activity_cancellation_tokens.lock().unwrap();
                 guard.remove(execution_id)
             };
             if let Some(info) = info {
-                let _ = info.interrupt_sender.send(());
+                let _ = info.cancellation_sender.send(());
             }
         }
         Ok(outcome)

@@ -194,9 +194,9 @@ impl Worker for ActivityWorker {
         let version = ctx.version.clone();
         let worker_span = ctx.worker_span.clone();
 
-        let interrupt_token = self
+        let cancellation_token = self
             .cancel_registry
-            .activity_obtain_interrupt_token(ctx.execution_id.clone());
+            .activity_obtain_cancellation_token(ctx.execution_id.clone());
         let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
 
         let (mut store, deadline_duration) = match self.create_store(ctx, started_at) {
@@ -255,7 +255,7 @@ impl Worker for ActivityWorker {
                     version,
                 });
             }
-            _ = interrupt_token => {
+            _ = cancellation_token => {
                 // The token fires only on cancellation (CancelRegistry::cancel_activity is its
                 // sole trigger). Return Cancelled; dropping the store here tears down the
                 // invocation, and the executor appends the terminal only if still `cancelling`.

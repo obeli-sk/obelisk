@@ -1291,6 +1291,7 @@ pub trait DbExecutor: Send + Sync {
         timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     );
 
+    /// See [`Self::append_activity_cancellation_requested`].
     async fn cancel_activity_with_retries(
         &self,
         execution_id: &ExecutionId,
@@ -1311,7 +1312,7 @@ pub trait DbExecutor: Send + Sync {
     }
 
     /// Request cancellation of a cancellable workflow. In one version-guarded
-    /// transaction, appends `CancellationRequested`; rejects a non-cancellable
+    /// transaction, appends [`ExecutionRequest::CancellationRequested`]; rejects a non-cancellable
     /// target and returns `AlreadyFinished`/`AlreadyCancelling` without appending.
     /// The `Finished(Cancelled)` outcome is driven later by the cancellation driver.
     async fn cancel_workflow(
@@ -1344,6 +1345,9 @@ pub trait DbExecutor: Send + Sync {
         execution_id: &ExecutionId,
     ) -> Result<ExecutionEvent, DbErrorRead>;
 
+    /// Append [`ExecutionRequest::CancellationRequested`] if execution is not finished and not in
+    /// cancellation already.
+    /// The state will become [`PendingStateCancelling`] with the underlying state embedded.
     async fn append_activity_cancellation_requested(
         &self,
         execution_id: &ExecutionId,
@@ -2247,7 +2251,7 @@ pub trait DbConnectionTest: DbConnection {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CancelOutcome {
-    Cancelled,
+    CancelRequested,
     AlreadyFinished,
     AlreadyCancelling,
 }
@@ -2310,7 +2314,7 @@ pub async fn cancel_delay(
         .await
         .map(|ok| match ok {
             AppendDelayResponseOutcome::Success | AppendDelayResponseOutcome::AlreadyCancelled => {
-                CancelOutcome::Cancelled
+                CancelOutcome::CancelRequested
             }
             AppendDelayResponseOutcome::AlreadyFinished => CancelOutcome::AlreadyFinished,
         })
