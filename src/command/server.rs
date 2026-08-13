@@ -3828,6 +3828,8 @@ impl DeploymentVerified {
                                 workflow_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
                                 global_executor_instance_limiter.clone(),
+                                fuel,
+                                subscription_interruption,
                             ).await?
                         );
                     }

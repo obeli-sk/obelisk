@@ -2534,6 +2534,8 @@ pub(crate) trait WorkflowJsComponentConfigResolvedExt {
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+        subscription_interruption: Option<Duration>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error>;
 }
 
@@ -2544,6 +2546,8 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+        subscription_interruption: Option<Duration>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
         let verified = verify_function_interface(
             self.interface,
@@ -2588,11 +2592,11 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
             stub_wasi: false,
-            fuel: None,
+            fuel,
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
                 lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
-                subscription_interruption: None,
+                subscription_interruption,
             },
         };
         let retry_config = ComponentRetryConfig {
