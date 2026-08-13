@@ -1053,7 +1053,7 @@ mod tests {
                 lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 
@@ -1419,7 +1419,7 @@ mod tests {
         ExecTask::new_all_ffqns_test(Arc::new(worker), exec_config, clock_fn, db_pool)
     }
 
-    fn new_js_workflow_exec_task_with_close_watcher(
+    fn new_js_workflow_exec_task_with_interrupt_watcher(
         worker: WorkflowJsWorker,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
@@ -1436,7 +1436,7 @@ mod tests {
             retry_config: ComponentRetryConfig::WORKFLOW,
             locking_strategy: LockingStrategy::ByComponentDigest,
         };
-        ExecTask::new_all_ffqns_test_with_close_watcher(
+        ExecTask::new_all_ffqns_test_with_interrupt_watcher(
             Arc::new(worker),
             exec_config,
             clock_fn,
@@ -2716,7 +2716,7 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn executor_close_writes_unlocked_event(database: Database) {
+    async fn execution_interrupt_writes_unlocked_event(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
@@ -2746,7 +2746,7 @@ mod tests {
             workflow_engine,
         );
 
-        let exec_task = new_js_workflow_exec_task_with_close_watcher(
+        let exec_task = new_js_workflow_exec_task_with_interrupt_watcher(
             worker,
             sim_clock.clone_box(),
             db_pool.clone(),

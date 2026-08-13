@@ -7,7 +7,7 @@ use tracing::{trace, warn};
 
 #[async_trait]
 pub trait DeadlineTracker: Send + Sync {
-    /// Host functions must check whether the executor is closing.
+    /// Host functions must check whether the execution was interrupted.
     fn check_preempt(&self) -> Result<(), PreemptRequested>;
 
     /// Called after the workflow made progress and is now blocked waiting for a response.
@@ -29,15 +29,15 @@ pub trait DeadlineTracker: Send + Sync {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PreemptRequested {
-    #[error("executor is closing")]
-    ExecutorClosing,
+    #[error("execution interrupt")]
+    ExecutionInterrupt,
 }
 
 pub trait DeadlineTrackerFactory: Send + Sync {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
-        unlock_executor_close_watcher: watch::Receiver<bool>,
+        unlock_execution_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired>;
 
     /// True iff this factory produces trackers that never expire the lock.
@@ -57,8 +57,8 @@ pub struct LockAlreadyExpired {
 pub enum EpochCallbackError {
     #[error("lock expired")]
     LockExpired,
-    #[error("executor is closing")]
-    ExecutorClosing,
+    #[error("execution interrupt")]
+    ExecutionInterrupt,
 }
 
 pub(crate) struct DeadlineTrackerTokio {
@@ -66,15 +66,15 @@ pub(crate) struct DeadlineTrackerTokio {
     pub(crate) deadline_minus_leeway: tokio::time::Instant, // Tracked as instant because calling track happens later after creation.
     pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) leeway: Duration, // Fire this much sooner than requested.
-    executor_close_watcher: watch::Receiver<bool>,
+    execution_interrupt_watcher: watch::Receiver<bool>,
 }
 
 #[async_trait]
 impl DeadlineTracker for DeadlineTrackerTokio {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
-        let executor_closing = *self.executor_close_watcher.borrow();
-        if executor_closing {
-            Err(PreemptRequested::ExecutorClosing)
+        let interrupt_requested = *self.execution_interrupt_watcher.borrow();
+        if interrupt_requested {
+            Err(PreemptRequested::ExecutionInterrupt)
         } else {
             Ok(())
         }
@@ -86,7 +86,7 @@ impl DeadlineTracker for DeadlineTrackerTokio {
     ) -> Result<Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>, TimeoutOutcome> {
         if self.deadline <= tokio::time::Instant::now() {
             Err(TimeoutOutcome::Timeout)
-        } else if *self.executor_close_watcher.borrow() {
+        } else if *self.execution_interrupt_watcher.borrow() {
             Err(TimeoutOutcome::Cancel)
         } else {
             let expiry = if let Some(max_duration) = max_duration {
@@ -95,11 +95,11 @@ impl DeadlineTracker for DeadlineTrackerTokio {
             } else {
                 self.deadline_minus_leeway
             };
-            let mut executor_close_watcher = self.executor_close_watcher.clone();
+            let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
             Ok(Box::pin(async move {
                 tokio::select! {
                     () = tokio::time::sleep_until(expiry) => TimeoutOutcome::Timeout,
-                    _ = executor_close_watcher.wait_for(|&v| v) => TimeoutOutcome::Cancel,
+                    _ = execution_interrupt_watcher.wait_for(|&v| v) => TimeoutOutcome::Cancel,
                 }
             }))
         }
@@ -110,9 +110,9 @@ impl DeadlineTracker for DeadlineTrackerTokio {
     }
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        let executor_closing = *self.executor_close_watcher.borrow();
-        if executor_closing {
-            Err(EpochCallbackError::ExecutorClosing)
+        let interrupt_requested = *self.execution_interrupt_watcher.borrow();
+        if interrupt_requested {
+            Err(EpochCallbackError::ExecutionInterrupt)
         } else if self.deadline <= tokio::time::Instant::now() {
             Err(EpochCallbackError::LockExpired)
         } else {
@@ -161,7 +161,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
-        executor_close_watcher: watch::Receiver<bool>,
+        execution_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         let started_at = self.clock_fn.now();
         let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
@@ -183,7 +183,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
             deadline_minus_leeway,
             clock_fn: self.clock_fn.clone_box(),
             leeway: self.leeway,
-            executor_close_watcher,
+            execution_interrupt_watcher,
         };
         Ok(Box::new(tracker))
     }
@@ -200,7 +200,7 @@ pub(crate) struct DeadlineTrackerSim {
     deadline_minus_leeway: DateTime<Utc>,
     leeway: Duration,
     clock: test_utils::sim_clock::SimClock,
-    executor_close_watcher: watch::Receiver<bool>,
+    execution_interrupt_watcher: watch::Receiver<bool>,
 }
 
 #[cfg(test)]
@@ -212,8 +212,8 @@ fn add_duration(time: DateTime<Utc>, duration: Duration) -> DateTime<Utc> {
 #[async_trait]
 impl DeadlineTracker for DeadlineTrackerSim {
     fn check_preempt(&self) -> Result<(), PreemptRequested> {
-        if *self.executor_close_watcher.borrow() {
-            Err(PreemptRequested::ExecutorClosing)
+        if *self.execution_interrupt_watcher.borrow() {
+            Err(PreemptRequested::ExecutionInterrupt)
         } else {
             Ok(())
         }
@@ -226,7 +226,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
         let now = self.clock.now();
         if self.deadline <= now {
             return Err(TimeoutOutcome::Timeout);
-        } else if *self.executor_close_watcher.borrow() {
+        } else if *self.execution_interrupt_watcher.borrow() {
             return Err(TimeoutOutcome::Cancel);
         }
         let expiry = if let Some(max_duration) = max_duration {
@@ -238,7 +238,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
         // Subscribe now, before the future is awaited, so time advances between
         // this call and the first poll are not missed.
         let mut time_watcher = self.clock.subscribe();
-        let mut executor_close_watcher = self.executor_close_watcher.clone();
+        let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
         Ok(Box::pin(async move {
             loop {
                 if clock.now() >= expiry {
@@ -249,7 +249,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
                     res = time_watcher.changed() => if res.is_err() {
                         return TimeoutOutcome::Cancel;
                     },
-                    _ = executor_close_watcher.wait_for(|&v| v) => return TimeoutOutcome::Timeout,
+                    _ = execution_interrupt_watcher.wait_for(|&v| v) => return TimeoutOutcome::Timeout,
                 }
             }
         }))
@@ -260,8 +260,8 @@ impl DeadlineTracker for DeadlineTrackerSim {
     }
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError> {
-        if *self.executor_close_watcher.borrow() {
-            Err(EpochCallbackError::ExecutorClosing)
+        if *self.execution_interrupt_watcher.borrow() {
+            Err(EpochCallbackError::ExecutionInterrupt)
         } else if self.deadline <= self.clock.now() {
             Err(EpochCallbackError::LockExpired)
         } else {
@@ -297,7 +297,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactorySim {
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
-        executor_close_watcher: watch::Receiver<bool>,
+        execution_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         let started_at = self.clock.now();
         let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
@@ -315,7 +315,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactorySim {
             deadline_minus_leeway,
             leeway: self.leeway,
             clock: self.clock.clone(),
-            executor_close_watcher,
+            execution_interrupt_watcher,
         }))
     }
 }
@@ -337,7 +337,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryForReplay {
     fn create(
         &self,
         _lock_expires_at: DateTime<Utc>,
-        _executor_close_watcher: watch::Receiver<bool>,
+        _execution_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         Ok(Box::new(DeadlineTrackerFactoryForReplay {}))
     }

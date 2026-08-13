@@ -246,7 +246,7 @@ mod tests {
             can_be_retried: false,
             worker_span: tracing::info_span!("schedule_test"),
             locked_event,
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 

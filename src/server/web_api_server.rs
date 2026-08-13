@@ -2416,7 +2416,7 @@ async fn execution_advance(
                 AdvanceError::DbError(db_err) => {
                     return Err(ErrorWrapper(db_err, accept).into());
                 }
-                err @ (AdvanceError::ExecutorClosing | AdvanceError::LimitReached { .. }) => {
+                err @ (AdvanceError::ExecutionInterrupt | AdvanceError::LimitReached { .. }) => {
                     AdvanceErrorSer::Transient(err.to_string())
                 }
             };

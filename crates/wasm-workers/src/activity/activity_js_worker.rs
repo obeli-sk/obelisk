@@ -555,7 +555,7 @@ mod tests {
             COMPONENT_DIGEST_DUMMY,
         )
         .unwrap();
-        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let (close_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
@@ -576,7 +576,7 @@ mod tests {
                 lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher,
+            execution_interrupt_watcher,
         };
         (ctx, close_tx)
     }
@@ -591,7 +591,7 @@ mod tests {
             COMPONENT_DIGEST_DUMMY,
         )
         .unwrap();
-        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let (close_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: ExecutionMetadata::empty(),
@@ -612,7 +612,7 @@ mod tests {
                 lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher,
+            execution_interrupt_watcher,
         };
         (ctx, close_tx)
     }

@@ -104,8 +104,8 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
-    #[error("executor closing")]
-    ExecutorClosing,
+    #[error("execution interrupt")]
+    ExecutionInterrupt,
     #[error("replay interrupt")]
     ReplayInterrupt,
 }
@@ -374,9 +374,9 @@ impl EventHistory {
     ) -> Result<ChildReturnValue, ApplyError> {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
-            Err(PreemptRequested::ExecutorClosing) => {
-                info!("Executor closing detected in check_preempt");
-                return Err(ApplyError::ExecutorClosing);
+            Err(PreemptRequested::ExecutionInterrupt) => {
+                info!("Execution interrupt detected in check_preempt");
+                return Err(ApplyError::ExecutionInterrupt);
             }
         }
 
@@ -602,7 +602,7 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
-            // Break on `executor_close_watcher` or when timeout is reached.
+            // Break on `execution_interrupt_watcher` or when timeout is reached.
             while let Ok(timeout_fut) = self.deadline_tracker.track(self.subscription_interruption)
             {
                 let last_response = self
@@ -646,8 +646,8 @@ impl EventHistory {
                         // if this was caused by `subscription_interruption` or deadline.
                     }
                     Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        info!("Executor is closing detected in subscribe_to_next_responses");
-                        return Err(ApplyError::ExecutorClosing);
+                        info!("Execution interrupt detected in subscribe_to_next_responses");
+                        return Err(ApplyError::ExecutionInterrupt);
                     }
                 }
             }
