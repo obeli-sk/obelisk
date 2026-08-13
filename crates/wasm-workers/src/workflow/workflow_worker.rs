@@ -7,7 +7,7 @@ use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{
     CachingBuffer, CachingDbConnection, WorkflowDbConnection,
 };
-use crate::workflow::deadline_tracker::EpochCallbackError;
+use crate::workflow::deadline_tracker::{EpochCallbackError, InterruptKind};
 pub use crate::workflow::replay_advance::{
     AdvanceError, ReplayAdvanceable, ReplayError, ReplayResponse,
 };
@@ -456,7 +456,7 @@ enum WorkerResultRefactored {
     FatalError(FatalError, WorkflowCtx),
     DbError(DbErrorWrite),
     LockExpired(WorkflowCtx),
-    ExecutionInterrupt(WorkflowCtx),
+    Interrupt(InterruptKind, WorkflowCtx),
     ReplayInterrupt(WorkflowCtx),
 }
 
@@ -477,8 +477,8 @@ enum WorkflowError {
     },
     #[error("lock expired")]
     LockExpired(Version),
-    #[error("execution interrupt")]
-    ExecutionInterrupt(Version),
+    #[error("execution interrupt: {1:?}")]
+    Interrupt(Version, InterruptKind),
 }
 impl From<WorkflowError> for WorkerError {
     fn from(value: WorkflowError) -> Self {
@@ -492,19 +492,21 @@ impl From<WorkflowError> for WorkerError {
                 http_client_traces: None,
                 version,
             },
-            WorkflowError::ExecutionInterrupt(version) => WorkerError::ExecutionInterrupt(version),
+            // `PauseOrCancel` is intercepted in `run()` and turned into
+            // `DbUpdatedByWorkerOrWatcher`; only `ExecutorClosing` reaches here.
+            WorkflowError::Interrupt(version, _kind) => WorkerError::ExecutorClosing(version),
         }
     }
 }
 
 #[derive(derive_more::Debug, thiserror::Error)]
-pub enum JoinSetCloseError {
+pub(crate) enum JoinSetCloseError {
     #[error(transparent)]
     DbError(DbErrorWrite),
     #[error("fatal error: {err}")]
     FatalError { err: FatalError },
-    #[error("execution interrupt")]
-    ExecutionInterrupt(Version),
+    #[error("execution interrupt: {1:?}")]
+    Interrupt(Version, InterruptKind),
 }
 impl JoinSetCloseError {
     fn into_workflow_error(
@@ -519,9 +521,7 @@ impl JoinSetCloseError {
                 version,
                 db_connection,
             },
-            JoinSetCloseError::ExecutionInterrupt(version) => {
-                WorkflowError::ExecutionInterrupt(version)
-            }
+            JoinSetCloseError::Interrupt(version, kind) => WorkflowError::Interrupt(version, kind),
         }
     }
 }
@@ -694,13 +694,13 @@ impl WorkflowWorker {
         is_replay: Option<ReplayKind>,
         view: WorkflowWorkerView<'_>,
         backtrace_capture: bool,
-        pause_watcher: tokio::sync::watch::Receiver<bool>,
+        local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
         let deadline_tracker = match view.deadline_factory.create(
             ctx.locked_event.lock_expires_at,
             ctx.execution_interrupt_watcher,
-            pause_watcher,
+            local_interrupt_watcher,
         ) {
             Ok(deadline_tracker) => deadline_tracker,
             Err(lock_already_expired) => {
@@ -772,11 +772,11 @@ impl WorkflowWorker {
                     info!("Deadline reached in epoch callback");
                     Err(wasmtime::Error::from(WorkflowFunctionError::LockExpired))
                 }
-                Err(EpochCallbackError::ExecutionInterrupt) => {
-                    info!("Execution interrupt detected in epoch callback");
-                    Err(wasmtime::Error::from(
-                        WorkflowFunctionError::ExecutionInterrupt,
-                    ))
+                Err(EpochCallbackError::Interrupt(kind)) => {
+                    info!("Execution interrupt detected in epoch callback: {kind:?}");
+                    Err(wasmtime::Error::from(WorkflowFunctionError::Interrupt(
+                        kind,
+                    )))
                 }
             }
         });
@@ -793,9 +793,10 @@ impl WorkflowWorker {
                             let version = store.into_data().version().clone();
                             return Err(WorkflowError::LockExpired(version));
                         }
-                        WorkflowFunctionError::ExecutionInterrupt => {
+                        WorkflowFunctionError::Interrupt(kind) => {
+                            let kind = *kind;
                             let version = store.into_data().version().clone();
-                            return Err(WorkflowError::ExecutionInterrupt(version));
+                            return Err(WorkflowError::Interrupt(version, kind));
                         }
                         _ => {}
                     }
@@ -1015,10 +1016,17 @@ impl WorkflowWorker {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::LockExpired(workflow_ctx.version().clone()))
             }
-            WorkerResultRefactored::ExecutionInterrupt(mut workflow_ctx) => {
-                workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
-                Err(WorkflowError::ExecutionInterrupt(
+            WorkerResultRefactored::Interrupt(InterruptKind::PauseOrCancel, workflow_ctx) => {
+                Err(WorkflowError::Interrupt(
                     workflow_ctx.version().clone(),
+                    InterruptKind::PauseOrCancel,
+                ))
+            }
+            WorkerResultRefactored::Interrupt(kind, mut workflow_ctx) => {
+                workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
+                Err(WorkflowError::Interrupt(
+                    workflow_ctx.version().clone(),
+                    kind,
                 ))
             }
             WorkerResultRefactored::ReplayInterrupt(workflow_ctx) => {
@@ -1066,6 +1074,15 @@ impl WorkflowWorker {
                 )
             }
             Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
+                if matches!(
+                    worker_partial_result,
+                    WorkerPartialResult::Interrupt(InterruptKind::PauseOrCancel)
+                ) {
+                    return WorkerResultRefactored::Interrupt(
+                        InterruptKind::PauseOrCancel,
+                        workflow_ctx,
+                    );
+                }
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
                         error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
@@ -1086,9 +1103,9 @@ impl WorkflowWorker {
                         // logged in epoch callback
                         WorkerResultRefactored::LockExpired(workflow_ctx)
                     }
-                    WorkerPartialResult::ExecutionInterrupt => {
+                    WorkerPartialResult::Interrupt(kind) => {
                         // logged in epoch callback
-                        WorkerResultRefactored::ExecutionInterrupt(workflow_ctx)
+                        WorkerResultRefactored::Interrupt(kind, workflow_ctx)
                     }
                     WorkerPartialResult::ReplayWaitingForResponse => {
                         WorkerResultRefactored::ReplayInterrupt(workflow_ctx)
@@ -1124,8 +1141,9 @@ impl WorkflowWorker {
             Err(ApplyError::ConstraintViolation(reason)) => Err(JoinSetCloseError::FatalError {
                 err: FatalError::ConstraintViolation { reason },
             }),
-            Err(ApplyError::ExecutionInterrupt) => Err(JoinSetCloseError::ExecutionInterrupt(
+            Err(ApplyError::Interrupt(kind)) => Err(JoinSetCloseError::Interrupt(
                 workflow_ctx.version().clone(),
+                kind,
             )),
             Err(ApplyError::ReplayInterrupt) => Ok(Either::Right(ReplayInterrupt)),
         }
@@ -1175,7 +1193,7 @@ impl WorkflowWorker {
             Some(replay_kind),
             view,
             backtrace_capture,
-            tokio::sync::watch::channel(false).1, // replay is never paused
+            tokio::sync::watch::channel(false).1, // replay is never interrupted here
         )
         .await
         {
@@ -1216,8 +1234,10 @@ impl WorkflowWorker {
             Err(WorkflowError::LockExpired(version)) => {
                 Err(ReplayInternalError::LockExpired(version))
             }
-            Err(WorkflowError::ExecutionInterrupt(version)) => {
-                Err(ReplayInternalError::ExecutionInterrupt(version))
+            // Replay uses a never-firing deadline tracker, so any interrupt here is a
+            // defensive `ExecutorClosing` (pause/cancel never reaches replay).
+            Err(WorkflowError::Interrupt(version, _kind)) => {
+                Err(ReplayInternalError::ExecutorClosing(version))
             }
         }?;
 
@@ -1258,7 +1278,7 @@ impl WorkflowWorker {
         is_replay: Option<ReplayKind>,
         view: WorkflowWorkerView<'_>,
         backtrace_capture: bool,
-        pause_watcher: tokio::sync::watch::Receiver<bool>,
+        local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<
         (
             Either<WorkerResultOk, ReplayInterrupt>,
@@ -1280,7 +1300,7 @@ impl WorkflowWorker {
             is_replay,
             view,
             backtrace_capture,
-            pause_watcher,
+            local_interrupt_watcher,
         )
         .await?;
         Self::call_func_convert_result(
@@ -1543,8 +1563,8 @@ impl WorkflowWorker {
                     http_client_traces: None,
                     version,
                 },
-                ReplayInternalError::ExecutionInterrupt(version) => {
-                    WorkerError::ExecutionInterrupt(version)
+                ReplayInternalError::ExecutorClosing(version) => {
+                    WorkerError::ExecutorClosing(version)
                 }
             })?;
 
@@ -1719,9 +1739,9 @@ impl Worker for WorkflowWorker {
             deadline_factory: self.deadline_factory.as_ref(),
             logs_storage_config: self.logs_storage_config.clone(),
         };
-        // Register for same-node pause interruption; the cancel watcher prunes the
-        // entry once this run drops the receiver (held in the deadline tracker).
-        let pause_watcher = self
+        // Register for same-node pause/cancel interruption; the cancel watcher prunes
+        // the entry once this run drops the receiver (held in the deadline tracker).
+        let local_interrupt_watcher = self
             .cancel_registry
             .register_running_workflow(ctx.execution_id.clone());
         let res = Self::run_internal(
@@ -1730,7 +1750,7 @@ impl Worker for WorkflowWorker {
             None, // is_replay
             view,
             false,
-            pause_watcher,
+            local_interrupt_watcher,
         )
         .await;
         worker_span.in_scope(|| match res {
@@ -1739,6 +1759,11 @@ impl Worker for WorkflowWorker {
                 WorkerResult::Ok(ok)
             }
             Ok((Either::Right(_), _)) => unreachable!("not replaying"),
+            // A pause or cancel already persisted its event out of band; append nothing.
+            Err(WorkflowError::Interrupt(_version, InterruptKind::PauseOrCancel)) => {
+                info!("Workflow run interrupted by pause/cancel, db already updated");
+                WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+            }
             Err(workflow_err) => {
                 info!("Workflow run finished with error: {workflow_err}");
                 WorkerResult::Err(WorkerError::from(workflow_err))

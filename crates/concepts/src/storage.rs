@@ -1013,6 +1013,22 @@ pub enum DbErrorReadWithTimeout {
     DbErrorRead(#[from] DbErrorRead),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseSubscriptionEnd {
+    PollIntervalElapsed,
+    LockDeadlineReached,
+    ExecutorClosing,
+    ExecutionUpdated,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum SubscribeToResponsesError {
+    #[error("response subscription ended: {0:?}")]
+    SubscriptionEnded(ResponseSubscriptionEnd),
+    #[error(transparent)]
+    DbErrorRead(#[from] DbErrorRead),
+}
+
 // Represents next version after successfuly appended to execution log.
 // TODO: Convert to struct with next_version
 pub type AppendResponse = Version;
@@ -1614,9 +1630,10 @@ pub trait DbExternalApi: DbConnection {
         pagination: Pagination<Option<DeploymentId>>,
     ) -> Result<Vec<DeploymentRecord>, DbErrorRead>;
 
-    /// Pause an execution. Only pending executions can be paused.
+    /// Pause an execution.
     /// If the execution is an activity and is currently in `PendingState::Locked`, implementations must
-    /// append `ExecutionRequest::Unlocked` to avoid affecting failed attempt count, before appending `ExecutionRequest::Paused`.
+    /// reject the write, otherwise a running activity will be considered terminated, which can break
+    /// structured concurrency guarantees.
     async fn pause_execution(
         &self,
         execution_id: &ExecutionId,
@@ -2102,7 +2119,8 @@ pub trait DbConnection: DbExecutor {
 
     /// Notification mechainism with no strict guarantees for getting notified when a new response arrives.
     /// Parameter `start_idx` must be at most be equal to current size of responses in the execution log.
-    /// If no response arrives immediately and `interrupt_after` resolves, `DbErrorReadWithTimeout::Timeout` is returned.
+    /// If no response arrives immediately and `subscription_end_fut` resolves,
+    /// `SubscribeToResponsesError::SubscriptionEnded` is returned.
     /// Implementations with no pubsub support should use polling.
     /// Callers are expected to call this function in a loop with a reasonable timeout
     /// to support less stellar implementations.
@@ -2110,8 +2128,8 @@ pub trait DbConnection: DbExecutor {
         &self,
         execution_id: &ExecutionId,
         last_response: ResponseCursor,
-        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout>;
+        subscription_end_fut: Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, SubscribeToResponsesError>;
 
     /// First, attempt to fetch the finished value. If the execution is not finished yet, poll
     /// periodically or subscribe to db changes, racing with `timeout_fut`.

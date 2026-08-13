@@ -16,9 +16,11 @@ use tracing::{Instrument, debug, info, info_span};
 /// Activity worker tasks register themselves and listen on an interruption token;
 /// cancel RPCs and workflow workers call `cancel_activity`, which writes durable
 /// cancellation intent to db (whether registered or not) and triggers the token.
-/// Workflow worker tasks register a per-execution pause watch (pruned by `tick`
-/// once the run drops its receiver); the pause RPC calls `signal_pause` to
-/// interrupt a locally-running workflow (`ExecutionInterrupt`).
+/// Workflow worker tasks register a per-execution interrupt watch (pruned by `tick`
+/// once the run drops its receiver); the pause and cancel RPCs call
+/// `signal_workflow_interrupt` after their durable write. The write is what takes
+/// effect (it dooms the run's next db append); the signal only stops the run early so
+/// it stops burning CPU, returning `DbUpdatedByWorkerOrWatcher` without appending.
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
     running_workflows: Arc<Mutex<hashbrown::HashMap<ExecutionId, watch::Sender<bool>>>>,
@@ -83,9 +85,9 @@ impl CancelRegistry {
         receiver
     }
 
-    /// Register a locked workflow run so a `signal_pause` can interrupt it same-node.
-    /// The returned receiver is threaded into the deadline tracker; the entry is
-    /// pruned by `tick` once the run drops it (completion, trap, or panic).
+    /// Register a locked workflow run so `signal_workflow_interrupt` can interrupt it
+    /// same-node. The returned receiver is threaded into the deadline tracker; the
+    /// entry is pruned by `tick` once the run drops it (completion, trap, or panic).
     #[must_use]
     pub fn register_running_workflow(&self, execution_id: ExecutionId) -> watch::Receiver<bool> {
         let (sender, receiver) = watch::channel(false);
@@ -96,10 +98,10 @@ impl CancelRegistry {
         receiver
     }
 
-    /// Best-effort interrupt of a locally-running workflow after its durable pause
-    /// write. A no-op if the workflow is not running in this process (another node,
-    /// or not currently locked).
-    pub fn signal_pause(&self, execution_id: &ExecutionId) {
+    /// Best-effort interrupt of a locally-running workflow after its durable pause or
+    /// cancel write. A no-op if the workflow is not running in this process (another
+    /// node, or not currently locked).
+    pub fn signal_workflow_interrupt(&self, execution_id: &ExecutionId) {
         if let Some(sender) = self.running_workflows.lock().unwrap().get(execution_id) {
             let _ = sender.send(true);
         }

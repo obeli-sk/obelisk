@@ -1,6 +1,6 @@
 use crate::storage::{
     DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
-    DbErrorWriteNonRetriable,
+    DbErrorWriteNonRetriable, SubscribeToResponsesError,
 };
 use std::{panic::Location, sync::Arc};
 use tokio_postgres::error::SqlState;
@@ -32,6 +32,13 @@ impl From<tokio_postgres::Error> for DbErrorRead {
 }
 
 impl From<tokio_postgres::Error> for DbErrorReadWithTimeout {
+    #[track_caller]
+    fn from(err: tokio_postgres::Error) -> Self {
+        Self::from(DbErrorRead::from(err))
+    }
+}
+
+impl From<tokio_postgres::Error> for SubscribeToResponsesError {
     #[track_caller]
     fn from(err: tokio_postgres::Error) -> Self {
         Self::from(DbErrorRead::from(err))

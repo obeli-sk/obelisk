@@ -85,8 +85,8 @@ pub enum WorkerError {
         http_client_traces: Option<Vec<HttpClientTrace>>,
         version: Version,
     },
-    #[error("execution interrupt")]
-    ExecutionInterrupt(Version),
+    #[error("executor closing")]
+    ExecutorClosing(Version),
     #[error(transparent)]
     DbError(DbErrorWrite),
     // non-retriable errors

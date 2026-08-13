@@ -7,7 +7,7 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::deadline_tracker::PreemptRequested;
+use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested};
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
@@ -29,7 +29,6 @@ use concepts::storage;
 use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceInfo;
 use concepts::storage::ChildExecutionRequestError;
-use concepts::storage::DbErrorReadWithTimeout;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::Locked;
@@ -39,11 +38,11 @@ use concepts::storage::ResponseWithCursor;
 use concepts::storage::ScheduleRequestError;
 use concepts::storage::StubError;
 use concepts::storage::StubRetValHash;
-use concepts::storage::TimeoutOutcome;
 use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest};
+use concepts::storage::{ResponseSubscriptionEnd, SubscribeToResponsesError};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params};
 use db_common::{JoinSetOpenTracker, JoinSetOpenTrackerError, JoinSetResponseId};
@@ -104,8 +103,8 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
-    #[error("execution interrupt")]
-    ExecutionInterrupt,
+    #[error("execution interrupt: {0:?}")]
+    Interrupt(InterruptKind),
     #[error("replay interrupt")]
     ReplayInterrupt,
 }
@@ -374,9 +373,9 @@ impl EventHistory {
     ) -> Result<ChildReturnValue, ApplyError> {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
-            Err(PreemptRequested::ExecutionInterrupt) => {
-                info!("Execution interrupt detected in check_preempt");
-                return Err(ApplyError::ExecutionInterrupt);
+            Err(PreemptRequested::Interrupt(kind)) => {
+                info!("Execution interrupt detected in check_preempt: {kind:?}");
+                return Err(ApplyError::Interrupt(kind));
             }
         }
 
@@ -601,10 +600,20 @@ impl EventHistory {
             debug!(join_set_id = %join_next_variant.join_set_id(), "Waiting for {join_next_variant:?}");
             let key = join_next_variant.as_key();
 
-            // Subscribe to the next response.
-            // Break on `execution_interrupt_watcher` or when timeout is reached.
-            while let Ok(timeout_fut) = self.deadline_tracker.track(self.subscription_interruption)
-            {
+            // Subscribe to the next response, waking on an interrupt or the deadline.
+            loop {
+                let subscription_end_fut =
+                    match self.deadline_tracker.track(self.subscription_interruption) {
+                        Ok(subscription_end_fut) => subscription_end_fut,
+                        Err(ResponseSubscriptionEnd::PollIntervalElapsed) => continue,
+                        Err(ResponseSubscriptionEnd::LockDeadlineReached) => break,
+                        Err(ResponseSubscriptionEnd::ExecutorClosing) => {
+                            return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing));
+                        }
+                        Err(ResponseSubscriptionEnd::ExecutionUpdated) => {
+                            return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel));
+                        }
+                    };
                 let last_response = self
                     .responses
                     .last()
@@ -614,7 +623,7 @@ impl EventHistory {
                     .subscribe_to_next_responses(
                         db_connection.execution_id(),
                         last_response,
-                        timeout_fut,
+                        subscription_end_fut,
                     )
                     .await
                 {
@@ -638,17 +647,21 @@ impl EventHistory {
                             return Ok(accept_resp);
                         } // this did not unblock the execution, loop
                     }
-                    Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
+                    Err(SubscribeToResponsesError::DbErrorRead(err)) => {
                         return Err(ApplyError::DbError(DbErrorWrite::from(err)));
                     }
-                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout)) => {
-                        // Let the next iteration of the loop decide
-                        // if this was caused by `subscription_interruption` or deadline.
-                    }
-                    Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        info!("Execution interrupt detected in subscribe_to_next_responses");
-                        return Err(ApplyError::ExecutionInterrupt);
-                    }
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::PollIntervalElapsed,
+                    )) => {}
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::LockDeadlineReached,
+                    )) => break,
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::ExecutorClosing,
+                    )) => return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing)),
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::ExecutionUpdated,
+                    )) => return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
                 }
             }
             debug!("Giving up on waiting for response");

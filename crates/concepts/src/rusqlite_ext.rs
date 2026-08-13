@@ -2,7 +2,8 @@ use crate::{
     ExecutionId, JoinSetId,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
+        DbErrorWriteNonRetriable, SubscribeToResponsesError,
     },
 };
 use rusqlite::{
@@ -129,6 +130,12 @@ impl From<rusqlite::Error> for DbErrorRead {
     }
 }
 impl From<rusqlite::Error> for DbErrorReadWithTimeout {
+    #[track_caller]
+    fn from(err: rusqlite::Error) -> Self {
+        Self::from(DbErrorRead::from(err))
+    }
+}
+impl From<rusqlite::Error> for SubscribeToResponsesError {
     #[track_caller]
     fn from(err: rusqlite::Error) -> Self {
         Self::from(DbErrorRead::from(err))

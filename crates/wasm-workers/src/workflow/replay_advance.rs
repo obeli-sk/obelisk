@@ -141,8 +141,8 @@ pub enum AdvanceError {
     // Errors from ReplayInternalError
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
-    #[error("execution interrupt")]
-    ExecutionInterrupt,
+    #[error("executor closing")]
+    ExecutorClosing,
 }
 impl From<ReplayInternalError> for AdvanceError {
     fn from(value: ReplayInternalError) -> Self {
@@ -156,7 +156,7 @@ impl From<ReplayInternalError> for AdvanceError {
                     "advance() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
                 )
             }
-            ReplayInternalError::ExecutionInterrupt(_) => Self::ExecutionInterrupt,
+            ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
         }
     }
 }
@@ -185,8 +185,8 @@ pub enum ReplayError {
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
     // Transient error
-    #[error("execution interrupt")]
-    ExecutionInterrupt,
+    #[error("executor closing")]
+    ExecutorClosing,
     /// Replay failed.
     /// `captured_writes` is non-empty iff execution has not finished yet, and therefore can be advanced to an execution error.
     #[error("fatal error: {err}")]
@@ -205,8 +205,8 @@ pub(crate) enum ReplayInternalError {
     LimitReached { reason: String, version: Version },
     #[error("lock expired")]
     LockExpired(Version),
-    #[error("execution interrupt")]
-    ExecutionInterrupt(Version),
+    #[error("executor closing")]
+    ExecutorClosing(Version),
 }
 impl From<ReplayInternalError> for ReplayError {
     fn from(value: ReplayInternalError) -> Self {
@@ -220,7 +220,7 @@ impl From<ReplayInternalError> for ReplayError {
                     "replay() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
                 )
             }
-            ReplayInternalError::ExecutionInterrupt(_) => Self::ExecutionInterrupt,
+            ReplayInternalError::ExecutorClosing(_) => Self::ExecutorClosing,
         }
     }
 }

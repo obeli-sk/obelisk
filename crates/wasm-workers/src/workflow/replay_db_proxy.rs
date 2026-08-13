@@ -16,9 +16,9 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
-        CapturedDbWrite, CreateRequest, DbConnection, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorWrite, DbErrorWriteNonRetriable, ExecutionRequest, LogInfoAppendRow, ResponseCursor,
-        ResponseWithCursor, TimeoutOutcome, Version,
+        CapturedDbWrite, CreateRequest, DbConnection, DbErrorRead, DbErrorWrite,
+        DbErrorWriteNonRetriable, ExecutionRequest, LogInfoAppendRow, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, SubscribeToResponsesError, Version,
     },
 };
 use db_common::JoinSetResponseId;
@@ -777,10 +777,12 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
         &self,
         _execution_id: &ExecutionId,
         _last_response: ResponseCursor,
-        _timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout> {
+        _subscription_end_fut: Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, SubscribeToResponsesError> {
         // During replay, there are no new responses to subscribe to.
-        Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Timeout))
+        Err(SubscribeToResponsesError::SubscriptionEnded(
+            ResponseSubscriptionEnd::LockDeadlineReached,
+        ))
     }
 
     async fn flush_non_blocking_event_cache(

@@ -130,10 +130,16 @@ impl GrpcServer {
                 .cancel_activity(conn.as_ref(), execution_id, executed_at)
                 .await
                 .to_status(),
-            ComponentType::Workflow => conn
-                .cancel_workflow_with_retries(execution_id, executed_at)
-                .await
-                .to_status(),
+            ComponentType::Workflow => {
+                let outcome = conn
+                    .cancel_workflow_with_retries(execution_id, executed_at)
+                    .await
+                    .to_status()?;
+                // Best-effort CPU saver: the write above already cancels it; a locally-running
+                // workflow would otherwise burn CPU until its next db append fails on that write.
+                self.cancel_registry.signal_workflow_interrupt(execution_id);
+                Ok(outcome)
+            }
             _ => Err(tonic::Status::invalid_argument(
                 "cancelled execution must be an activity or cancellable workflow",
             )),
@@ -1049,8 +1055,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                             grpc_gen::advance_execution_response::error::ReplayMismatch {},
                         )
                     }
-                    err
-                    @ (AdvanceError::ExecutionInterrupt | AdvanceError::LimitReached { .. }) => {
+                    err @ (AdvanceError::ExecutorClosing | AdvanceError::LimitReached { .. }) => {
                         grpc_gen::advance_execution_response::error::Error::TransientError(
                             grpc_gen::advance_execution_response::error::TransientError {
                                 message: err.to_string(),
@@ -1267,8 +1272,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         conn.pause_execution(&execution_id, executed_at)
             .await
             .to_status()?;
-        // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
-        self.cancel_registry.signal_pause(&execution_id);
+        // Best-effort CPU saver: the write above already pauses it; a locally-running
+        // workflow would otherwise burn CPU until its next db append fails on that write.
+        self.cancel_registry
+            .signal_workflow_interrupt(&execution_id);
         Ok(tonic::Response::new(grpc_gen::PauseExecutionResponse {}))
     }
 
