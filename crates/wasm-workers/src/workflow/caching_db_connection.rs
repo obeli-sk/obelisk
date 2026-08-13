@@ -13,8 +13,8 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, AppendRequest, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
-        DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, LogInfoAppendRow, ResponseCursor,
-        ResponseWithCursor, TimeoutOutcome, Version,
+        DbErrorRead, DbErrorWrite, LogInfoAppendRow, ResponseCursor, ResponseSubscriptionEnd,
+        ResponseWithCursor, SubscribeToResponsesError, Version,
     },
 };
 use db_common::JoinSetResponseId;
@@ -116,8 +116,8 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
         &self,
         execution_id: &ExecutionId,
         last_response: ResponseCursor,
-        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout>;
+        subscription_end_fut: Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, SubscribeToResponsesError>;
 
     async fn flush_non_blocking_event_cache(
         &mut self,
@@ -559,10 +559,10 @@ impl WorkflowDbConnection for CachingDbConnection {
         &self,
         execution_id: &ExecutionId,
         last_response: ResponseCursor,
-        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout> {
+        subscription_end_fut: Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, SubscribeToResponsesError> {
         self.db_connection
-            .subscribe_to_next_responses(execution_id, last_response, timeout_fut)
+            .subscribe_to_next_responses(execution_id, last_response, subscription_end_fut)
             .await
     }
 

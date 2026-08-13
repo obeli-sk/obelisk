@@ -26,9 +26,10 @@ use concepts::{
         LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Unlocked, Version, VersionType, WasmBacktrace,
+        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked, Version,
+        VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -4371,13 +4372,13 @@ impl DbConnection for PostgresConnection {
         Ok(version)
     }
 
-    #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
+    #[instrument(level = Level::DEBUG, skip(self, subscription_end_fut))]
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
         last_response: ResponseCursor,
-        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout> {
+        subscription_end_fut: Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, SubscribeToResponsesError> {
         debug!("next_responses");
         let unique_tag: u64 = rand::random();
         let execution_id_clone = execution_id.clone();
@@ -4427,9 +4428,9 @@ impl DbConnection for PostgresConnection {
         let woken = tokio::select! {
             resp = receiver => match resp {
                 Ok(()) => Ok(()),
-                Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
+                Err(_) => Err(SubscribeToResponsesError::from(DbErrorGeneric::Close)),
             },
-            outcome = timeout_fut => Err(DbErrorReadWithTimeout::Timeout(outcome)),
+            reason = subscription_end_fut => Err(SubscribeToResponsesError::SubscriptionEnded(reason)),
         };
 
         cleanup();

@@ -26,9 +26,10 @@ use concepts::{
         LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseWithCursor,
-        STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, TimeoutOutcome,
-        Unlocked, Version, VersionType,
+        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
+        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
+        STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked, Version,
+        VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -123,6 +124,7 @@ mod conversions {
         StrVariant,
         storage::{
             DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
+            SubscribeToResponsesError,
         },
     };
     use rusqlite::{
@@ -185,6 +187,11 @@ mod conversions {
         }
     }
     impl From<RusqliteError> for DbErrorReadWithTimeout {
+        fn from(err: RusqliteError) -> Self {
+            Self::from(DbErrorRead::from(err))
+        }
+    }
+    impl From<RusqliteError> for SubscribeToResponsesError {
         fn from(err: RusqliteError) -> Self {
             Self::from(DbErrorRead::from(err))
         }
@@ -5597,13 +5604,13 @@ impl DbConnection for SqlitePool {
     // Supports only one subscriber per execution id.
     // A new call will overwrite the old subscriber, the old one will end
     // with a timeout, which is fine.
-    #[instrument(level = Level::DEBUG, skip(self, timeout_fut))]
+    #[instrument(level = Level::DEBUG, skip(self, subscription_end_fut))]
     async fn subscribe_to_next_responses(
         &self,
         execution_id: &ExecutionId,
         last_response: ResponseCursor,
-        timeout_fut: Pin<Box<dyn Future<Output = TimeoutOutcome> + Send>>,
-    ) -> Result<Vec<ResponseWithCursor>, DbErrorReadWithTimeout> {
+        subscription_end_fut: Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+    ) -> Result<Vec<ResponseWithCursor>, SubscribeToResponsesError> {
         debug!("next_responses");
         let unique_tag: u64 = rand::random();
         let execution_id = execution_id.clone();
@@ -5633,7 +5640,7 @@ impl DbConnection for SqlitePool {
                             .lock()
                             .unwrap()
                             .insert(execution_id.clone(), (sender, unique_tag));
-                        Ok::<_, DbErrorReadWithTimeout>(itertools::Either::Right(receiver))
+                        Ok::<_, SubscribeToResponsesError>(itertools::Either::Right(receiver))
                     } else {
                         Ok(itertools::Either::Left(responses))
                     }
@@ -5652,9 +5659,9 @@ impl DbConnection for SqlitePool {
                 let woken = tokio::select! {
                     resp = receiver => match resp {
                         Ok(()) => Ok(()),
-                        Err(_) => Err(DbErrorReadWithTimeout::from(DbErrorGeneric::Close)),
+                        Err(_) => Err(SubscribeToResponsesError::from(DbErrorGeneric::Close)),
                     },
-                    outcome = timeout_fut => Err(DbErrorReadWithTimeout::Timeout(outcome)),
+                    reason = subscription_end_fut => Err(SubscribeToResponsesError::SubscriptionEnded(reason)),
                 };
                 cleanup();
                 woken?;
@@ -5663,7 +5670,7 @@ impl DbConnection for SqlitePool {
                 self.transaction(
                     move |tx| {
                         Self::get_responses_after(tx, &execution_id, last_response)
-                            .map_err(DbErrorReadWithTimeout::from)
+                            .map_err(SubscribeToResponsesError::from)
                     },
                     TxType::Other, // read only
                     "subscribe_to_next_responses_refetch",

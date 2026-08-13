@@ -2875,6 +2875,14 @@ mod tests {
             .tick_test(sim_clock.now(), RunId::generate())
             .await;
 
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .pause_execution(&execution_id, sim_clock.now())
+            .await
+            .unwrap();
+
         // `signal_workflow_interrupt` is a no-op until `run()` registers the execution,
         // so retry until the worker (blocked in the first `obelisk.sleep`) observes it
         // and returns; the loop is aborted once the worker task exits.
@@ -2891,21 +2899,18 @@ mod tests {
         progress.wait_for_tasks().await;
         signaller.abort();
 
-        // A `PauseOrCancel` interrupt appends nothing; an `Unlocked` would be the
-        // executor-closing disposition.
+        // Pausing the locked workflow appends one `Unlocked`; the worker must not
+        // append another one when it observes the local interrupt.
         let log = db_connection.get(&execution_id).await.unwrap();
-        let has_unlocked = log
+        let unlocked_count = log
             .events
             .iter()
-            .any(|e| matches!(e.event, ExecutionRequest::Unlocked(_)));
+            .filter(|e| matches!(e.event, ExecutionRequest::Unlocked(_)))
+            .count();
+        assert_eq!(unlocked_count, 1, "unexpected events: {:?}", log.events);
         assert!(
-            !has_unlocked,
-            "pause/cancel interrupt must not append Unlocked, got: {:?}",
-            log.events
-        );
-        assert!(
-            !log.pending_state.is_finished(),
-            "execution must not be finished, got: {:?}",
+            log.pending_state.is_paused(),
+            "execution must remain paused, got: {:?}",
             log.pending_state
         );
         drop(db_connection);

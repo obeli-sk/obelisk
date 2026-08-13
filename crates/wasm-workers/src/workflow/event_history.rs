@@ -7,7 +7,7 @@ use super::host_exports::latest::obelisk::types::execution::GetExtensionError;
 use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested, TrackPrecheck};
+use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested};
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
@@ -29,7 +29,6 @@ use concepts::storage;
 use concepts::storage::AppendResponseToExecution;
 use concepts::storage::BacktraceInfo;
 use concepts::storage::ChildExecutionRequestError;
-use concepts::storage::DbErrorReadWithTimeout;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::HistoryEventScheduleAt;
 use concepts::storage::Locked;
@@ -43,6 +42,7 @@ use concepts::storage::{
     AppendRequest, CreateRequest, ExecutionRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest};
+use concepts::storage::{ResponseSubscriptionEnd, SubscribeToResponsesError};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params};
 use db_common::{JoinSetOpenTracker, JoinSetOpenTrackerError, JoinSetResponseId};
@@ -602,16 +602,18 @@ impl EventHistory {
 
             // Subscribe to the next response, waking on an interrupt or the deadline.
             loop {
-                // `track` reports the concrete reason it declines to wait; its future
-                // (below) resolves opaquely, so re-`track` after each wake to classify.
-                let timeout_fut = match self.deadline_tracker.track(self.subscription_interruption) {
-                    Ok(timeout_fut) => timeout_fut,
-                    Err(TrackPrecheck::LockDeadlineReached) => break,
-                    Err(TrackPrecheck::Interrupt(kind)) => {
-                        info!("Execution interrupt detected while waiting for a response: {kind:?}");
-                        return Err(ApplyError::Interrupt(kind));
-                    }
-                };
+                let subscription_end_fut =
+                    match self.deadline_tracker.track(self.subscription_interruption) {
+                        Ok(subscription_end_fut) => subscription_end_fut,
+                        Err(ResponseSubscriptionEnd::PollIntervalElapsed) => continue,
+                        Err(ResponseSubscriptionEnd::LockDeadlineReached) => break,
+                        Err(ResponseSubscriptionEnd::ExecutorClosing) => {
+                            return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing));
+                        }
+                        Err(ResponseSubscriptionEnd::ExecutionUpdated) => {
+                            return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel));
+                        }
+                    };
                 let last_response = self
                     .responses
                     .last()
@@ -621,7 +623,7 @@ impl EventHistory {
                     .subscribe_to_next_responses(
                         db_connection.execution_id(),
                         last_response,
-                        timeout_fut,
+                        subscription_end_fut,
                     )
                     .await
                 {
@@ -645,11 +647,21 @@ impl EventHistory {
                             return Ok(accept_resp);
                         } // this did not unblock the execution, loop
                     }
-                    Err(DbErrorReadWithTimeout::DbErrorRead(err)) => {
+                    Err(SubscribeToResponsesError::DbErrorRead(err)) => {
                         return Err(ApplyError::DbError(DbErrorWrite::from(err)));
                     }
-                    // Woke on deadline or interrupt; the next `track` classifies which.
-                    Err(DbErrorReadWithTimeout::Timeout(_)) => {}
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::PollIntervalElapsed,
+                    )) => {}
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::LockDeadlineReached,
+                    )) => break,
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::ExecutorClosing,
+                    )) => return Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing)),
+                    Err(SubscribeToResponsesError::SubscriptionEnded(
+                        ResponseSubscriptionEnd::ExecutionUpdated,
+                    )) => return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
                 }
             }
             debug!("Giving up on waiting for response");

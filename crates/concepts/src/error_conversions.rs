@@ -2,7 +2,8 @@ use crate::{
     JoinSetIdParseError,
     prefixed_ulid::{DerivedIdParseError, ExecutionIdParseError, PrefixedUlidParseError},
     storage::{
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite, VersionParseError,
+        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorWrite,
+        SubscribeToResponsesError, VersionParseError,
     },
 };
 use std::{panic::Location, sync::Arc};
@@ -85,6 +86,12 @@ impl From<DerivedIdParseError> for DbErrorGeneric {
 
 impl From<DbErrorGeneric> for DbErrorReadWithTimeout {
     fn from(value: DbErrorGeneric) -> DbErrorReadWithTimeout {
+        Self::from(DbErrorRead::from(value))
+    }
+}
+
+impl From<DbErrorGeneric> for SubscribeToResponsesError {
+    fn from(value: DbErrorGeneric) -> Self {
         Self::from(DbErrorRead::from(value))
     }
 }

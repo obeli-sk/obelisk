@@ -500,7 +500,7 @@ impl From<WorkflowError> for WorkerError {
 }
 
 #[derive(derive_more::Debug, thiserror::Error)]
-pub enum JoinSetCloseError {
+pub(crate) enum JoinSetCloseError {
     #[error(transparent)]
     DbError(DbErrorWrite),
     #[error("fatal error: {err}")]
@@ -521,9 +521,7 @@ impl JoinSetCloseError {
                 version,
                 db_connection,
             },
-            JoinSetCloseError::Interrupt(version, kind) => {
-                WorkflowError::Interrupt(version, kind)
-            }
+            JoinSetCloseError::Interrupt(version, kind) => WorkflowError::Interrupt(version, kind),
         }
     }
 }
@@ -1018,6 +1016,12 @@ impl WorkflowWorker {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::LockExpired(workflow_ctx.version().clone()))
             }
+            WorkerResultRefactored::Interrupt(InterruptKind::PauseOrCancel, workflow_ctx) => {
+                Err(WorkflowError::Interrupt(
+                    workflow_ctx.version().clone(),
+                    InterruptKind::PauseOrCancel,
+                ))
+            }
             WorkerResultRefactored::Interrupt(kind, mut workflow_ctx) => {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::Interrupt(
@@ -1070,6 +1074,15 @@ impl WorkflowWorker {
                 )
             }
             Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
+                if matches!(
+                    worker_partial_result,
+                    WorkerPartialResult::Interrupt(InterruptKind::PauseOrCancel)
+                ) {
+                    return WorkerResultRefactored::Interrupt(
+                        InterruptKind::PauseOrCancel,
+                        workflow_ctx,
+                    );
+                }
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
                         error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
