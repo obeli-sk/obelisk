@@ -156,6 +156,14 @@ params = [
 ]
 return_type = "result<string, string>"
 
+[[workflow_js]]
+location = "crates/testing/test-programs/js/workflow/stub_join_next_try_loop.js"
+ffqn = "testing:integration/workflow-stub-loop.stub-join-next-try-loop"
+params = [
+  { name = "id", type = "u64" },
+]
+return_type = "result<string, string>"
+
 [[activity_stub]]
 ffqn = "testing:integration/stubs.my-stub"
 params = [
