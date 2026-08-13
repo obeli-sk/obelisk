@@ -694,11 +694,13 @@ impl WorkflowWorker {
         is_replay: Option<ReplayKind>,
         view: WorkflowWorkerView<'_>,
         backtrace_capture: bool,
+        pause_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
         let deadline_tracker = match view.deadline_factory.create(
             ctx.locked_event.lock_expires_at,
             ctx.execution_interrupt_watcher,
+            pause_watcher,
         ) {
             Ok(deadline_tracker) => deadline_tracker,
             Err(lock_already_expired) => {
@@ -1173,6 +1175,7 @@ impl WorkflowWorker {
             Some(replay_kind),
             view,
             backtrace_capture,
+            tokio::sync::watch::channel(false).1, // replay is never paused
         )
         .await
         {
@@ -1255,6 +1258,7 @@ impl WorkflowWorker {
         is_replay: Option<ReplayKind>,
         view: WorkflowWorkerView<'_>,
         backtrace_capture: bool,
+        pause_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<
         (
             Either<WorkerResultOk, ReplayInterrupt>,
@@ -1270,8 +1274,15 @@ impl WorkflowWorker {
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
         let fuel = view.config.fuel;
-        let prepare_finished =
-            Self::prepare_func(ctx, db_connection, is_replay, view, backtrace_capture).await?;
+        let prepare_finished = Self::prepare_func(
+            ctx,
+            db_connection,
+            is_replay,
+            view,
+            backtrace_capture,
+            pause_watcher,
+        )
+        .await?;
         Self::call_func_convert_result(
             prepare_finished.store,
             prepare_finished.func,
@@ -1708,12 +1719,18 @@ impl Worker for WorkflowWorker {
             deadline_factory: self.deadline_factory.as_ref(),
             logs_storage_config: self.logs_storage_config.clone(),
         };
+        // Register for same-node pause interruption; the cancel watcher prunes the
+        // entry once this run drops the receiver (held in the deadline tracker).
+        let pause_watcher = self
+            .cancel_registry
+            .register_running_workflow(ctx.execution_id.clone());
         let res = Self::run_internal(
             ctx,
             db_connection,
             None, // is_replay
             view,
             false,
+            pause_watcher,
         )
         .await;
         worker_span.in_scope(|| match res {

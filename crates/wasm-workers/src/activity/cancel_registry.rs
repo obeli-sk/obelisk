@@ -8,17 +8,20 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tracing::{Instrument, debug, info, info_span};
 
 #[derive(Clone)]
-/// All currently running activities in this process.
-/// Activity worker tasks register themselves and listen on interruption token.
-/// Cancel RPCs and workflow workers call `cancel_activity`
-/// which writes durable cancellation intent to db (no matter whether registered or not)
-/// and triggers the interruption token.
+/// All currently running activities and workflows in this process.
+/// Activity worker tasks register themselves and listen on an interruption token;
+/// cancel RPCs and workflow workers call `cancel_activity`, which writes durable
+/// cancellation intent to db (whether registered or not) and triggers the token.
+/// Workflow worker tasks register a per-execution pause watch (pruned by `tick`
+/// once the run drops its receiver); the pause RPC calls `signal_pause` to
+/// interrupt a locally-running workflow (`ExecutionInterrupt`).
 pub struct CancelRegistry {
     tokens: Arc<Mutex<hashbrown::HashMap<ExecutionId, ActivityInfo>>>,
+    running_workflows: Arc<Mutex<hashbrown::HashMap<ExecutionId, watch::Sender<bool>>>>,
 }
 
 struct ActivityInfo {
@@ -36,6 +39,7 @@ impl CancelRegistry {
     pub fn new() -> CancelRegistry {
         CancelRegistry {
             tokens: Arc::default(),
+            running_workflows: Arc::default(),
         }
     }
 
@@ -57,8 +61,16 @@ impl CancelRegistry {
     }
 
     fn tick(&self) {
-        let mut guard = self.tokens.lock().unwrap();
-        guard.retain(|_exe, info| !info.interrupt_sender.is_closed());
+        self.tokens
+            .lock()
+            .unwrap()
+            .retain(|_exe, info| !info.interrupt_sender.is_closed());
+        // A workflow's receiver lives in its deadline tracker for the run's
+        // lifetime, so `is_closed` prunes the entry once the run ends/traps.
+        self.running_workflows
+            .lock()
+            .unwrap()
+            .retain(|_exe, sender| !sender.is_closed());
     }
 
     pub(crate) fn activity_obtain_interrupt_token(
@@ -69,6 +81,28 @@ impl CancelRegistry {
         let (interrupt_sender, receiver) = oneshot::channel();
         guard.insert(execution_id, ActivityInfo { interrupt_sender });
         receiver
+    }
+
+    /// Register a locked workflow run so a `signal_pause` can interrupt it same-node.
+    /// The returned receiver is threaded into the deadline tracker; the entry is
+    /// pruned by `tick` once the run drops it (completion, trap, or panic).
+    #[must_use]
+    pub fn register_running_workflow(&self, execution_id: ExecutionId) -> watch::Receiver<bool> {
+        let (sender, receiver) = watch::channel(false);
+        self.running_workflows
+            .lock()
+            .unwrap()
+            .insert(execution_id, sender);
+        receiver
+    }
+
+    /// Best-effort interrupt of a locally-running workflow after its durable pause
+    /// write. A no-op if the workflow is not running in this process (another node,
+    /// or not currently locked).
+    pub fn signal_pause(&self, execution_id: &ExecutionId) {
+        if let Some(sender) = self.running_workflows.lock().unwrap().get(execution_id) {
+            let _ = sender.send(true);
+        }
     }
 
     /// It is the responsibility of the caller to check that the execution belongs to an activity!
