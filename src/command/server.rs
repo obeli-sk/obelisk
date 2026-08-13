@@ -185,8 +185,8 @@ use wasm_workers::workflow::deadline_tracker::{
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerCompiled;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
-use wasm_workers::workflow::workflow_worker::JoinNextBlockingStrategy;
 use wasm_workers::workflow::workflow_worker::WorkflowConfig;
+use wasm_workers::workflow::workflow_worker::WorkflowConfigMode;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 use wasmtime::Engine;
@@ -2012,6 +2012,9 @@ struct ServerVerifiedLaunch {
     /// Deprecated server-wide override; when set, applies to every workflow. See
     /// `WorkflowsGlobalConfigToml::lock_extension_leeway`.
     deprecated_workflows_lock_extension_leeway: Option<Duration>,
+    /// Bound on captured writes collected during a single replay pass. See
+    /// `WorkflowsGlobalConfigToml::max_replay_captured_writes`.
+    workflows_max_replay_captured_writes: usize,
 }
 
 impl ServerVerified {
@@ -2056,6 +2059,8 @@ impl ServerVerified {
                  instead. While set, it overrides the per-workflow value for every workflow."
             );
         }
+        let workflows_max_replay_captured_writes =
+            config.workflows_global_config.max_replay_captured_writes;
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
         let global_executor_instance_limiter = config
             .wasm_global_config
@@ -2083,6 +2088,7 @@ impl ServerVerified {
                 engines,
                 build_semaphore,
                 deprecated_workflows_lock_extension_leeway,
+                workflows_max_replay_captured_writes,
             },
             allow_exec_activities: config.allow_exec_activities,
             http_servers,
@@ -2165,6 +2171,7 @@ impl ServerCompiledLinked {
             global_http_config,
             server_verified.build_semaphore,
             server_verified.deprecated_workflows_lock_extension_leeway,
+            server_verified.workflows_max_replay_captured_writes,
             termination_watcher,
             suppress_linking_errors,
         )
@@ -3821,6 +3828,8 @@ impl DeploymentVerified {
                                 workflow_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
                                 global_executor_instance_limiter.clone(),
+                                fuel,
+                                subscription_interruption,
                             ).await?
                         );
                     }
@@ -3937,6 +3946,7 @@ async fn compile_and_link(
     global_http_config: GlobalHttpConfig,
     build_semaphore: Option<u64>,
     deprecated_workflows_lock_extension_leeway: Option<Duration>,
+    workflows_max_replay_captured_writes: usize,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
@@ -4118,7 +4128,12 @@ async fn compile_and_link(
                 span.in_scope(|| {
                     let leeway = deprecated_workflows_lock_extension_leeway
                         .unwrap_or(workflow.lock_extension_leeway);
-                    prespawn_workflow_wasm(workflow, &engines, leeway)
+                    prespawn_workflow_wasm(
+                        workflow,
+                        &engines,
+                        leeway,
+                        workflows_max_replay_captured_writes,
+                    )
                     .map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
@@ -4139,7 +4154,13 @@ async fn compile_and_link(
                 span.in_scope(|| {
                     let leeway = deprecated_workflows_lock_extension_leeway
                         .unwrap_or(workflow_js.lock_extension_leeway);
-                    prespawn_workflow_js(workflow_js, &engines, workflow_js_runnable, leeway)
+                    prespawn_workflow_js(
+                        workflow_js,
+                        &engines,
+                        workflow_js_runnable,
+                        leeway,
+                        workflows_max_replay_captured_writes,
+                    )
                         .map(|(worker, component_config, frame_files)| {
                             CompiledComponent::ActivityOrWorkflow {
                                 worker,
@@ -4737,6 +4758,7 @@ fn prespawn_workflow_wasm(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
     workflows_lock_extension_leeway: Duration,
+    max_replay_captured_writes: usize,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
     let component_id = workflow.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
@@ -4753,6 +4775,7 @@ fn prespawn_workflow_wasm(
         workflow,
         wit,
         workflows_lock_extension_leeway,
+        max_replay_captured_writes,
     )
     .with_context(|| format!("cannot compile {component_id}"))
 }
@@ -4767,6 +4790,7 @@ fn prespawn_workflow_js(
     engines: &Engines,
     runnable_component: RunnableComponent,
     workflows_lock_extension_leeway: Duration,
+    max_replay_captured_writes: usize,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
@@ -4779,7 +4803,7 @@ fn prespawn_workflow_js(
 
     let replay_inner = WorkflowWorkerCompiled::new_with_config(
         runnable_component.clone(),
-        replay_workflow_config(&component_id),
+        replay_workflow_config(&workflow_js.workflow_config, max_replay_captured_writes),
         engine.clone(),
         Now.clone_box(),
     )
@@ -4844,16 +4868,20 @@ fn prespawn_workflow_js(
     ))
 }
 
-/// Replay-purposed [`WorkflowConfig`]: Interrupt strategy, stubbed WASI, no lock
-/// extension, no subscription interruption, no fuel limit.
-fn replay_workflow_config(component_id: &ComponentId) -> WorkflowConfig {
+/// Replay-purposed [`WorkflowConfig`] derived from the real config: `Replay` mode (forces the
+/// `Interrupt` strategy) bounded by `max_replay_captured_writes`, inheriting `stub_wasi` and `fuel`
+/// from the real config so replay behaves like the real run.
+fn replay_workflow_config(
+    real_config: &WorkflowConfig,
+    max_replay_captured_writes: usize,
+) -> WorkflowConfig {
     WorkflowConfig {
-        component_id: component_id.clone(),
-        join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
-        stub_wasi: true,
-        fuel: None,
-        lock_extension: None, // does not matter for the `Interrupt` strategy.
-        subscription_interruption: None, // does not matter for the `Interrupt` strategy.
+        component_id: real_config.component_id.clone(),
+        stub_wasi: real_config.stub_wasi,
+        fuel: real_config.fuel,
+        mode: WorkflowConfigMode::Replay {
+            max_replay_captured_writes,
+        },
     }
 }
 
@@ -4974,13 +5002,14 @@ impl WorkerCompiled {
         workflow: WorkflowConfigVerified,
         wit: String,
         workflows_lock_extension_leeway: Duration,
+        max_replay_captured_writes: usize,
     ) -> Result<
         (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent),
         utils::wasm_tools::DecodeError,
     > {
         let replay_compiled = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
-            replay_workflow_config(&workflow.workflow_config.component_id),
+            replay_workflow_config(&workflow.workflow_config, max_replay_captured_writes),
             engine.clone(),
             Now.clone_box(),
         )?;

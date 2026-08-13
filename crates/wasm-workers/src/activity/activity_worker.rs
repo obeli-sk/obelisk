@@ -197,7 +197,7 @@ impl Worker for ActivityWorker {
         let interrupt_token = self
             .cancel_registry
             .activity_obtain_interrupt_token(ctx.execution_id.clone());
-        let mut executor_close_watcher = ctx.executor_close_watcher.clone();
+        let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
 
         let (mut store, deadline_duration) = match self.create_store(ctx, started_at) {
             Ok(store) => store,
@@ -226,8 +226,8 @@ impl Worker for ActivityWorker {
                         Ok(worker_res_ok) => {
                             info!(duration = ?stopwatch_for_reporting.elapsed(), "Run finished: {worker_res_ok}");
                         }
-                        Err(WorkerError::ExecutorClosing(_)) => {
-                            info!("Executor closing");
+                        Err(WorkerError::ExecutionInterrupt(_)) => {
+                            info!("Execution interrupted");
                         }
                         Err(err) => {
                             info!(%err, duration = ?stopwatch_for_reporting.elapsed(), "Run finished with an error");
@@ -263,10 +263,10 @@ impl Worker for ActivityWorker {
                 debug!("Activity run interrupted, finalizing cancellation after dropping store");
                 return WorkerResult::Err(WorkerError::FatalError(FatalError::Cancelled, version));
             }
-            _ = executor_close_watcher.changed() => {
-                debug!("Executor is closing");
+            _ = execution_interrupt_watcher.changed() => {
+                debug!("Execution interrupted");
                 // Executor will append the Unlocked event.
-                return WorkerResult::Err(WorkerError::ExecutorClosing(version.clone()))
+                return WorkerResult::Err(WorkerError::ExecutionInterrupt(version.clone()))
             }
         }
     }
@@ -1061,7 +1061,7 @@ pub(crate) mod tests {
                 let fibo_worker = fibo_worker.clone();
                 let sim_clock = sim_clock.clone();
                 let execution_id = ExecutionId::generate();
-                let (executor_close_tx, executor_close_watcher) =
+                let (execution_interrupt_tx, execution_interrupt_watcher) =
                     tokio::sync::watch::channel(false);
                 let ctx = WorkerContext {
                     execution_id: execution_id.clone(),
@@ -1083,11 +1083,11 @@ pub(crate) mod tests {
                         lock_expires_at: sim_clock.now() + lock_expiry,
                         retry_config: ComponentRetryConfig::ZERO,
                     },
-                    executor_close_watcher,
+                    execution_interrupt_watcher,
                 };
                 tokio::spawn(async move {
                     let res = fibo_worker.run(ctx).await;
-                    drop(executor_close_tx);
+                    drop(execution_interrupt_tx);
                     res
                 })
             })
@@ -1236,7 +1236,8 @@ pub(crate) mod tests {
 
         let executed_at = sim_clock.now();
         let version = Version::new(10);
-        let (_executor_close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let (_execution_interrupt_tx, execution_interrupt_watcher) =
+            tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
@@ -1261,7 +1262,7 @@ pub(crate) mod tests {
                 lock_expires_at: executed_at + TIMEOUT,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher,
+            execution_interrupt_watcher,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
@@ -1294,7 +1295,8 @@ pub(crate) mod tests {
         let execution_deadline = sim_clock.now();
         sim_clock.move_time_forward(Duration::from_millis(100));
         let version = Version::new(10);
-        let (_executor_close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let (_execution_interrupt_tx, execution_interrupt_watcher) =
+            tokio::sync::watch::channel(false);
         let ctx = WorkerContext {
             execution_id: ExecutionId::generate(),
             metadata: concepts::ExecutionMetadata::empty(),
@@ -1319,7 +1321,7 @@ pub(crate) mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher,
+            execution_interrupt_watcher,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()

@@ -104,8 +104,8 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
-    #[error("executor closing")]
-    ExecutorClosing,
+    #[error("execution interrupt")]
+    ExecutionInterrupt,
     #[error("replay interrupt")]
     ReplayInterrupt,
 }
@@ -171,6 +171,9 @@ pub(crate) struct EventHistory {
     last_oneoff_id: Option<JoinSetResponseId>,
     // Last one-off child execution (call-json / direct call), for `last-direct-call-id`.
     last_direct_call_id: Option<ExecutionIdDerived>,
+
+    // Upper bound on captured writes a replay pass may collect. `None` outside replay.
+    max_replay_captured_writes: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -223,6 +226,7 @@ impl EventHistory {
         subscription_interruption: Option<Duration>,
         worker_span: Span,
         replaying_unfinished_execution: bool,
+        max_replay_captured_writes: Option<usize>,
     ) -> EventHistory {
         EventHistory {
             replaying_unfinished_execution,
@@ -250,6 +254,7 @@ impl EventHistory {
             last_response_by_join_set: HashMap::default(),
             last_oneoff_id: None,
             last_direct_call_id: None,
+            max_replay_captured_writes,
         }
     }
 
@@ -369,9 +374,9 @@ impl EventHistory {
     ) -> Result<ChildReturnValue, ApplyError> {
         match self.deadline_tracker.check_preempt() {
             Ok(()) => {}
-            Err(PreemptRequested::ExecutorClosing) => {
-                info!("Executor closing detected in check_preempt");
-                return Err(ApplyError::ExecutorClosing);
+            Err(PreemptRequested::ExecutionInterrupt) => {
+                info!("Execution interrupt detected in check_preempt");
+                return Err(ApplyError::ExecutionInterrupt);
             }
         }
 
@@ -394,6 +399,19 @@ impl EventHistory {
         called_at: DateTime<Utc>,
     ) -> Result<ChildReturnValue, ApplyError> {
         debug!("applying {event_call:?}");
+
+        // A non-terminating workflow (e.g. a `joinNextTry` busy loop on a response that is never
+        // injected) would collect captured writes forever during replay, since the replay deadline
+        // never expires the lock. Once the collection hits the bound, interrupt replay so the writes
+        // gathered so far are returned as an advanceable prefix; advancing them and replaying again
+        // resumes collection from the persisted tip, stepping the workflow forward N writes at a time.
+        if let Some(max) = self.max_replay_captured_writes
+            && let Some(collected) = db_connection.captured_writes_collected()
+            && collected >= max
+        {
+            debug!("Reached replay captured-write limit of {max}, interrupting replay");
+            return Err(ApplyError::ReplayInterrupt);
+        }
 
         let wasm_backtrace = event_call.wasm_backtrace().cloned();
         match self.find_matching_atomic(&event_call)? {
@@ -584,7 +602,7 @@ impl EventHistory {
             let key = join_next_variant.as_key();
 
             // Subscribe to the next response.
-            // Break on `executor_close_watcher` or when timeout is reached.
+            // Break on `execution_interrupt_watcher` or when timeout is reached.
             while let Ok(timeout_fut) = self.deadline_tracker.track(self.subscription_interruption)
             {
                 let last_response = self
@@ -628,8 +646,8 @@ impl EventHistory {
                         // if this was caused by `subscription_interruption` or deadline.
                     }
                     Err(DbErrorReadWithTimeout::Timeout(TimeoutOutcome::Cancel)) => {
-                        info!("Executor is closing detected in subscribe_to_next_responses");
-                        return Err(ApplyError::ExecutorClosing);
+                        info!("Execution interrupt detected in subscribe_to_next_responses");
+                        return Err(ApplyError::ExecutionInterrupt);
                     }
                 }
             }
@@ -3574,6 +3592,7 @@ mod tests {
                 deadline_tracker_factory_test(&sim_clock),
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: 100,
+                    subscription_interruption: None,
                 },
                 TestingFnRegistry::new_from_components(vec![]),
             )
@@ -3619,7 +3638,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn regular_join_next_child(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100, subscription_interruption: None })]
         second_run_strategy: JoinNextBlockingStrategy,
     ) {
         test_utils::set_up();
@@ -3726,7 +3745,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn start_async_respond_then_join_next(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         const CHILD_RESP: SupportedFunctionReturnValue =
@@ -4148,6 +4167,7 @@ mod tests {
                     deadline_tracker_factory_test(&sim_clock),
                     JoinNextBlockingStrategy::Await {
                         non_blocking_event_batching: 0,
+                        subscription_interruption: None,
                     },
                     fn_registry.clone(),
                 )
@@ -4249,6 +4269,7 @@ mod tests {
                     deadline_tracker_factory_test(&sim_clock),
                     JoinNextBlockingStrategy::Await {
                         non_blocking_event_batching: 0,
+                        subscription_interruption: None,
                     },
                     fn_registry.clone(),
                 )
@@ -4306,6 +4327,7 @@ mod tests {
                     deadline_tracker_factory_test(&sim_clock),
                     JoinNextBlockingStrategy::Await {
                         non_blocking_event_batching: 0,
+                        subscription_interruption: None,
                     },
                     fn_registry.clone(),
                 )
@@ -4347,7 +4369,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn trimmed_second_execution_should_result_in_nondeterminism_detected(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 100, subscription_interruption: None })]
         second_run_strategy: JoinNextBlockingStrategy,
     ) {
         test_utils::set_up();
@@ -4546,6 +4568,7 @@ mod tests {
             None, // subscription_interruption
             info_span!("worker-test"),
             false, // replaying_unfinished_execution
+            None,  // max_replay_captured_writes
         );
 
         (

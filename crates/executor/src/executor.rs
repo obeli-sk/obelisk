@@ -50,7 +50,7 @@ pub struct ExecTask {
     db_pool: Arc<dyn DbPool>,
     locking_strategy_holder: LockingStrategyHolder,
     worker_count_tx: tokio::sync::watch::Sender<usize>,
-    executor_close_watcher: tokio::sync::watch::Receiver<bool>,
+    execution_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
 }
 
 #[derive(derive_more::Debug, Default)]
@@ -89,7 +89,7 @@ pub struct ExecutorTaskHandle {
     executor_id: ExecutorId,
     deployment_id: DeploymentId,
     // Signals close() -> workers to shut down
-    executor_closing_signal_sender: tokio::sync::watch::Sender<bool>,
+    execution_interrupt_sender: tokio::sync::watch::Sender<bool>,
     /// Tracks the number of worker tasks currently in-flight.
     worker_count_rx: tokio::sync::watch::Receiver<usize>,
 }
@@ -99,7 +99,7 @@ pub struct WorkerTasksHandle {
     executor_id: ExecutorId,
     deployment_id: DeploymentId,
     // Signals close() -> workers to shut down
-    executor_closing_signal_sender: tokio::sync::watch::Sender<bool>,
+    execution_interrupt_sender: tokio::sync::watch::Sender<bool>,
     /// Tracks the number of worker tasks currently in-flight.
     worker_count_rx: tokio::sync::watch::Receiver<usize>,
 }
@@ -128,7 +128,7 @@ impl ExecutorTaskHandle {
             component_id: self.component_id,
             executor_id: self.executor_id,
             deployment_id: self.deployment_id,
-            executor_closing_signal_sender: self.executor_closing_signal_sender,
+            execution_interrupt_sender: self.execution_interrupt_sender,
             worker_count_rx: self.worker_count_rx,
         }
     }
@@ -145,7 +145,7 @@ impl WorkerTasksHandle {
         deployment_id = %self.deployment_id))]
     pub async fn close(self) {
         debug!("Signaling worker tasks to unlock");
-        let _ = self.executor_closing_signal_sender.send(true);
+        let _ = self.execution_interrupt_sender.send(true);
         let mut worker_count_rx = self.worker_count_rx.clone();
         loop {
             tokio::select! {
@@ -213,7 +213,7 @@ impl ExecTask {
         ffqns: Arc<[FunctionFqn]>,
     ) -> (Self, tokio::sync::watch::Sender<bool>) {
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
-        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let (close_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
         (
             ExecTask {
                 worker,
@@ -222,7 +222,7 @@ impl ExecTask {
                 clock_fn,
                 db_pool,
                 worker_count_tx,
-                executor_close_watcher,
+                execution_interrupt_watcher,
             },
             close_tx,
         )
@@ -237,7 +237,7 @@ impl ExecTask {
     ) -> (Self, tokio::sync::watch::Sender<bool>) {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
-        let (close_tx, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let (close_tx, execution_interrupt_watcher) = tokio::sync::watch::channel(false);
         (
             Self {
                 worker,
@@ -246,19 +246,19 @@ impl ExecTask {
                 clock_fn,
                 db_pool,
                 worker_count_tx,
-                executor_close_watcher,
+                execution_interrupt_watcher,
             },
             close_tx,
         )
     }
 
     #[cfg(feature = "test")]
-    pub fn new_all_ffqns_test_with_close_watcher(
+    pub fn new_all_ffqns_test_with_interrupt_watcher(
         worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
-        executor_close_watcher: tokio::sync::watch::Receiver<bool>,
+        execution_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Self {
         let ffqns = extract_exported_ffqns_noext(worker.as_ref());
         let (worker_count_tx, _) = tokio::sync::watch::channel(0usize);
@@ -269,7 +269,7 @@ impl ExecTask {
             clock_fn,
             db_pool,
             worker_count_tx,
-            executor_close_watcher,
+            execution_interrupt_watcher,
         }
     }
 
@@ -288,7 +288,7 @@ impl ExecTask {
         let component_id = config.component_id.clone();
         let executor_id = config.executor_id;
         let (worker_count_tx, worker_count_rx) = tokio::sync::watch::channel(0);
-        let (executor_closing_signal_sender, executor_close_watcher) =
+        let (execution_interrupt_sender, execution_interrupt_watcher) =
             tokio::sync::watch::channel(false);
         let join_handle = tokio::spawn(async move {
             debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
@@ -300,7 +300,7 @@ impl ExecTask {
                 locking_strategy_holder: lock_strategy_holder,
                 clock_fn: clock_fn.clone_box(),
                 worker_count_tx,
-                executor_close_watcher,
+                execution_interrupt_watcher,
             };
             let mut old_err = None;
             while !is_closing_inner.load(Ordering::Relaxed) {
@@ -361,7 +361,7 @@ impl ExecTask {
             component_id,
             executor_id,
             deployment_id,
-            executor_closing_signal_sender,
+            execution_interrupt_sender,
             worker_count_rx,
         }
     }
@@ -532,7 +532,7 @@ impl ExecTask {
                 let component_type = self.config.component_id.component_type;
                 let worker_count_tx = self.worker_count_tx.clone();
                 worker_count_tx.send_modify(|n| *n += 1);
-                let executor_close_watcher = self.executor_close_watcher.clone();
+                let execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
                 tokio::spawn({
                     let worker_span2 = worker_span.clone();
                     let retry_config = self.config.retry_config;
@@ -546,7 +546,7 @@ impl ExecTask {
                             locked_execution,
                             retry_config,
                             worker_span2,
-                            executor_close_watcher
+                            execution_interrupt_watcher
                         )
                         .await;
                         debug!("run_worker finished with {res:?}");
@@ -572,7 +572,7 @@ impl ExecTask {
         locked_execution: LockedExecution,
         retry_config: ComponentRetryConfig,
         worker_span: Span,
-        executor_close_watcher: tokio::sync::watch::Receiver<bool>,
+        execution_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), DbErrorWrite> {
         debug!("Worker::run starting");
         trace!(
@@ -606,7 +606,7 @@ impl ExecTask {
             can_be_retried: can_be_retried.is_some(),
             locked_event: locked_execution.locked_event,
             worker_span,
-            executor_close_watcher,
+            execution_interrupt_watcher,
         };
         let worker_result = worker.run(ctx).await;
         debug!("Worker::run finished {worker_result:?}");
@@ -777,10 +777,10 @@ impl ExecTask {
                 let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
 
                 let (primary_event, child_finished, version) = match err {
-                    WorkerError::ExecutorClosing(version) => {
+                    WorkerError::ExecutionInterrupt(version) => {
                         let primary_event = ExecutionRequest::Unlocked(Unlocked {
                             unlocked_at: result_obtained_at,
-                            reason: "executor closing".into(),
+                            reason: "execution interrupt".into(),
                         });
                         (primary_event, None, version)
                     }

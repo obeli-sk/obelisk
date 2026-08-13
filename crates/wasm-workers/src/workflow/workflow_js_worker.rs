@@ -743,7 +743,9 @@ mod tests {
         DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
     };
     use crate::workflow::workflow_worker::tests::write_stub_response;
-    use crate::workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig};
+    use crate::workflow::workflow_worker::{
+        JoinNextBlockingStrategy, WorkflowConfig, WorkflowConfigMode,
+    };
     use assert_matches::assert_matches;
     use chrono::DateTime;
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest, Digest};
@@ -850,15 +852,17 @@ mod tests {
         clock_fn: Box<dyn concepts::time::ClockFn>,
         js_source: String,
         user_return_type: ReturnTypeExtendable,
+        max_replay_captured_writes: Option<usize>,
     ) -> WorkflowJsWorker {
         use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
         let config = WorkflowConfig {
             component_id,
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: true,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
+            mode: WorkflowConfigMode::Replay {
+                // `None` in tests means effectively unbounded.
+                max_replay_captured_writes: max_replay_captured_writes.unwrap_or(usize::MAX),
+            },
         };
         let compiled = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
@@ -914,11 +918,12 @@ mod tests {
 
         let config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: false,
             fuel: None,
-            lock_extension: Some(Duration::from_secs(1)),
-            subscription_interruption: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+                lock_extension: Some(Duration::from_secs(1)),
+            },
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config(
@@ -991,11 +996,12 @@ mod tests {
 
         let config = WorkflowConfig {
             component_id,
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: false,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+                lock_extension: None,
+            },
         };
 
         let compiled =
@@ -1047,7 +1053,7 @@ mod tests {
                 lock_expires_at: chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(60),
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
         }
     }
 
@@ -1323,11 +1329,12 @@ mod tests {
 
         let config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy,
             stub_wasi: false,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy,
+                lock_extension: None,
+            },
         };
 
         let compiled = WorkflowWorkerCompiled::new_with_config(
@@ -1412,7 +1419,7 @@ mod tests {
         ExecTask::new_all_ffqns_test(Arc::new(worker), exec_config, clock_fn, db_pool)
     }
 
-    fn new_js_workflow_exec_task_with_close_watcher(
+    fn new_js_workflow_exec_task_with_interrupt_watcher(
         worker: WorkflowJsWorker,
         clock_fn: Box<dyn ClockFn>,
         db_pool: Arc<dyn DbPool>,
@@ -1429,7 +1436,7 @@ mod tests {
             retry_config: ComponentRetryConfig::WORKFLOW,
             locking_strategy: LockingStrategy::ByComponentDigest,
         };
-        ExecTask::new_all_ffqns_test_with_close_watcher(
+        ExecTask::new_all_ffqns_test_with_interrupt_watcher(
             Arc::new(worker),
             exec_config,
             clock_fn,
@@ -1804,6 +1811,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
         replay_worker.replay(execution_id, false).await.unwrap();
         // Drop the worker so the log_sender is closed; otherwise `recv_many` blocks indefinitely.
@@ -2349,6 +2357,7 @@ mod tests {
             "session",
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
+                subscription_interruption: None,
             },
         )
         .await;
@@ -2707,7 +2716,7 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn executor_close_writes_unlocked_event(database: Database) {
+    async fn execution_interrupt_writes_unlocked_event(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
@@ -2737,7 +2746,7 @@ mod tests {
             workflow_engine,
         );
 
-        let exec_task = new_js_workflow_exec_task_with_close_watcher(
+        let exec_task = new_js_workflow_exec_task_with_interrupt_watcher(
             worker,
             sim_clock.clone_box(),
             db_pool.clone(),
@@ -3713,6 +3722,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
         let replay = replay_worker
             .replay(execution_id.clone(), false)
@@ -3879,6 +3889,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
         let replay = replay_worker
             .replay(execution_id.clone(), false)
@@ -3917,6 +3928,108 @@ mod tests {
             .expect("retval should be computed");
         let retval = assert_matches!(retval, SupportedFunctionReturnValue::Ok(Some(WastValWithType{ r#type: _, value })) => value);
         assert_eq!(WastVal::String("hello".into()), *retval);
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    /// A workflow that submits a stub whose response is never injected, then polls it forever with
+    /// `joinNextTry()`. During replay the poll never blocks, so replay would collect captured writes
+    /// indefinitely. `max_replay_captured_writes` bounds a single pass: replay returns the first N
+    /// writes as an advanceable prefix (instead of looping forever or erroring), and advancing them
+    /// then replaying again resumes from the persisted tip, stepping the workflow forward N at a time.
+    #[tokio::test]
+    async fn workflow_js_replay_join_next_try_loop_bounds_captured_writes() {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        const MAX: usize = 5;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+
+        let js_source = r"
+        export default function loop_forever() {
+            const js = obelisk.createJoinSet();
+            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            for (;;) {
+                const result = js.joinNextTry();
+                if (result !== undefined) {
+                    throw 'stub result was injected unexpectedly';
+                }
+            }
+        }";
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "loop-forever");
+        let sim_clock = SimClock::epoch();
+
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        );
+
+        let execution_id = ExecutionId::from_parts(0, 0);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+
+        let replay_worker = build_js_replay_worker(
+            DeploymentId::generate(),
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool,
+            None,
+            sim_clock.clone_box(),
+            js_source.to_string(),
+            default_return_type(),
+            Some(MAX),
+        );
+
+        // Replay bounds the pass to MAX captured writes and returns them as an advanceable prefix
+        // rather than looping forever.
+        let replay = replay_worker
+            .replay(execution_id.clone(), false)
+            .await
+            .unwrap();
+        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        assert_eq!(replay.captured_writes.len(), MAX);
+
+        // Advancing the prefix persists it; a fresh replay resumes past the tip and yields the next
+        // bounded batch, so the never-terminating workflow keeps making progress without erroring.
+        replay_worker
+            .advance(execution_id.clone(), replay, false)
+            .await
+            .unwrap();
+        let replay2 = replay_worker.replay(execution_id, false).await.unwrap();
+        let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
+        assert_eq!(replay2.captured_writes.len(), MAX);
+
         drop(db_connection);
         db_close.close().await;
     }
@@ -4003,6 +4116,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         ));
         let result = workflow_js_step_execution_until_finished(
             &*db_connection,
@@ -4102,6 +4216,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
 
         // The paused workflow has not executed, so every backtrace the replay captures belongs to a
@@ -4209,6 +4324,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         ));
         let result = workflow_js_step_execution_until_finished(
             &*db_connection,
@@ -4306,6 +4422,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
         let replay = replay_worker
             .replay(execution_id.clone(), false)
@@ -4405,6 +4522,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
         let mut forwarded = Vec::new();
         for expected_len in [3_usize, 2, 1] {
@@ -4644,6 +4762,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
         let replay = replay_worker
             .replay(execution_id.clone(), false)
@@ -4784,6 +4903,7 @@ mod tests {
             sim_clock.clone_box(),
             js_source.to_string(),
             default_return_type(),
+            None, // max_replay_captured_writes
         );
         let replay = replay_worker
             .replay(execution_id.clone(), false)

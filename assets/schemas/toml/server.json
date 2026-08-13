@@ -713,6 +713,13 @@
             }
           ],
           "default": null
+        },
+        "max_replay_captured_writes": {
+          "description": "Maximum number of captured writes a single replay pass returns. On reaching it, replay\nstops and returns that many writes as an advanceable prefix; advancing them and replaying\nagain resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved\n`joinNextTry` poll loop, whose replay never blocks) advanceable in bounded batches instead\nof collecting captured writes forever.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 100
         }
       },
       "additionalProperties": false

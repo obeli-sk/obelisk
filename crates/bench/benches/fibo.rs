@@ -32,7 +32,7 @@ mod bench {
     use wasm_workers::workflow::deadline_tracker::DeadlineTrackerFactoryTokio;
     use wasm_workers::workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
-        WorkflowWorkerCompiled,
+        WorkflowConfigMode, WorkflowWorkerCompiled,
     };
     use wasmtime::Engine;
 
@@ -195,11 +195,12 @@ mod bench {
                     .unwrap(),
                 WorkflowConfig {
                     component_id: component_id.clone(),
-                    join_next_blocking_strategy,
                     stub_wasi: false,
                     fuel: None,
-                    lock_extension: None,
-                    subscription_interruption: None,
+                    mode: WorkflowConfigMode::Real {
+                        join_next_blocking_strategy,
+                        lock_extension: None,
+                    },
                 },
                 workflow_engine,
                 clock_fn.clone_box(),
@@ -302,6 +303,7 @@ mod bench {
             Now.clone_box(),
             JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                subscription_interruption: None,
             },
             &fn_registry,
             engines.workflow_engine.clone(),

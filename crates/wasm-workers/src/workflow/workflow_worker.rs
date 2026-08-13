@@ -52,7 +52,12 @@ pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
-    Await { non_blocking_event_batching: u32 },
+    Await {
+        non_blocking_event_batching: u32,
+        /// Caps how long a blocking `join-next` waits before re-polling the database for
+        /// responses; needed as a fallback for Postgres' local-only subscription mechanism.
+        subscription_interruption: Option<Duration>,
+    },
 }
 
 pub use deployment_config::config::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
@@ -60,13 +65,70 @@ pub use deployment_config::config::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
 #[derive(Clone, Debug)]
 pub struct WorkflowConfig {
     pub component_id: ComponentId,
-    pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub stub_wasi: bool,
     pub fuel: Option<u64>,
-    // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
-    pub lock_extension: Option<Duration>,
-    // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
-    pub subscription_interruption: Option<Duration>,
+    /// Fields that differ between a normal run and a replay pass. `stub_wasi` and `fuel` are
+    /// shared (a replay-purposed config inherits them from the real config).
+    pub mode: WorkflowConfigMode,
+}
+
+#[derive(Clone, Debug)]
+pub enum WorkflowConfigMode {
+    /// Normal execution: writes are persisted to the database.
+    Real {
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
+        lock_extension: Option<Duration>,
+    },
+    /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
+    /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
+    /// writes a single pass returns, keeping a non-terminating workflow advanceable in batches.
+    Replay { max_replay_captured_writes: usize },
+}
+
+impl WorkflowConfig {
+    /// Blocking strategy for a normal run. Replay always uses `Interrupt`, forced in `prepare_func`.
+    fn join_next_blocking_strategy(&self) -> JoinNextBlockingStrategy {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                join_next_blocking_strategy,
+                ..
+            } => *join_next_blocking_strategy,
+            WorkflowConfigMode::Replay { .. } => JoinNextBlockingStrategy::Interrupt,
+        }
+    }
+
+    fn lock_extension(&self) -> Option<Duration> {
+        match &self.mode {
+            WorkflowConfigMode::Real { lock_extension, .. } => *lock_extension,
+            WorkflowConfigMode::Replay { .. } => None,
+        }
+    }
+
+    fn subscription_interruption(&self) -> Option<Duration> {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                join_next_blocking_strategy:
+                    JoinNextBlockingStrategy::Await {
+                        subscription_interruption,
+                        ..
+                    },
+                ..
+            } => *subscription_interruption,
+            WorkflowConfigMode::Real { .. } | WorkflowConfigMode::Replay { .. } => None,
+        }
+    }
+
+    /// Captured-write bound. `None` for a real config (an unbounded auto-upgrade replay); `Some`
+    /// only for a replay-purposed config.
+    fn max_replay_captured_writes(&self) -> Option<usize> {
+        match &self.mode {
+            WorkflowConfigMode::Real { .. } => None,
+            WorkflowConfigMode::Replay {
+                max_replay_captured_writes,
+            } => Some(*max_replay_captured_writes),
+        }
+    }
 }
 
 pub struct WorkflowWorkerCompiled {
@@ -394,7 +456,7 @@ enum WorkerResultRefactored {
     FatalError(FatalError, WorkflowCtx),
     DbError(DbErrorWrite),
     LockExpired(WorkflowCtx),
-    ExecutorClosing(WorkflowCtx),
+    ExecutionInterrupt(WorkflowCtx),
     ReplayInterrupt(WorkflowCtx),
 }
 
@@ -415,8 +477,8 @@ enum WorkflowError {
     },
     #[error("lock expired")]
     LockExpired(Version),
-    #[error("executor closing")]
-    ExecutorClosing(Version),
+    #[error("execution interrupt")]
+    ExecutionInterrupt(Version),
 }
 impl From<WorkflowError> for WorkerError {
     fn from(value: WorkflowError) -> Self {
@@ -430,7 +492,7 @@ impl From<WorkflowError> for WorkerError {
                 http_client_traces: None,
                 version,
             },
-            WorkflowError::ExecutorClosing(version) => WorkerError::ExecutorClosing(version),
+            WorkflowError::ExecutionInterrupt(version) => WorkerError::ExecutionInterrupt(version),
         }
     }
 }
@@ -441,8 +503,8 @@ pub enum JoinSetCloseError {
     DbError(DbErrorWrite),
     #[error("fatal error: {err}")]
     FatalError { err: FatalError },
-    #[error("executor closing")]
-    ExecutorClosing(Version),
+    #[error("execution interrupt")]
+    ExecutionInterrupt(Version),
 }
 impl JoinSetCloseError {
     fn into_workflow_error(
@@ -457,7 +519,9 @@ impl JoinSetCloseError {
                 version,
                 db_connection,
             },
-            JoinSetCloseError::ExecutorClosing(version) => WorkflowError::ExecutorClosing(version),
+            JoinSetCloseError::ExecutionInterrupt(version) => {
+                WorkflowError::ExecutionInterrupt(version)
+            }
         }
     }
 }
@@ -524,7 +588,8 @@ impl WorkflowWorker {
         };
         debug!("Execution replay of kind `{replay_kind}` started");
 
-        let (_executor_close_sender, executor_close_watcher) = tokio::sync::watch::channel(false);
+        let (_execution_interrupt_sender, execution_interrupt_watcher) =
+            tokio::sync::watch::channel(false);
         let parent = log.parent();
 
         let ctx = WorkerContext {
@@ -547,7 +612,7 @@ impl WorkflowWorker {
                 lock_expires_at: self.clock_fn.now(),
                 retry_config: concepts::ComponentRetryConfig::WORKFLOW,
             },
-            executor_close_watcher,
+            execution_interrupt_watcher,
         };
 
         self.replay_internal(
@@ -631,10 +696,10 @@ impl WorkflowWorker {
         backtrace_capture: bool,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
-        let deadline_tracker = match view
-            .deadline_factory
-            .create(ctx.locked_event.lock_expires_at, ctx.executor_close_watcher)
-        {
+        let deadline_tracker = match view.deadline_factory.create(
+            ctx.locked_event.lock_expires_at,
+            ctx.execution_interrupt_watcher,
+        ) {
             Ok(deadline_tracker) => deadline_tracker,
             Err(lock_already_expired) => {
                 ctx.worker_span.in_scope(|| {
@@ -646,6 +711,18 @@ impl WorkflowWorker {
         };
 
         let seed = ctx.execution_id.random_seed();
+        // Replay always runs with the `Interrupt` strategy and ignores lock extension / subscription
+        // interruption, regardless of whether the source config is `Real` (auto-upgrade) or `Replay`.
+        let (join_next_blocking_strategy, lock_extension, subscription_interruption) =
+            if is_replay.is_some() {
+                (JoinNextBlockingStrategy::Interrupt, None, None)
+            } else {
+                (
+                    view.config.join_next_blocking_strategy(),
+                    view.config.lock_extension(),
+                    view.config.subscription_interruption(),
+                )
+            };
         let workflow_ctx = WorkflowCtx::new(
             view.deployment_id,
             db_connection,
@@ -654,17 +731,18 @@ impl WorkflowWorker {
             ctx.responses,
             seed,
             view.clock_fn,
-            view.config.join_next_blocking_strategy,
+            join_next_blocking_strategy,
             ctx.worker_span,
             backtrace_capture,
             deadline_tracker,
             view.fn_registry,
             view.cancel_registry,
             ctx.locked_event,
-            view.config.lock_extension,
-            view.config.subscription_interruption,
+            lock_extension,
+            subscription_interruption,
             view.logs_storage_config,
             is_replay,
+            view.config.max_replay_captured_writes(),
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -692,10 +770,10 @@ impl WorkflowWorker {
                     info!("Deadline reached in epoch callback");
                     Err(wasmtime::Error::from(WorkflowFunctionError::LockExpired))
                 }
-                Err(EpochCallbackError::ExecutorClosing) => {
-                    info!("Executor closing detected in epoch callback");
+                Err(EpochCallbackError::ExecutionInterrupt) => {
+                    info!("Execution interrupt detected in epoch callback");
                     Err(wasmtime::Error::from(
-                        WorkflowFunctionError::ExecutorClosing,
+                        WorkflowFunctionError::ExecutionInterrupt,
                     ))
                 }
             }
@@ -713,9 +791,9 @@ impl WorkflowWorker {
                             let version = store.into_data().version().clone();
                             return Err(WorkflowError::LockExpired(version));
                         }
-                        WorkflowFunctionError::ExecutorClosing => {
+                        WorkflowFunctionError::ExecutionInterrupt => {
                             let version = store.into_data().version().clone();
-                            return Err(WorkflowError::ExecutorClosing(version));
+                            return Err(WorkflowError::ExecutionInterrupt(version));
                         }
                         _ => {}
                     }
@@ -935,9 +1013,9 @@ impl WorkflowWorker {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
                 Err(WorkflowError::LockExpired(workflow_ctx.version().clone()))
             }
-            WorkerResultRefactored::ExecutorClosing(mut workflow_ctx) => {
+            WorkerResultRefactored::ExecutionInterrupt(mut workflow_ctx) => {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
-                Err(WorkflowError::ExecutorClosing(
+                Err(WorkflowError::ExecutionInterrupt(
                     workflow_ctx.version().clone(),
                 ))
             }
@@ -1006,9 +1084,9 @@ impl WorkflowWorker {
                         // logged in epoch callback
                         WorkerResultRefactored::LockExpired(workflow_ctx)
                     }
-                    WorkerPartialResult::ExecutorClosing => {
+                    WorkerPartialResult::ExecutionInterrupt => {
                         // logged in epoch callback
-                        WorkerResultRefactored::ExecutorClosing(workflow_ctx)
+                        WorkerResultRefactored::ExecutionInterrupt(workflow_ctx)
                     }
                     WorkerPartialResult::ReplayWaitingForResponse => {
                         WorkerResultRefactored::ReplayInterrupt(workflow_ctx)
@@ -1044,7 +1122,7 @@ impl WorkflowWorker {
             Err(ApplyError::ConstraintViolation(reason)) => Err(JoinSetCloseError::FatalError {
                 err: FatalError::ConstraintViolation { reason },
             }),
-            Err(ApplyError::ExecutorClosing) => Err(JoinSetCloseError::ExecutorClosing(
+            Err(ApplyError::ExecutionInterrupt) => Err(JoinSetCloseError::ExecutionInterrupt(
                 workflow_ctx.version().clone(),
             )),
             Err(ApplyError::ReplayInterrupt) => Ok(Either::Right(ReplayInterrupt)),
@@ -1073,11 +1151,11 @@ impl WorkflowWorker {
         ),
         ReplayInternalError,
     > {
-        let mut replay_config = self.config.clone();
-        replay_config.join_next_blocking_strategy = JoinNextBlockingStrategy::Interrupt;
+        // `prepare_func` forces the `Interrupt` strategy for replay (`is_replay.is_some()`), so a
+        // `Real` config (auto-upgrade) and a `Replay` config both replay correctly without cloning.
         let view = WorkflowWorkerView {
             deployment_id: self.deployment_id,
-            config: &replay_config,
+            config: &self.config,
             engine: &self.engine,
             clock_fn: self.clock_fn.clone_box(),
             exported_ffqn_to_index: &self.exported_ffqn_to_index,
@@ -1135,8 +1213,8 @@ impl WorkflowWorker {
             Err(WorkflowError::LockExpired(version)) => {
                 Err(ReplayInternalError::LockExpired(version))
             }
-            Err(WorkflowError::ExecutorClosing(version)) => {
-                Err(ReplayInternalError::ExecutorClosing(version))
+            Err(WorkflowError::ExecutionInterrupt(version)) => {
+                Err(ReplayInternalError::ExecutionInterrupt(version))
             }
         }?;
 
@@ -1454,8 +1532,8 @@ impl WorkflowWorker {
                     http_client_traces: None,
                     version,
                 },
-                ReplayInternalError::ExecutorClosing(version) => {
-                    WorkerError::ExecutorClosing(version)
+                ReplayInternalError::ExecutionInterrupt(version) => {
+                    WorkerError::ExecutionInterrupt(version)
                 }
             })?;
 
@@ -1612,7 +1690,7 @@ impl Worker for WorkflowWorker {
         let db_connection = Box::new(CachingDbConnection::new(
             self.db_pool.connection().await.unwrap(),
             ctx.execution_id.clone(),
-            CachingBuffer::new(self.config.join_next_blocking_strategy),
+            CachingBuffer::new(self.config.join_next_blocking_strategy()),
         ));
         let worker_span = ctx.worker_span.clone();
         worker_span.in_scope(|| {
@@ -1864,11 +1942,12 @@ pub(crate) mod tests {
                     runnable_component.clone(),
                     WorkflowConfig {
                         component_id,
-                        join_next_blocking_strategy,
                         stub_wasi: false,
                         fuel: None,
-                        lock_extension: None,
-                        subscription_interruption: None,
+                        mode: WorkflowConfigMode::Real {
+                            join_next_blocking_strategy,
+                            lock_extension: None,
+                        },
                     },
                     workflow_engine,
                     clock_fn.clone_box(),
@@ -1903,11 +1982,11 @@ pub(crate) mod tests {
     ) -> WorkflowWorker {
         let config = WorkflowConfig {
             component_id,
-            join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
             stub_wasi: true,
             fuel: None,
-            lock_extension: None,
-            subscription_interruption: None,
+            mode: WorkflowConfigMode::Replay {
+                max_replay_captured_writes: usize::MAX, // effectively unbounded for tests
+            },
         };
         WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
@@ -1987,7 +2066,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity(
         db: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
@@ -2121,7 +2200,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn fiboa_submit_json_workflow(
         db: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         let sim_clock = SimClock::default();
@@ -2706,7 +2785,7 @@ pub(crate) mod tests {
                 lock_expires_at: execution_deadline,
                 retry_config: ComponentRetryConfig::ZERO,
             },
-            executor_close_watcher: tokio::sync::watch::channel(false).1,
+            execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
         };
         let worker_result = worker.run(ctx).await;
         assert_matches!(
@@ -2848,7 +2927,7 @@ pub(crate) mod tests {
     // TODO: Test await interleaving with timer - execution should finished in one go.
     async fn sleep_should_be_persisted_after_executor_restart(
         database: Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None })]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) {
         const SLEEP_MILLIS: u32 = 100;
@@ -3332,7 +3411,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn scheduling_should_work(
         db: db_tests::Database,
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0}, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10})]
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 0, subscription_interruption: None }, JoinNextBlockingStrategy::Await { non_blocking_event_batching: 10, subscription_interruption: None })]
         join_next_strategy: JoinNextBlockingStrategy,
     ) {
         const SLEEP_DURATION: Duration = Duration::from_millis(100);

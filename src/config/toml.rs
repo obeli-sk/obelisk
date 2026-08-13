@@ -56,6 +56,7 @@ use wasm_workers::{
     std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
         DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy, WorkflowConfig,
+        WorkflowConfigMode,
     },
 };
 use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
@@ -878,13 +879,32 @@ impl WasmGlobalConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-#[derive(Default)]
 pub(crate) struct WorkflowsGlobalConfigToml {
     /// Deprecated: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]`
     /// instead. When set, it overrides the per-workflow value for every workflow. Will be
     /// removed in 0.42.
     #[serde(default)]
     pub(crate) lock_extension_leeway: Option<DurationConfig>,
+    /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
+    /// stops and returns that many writes as an advanceable prefix; advancing them and replaying
+    /// again resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved
+    /// `joinNextTry` poll loop, whose replay never blocks) advanceable in bounded batches instead
+    /// of collecting captured writes forever.
+    #[serde(default = "default_max_replay_captured_writes")]
+    pub(crate) max_replay_captured_writes: usize,
+}
+
+impl Default for WorkflowsGlobalConfigToml {
+    fn default() -> Self {
+        Self {
+            lock_extension_leeway: None,
+            max_replay_captured_writes: default_max_replay_captured_writes(),
+        }
+    }
+}
+
+const fn default_max_replay_captured_writes() -> usize {
+    100
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -2120,10 +2140,16 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
 }
 
 pub(crate) trait BlockingStrategyConfigTomlExt {
-    fn into_blocking_strategy(self) -> JoinNextBlockingStrategy;
+    fn into_blocking_strategy(
+        self,
+        subscription_interruption: Option<Duration>,
+    ) -> JoinNextBlockingStrategy;
 }
 impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
-    fn into_blocking_strategy(self) -> JoinNextBlockingStrategy {
+    fn into_blocking_strategy(
+        self,
+        subscription_interruption: Option<Duration>,
+    ) -> JoinNextBlockingStrategy {
         use deployment_config::config::{
             BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
             BlockingStrategyConfigSimple,
@@ -2135,6 +2161,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
                 },
             )) => JoinNextBlockingStrategy::Await {
                 non_blocking_event_batching,
+                subscription_interruption,
             },
             BlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Interrupt) => {
                 JoinNextBlockingStrategy::Interrupt
@@ -2142,6 +2169,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
             BlockingStrategyConfigToml::Simple(BlockingStrategyConfigSimple::Await) => {
                 JoinNextBlockingStrategy::Await {
                     non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                    subscription_interruption,
                 }
             }
         }
@@ -2480,11 +2508,14 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         )?;
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
             stub_wasi: self.stub_wasi,
             fuel,
-            lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
-            subscription_interruption,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: self
+                    .blocking_strategy
+                    .into_blocking_strategy(subscription_interruption),
+                lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
+            },
         };
         let frame_files_to_sources = self.backtrace.into_frame_files();
         let retry_config = ComponentRetryConfig {
@@ -2512,6 +2543,8 @@ pub(crate) trait WorkflowJsComponentConfigResolvedExt {
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+        subscription_interruption: Option<Duration>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error>;
 }
 
@@ -2522,6 +2555,8 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        fuel: Option<u64>,
+        subscription_interruption: Option<Duration>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
         let verified = verify_function_interface(
             self.interface,
@@ -2565,11 +2600,14 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         )?;
         let workflow_config = WorkflowConfig {
             component_id: component_id.clone(),
-            join_next_blocking_strategy: self.blocking_strategy.into_blocking_strategy(),
             stub_wasi: false,
-            fuel: None,
-            lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
-            subscription_interruption: None,
+            fuel,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: self
+                    .blocking_strategy
+                    .into_blocking_strategy(subscription_interruption),
+                lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
+            },
         };
         let retry_config = ComponentRetryConfig {
             max_retries: None,
@@ -4208,7 +4246,7 @@ strategy = "interrupt"
 
             // Verify From impl result
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Interrupt
             );
         }
@@ -4228,9 +4266,10 @@ strategy = "await"
 
             // Verify From impl result (uses default batching)
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Await {
-                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
+                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                    subscription_interruption: None,
                 }
             );
         }
@@ -4253,9 +4292,10 @@ strategy = { kind = "await" }
 
             // Verify From impl result (uses default batching)
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Await {
-                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING
+                    non_blocking_event_batching: DEFAULT_NON_BLOCKING_EVENT_BATCHING,
+                    subscription_interruption: None,
                 }
             );
         }
@@ -4278,9 +4318,10 @@ strategy = { kind = "await", non_blocking_event_batching = 99 }
 
             // Verify From impl result (uses custom batching)
             assert_eq!(
-                actual.strategy.into_blocking_strategy(),
+                actual.strategy.into_blocking_strategy(None),
                 JoinNextBlockingStrategy::Await {
-                    non_blocking_event_batching: 99
+                    non_blocking_event_batching: 99,
+                    subscription_interruption: None,
                 }
             );
         }

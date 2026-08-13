@@ -1049,7 +1049,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                             grpc_gen::advance_execution_response::error::ReplayMismatch {},
                         )
                     }
-                    err @ (AdvanceError::ExecutorClosing | AdvanceError::LimitReached { .. }) => {
+                    err
+                    @ (AdvanceError::ExecutionInterrupt | AdvanceError::LimitReached { .. }) => {
                         grpc_gen::advance_execution_response::error::Error::TransientError(
                             grpc_gen::advance_execution_response::error::TransientError {
                                 message: err.to_string(),

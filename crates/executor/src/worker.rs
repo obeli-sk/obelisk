@@ -59,7 +59,7 @@ pub struct WorkerContext {
     pub can_be_retried: bool,
     pub worker_span: Span,
     pub locked_event: Locked,
-    pub executor_close_watcher: tokio::sync::watch::Receiver<bool>,
+    pub execution_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -85,8 +85,8 @@ pub enum WorkerError {
         http_client_traces: Option<Vec<HttpClientTrace>>,
         version: Version,
     },
-    #[error("executor closing")]
-    ExecutorClosing(Version),
+    #[error("execution interrupt")]
+    ExecutionInterrupt(Version),
     #[error(transparent)]
     DbError(DbErrorWrite),
     // non-retriable errors

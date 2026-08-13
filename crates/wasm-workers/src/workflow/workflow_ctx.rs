@@ -73,8 +73,8 @@ pub(crate) enum WorkflowFunctionError {
     DbError(DbErrorWrite),
     #[error("lock expired")]
     LockExpired,
-    #[error("executor closing")]
-    ExecutorClosing,
+    #[error("execution interrupt")]
+    ExecutionInterrupt,
     #[error("replay interrupt")]
     ReplayInterrupt,
 }
@@ -86,7 +86,7 @@ pub(crate) enum WorkerPartialResult {
     // retriable:
     InterruptDbUpdated,
     LockExpired,
-    ExecutorClosing,
+    ExecutionInterrupt,
     DbError(DbErrorWrite),
 }
 
@@ -118,7 +118,7 @@ impl WorkflowFunctionError {
                 WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
             }
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
-            WorkflowFunctionError::ExecutorClosing => WorkerPartialResult::ExecutorClosing,
+            WorkflowFunctionError::ExecutionInterrupt => WorkerPartialResult::ExecutionInterrupt,
             WorkflowFunctionError::ReplayInterrupt => WorkerPartialResult::ReplayWaitingForResponse,
         }
     }
@@ -135,7 +135,7 @@ impl From<ApplyError> for WorkflowFunctionError {
             ApplyError::ConstraintViolation(reason) => {
                 WorkflowFunctionError::ConstraintViolation(reason)
             }
-            ApplyError::ExecutorClosing => WorkflowFunctionError::ExecutorClosing,
+            ApplyError::ExecutionInterrupt => WorkflowFunctionError::ExecutionInterrupt,
             ApplyError::ReplayInterrupt => WorkflowFunctionError::ReplayInterrupt,
         }
     }
@@ -898,6 +898,7 @@ impl WorkflowCtx {
         subscription_interruption: Option<Duration>,
         logs_storage_config: Option<LogStrageConfig>,
         is_replay: Option<ReplayKind>,
+        max_replay_captured_writes: Option<usize>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -923,6 +924,7 @@ impl WorkflowCtx {
                 subscription_interruption,
                 worker_span.clone(),
                 is_replay == Some(ReplayKind::Unfinished),
+                max_replay_captured_writes,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -3120,7 +3122,7 @@ pub(crate) mod tests {
                 WorkerPartialResult::DbError(db_err) => {
                     Err(executor::worker::WorkerError::DbError(db_err))
                 }
-                WorkerPartialResult::LockExpired | WorkerPartialResult::ExecutorClosing => {
+                WorkerPartialResult::LockExpired | WorkerPartialResult::ExecutionInterrupt => {
                     unreachable!()
                 }
             }
@@ -3254,6 +3256,7 @@ pub(crate) mod tests {
                 None,                         // subscription_interruption
                 None,                         // logs_storage_config,
                 is_replay,
+                None, // max_replay_captured_writes
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
@@ -3516,7 +3519,7 @@ pub(crate) mod tests {
                             lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                             retry_config: ComponentRetryConfig::ZERO,
                         },
-                        executor_close_watcher: tokio::sync::watch::channel(false).1,
+                        execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
                     })
                     .await;
                 if let WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
@@ -3781,7 +3784,7 @@ pub(crate) mod tests {
                         lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                         retry_config: ComponentRetryConfig::ZERO,
                     },
-                    executor_close_watcher: tokio::sync::watch::channel(false).1,
+                    execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
                 })
                 .await;
             let cancel_registry = CancelRegistry::new();
@@ -3838,7 +3841,7 @@ pub(crate) mod tests {
                             lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                             retry_config: ComponentRetryConfig::ZERO,
                         },
-                        executor_close_watcher: tokio::sync::watch::channel(false).1,
+                        execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
                     })
                     .await;
             }
@@ -3897,7 +3900,7 @@ pub(crate) mod tests {
                     lock_expires_at: sim_clock.now() + Duration::from_secs(1),
                     retry_config: ComponentRetryConfig::ZERO,
                 },
-                executor_close_watcher: tokio::sync::watch::channel(false).1,
+                execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
             })
             .await;
         assert_matches!(worker_result, WorkerResult::Ok(..), "should be finished");
