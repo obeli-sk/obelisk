@@ -704,6 +704,8 @@ async fn execution_pause(
     conn.pause_execution(&execution_id, paused_at)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
+    // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
+    state.cancel_registry.signal_pause(&execution_id);
     Ok(HttpResponse {
         status: StatusCode::OK,
         message: "paused".to_string(),

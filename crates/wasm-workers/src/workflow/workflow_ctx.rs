@@ -3247,6 +3247,7 @@ pub(crate) mod tests {
                     .create(
                         ctx.locked_event.lock_expires_at,
                         tokio::sync::watch::channel(false).1,
+                        tokio::sync::watch::channel(false).1,
                     )
                     .unwrap(),
                 self.fn_registry.clone(),

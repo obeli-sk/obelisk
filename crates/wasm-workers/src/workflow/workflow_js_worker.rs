@@ -2802,6 +2802,108 @@ mod tests {
         db_close.close().await;
     }
 
+    /// When the pause RPC signals a locally-running JS workflow via `signal_pause`,
+    /// the worker must be interrupted (`ExecutionInterrupt`) and write an `Unlocked`
+    /// event, exactly like the executor-close signal, without waiting for the lock
+    /// deadline. This drives the per-execution `CancelRegistry` pause path rather
+    /// than the executor-wide close watcher.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn signal_pause_interrupts_running_workflow(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+            export default function busy(params) {
+                for (let i = 0; i < 30; i++) {
+                    obelisk.sleep({ milliseconds: 300 });
+                }
+                return 'done';
+            }
+        ";
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "busy");
+
+        // Never-set close watcher: the interrupt can only come from `signal_pause`.
+        let (_close_sender, close_receiver) = tokio::sync::watch::channel(false);
+
+        let sim_clock = SimClock::epoch();
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (worker, component_id, _) = compile_js_workflow_worker(
+            js_source,
+            &ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry,
+            workflow_engine,
+        );
+        // Share the worker's registry so the test can drive `signal_pause`.
+        let cancel_registry = worker.inner.cancel_registry.clone();
+
+        let exec_task = new_js_workflow_exec_task_with_interrupt_watcher(
+            worker,
+            sim_clock.clone_box(),
+            db_pool.clone(),
+            close_receiver,
+        );
+
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        let progress = exec_task
+            .tick_test(sim_clock.now(), RunId::generate())
+            .await;
+
+        // `signal_pause` is a no-op until `run()` registers the execution, so retry
+        // until the worker observes it (blocked in the first `obelisk.sleep`), wakes,
+        // and writes `Unlocked`. The loop is aborted once the worker task exits.
+        let signaller = tokio::spawn({
+            let cancel_registry = cancel_registry.clone();
+            let execution_id = execution_id.clone();
+            async move {
+                loop {
+                    cancel_registry.signal_pause(&execution_id);
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        });
+        progress.wait_for_tasks().await;
+        signaller.abort();
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        let has_unlocked = log
+            .events
+            .iter()
+            .any(|e| matches!(e.event, ExecutionRequest::Unlocked(_)));
+        assert!(
+            has_unlocked,
+            "expected Unlocked event from pause interrupt, got: {:?}",
+            log.events
+        );
+        drop(db_connection);
+        db_close.close().await;
+    }
+
     /// Test: `Math.random()` returns a value in [0, 1) and is deterministic (replay
     /// produces identical output because random values are replayed from the event log).
     #[expand_enum_database]

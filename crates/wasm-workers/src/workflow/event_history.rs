@@ -4535,7 +4535,11 @@ mod tests {
     ) -> (EventHistory, EventCallCursor, Box<dyn WorkflowDbConnection>) {
         let execution_deadline = now + lock_expires_at;
         let deadline_tracker = deadline_factory
-            .create(execution_deadline, tokio::sync::watch::channel(false).1)
+            .create(
+                execution_deadline,
+                tokio::sync::watch::channel(false).1,
+                tokio::sync::watch::channel(false).1,
+            )
             .unwrap();
 
         let exec_log = db_connection.get(&execution_id).await.unwrap();
