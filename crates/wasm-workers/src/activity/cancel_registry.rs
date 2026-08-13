@@ -81,7 +81,12 @@ impl CancelRegistry {
     ) -> oneshot::Receiver<()> {
         let mut guard = self.activity_cancellation_tokens.lock().unwrap();
         let (cancellation_sender, receiver) = oneshot::channel();
-        guard.insert(execution_id, ActivityInfo { cancellation_sender });
+        guard.insert(
+            execution_id,
+            ActivityInfo {
+                cancellation_sender,
+            },
+        );
         receiver
     }
 
