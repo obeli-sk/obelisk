@@ -660,8 +660,16 @@ async fn execution_cancel(
                 .await
         }
         ComponentType::Workflow => {
-            conn.cancel_workflow_with_retries(&execution_id, executed_at)
-                .await
+            let outcome = conn
+                .cancel_workflow_with_retries(&execution_id, executed_at)
+                .await;
+            if outcome.is_ok() {
+                // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
+                state
+                    .cancel_registry
+                    .signal_workflow_interrupt(&execution_id);
+            }
+            outcome
         }
         _ => {
             return Err(HttpResponse {
@@ -705,7 +713,9 @@ async fn execution_pause(
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
     // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
-    state.cancel_registry.signal_pause(&execution_id);
+    state
+        .cancel_registry
+        .signal_workflow_interrupt(&execution_id);
     Ok(HttpResponse {
         status: StatusCode::OK,
         message: "paused".to_string(),

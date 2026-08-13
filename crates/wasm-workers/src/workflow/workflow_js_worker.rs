@@ -2802,15 +2802,16 @@ mod tests {
         db_close.close().await;
     }
 
-    /// When the pause RPC signals a locally-running JS workflow via `signal_pause`,
-    /// the worker must be interrupted (`ExecutionInterrupt`) and write an `Unlocked`
-    /// event, exactly like the executor-close signal, without waiting for the lock
-    /// deadline. This drives the per-execution `CancelRegistry` pause path rather
-    /// than the executor-wide close watcher.
+    /// When a pause or cancel RPC signals a locally-running JS workflow via
+    /// `signal_workflow_interrupt`, the worker must be interrupted
+    /// (`ExecutionInterrupt`) and write an `Unlocked` event, exactly like the
+    /// executor-close signal, without waiting for the lock deadline. This drives the
+    /// per-execution `CancelRegistry` interrupt path rather than the executor-wide
+    /// close watcher.
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn signal_pause_interrupts_running_workflow(database: Database) {
+    async fn signal_workflow_interrupt_interrupts_running_workflow(database: Database) {
         test_utils::set_up();
         let (_guard, db_pool, db_close) = database.set_up().await;
 
@@ -2824,7 +2825,7 @@ mod tests {
         ";
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "busy");
 
-        // Never-set close watcher: the interrupt can only come from `signal_pause`.
+        // Never-set close watcher: the interrupt can only come from `signal_workflow_interrupt`.
         let (_close_sender, close_receiver) = tokio::sync::watch::channel(false);
 
         let sim_clock = SimClock::epoch();
@@ -2840,7 +2841,7 @@ mod tests {
             fn_registry,
             workflow_engine,
         );
-        // Share the worker's registry so the test can drive `signal_pause`.
+        // Share the worker's registry so the test can drive `signal_workflow_interrupt`.
         let cancel_registry = worker.inner.cancel_registry.clone();
 
         let exec_task = new_js_workflow_exec_task_with_interrupt_watcher(
@@ -2874,15 +2875,15 @@ mod tests {
             .tick_test(sim_clock.now(), RunId::generate())
             .await;
 
-        // `signal_pause` is a no-op until `run()` registers the execution, so retry
-        // until the worker observes it (blocked in the first `obelisk.sleep`), wakes,
-        // and writes `Unlocked`. The loop is aborted once the worker task exits.
+        // `signal_workflow_interrupt` is a no-op until `run()` registers the execution,
+        // so retry until the worker observes it (blocked in the first `obelisk.sleep`),
+        // wakes, and writes `Unlocked`. The loop is aborted once the worker task exits.
         let signaller = tokio::spawn({
             let cancel_registry = cancel_registry.clone();
             let execution_id = execution_id.clone();
             async move {
                 loop {
-                    cancel_registry.signal_pause(&execution_id);
+                    cancel_registry.signal_workflow_interrupt(&execution_id);
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }

@@ -130,10 +130,15 @@ impl GrpcServer {
                 .cancel_activity(conn.as_ref(), execution_id, executed_at)
                 .await
                 .to_status(),
-            ComponentType::Workflow => conn
-                .cancel_workflow_with_retries(execution_id, executed_at)
-                .await
-                .to_status(),
+            ComponentType::Workflow => {
+                let outcome = conn
+                    .cancel_workflow_with_retries(execution_id, executed_at)
+                    .await
+                    .to_status()?;
+                // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
+                self.cancel_registry.signal_workflow_interrupt(execution_id);
+                Ok(outcome)
+            }
             _ => Err(tonic::Status::invalid_argument(
                 "cancelled execution must be an activity or cancellable workflow",
             )),
@@ -1268,7 +1273,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .await
             .to_status()?;
         // Best-effort interrupt of a locally-running workflow (`ExecutionInterrupt`).
-        self.cancel_registry.signal_pause(&execution_id);
+        self.cancel_registry.signal_workflow_interrupt(&execution_id);
         Ok(tonic::Response::new(grpc_gen::PauseExecutionResponse {}))
     }
 

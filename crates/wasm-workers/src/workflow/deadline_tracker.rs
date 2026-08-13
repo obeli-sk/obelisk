@@ -35,13 +35,13 @@ pub enum PreemptRequested {
 
 pub trait DeadlineTrackerFactory: Send + Sync {
     /// `execution_interrupt_watcher` is the executor-wide shutdown signal;
-    /// `pause_watcher` is the per-execution pause signal. Either firing interrupts
-    /// the run as `ExecutionInterrupt`.
+    /// `local_interrupt_watcher` is the per-execution pause/cancel signal. Either
+    /// firing interrupts the run as `ExecutionInterrupt`.
     fn create(
         &self,
         lock_expires_at: DateTime<Utc>,
         execution_interrupt_watcher: watch::Receiver<bool>,
-        pause_watcher: watch::Receiver<bool>,
+        local_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired>;
 
     /// True iff this factory produces trackers that never expire the lock.
@@ -71,12 +71,12 @@ pub(crate) struct DeadlineTrackerTokio {
     pub(crate) clock_fn: Box<dyn ClockFn>,
     pub(crate) leeway: Duration, // Fire this much sooner than requested.
     execution_interrupt_watcher: watch::Receiver<bool>,
-    pause_watcher: watch::Receiver<bool>,
+    local_interrupt_watcher: watch::Receiver<bool>,
 }
 
 impl DeadlineTrackerTokio {
     fn interrupt_requested(&self) -> bool {
-        *self.execution_interrupt_watcher.borrow() || *self.pause_watcher.borrow()
+        *self.execution_interrupt_watcher.borrow() || *self.local_interrupt_watcher.borrow()
     }
 }
 
@@ -106,12 +106,12 @@ impl DeadlineTracker for DeadlineTrackerTokio {
                 self.deadline_minus_leeway
             };
             let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
-            let mut pause_watcher = self.pause_watcher.clone();
+            let mut local_interrupt_watcher = self.local_interrupt_watcher.clone();
             Ok(Box::pin(async move {
                 tokio::select! {
                     () = tokio::time::sleep_until(expiry) => TimeoutOutcome::Timeout,
                     _ = execution_interrupt_watcher.wait_for(|&v| v) => TimeoutOutcome::Cancel,
-                    _ = pause_watcher.wait_for(|&v| v) => TimeoutOutcome::Cancel,
+                    _ = local_interrupt_watcher.wait_for(|&v| v) => TimeoutOutcome::Cancel,
                 }
             }))
         }
@@ -173,7 +173,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
         &self,
         lock_expires_at: DateTime<Utc>,
         execution_interrupt_watcher: watch::Receiver<bool>,
-        pause_watcher: watch::Receiver<bool>,
+        local_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         let started_at = self.clock_fn.now();
         let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
@@ -196,7 +196,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryTokio {
             clock_fn: self.clock_fn.clone_box(),
             leeway: self.leeway,
             execution_interrupt_watcher,
-            pause_watcher,
+            local_interrupt_watcher,
         };
         Ok(Box::new(tracker))
     }
@@ -214,7 +214,7 @@ pub(crate) struct DeadlineTrackerSim {
     leeway: Duration,
     clock: test_utils::sim_clock::SimClock,
     execution_interrupt_watcher: watch::Receiver<bool>,
-    pause_watcher: watch::Receiver<bool>,
+    local_interrupt_watcher: watch::Receiver<bool>,
 }
 
 #[cfg(test)]
@@ -225,7 +225,7 @@ fn add_duration(time: DateTime<Utc>, duration: Duration) -> DateTime<Utc> {
 #[cfg(test)]
 impl DeadlineTrackerSim {
     fn interrupt_requested(&self) -> bool {
-        *self.execution_interrupt_watcher.borrow() || *self.pause_watcher.borrow()
+        *self.execution_interrupt_watcher.borrow() || *self.local_interrupt_watcher.borrow()
     }
 }
 
@@ -260,7 +260,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
         // this call and the first poll are not missed.
         let mut time_watcher = self.clock.subscribe();
         let mut execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
-        let mut pause_watcher = self.pause_watcher.clone();
+        let mut local_interrupt_watcher = self.local_interrupt_watcher.clone();
         Ok(Box::pin(async move {
             loop {
                 if clock.now() >= expiry {
@@ -272,7 +272,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
                         return TimeoutOutcome::Cancel;
                     },
                     _ = execution_interrupt_watcher.wait_for(|&v| v) => return TimeoutOutcome::Timeout,
-                    _ = pause_watcher.wait_for(|&v| v) => return TimeoutOutcome::Timeout,
+                    _ = local_interrupt_watcher.wait_for(|&v| v) => return TimeoutOutcome::Timeout,
                 }
             }
         }))
@@ -321,7 +321,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactorySim {
         &self,
         lock_expires_at: DateTime<Utc>,
         execution_interrupt_watcher: watch::Receiver<bool>,
-        pause_watcher: watch::Receiver<bool>,
+        local_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         let started_at = self.clock.now();
         let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
@@ -340,7 +340,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactorySim {
             leeway: self.leeway,
             clock: self.clock.clone(),
             execution_interrupt_watcher,
-            pause_watcher,
+            local_interrupt_watcher,
         }))
     }
 }
@@ -363,7 +363,7 @@ impl DeadlineTrackerFactory for DeadlineTrackerFactoryForReplay {
         &self,
         _lock_expires_at: DateTime<Utc>,
         _execution_interrupt_watcher: watch::Receiver<bool>,
-        _pause_watcher: watch::Receiver<bool>,
+        _local_interrupt_watcher: watch::Receiver<bool>,
     ) -> Result<Box<dyn DeadlineTracker>, LockAlreadyExpired> {
         Ok(Box::new(DeadlineTrackerFactoryForReplay {}))
     }
