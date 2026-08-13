@@ -2256,6 +2256,12 @@ pub enum CancelOutcome {
     AlreadyCancelling,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DelayCancelOutcome {
+    Cancelled,
+    AlreadyFinished,
+}
+
 #[instrument(skip(db_connection))]
 pub async fn stub_execution(
     db_connection: &dyn DbConnection,
@@ -2301,7 +2307,7 @@ pub async fn cancel_delay(
     db_connection: &dyn DbConnection,
     delay_id: DelayId,
     cancelled_at: DateTime<Utc>,
-) -> Result<CancelOutcome, DbErrorWrite> {
+) -> Result<DelayCancelOutcome, DbErrorWrite> {
     let (parent_execution_id, join_set_id) = delay_id.split_to_parts();
     db_connection
         .append_delay_response(
@@ -2314,9 +2320,9 @@ pub async fn cancel_delay(
         .await
         .map(|ok| match ok {
             AppendDelayResponseOutcome::Success | AppendDelayResponseOutcome::AlreadyCancelled => {
-                CancelOutcome::CancelRequested
+                DelayCancelOutcome::Cancelled
             }
-            AppendDelayResponseOutcome::AlreadyFinished => CancelOutcome::AlreadyFinished,
+            AppendDelayResponseOutcome::AlreadyFinished => DelayCancelOutcome::AlreadyFinished,
         })
 }
 

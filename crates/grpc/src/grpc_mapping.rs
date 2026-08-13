@@ -10,7 +10,8 @@ use concepts::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
         CancelOutcome, CapturedDbWrite, ChildExecutionRequestError, ComponentUpgradeOutcome,
         ComponentUpgradeReason, CreateRequest, DbErrorGeneric, DbErrorRead, DbErrorWrite,
-        DbErrorWriteNonRetriable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
+        DbErrorWriteNonRetriable, DelayCancelOutcome, ExecutionEvent, ExecutionListPagination,
+        ExecutionRequest,
         ExecutionWithState, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy,
         LogEntry, LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
         PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedError,
@@ -1819,17 +1820,14 @@ impl From<CancelOutcome> for grpc_gen::cancel_execution_response::CancelExecutio
     }
 }
 
-impl From<CancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome {
-    fn from(value: CancelOutcome) -> Self {
+impl From<DelayCancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome {
+    fn from(value: DelayCancelOutcome) -> Self {
         match value {
-            CancelOutcome::CancelRequested => {
+            DelayCancelOutcome::Cancelled => {
                 grpc_gen::cancel_delay_response::CancelDelayOutcome::Cancelled
             }
-            CancelOutcome::AlreadyFinished => {
+            DelayCancelOutcome::AlreadyFinished => {
                 grpc_gen::cancel_delay_response::CancelDelayOutcome::AlreadyFinished
-            }
-            CancelOutcome::AlreadyCancelling => {
-                unreachable!("cancel_delay never yields AlreadyCancelling")
             }
         }
     }

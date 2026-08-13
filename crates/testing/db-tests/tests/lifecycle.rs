@@ -4,7 +4,7 @@ use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, RunId};
 use concepts::storage::DeploymentFileRecord;
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
-    BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
+    BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest, DelayCancelOutcome,
     ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, ExpiredDelay, ExpiredLock,
     ExpiredTimer, FrameInfo, FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse,
     JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination, PendingState,
@@ -2206,11 +2206,11 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
     let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::CancelRequested, res);
+    assert_eq!(DelayCancelOutcome::Cancelled, res);
     let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::CancelRequested, res);
+    assert_eq!(DelayCancelOutcome::Cancelled, res);
     drop(db_connection);
     db_close.close().await;
 }
