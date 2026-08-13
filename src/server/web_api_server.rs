@@ -27,10 +27,11 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
-        DbErrorWrite, DbErrorWriteNonRetriable, DbPool, ExecutionEvent, ExecutionListPagination,
-        ExecutionRequest, ExecutionWithState, FunctionNameFilter, ListExecutionsFilter, Pagination,
-        PendingState, PendingStateFinishedError, PendingStateFinishedResultKind, ResponseCursor,
-        ResponseWithCursor, TimeoutOutcome, Version, VersionType,
+        DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
+        ExecutionListPagination, ExecutionRequest, ExecutionWithState, FunctionNameFilter,
+        ListExecutionsFilter, Pagination, PendingState, PendingStateFinishedError,
+        PendingStateFinishedResultKind, ResponseCursor, ResponseWithCursor, TimeoutOutcome,
+        Version, VersionType,
     },
     time::{ClockFn as _, Now, Sleep as _},
 };
@@ -312,7 +313,7 @@ async fn delay_cancel(
     let outcome = storage::cancel_delay(conn.as_ref(), delay_id, executed_at)
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    Ok(HttpResponse::from_cancel_outcome(outcome, accept).into_response())
+    Ok(HttpResponse::from_delay_cancel_outcome(outcome, accept).into_response())
 }
 
 /// Pause a delay
@@ -4302,7 +4303,7 @@ pub(crate) struct HttpResponse {
 impl HttpResponse {
     fn from_cancel_execution_outcome(outcome: CancelOutcome, accept: AcceptHeader) -> Self {
         match outcome {
-            CancelOutcome::Cancelled => HttpResponse {
+            CancelOutcome::CancelRequested => HttpResponse {
                 status: StatusCode::OK,
                 message: "cancellation requested".to_string(),
                 accept,
@@ -4320,21 +4321,16 @@ impl HttpResponse {
         }
     }
 
-    fn from_cancel_outcome(outcome: CancelOutcome, accept: AcceptHeader) -> Self {
+    fn from_delay_cancel_outcome(outcome: DelayCancelOutcome, accept: AcceptHeader) -> Self {
         match outcome {
-            CancelOutcome::Cancelled => HttpResponse {
+            DelayCancelOutcome::Cancelled => HttpResponse {
                 status: StatusCode::OK,
                 message: "cancelled".to_string(),
                 accept,
             },
-            CancelOutcome::AlreadyFinished => HttpResponse {
+            DelayCancelOutcome::AlreadyFinished => HttpResponse {
                 status: StatusCode::CONFLICT,
                 message: "already finished".to_string(),
-                accept,
-            },
-            CancelOutcome::AlreadyCancelling => HttpResponse {
-                status: StatusCode::CONFLICT,
-                message: "already cancelling".to_string(),
                 accept,
             },
         }

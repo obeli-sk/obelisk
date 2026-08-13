@@ -5,12 +5,12 @@ use concepts::storage::DeploymentFileRecord;
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
-    ExecutionListPagination, ExecutionRequest, ExecutionStateFilter, ExpiredDelay, ExpiredLock,
-    ExpiredTimer, FrameInfo, FrameSymbol, FunctionNameFilter, JoinSetRequest, JoinSetResponse,
-    JoinSetResponseEventOuter, LockedBy, LockedExecution, Pagination, PendingState,
-    PendingStateBlockedByJoinSet, PendingStateCancelling, PendingStateLocked, PendingStatePaused,
-    PendingStatePendingAt, ResponseCursor, TimeoutOutcome, Unlocked, Version, VersionType,
-    WasmBacktrace,
+    DelayCancelOutcome, ExecutionListPagination, ExecutionRequest, ExecutionStateFilter,
+    ExpiredDelay, ExpiredLock, ExpiredTimer, FrameInfo, FrameSymbol, FunctionNameFilter,
+    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution,
+    Pagination, PendingState, PendingStateBlockedByJoinSet, PendingStateCancelling,
+    PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
+    Unlocked, Version, VersionType, WasmBacktrace,
 };
 use concepts::storage::{
     DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
@@ -2206,11 +2206,11 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
     let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, res);
+    assert_eq!(DelayCancelOutcome::Cancelled, res);
     let res = storage::cancel_delay(db_connection.as_ref(), delay_id.clone(), sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, res);
+    assert_eq!(DelayCancelOutcome::Cancelled, res);
     drop(db_connection);
     db_close.close().await;
 }
@@ -2760,7 +2760,7 @@ async fn cancel_activity_on_locked_execution_requests_cancellation(database: Dat
         .append_activity_cancellation_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, outcome);
+    assert_eq!(CancelOutcome::CancelRequested, outcome);
 
     let log = db_connection.get(&execution_id).await.unwrap();
     let locked = assert_matches!(
@@ -2810,7 +2810,7 @@ async fn cancel_activity_on_paused_execution_requests_cancellation(database: Dat
         .append_activity_cancellation_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, outcome);
+    assert_eq!(CancelOutcome::CancelRequested, outcome);
 
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
@@ -2996,7 +2996,7 @@ async fn cancel_workflow_from_pending_at(database: Database) {
         .cancel_workflow(&execution_id, sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, outcome);
+    assert_eq!(CancelOutcome::CancelRequested, outcome);
 
     let log = db_connection.get(&execution_id).await.unwrap();
     assert_matches!(
@@ -3048,7 +3048,7 @@ async fn cancel_workflow_from_locked_should_keep_underlying_state(database: Data
         .cancel_workflow(&execution_id, sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, outcome);
+    assert_eq!(CancelOutcome::CancelRequested, outcome);
 
     let log = db_connection.get(&execution_id).await.unwrap();
     // The lock is kept; the running workflow is fenced by the version bump.
@@ -3096,7 +3096,7 @@ async fn cancel_workflow_from_paused_should_keep_underlying_state(database: Data
         .cancel_workflow(&execution_id, sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, outcome);
+    assert_eq!(CancelOutcome::CancelRequested, outcome);
 
     let log = db_connection.get(&execution_id).await.unwrap();
     // Cancel supersedes pause: cancelling, not paused.
@@ -3173,7 +3173,7 @@ async fn cancel_workflow_second_call_is_already_cancelling(database: Database) {
         .cancel_workflow(&execution_id, sim_clock.now())
         .await
         .unwrap();
-    assert_eq!(CancelOutcome::Cancelled, first);
+    assert_eq!(CancelOutcome::CancelRequested, first);
     let second = db_connection
         .cancel_workflow(&execution_id, sim_clock.now())
         .await

@@ -10,9 +10,9 @@ use concepts::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
         CancelOutcome, CapturedDbWrite, ChildExecutionRequestError, ComponentUpgradeOutcome,
         ComponentUpgradeReason, CreateRequest, DbErrorGeneric, DbErrorRead, DbErrorWrite,
-        DbErrorWriteNonRetriable, ExecutionEvent, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest, Locked, LockedBy,
-        LogEntry, LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
+        DbErrorWriteNonRetriable, DelayCancelOutcome, ExecutionEvent, ExecutionListPagination,
+        ExecutionRequest, ExecutionWithState, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,
+        Locked, LockedBy, LogEntry, LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
         PendingStateBlockedByJoinSet, PendingStateFinished, PendingStateFinishedError,
         PendingStateFinishedResultKind, PendingStateLocked, PendingStatePendingAt, PersistKind,
         ScheduleRequestError, StubError, Unlocked, Version, VersionParseError,
@@ -1806,7 +1806,7 @@ impl From<HttpClientTrace> for grpc_gen::HttpClientTrace {
 impl From<CancelOutcome> for grpc_gen::cancel_execution_response::CancelExecutionOutcome {
     fn from(value: CancelOutcome) -> Self {
         match value {
-            CancelOutcome::Cancelled => {
+            CancelOutcome::CancelRequested => {
                 grpc_gen::cancel_execution_response::CancelExecutionOutcome::CancellationRequested
             }
             CancelOutcome::AlreadyFinished => {
@@ -1819,17 +1819,14 @@ impl From<CancelOutcome> for grpc_gen::cancel_execution_response::CancelExecutio
     }
 }
 
-impl From<CancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome {
-    fn from(value: CancelOutcome) -> Self {
+impl From<DelayCancelOutcome> for grpc_gen::cancel_delay_response::CancelDelayOutcome {
+    fn from(value: DelayCancelOutcome) -> Self {
         match value {
-            CancelOutcome::Cancelled => {
+            DelayCancelOutcome::Cancelled => {
                 grpc_gen::cancel_delay_response::CancelDelayOutcome::Cancelled
             }
-            CancelOutcome::AlreadyFinished => {
+            DelayCancelOutcome::AlreadyFinished => {
                 grpc_gen::cancel_delay_response::CancelDelayOutcome::AlreadyFinished
-            }
-            CancelOutcome::AlreadyCancelling => {
-                unreachable!("cancel_delay never yields AlreadyCancelling")
             }
         }
     }
