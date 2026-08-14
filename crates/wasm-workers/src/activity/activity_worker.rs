@@ -226,7 +226,10 @@ impl Worker for ActivityWorker {
                         Ok(worker_res_ok) => {
                             info!(duration = ?stopwatch_for_reporting.elapsed(), "Run finished: {worker_res_ok}");
                         }
-                        Err(WorkerError::ExecutorClosing(_)) => {
+                        Err(WorkerError::ExecutionYielded {
+                            reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
+                            ..
+                        }) => {
                             info!("Executor closing");
                         }
                         Err(err) => {
@@ -266,7 +269,10 @@ impl Worker for ActivityWorker {
             _ = execution_interrupt_watcher.changed() => {
                 debug!("Executor closing");
                 // Executor will append the Unlocked event.
-                return WorkerResult::Err(WorkerError::ExecutorClosing(version.clone()))
+                return WorkerResult::Err(WorkerError::ExecutionYielded {
+                    version: version.clone(),
+                    reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
+                })
             }
         }
     }

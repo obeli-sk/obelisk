@@ -923,6 +923,7 @@ mod tests {
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
                 lock_extension: Some(Duration::from_secs(1)),
+                max_events_per_run: usize::MAX,
             },
         };
 
@@ -1001,6 +1002,7 @@ mod tests {
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
                 lock_extension: None,
+                max_events_per_run: usize::MAX,
             },
         };
 
@@ -1298,6 +1300,7 @@ mod tests {
             join_next_blocking_strategy,
             deadline_factory,
             default_return_type(),
+            usize::MAX,
         )
     }
 
@@ -1313,6 +1316,7 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         return_type: ReturnTypeExtendable,
+        max_events_per_run: usize,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let params = default_js_params();
@@ -1334,6 +1338,7 @@ mod tests {
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy,
                 lock_extension: None,
+                max_events_per_run,
             },
         };
 
@@ -1973,6 +1978,7 @@ mod tests {
                     join_next_blocking_strategy,
                     deadline_factory,
                     return_type,
+                    usize::MAX,
                 );
 
             let (workflow_exec, workflow_close_tx) =
@@ -4144,6 +4150,90 @@ mod tests {
         let replay2 = replay_worker.replay(execution_id, false).await.unwrap();
         let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
         assert_eq!(replay2.captured_writes.len(), MAX);
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_js_real_run_event_limit_yields_and_unlocks() {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        const MAX: usize = 5;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let js_source = r"
+        export default function loop_forever() {
+            const js = obelisk.createJoinSet();
+            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            for (;;) {
+                js.joinNextTry();
+            }
+        }";
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "loop-forever");
+        let sim_clock = SimClock::epoch();
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, component_id, _) =
+            compile_js_workflow_worker_with_deployment_id_and_return_type(
+                js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                &sim_clock,
+                fn_registry,
+                workflow_engine,
+                DEPLOYMENT_ID_DUMMY,
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 10,
+                    subscription_interruption: None,
+                },
+                deadline_tracker_factory_test(&sim_clock),
+                default_return_type(),
+                MAX,
+            );
+        let (workflow_exec, _close_tx) =
+            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+        let execution_id = ExecutionId::from_parts(0, 42);
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        for expected_history_events in [MAX, MAX * 2] {
+            assert_eq!(
+                1,
+                workflow_exec
+                    .tick_test_await(sim_clock.now(), RunId::generate())
+                    .await
+                    .len()
+            );
+            let log = db_connection.get(&execution_id).await.unwrap();
+            assert_eq!(expected_history_events, log.event_history().count());
+            assert_matches!(
+                &log.events.last().unwrap().event,
+                ExecutionRequest::Unlocked(unlocked)
+                    if unlocked.reason.as_ref() == "workflow event limit reached"
+            );
+            assert_matches!(log.pending_state, PendingState::PendingAt(..));
+        }
 
         drop(db_connection);
         db_close.close().await;

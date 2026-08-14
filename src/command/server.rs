@@ -1111,6 +1111,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.fuel,
         termination_watcher,
         server_verified.database_subscription_interruption,
+        server_verified.workflows_max_events_per_run,
         server_verified.api_addr_if_webui_enabled.clone(),
         server_verified.secret_registry.clone(),
         server_verified.global_http_config.clone(),
@@ -1989,6 +1990,7 @@ pub(crate) struct ServerVerified {
     fuel: Option<u64>,
     global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     database_subscription_interruption: Option<Duration>,
+    workflows_max_events_per_run: usize,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
     global_http_config: GlobalHttpConfig,
@@ -2061,6 +2063,10 @@ impl ServerVerified {
         }
         let workflows_max_replay_captured_writes =
             config.workflows_global_config.max_replay_captured_writes;
+        let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
+        if workflows_max_events_per_run == 0 {
+            bail!("`workflows.max_events_per_run` must be greater than zero");
+        }
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
         let global_executor_instance_limiter = config
             .wasm_global_config
@@ -2095,6 +2101,7 @@ impl ServerVerified {
             fuel,
             global_executor_instance_limiter,
             database_subscription_interruption,
+            workflows_max_events_per_run,
             api_addr_if_webui_enabled: if config.webui.enabled {
                 Some(config.api.listening_addr.to_string()) // `config.api.enabled` checked above
             } else {
@@ -3523,6 +3530,7 @@ impl DeploymentVerified {
         fuel: Option<u64>,
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
+        max_events_per_run: usize,
         api_addr_if_webui_enabled: Option<String>,
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
@@ -3688,6 +3696,7 @@ impl DeploymentVerified {
                             global_executor_instance_limiter.clone(),
                             fuel,
                             subscription_interruption,
+                            max_events_per_run,
                         )
                         .in_current_span(),
                 )
@@ -3830,6 +3839,7 @@ impl DeploymentVerified {
                                 global_executor_instance_limiter.clone(),
                                 fuel,
                                 subscription_interruption,
+                                max_events_per_run,
                             ).await?
                         );
                     }
@@ -5687,6 +5697,7 @@ mod tests {
             server_verified.fuel,
             &mut termination_watcher,
             server_verified.database_subscription_interruption,
+            server_verified.workflows_max_events_per_run,
             webui_enabled,
             server_verified.secret_registry,
             server_verified.global_http_config,

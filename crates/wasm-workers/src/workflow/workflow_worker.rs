@@ -31,8 +31,11 @@ use concepts::{
     FunctionMetadata, JoinSetId, PackageIfcFns, Params, ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
-use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
-use executor::worker::{Worker, WorkerError};
+use executor::worker::Worker;
+use executor::worker::{
+    ExecutionYieldReason, FatalError, RunFinished, WorkerContext, WorkerError, WorkerResult,
+    WorkerResultOk,
+};
 use itertools::Either;
 use std::future;
 use std::ops::Deref;
@@ -79,6 +82,7 @@ pub enum WorkflowConfigMode {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
         lock_extension: Option<Duration>,
+        max_events_per_run: usize,
     },
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
     /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
@@ -127,6 +131,15 @@ impl WorkflowConfig {
             WorkflowConfigMode::Replay {
                 max_replay_captured_writes,
             } => Some(*max_replay_captured_writes),
+        }
+    }
+
+    fn max_events_per_run(&self) -> Option<usize> {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                max_events_per_run, ..
+            } => Some(*max_events_per_run),
+            WorkflowConfigMode::Replay { .. } => None,
         }
     }
 }
@@ -477,24 +490,29 @@ enum WorkflowError {
     },
     #[error("lock expired")]
     LockExpired(Version),
-    #[error("execution interrupt: {1:?}")]
-    Interrupt(Version, InterruptKind),
+    /// Executor will append `Unlocked` event
+    #[error("execution yielded: {reason:?}")]
+    ExecutionYielded {
+        version: Version,
+        reason: ExecutionYieldReason,
+    },
+    /// Executor will not append any more events
+    #[error("execution interrupted by pause/cancel")]
+    PauseOrCancel(Version),
 }
-impl From<WorkflowError> for WorkerError {
-    fn from(value: WorkflowError) -> Self {
-        match value {
-            WorkflowError::LimitReached { reason, version } => {
-                WorkerError::LimitReached { reason, version }
-            }
-            WorkflowError::DbError(db_err) => WorkerError::DbError(db_err),
-            WorkflowError::FatalError { err, version, .. } => WorkerError::FatalError(err, version),
-            WorkflowError::LockExpired(version) => WorkerError::TemporaryTimeout {
-                http_client_traces: None,
+
+impl WorkflowError {
+    fn interrupt(version: Version, kind: InterruptKind) -> Self {
+        match kind {
+            InterruptKind::ExecutorClosing => Self::ExecutionYielded {
                 version,
+                reason: ExecutionYieldReason::ExecutorClosing,
             },
-            // `PauseOrCancel` is intercepted in `run()` and turned into
-            // `DbUpdatedByWorkerOrWatcher`; only `ExecutorClosing` reaches here.
-            WorkflowError::Interrupt(version, _kind) => WorkerError::ExecutorClosing(version),
+            InterruptKind::WorkflowEventLimitReached => Self::ExecutionYielded {
+                version,
+                reason: ExecutionYieldReason::WorkflowEventLimitReached,
+            },
+            InterruptKind::PauseOrCancel => Self::PauseOrCancel(version),
         }
     }
 }
@@ -521,7 +539,7 @@ impl JoinSetCloseError {
                 version,
                 db_connection,
             },
-            JoinSetCloseError::Interrupt(version, kind) => WorkflowError::Interrupt(version, kind),
+            JoinSetCloseError::Interrupt(version, kind) => WorkflowError::interrupt(version, kind),
         }
     }
 }
@@ -715,16 +733,21 @@ impl WorkflowWorker {
         let seed = ctx.execution_id.random_seed();
         // Replay always runs with the `Interrupt` strategy and ignores lock extension / subscription
         // interruption, regardless of whether the source config is `Real` (auto-upgrade) or `Replay`.
-        let (join_next_blocking_strategy, lock_extension, subscription_interruption) =
-            if is_replay.is_some() {
-                (JoinNextBlockingStrategy::Interrupt, None, None)
-            } else {
-                (
-                    view.config.join_next_blocking_strategy(),
-                    view.config.lock_extension(),
-                    view.config.subscription_interruption(),
-                )
-            };
+        let (
+            join_next_blocking_strategy,
+            lock_extension,
+            subscription_interruption,
+            max_events_per_run,
+        ) = if is_replay.is_some() {
+            (JoinNextBlockingStrategy::Interrupt, None, None, None)
+        } else {
+            (
+                view.config.join_next_blocking_strategy(),
+                view.config.lock_extension(),
+                view.config.subscription_interruption(),
+                view.config.max_events_per_run(),
+            )
+        };
         let workflow_ctx = WorkflowCtx::new(
             view.deployment_id,
             db_connection,
@@ -745,6 +768,7 @@ impl WorkflowWorker {
             view.logs_storage_config,
             is_replay,
             view.config.max_replay_captured_writes(),
+            max_events_per_run,
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -796,7 +820,7 @@ impl WorkflowWorker {
                         WorkflowFunctionError::Interrupt(kind) => {
                             let kind = *kind;
                             let version = store.into_data().version().clone();
-                            return Err(WorkflowError::Interrupt(version, kind));
+                            return Err(WorkflowError::interrupt(version, kind));
                         }
                         _ => {}
                     }
@@ -1017,14 +1041,14 @@ impl WorkflowWorker {
                 Err(WorkflowError::LockExpired(workflow_ctx.version().clone()))
             }
             WorkerResultRefactored::Interrupt(InterruptKind::PauseOrCancel, workflow_ctx) => {
-                Err(WorkflowError::Interrupt(
+                Err(WorkflowError::interrupt(
                     workflow_ctx.version().clone(),
                     InterruptKind::PauseOrCancel,
                 ))
             }
             WorkerResultRefactored::Interrupt(kind, mut workflow_ctx) => {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
-                Err(WorkflowError::Interrupt(
+                Err(WorkflowError::interrupt(
                     workflow_ctx.version().clone(),
                     kind,
                 ))
@@ -1236,9 +1260,10 @@ impl WorkflowWorker {
             }
             // Replay uses a never-firing deadline tracker, so any interrupt here is a
             // defensive `ExecutorClosing` (pause/cancel never reaches replay).
-            Err(WorkflowError::Interrupt(version, _kind)) => {
-                Err(ReplayInternalError::ExecutorClosing(version))
-            }
+            Err(
+                WorkflowError::ExecutionYielded { version, .. }
+                | WorkflowError::PauseOrCancel(version),
+            ) => Err(ReplayInternalError::ExecutorClosing(version)),
         }?;
 
         let Ok(mut replay_db_connection) = replay_db_connection
@@ -1563,9 +1588,10 @@ impl WorkflowWorker {
                     http_client_traces: None,
                     version,
                 },
-                ReplayInternalError::ExecutorClosing(version) => {
-                    WorkerError::ExecutorClosing(version)
-                }
+                ReplayInternalError::ExecutorClosing(version) => WorkerError::ExecutionYielded {
+                    version,
+                    reason: ExecutionYieldReason::ExecutorClosing,
+                },
             })?;
 
         // Explicit replay/advance may persist this fatal replay outcome as `Finished`.
@@ -1753,20 +1779,39 @@ impl Worker for WorkflowWorker {
             local_interrupt_watcher,
         )
         .await;
-        worker_span.in_scope(|| match res {
-            Ok((Either::Left(ok), _)) => {
-                info!("Workflow run finished: {ok}");
-                WorkerResult::Ok(ok)
-            }
-            Ok((Either::Right(_), _)) => unreachable!("not replaying"),
-            // A pause or cancel already persisted its event out of band; append nothing.
-            Err(WorkflowError::Interrupt(_version, InterruptKind::PauseOrCancel)) => {
-                info!("Workflow run interrupted by pause/cancel, db already updated");
-                WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
-            }
-            Err(workflow_err) => {
+        worker_span.in_scope(|| {
+            if let Err(workflow_err) = &res {
                 info!("Workflow run finished with error: {workflow_err}");
-                WorkerResult::Err(WorkerError::from(workflow_err))
+            }
+            match res {
+                Ok((Either::Left(ok), _)) => {
+                    info!("Workflow run finished: {ok}");
+                    WorkerResult::Ok(ok)
+                }
+                Ok((Either::Right(_), _)) => unreachable!("not replaying"),
+                // A pause or cancel already persisted its event out of band; append nothing.
+                Err(WorkflowError::PauseOrCancel(_version)) => {
+                    info!("Workflow run interrupted by pause/cancel, db already updated");
+                    WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                }
+                Err(WorkflowError::LimitReached { reason, version }) => {
+                    WorkerResult::Err(WorkerError::LimitReached { reason, version })
+                }
+                Err(WorkflowError::DbError(db_err)) => {
+                    WorkerResult::Err(WorkerError::DbError(db_err))
+                }
+                Err(WorkflowError::FatalError { err, version, .. }) => {
+                    WorkerResult::Err(WorkerError::FatalError(err, version))
+                }
+                Err(WorkflowError::LockExpired(version)) => {
+                    WorkerResult::Err(WorkerError::TemporaryTimeout {
+                        http_client_traces: None,
+                        version,
+                    })
+                }
+                Err(WorkflowError::ExecutionYielded { version, reason }) => {
+                    WorkerResult::Err(WorkerError::ExecutionYielded { version, reason })
+                }
             }
         })
     }
@@ -1989,6 +2034,7 @@ pub(crate) mod tests {
                         mode: WorkflowConfigMode::Real {
                             join_next_blocking_strategy,
                             lock_extension: None,
+                            max_events_per_run: usize::MAX,
                         },
                     },
                     workflow_engine,

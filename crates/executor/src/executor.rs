@@ -1,5 +1,6 @@
 use crate::worker::{
-    FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
+    ExecutionYieldReason, FatalError, RunFinished, Worker, WorkerContext, WorkerError,
+    WorkerResult, WorkerResultOk,
 };
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
@@ -777,10 +778,15 @@ impl ExecTask {
                 let reason_generic = err.to_string(); // Override with err's reason if no information is lost.
 
                 let (primary_event, child_finished, version) = match err {
-                    WorkerError::ExecutorClosing(version) => {
+                    WorkerError::ExecutionYielded { version, reason } => {
                         let primary_event = ExecutionRequest::Unlocked(Unlocked {
                             unlocked_at: result_obtained_at,
-                            reason: "executor closing".into(),
+                            reason: match reason {
+                                ExecutionYieldReason::ExecutorClosing => "executor closing".into(),
+                                ExecutionYieldReason::WorkflowEventLimitReached => {
+                                    "workflow event limit reached".into()
+                                }
+                            },
                         });
                         (primary_event, None, version)
                     }

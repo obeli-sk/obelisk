@@ -200,6 +200,7 @@ mod bench {
                     mode: WorkflowConfigMode::Real {
                         join_next_blocking_strategy,
                         lock_extension: None,
+                        max_events_per_run: usize::MAX,
                     },
                 },
                 workflow_engine,

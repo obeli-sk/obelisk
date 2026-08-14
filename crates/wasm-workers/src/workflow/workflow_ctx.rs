@@ -899,6 +899,7 @@ impl WorkflowCtx {
         logs_storage_config: Option<LogStrageConfig>,
         is_replay: Option<ReplayKind>,
         max_replay_captured_writes: Option<usize>,
+        max_events_per_run: Option<usize>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -925,6 +926,7 @@ impl WorkflowCtx {
                 worker_span.clone(),
                 is_replay == Some(ReplayKind::Unfinished),
                 max_replay_captured_writes,
+                max_events_per_run,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -3258,6 +3260,7 @@ pub(crate) mod tests {
                 None,                         // logs_storage_config,
                 is_replay,
                 None, // max_replay_captured_writes
+                None, // max_events_per_run
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
