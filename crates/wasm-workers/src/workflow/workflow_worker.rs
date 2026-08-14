@@ -490,33 +490,29 @@ enum WorkflowError {
     },
     #[error("lock expired")]
     LockExpired(Version),
-    #[error("execution interrupt: {1:?}")]
-    Interrupt(Version, InterruptKind),
+    /// Executor will append `Unlocked` event
+    #[error("execution yielded: {reason:?}")]
+    ExecutionYielded {
+        version: Version,
+        reason: ExecutionYieldReason,
+    },
+    /// Executor will not append any more events
+    #[error("execution interrupted by pause/cancel")]
+    PauseOrCancel(Version),
 }
-impl From<WorkflowError> for WorkerError {
-    fn from(value: WorkflowError) -> Self {
-        match value {
-            WorkflowError::LimitReached { reason, version } => {
-                WorkerError::LimitReached { reason, version }
-            }
-            WorkflowError::DbError(db_err) => WorkerError::DbError(db_err),
-            WorkflowError::FatalError { err, version, .. } => WorkerError::FatalError(err, version),
-            WorkflowError::LockExpired(version) => WorkerError::TemporaryTimeout {
-                http_client_traces: None,
+
+impl WorkflowError {
+    fn interrupt(version: Version, kind: InterruptKind) -> Self {
+        match kind {
+            InterruptKind::ExecutorClosing => Self::ExecutionYielded {
                 version,
+                reason: ExecutionYieldReason::ExecutorClosing,
             },
-            // `PauseOrCancel` is intercepted in `run()` and turned into
-            // `DbUpdatedByWorkerOrWatcher`.
-            WorkflowError::Interrupt(version, kind) => WorkerError::ExecutionYielded {
+            InterruptKind::WorkflowEventLimitReached => Self::ExecutionYielded {
                 version,
-                reason: match kind {
-                    InterruptKind::ExecutorClosing => ExecutionYieldReason::ExecutorClosing,
-                    InterruptKind::WorkflowEventLimitReached => {
-                        ExecutionYieldReason::WorkflowEventLimitReached
-                    }
-                    InterruptKind::PauseOrCancel => unreachable!("intercepted in run"),
-                },
+                reason: ExecutionYieldReason::WorkflowEventLimitReached,
             },
+            InterruptKind::PauseOrCancel => Self::PauseOrCancel(version),
         }
     }
 }
@@ -543,7 +539,7 @@ impl JoinSetCloseError {
                 version,
                 db_connection,
             },
-            JoinSetCloseError::Interrupt(version, kind) => WorkflowError::Interrupt(version, kind),
+            JoinSetCloseError::Interrupt(version, kind) => WorkflowError::interrupt(version, kind),
         }
     }
 }
@@ -824,7 +820,7 @@ impl WorkflowWorker {
                         WorkflowFunctionError::Interrupt(kind) => {
                             let kind = *kind;
                             let version = store.into_data().version().clone();
-                            return Err(WorkflowError::Interrupt(version, kind));
+                            return Err(WorkflowError::interrupt(version, kind));
                         }
                         _ => {}
                     }
@@ -1045,14 +1041,14 @@ impl WorkflowWorker {
                 Err(WorkflowError::LockExpired(workflow_ctx.version().clone()))
             }
             WorkerResultRefactored::Interrupt(InterruptKind::PauseOrCancel, workflow_ctx) => {
-                Err(WorkflowError::Interrupt(
+                Err(WorkflowError::interrupt(
                     workflow_ctx.version().clone(),
                     InterruptKind::PauseOrCancel,
                 ))
             }
             WorkerResultRefactored::Interrupt(kind, mut workflow_ctx) => {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
-                Err(WorkflowError::Interrupt(
+                Err(WorkflowError::interrupt(
                     workflow_ctx.version().clone(),
                     kind,
                 ))
@@ -1264,9 +1260,10 @@ impl WorkflowWorker {
             }
             // Replay uses a never-firing deadline tracker, so any interrupt here is a
             // defensive `ExecutorClosing` (pause/cancel never reaches replay).
-            Err(WorkflowError::Interrupt(version, _kind)) => {
-                Err(ReplayInternalError::ExecutorClosing(version))
-            }
+            Err(
+                WorkflowError::ExecutionYielded { version, .. }
+                | WorkflowError::PauseOrCancel(version),
+            ) => Err(ReplayInternalError::ExecutorClosing(version)),
         }?;
 
         let Ok(mut replay_db_connection) = replay_db_connection
@@ -1782,20 +1779,39 @@ impl Worker for WorkflowWorker {
             local_interrupt_watcher,
         )
         .await;
-        worker_span.in_scope(|| match res {
-            Ok((Either::Left(ok), _)) => {
-                info!("Workflow run finished: {ok}");
-                WorkerResult::Ok(ok)
-            }
-            Ok((Either::Right(_), _)) => unreachable!("not replaying"),
-            // A pause or cancel already persisted its event out of band; append nothing.
-            Err(WorkflowError::Interrupt(_version, InterruptKind::PauseOrCancel)) => {
-                info!("Workflow run interrupted by pause/cancel, db already updated");
-                WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
-            }
-            Err(workflow_err) => {
+        worker_span.in_scope(|| {
+            if let Err(workflow_err) = &res {
                 info!("Workflow run finished with error: {workflow_err}");
-                WorkerResult::Err(WorkerError::from(workflow_err))
+            }
+            match res {
+                Ok((Either::Left(ok), _)) => {
+                    info!("Workflow run finished: {ok}");
+                    WorkerResult::Ok(ok)
+                }
+                Ok((Either::Right(_), _)) => unreachable!("not replaying"),
+                // A pause or cancel already persisted its event out of band; append nothing.
+                Err(WorkflowError::PauseOrCancel(_version)) => {
+                    info!("Workflow run interrupted by pause/cancel, db already updated");
+                    WorkerResult::Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
+                }
+                Err(WorkflowError::LimitReached { reason, version }) => {
+                    WorkerResult::Err(WorkerError::LimitReached { reason, version })
+                }
+                Err(WorkflowError::DbError(db_err)) => {
+                    WorkerResult::Err(WorkerError::DbError(db_err))
+                }
+                Err(WorkflowError::FatalError { err, version, .. }) => {
+                    WorkerResult::Err(WorkerError::FatalError(err, version))
+                }
+                Err(WorkflowError::LockExpired(version)) => {
+                    WorkerResult::Err(WorkerError::TemporaryTimeout {
+                        http_client_traces: None,
+                        version,
+                    })
+                }
+                Err(WorkflowError::ExecutionYielded { version, reason }) => {
+                    WorkerResult::Err(WorkerError::ExecutionYielded { version, reason })
+                }
             }
         })
     }
