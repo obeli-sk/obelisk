@@ -37,6 +37,14 @@ pub enum WorkerResultOk {
     RunFinished(RunFinished),
 }
 
+#[derive(Debug, Clone, Copy, derive_more::Display)]
+pub enum ExecutionYieldReason {
+    #[display("executor closing")]
+    ExecutorClosing,
+    #[display("workflow event limit reached")]
+    WorkflowEventLimitReached,
+}
+
 #[derive(Debug, derive_more::Display)]
 #[display("finished at v{version}")]
 pub struct RunFinished {
@@ -85,8 +93,11 @@ pub enum WorkerError {
         http_client_traces: Option<Vec<HttpClientTrace>>,
         version: Version,
     },
-    #[error("executor closing")]
-    ExecutorClosing(Version),
+    #[error("execution yielded: {reason}")]
+    ExecutionYielded {
+        version: Version,
+        reason: ExecutionYieldReason,
+    },
     #[error(transparent)]
     DbError(DbErrorWrite),
     // non-retriable errors

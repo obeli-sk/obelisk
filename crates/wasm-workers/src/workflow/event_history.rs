@@ -173,6 +173,8 @@ pub(crate) struct EventHistory {
 
     // Upper bound on captured writes a replay pass may collect. `None` outside replay.
     max_replay_captured_writes: Option<usize>,
+    max_events_per_run: Option<usize>,
+    written_events_this_run: usize,
 }
 
 #[derive(Debug)]
@@ -226,6 +228,7 @@ impl EventHistory {
         worker_span: Span,
         replaying_unfinished_execution: bool,
         max_replay_captured_writes: Option<usize>,
+        max_events_per_run: Option<usize>,
     ) -> EventHistory {
         EventHistory {
             replaying_unfinished_execution,
@@ -254,6 +257,8 @@ impl EventHistory {
             last_oneoff_id: None,
             last_direct_call_id: None,
             max_replay_captured_writes,
+            max_events_per_run,
+            written_events_this_run: 0,
         }
     }
 
@@ -437,7 +442,8 @@ impl EventHistory {
         }
 
         let version_range = event_call.version_range.clone();
-        match event_call.kind {
+        let event_history_len_before = self.event_history.len();
+        let value = match event_call.kind {
             EventCallKind::NonBlocking(event_call) => {
                 // Events that cannot block waiting for response.
                 let cloned_non_blocking = event_call.clone();
@@ -477,7 +483,19 @@ impl EventHistory {
                 )
                 .await
             }
+        }?;
+        let written_events = self.event_history.len() - event_history_len_before;
+        self.written_events_this_run += written_events;
+        if written_events > 0
+            && self
+                .max_events_per_run
+                .is_some_and(|max| self.written_events_this_run >= max)
+        {
+            return Err(ApplyError::Interrupt(
+                InterruptKind::WorkflowEventLimitReached,
+            ));
         }
+        Ok(value)
     }
 
     async fn persist_replayed_backtrace(
@@ -4586,6 +4604,7 @@ mod tests {
             info_span!("worker-test"),
             false, // replaying_unfinished_execution
             None,  // max_replay_captured_writes
+            None,  // max_events_per_run
         );
 
         (

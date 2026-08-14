@@ -102,6 +102,7 @@
 # lock_extension_leeway.milliseconds = 100 # Deprecated, removed in 0.42: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]` instead. While set, it overrides the per-workflow value for every workflow.
 # subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
 # max_replay_captured_writes = 100         # Max captured writes a single replay pass returns; on reaching it replay stops and returns that many as an advanceable prefix (advance them, then replay again to resume). Keeps a non-terminating workflow (e.g. an unresolved `joinNextTry` poll loop) advanceable in bounded batches.
+# max_events_per_run = 100                 # Max history events a real workflow run writes before yielding and unlocking. Replay uses max_replay_captured_writes instead.
 
 # [wasm.codegen_cache]
 ## Defaults:

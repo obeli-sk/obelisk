@@ -31,8 +31,11 @@ use concepts::{
     FunctionMetadata, JoinSetId, PackageIfcFns, Params, ResultParsingError, StrVariant, TrapKind,
 };
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
-use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
-use executor::worker::{Worker, WorkerError};
+use executor::worker::Worker;
+use executor::worker::{
+    ExecutionYieldReason, FatalError, RunFinished, WorkerContext, WorkerError, WorkerResult,
+    WorkerResultOk,
+};
 use itertools::Either;
 use std::future;
 use std::ops::Deref;
@@ -79,6 +82,7 @@ pub enum WorkflowConfigMode {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
         lock_extension: Option<Duration>,
+        max_events_per_run: usize,
     },
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
     /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
@@ -127,6 +131,15 @@ impl WorkflowConfig {
             WorkflowConfigMode::Replay {
                 max_replay_captured_writes,
             } => Some(*max_replay_captured_writes),
+        }
+    }
+
+    fn max_events_per_run(&self) -> Option<usize> {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                max_events_per_run, ..
+            } => Some(*max_events_per_run),
+            WorkflowConfigMode::Replay { .. } => None,
         }
     }
 }
@@ -493,8 +506,17 @@ impl From<WorkflowError> for WorkerError {
                 version,
             },
             // `PauseOrCancel` is intercepted in `run()` and turned into
-            // `DbUpdatedByWorkerOrWatcher`; only `ExecutorClosing` reaches here.
-            WorkflowError::Interrupt(version, _kind) => WorkerError::ExecutorClosing(version),
+            // `DbUpdatedByWorkerOrWatcher`.
+            WorkflowError::Interrupt(version, kind) => WorkerError::ExecutionYielded {
+                version,
+                reason: match kind {
+                    InterruptKind::ExecutorClosing => ExecutionYieldReason::ExecutorClosing,
+                    InterruptKind::WorkflowEventLimitReached => {
+                        ExecutionYieldReason::WorkflowEventLimitReached
+                    }
+                    InterruptKind::PauseOrCancel => unreachable!("intercepted in run"),
+                },
+            },
         }
     }
 }
@@ -715,16 +737,21 @@ impl WorkflowWorker {
         let seed = ctx.execution_id.random_seed();
         // Replay always runs with the `Interrupt` strategy and ignores lock extension / subscription
         // interruption, regardless of whether the source config is `Real` (auto-upgrade) or `Replay`.
-        let (join_next_blocking_strategy, lock_extension, subscription_interruption) =
-            if is_replay.is_some() {
-                (JoinNextBlockingStrategy::Interrupt, None, None)
-            } else {
-                (
-                    view.config.join_next_blocking_strategy(),
-                    view.config.lock_extension(),
-                    view.config.subscription_interruption(),
-                )
-            };
+        let (
+            join_next_blocking_strategy,
+            lock_extension,
+            subscription_interruption,
+            max_events_per_run,
+        ) = if is_replay.is_some() {
+            (JoinNextBlockingStrategy::Interrupt, None, None, None)
+        } else {
+            (
+                view.config.join_next_blocking_strategy(),
+                view.config.lock_extension(),
+                view.config.subscription_interruption(),
+                view.config.max_events_per_run(),
+            )
+        };
         let workflow_ctx = WorkflowCtx::new(
             view.deployment_id,
             db_connection,
@@ -745,6 +772,7 @@ impl WorkflowWorker {
             view.logs_storage_config,
             is_replay,
             view.config.max_replay_captured_writes(),
+            max_events_per_run,
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -1563,9 +1591,10 @@ impl WorkflowWorker {
                     http_client_traces: None,
                     version,
                 },
-                ReplayInternalError::ExecutorClosing(version) => {
-                    WorkerError::ExecutorClosing(version)
-                }
+                ReplayInternalError::ExecutorClosing(version) => WorkerError::ExecutionYielded {
+                    version,
+                    reason: ExecutionYieldReason::ExecutorClosing,
+                },
             })?;
 
         // Explicit replay/advance may persist this fatal replay outcome as `Finished`.
@@ -1989,6 +2018,7 @@ pub(crate) mod tests {
                         mode: WorkflowConfigMode::Real {
                             join_next_blocking_strategy,
                             lock_extension: None,
+                            max_events_per_run: usize::MAX,
                         },
                     },
                     workflow_engine,

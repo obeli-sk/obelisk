@@ -720,6 +720,13 @@
           "format": "uint",
           "minimum": 0,
           "default": 100
+        },
+        "max_events_per_run": {
+          "description": "Maximum number of history events a real workflow run may write before yielding.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "default": 100
         }
       },
       "additionalProperties": false

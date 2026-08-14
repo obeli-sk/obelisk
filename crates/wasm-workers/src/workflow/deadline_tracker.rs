@@ -7,8 +7,10 @@ use tracing::{trace, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptKind {
-    /// Send [`WorkerError::ExecutorClosing`]
+    /// Send an executor-closing execution yield.
     ExecutorClosing,
+    /// The real-run durable event budget was exhausted.
+    WorkflowEventLimitReached,
     /// Send [`WorkerResultOk::DbUpdatedByWorkerOrWatcher`], the pause/cancel RPC must have appended the event.
     PauseOrCancel,
 }
@@ -131,6 +133,7 @@ impl DeadlineTracker for DeadlineTrackerTokio {
             Err(match kind {
                 InterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
                 InterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
+                InterruptKind::WorkflowEventLimitReached => unreachable!("not watcher-driven"),
             })
         } else {
             let (expiry, expiry_reason) = match max_duration {
@@ -295,6 +298,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
             return Err(match kind {
                 InterruptKind::ExecutorClosing => ResponseSubscriptionEnd::ExecutorClosing,
                 InterruptKind::PauseOrCancel => ResponseSubscriptionEnd::ExecutionUpdated,
+                InterruptKind::WorkflowEventLimitReached => unreachable!("not watcher-driven"),
             });
         }
         let (expiry, expiry_reason) = match max_duration {
