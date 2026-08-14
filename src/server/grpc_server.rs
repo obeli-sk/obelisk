@@ -80,7 +80,9 @@ use tracing::info_span;
 use tracing::instrument;
 use val_json::wast_val_ser::deserialize_slice;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
-use wasm_workers::workflow::workflow_worker::{AdvanceError, ReplayAdvanceable, ReplayResponse};
+use wasm_workers::workflow::workflow_worker::{
+    AdvanceError, BacktraceCapture, ReplayAdvanceable, ReplayResponse,
+};
 
 pub(crate) struct GrpcServer {
     server_verified: ServerVerified,
@@ -871,8 +873,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 ))
             })?;
 
-        // Always capture backtrace so that advance can persist it
-        let replay_res = replay_worker.replay(execution_id.clone(), true).await;
+        // Capture backtraces for the newly produced writes only; the already-persisted prefix
+        // does not need them (and re-deriving them for a long log is expensive).
+        let replay_res = replay_worker
+            .replay(execution_id.clone(), BacktraceCapture::NewEventsOnly)
+            .await;
         let outcome = match replay_res {
             Ok(ReplayResponse::Advanceable(replay)) => {
                 grpc_gen::replay_execution_response::Outcome::Advanceable(
@@ -1024,8 +1029,13 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 .collect::<Result<Vec<_>, _>>()?,
         };
 
+        let backtrace_capture = if request.persist_backtrace {
+            BacktraceCapture::NewEventsOnly
+        } else {
+            BacktraceCapture::Disabled
+        };
         let advance_res = replay_worker
-            .advance(execution_id.clone(), expected, request.persist_backtrace)
+            .advance(execution_id.clone(), expected, backtrace_capture)
             .await;
 
         let result = match advance_res {
@@ -1102,7 +1112,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 tonic::Status::not_found(format!("new component '{new}' not found in registry"))
             })?;
             // no backtrace capture on upgrade
-            let replay_res = replay_worker.replay(execution_id.clone(), false).await;
+            let replay_res = replay_worker
+                .replay(execution_id.clone(), BacktraceCapture::Disabled)
+                .await;
             if let Err(err) = replay_res {
                 info!("Replay failed: {err:?}");
                 return Err(tonic::Status::internal(format!("replay failed: {err}")));

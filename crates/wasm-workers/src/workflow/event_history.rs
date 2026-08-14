@@ -2545,6 +2545,7 @@ struct EventCall {
 
 pub(crate) struct EventCallCursor {
     next_version: Version,
+    // Starts with whole replay history, pops front upon consuming each event.
     replay_versions: VecDeque<Version>,
 }
 
@@ -2561,6 +2562,12 @@ impl EventCallCursor {
 
     pub(crate) fn version(&self) -> &Version {
         &self.next_version
+    }
+
+    /// True while there are still persisted events to replay before the cursor reaches the
+    /// live tip. Once exhausted, subsequent calls produce brand-new events.
+    pub(crate) fn is_replaying_persisted(&self) -> bool {
+        !self.replay_versions.is_empty()
     }
 
     fn next(&mut self, kind: EventCallKind) -> EventCall {

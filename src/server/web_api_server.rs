@@ -49,8 +49,9 @@ use tracing::{Instrument as _, Span, debug, info, info_span, instrument, trace, 
 use utoipa::{IntoParams, OpenApi, ToSchema};
 use val_json::{wast_val::WastVal, wast_val_ser::deserialize_value};
 use wasm_workers::{
-    activity::cancel_registry::CancelRegistry, registry::ReplayWorker,
-    workflow::workflow_worker::AdvanceError,
+    activity::cancel_registry::CancelRegistry,
+    registry::ReplayWorker,
+    workflow::workflow_worker::{AdvanceError, BacktraceCapture},
 };
 
 #[derive(Clone)]
@@ -2408,12 +2409,13 @@ async fn execution_advance(
         ));
     }
 
+    let backtrace_capture = if payload.persist_backtrace {
+        BacktraceCapture::NewEventsOnly
+    } else {
+        BacktraceCapture::Disabled
+    };
     let advance_res = replay_worker
-        .advance(
-            execution_id.clone(),
-            captured_writes,
-            payload.persist_backtrace,
-        )
+        .advance(execution_id.clone(), captured_writes, backtrace_capture)
         .await;
 
     let advance_response = match advance_res {
@@ -2607,8 +2609,11 @@ async fn replay_execution_internal(
             }
         };
 
-    // Always capture backtrace so that advance can persist it
-    let replay_res = replay_worker.replay(execution_id.clone(), true).await;
+    // Capture backtraces for the newly produced writes only; the already-persisted prefix
+    // does not need them (and re-deriving them for a long log is expensive).
+    let replay_res = replay_worker
+        .replay(execution_id.clone(), BacktraceCapture::NewEventsOnly)
+        .await;
     match replay_res {
         Ok(response) => Ok(ReplayResponseSer::from(response)),
         Err(err) => map_replay_err(err),
@@ -2660,7 +2665,9 @@ async fn execution_upgrade(
             .get(&payload.new)
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
         // no backtrace capture on upgrade
-        let replay_res = replay_worker.replay(execution_id.clone(), false).await;
+        let replay_res = replay_worker
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
+            .await;
         if let Err(err) = replay_res {
             info!("Replay failed: {err:?}");
             return Err(HttpResponse {

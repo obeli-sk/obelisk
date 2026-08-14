@@ -3,7 +3,7 @@
 use crate::workflow::replay_advance::AdvanceResponse;
 use crate::workflow::workflow_js_worker::WorkflowJsWorker;
 use crate::workflow::workflow_worker::{
-    AdvanceError, ReplayAdvanceable, ReplayError, ReplayResponse, WorkflowWorker,
+    AdvanceError, BacktraceCapture, ReplayAdvanceable, ReplayError, ReplayResponse, WorkflowWorker,
 };
 use concepts::ComponentId;
 use concepts::ComponentType;
@@ -56,7 +56,7 @@ impl ReplayWorker {
     pub async fn replay(
         &self,
         execution_id: ExecutionId,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<ReplayResponse, ReplayError> {
         match self {
             Self::Wasm(worker) => worker.replay(execution_id, backtrace_capture).await,
@@ -78,7 +78,7 @@ impl ReplayWorker {
         &self,
         execution_id: ExecutionId,
         requested: ReplayAdvanceable,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<AdvanceResponse, AdvanceError> {
         match self {
             Self::Wasm(worker) => {
