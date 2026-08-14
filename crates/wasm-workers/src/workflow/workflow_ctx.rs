@@ -150,7 +150,7 @@ pub(crate) struct WorkflowCtx {
     pub(crate) db_connection: Box<dyn WorkflowDbConnection>,
     component_logger: ComponentLogger,
     pub(crate) resource_table: wasmtime::component::ResourceTable,
-    backtrace_capture: bool,
+    backtrace_capture: BacktraceCapture,
     wasi_ctx: WasiCtx,
     is_replay: Option<ReplayKind>,
 }
@@ -685,7 +685,7 @@ impl<'a> ImportedFnCall<'a> {
         params: &'a [Val],
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<ImportedFnCall<'a>, WorkflowFunctionError> {
-        let wasm_backtrace = if store_ctx.data().backtrace_capture {
+        let wasm_backtrace = if store_ctx.data().should_capture_backtrace() {
             let wasm_backtrace = wasmtime::WasmBacktrace::capture(&store_ctx);
             concepts::storage::WasmBacktrace::maybe_from(&wasm_backtrace)
         } else {
@@ -873,9 +873,27 @@ pub(crate) enum ReplayKind {
     Unfinished,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BacktraceCapture {
+    /// Do not capture backtraces (normal execution run).
+    Disabled,
+    /// Capture only for events past the persisted tip, i.e. the writes a replay would append.
+    NewEventsOnly,
+    /// Capture for every replayed event, including the already-persisted prefix (`persist_backtraces`).
+    Full,
+}
+
 impl WorkflowCtx {
     pub(crate) fn version(&self) -> &Version {
         self.event_call_cursor.version()
+    }
+
+    fn should_capture_backtrace(&self) -> bool {
+        match self.backtrace_capture {
+            BacktraceCapture::Disabled => false,
+            BacktraceCapture::Full => true,
+            BacktraceCapture::NewEventsOnly => !self.event_call_cursor.is_replaying_persisted(),
+        }
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -889,7 +907,7 @@ impl WorkflowCtx {
         clock_fn: Box<dyn ClockFn>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         worker_span: Span,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
         deadline_tracker: Box<dyn DeadlineTracker>,
         fn_registry: Arc<dyn FunctionRegistry>,
         cancel_registry: CancelRegistry,
@@ -1033,7 +1051,7 @@ impl WorkflowCtx {
         caller: &'a mut wasmtime::StoreContextMut<'_, Self>,
         wit_backtrace: Option<typesTypes::backtrace::WasmBacktrace>,
     ) -> (&'a mut WorkflowCtx, Option<storage::WasmBacktrace>) {
-        let backtrace = if caller.data().backtrace_capture {
+        let backtrace = if caller.data().should_capture_backtrace() {
             wit_backtrace
                 .and_then(Self::wit_wasm_backtrace_to_storage)
                 .or_else(|| {
@@ -3035,6 +3053,7 @@ impl log_activities::obelisk::log::log::Host for WorkflowCtx {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::BacktraceCapture;
     use crate::activity::cancel_registry::CancelRegistry;
     use crate::cancellation_driver;
     use crate::testing_fn_registry::fn_registry_dummy;
@@ -3244,7 +3263,7 @@ pub(crate) mod tests {
                 self.clock_fn.clone_box(),
                 join_next_blocking_strategy,
                 tracing::info_span!("workflow-test"),
-                false,
+                BacktraceCapture::Disabled,
                 DeadlineTrackerFactoryTokio::new(Duration::ZERO, self.clock_fn.clone_box())
                     .create(
                         ctx.locked_event.lock_expires_at,

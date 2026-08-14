@@ -15,6 +15,7 @@ use crate::workflow::replay_advance::{AdvanceFromLogError, AdvanceResponse, Repl
 use crate::workflow::replay_db_proxy::{
     InternalCapturedWrite, ReplayWorkflowDbConnection, apply_writes, bump_versions_for_execution,
 };
+pub use crate::workflow::workflow_ctx::BacktraceCapture;
 use crate::workflow::workflow_ctx::{ImportedFnCall, ReplayKind, WorkerPartialResult};
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
@@ -589,7 +590,7 @@ impl WorkflowWorker {
         ffqn: FunctionFqn,
         params: Params,
         db_conn: Box<dyn DbConnection>,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<
         (
             Vec<InternalCapturedWrite>,
@@ -711,7 +712,7 @@ impl WorkflowWorker {
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
         view: WorkflowWorkerView<'_>,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
         local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
@@ -1185,7 +1186,7 @@ impl WorkflowWorker {
         execution_id: ExecutionId,
         real_connection: Box<dyn DbConnection>,
         parent: Option<(ExecutionId, JoinSetId)>,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<
         (
             Vec<InternalCapturedWrite>,
@@ -1302,7 +1303,7 @@ impl WorkflowWorker {
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
         view: WorkflowWorkerView<'_>,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
         local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<
         (
@@ -1361,7 +1362,14 @@ impl WorkflowWorker {
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
         let (writes, backtraces, _fatal_error, _db_conn) = self
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn, true)
+            .capture_replay_writes_from_log(
+                execution_id,
+                log,
+                ffqn,
+                params,
+                db_conn,
+                BacktraceCapture::Full,
+            )
             .await?;
         Ok(Self::collect_write_backtraces(writes, backtraces))
     }
@@ -1415,7 +1423,7 @@ impl WorkflowWorker {
     pub async fn replay(
         &self,
         execution_id: ExecutionId,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<ReplayResponse, ReplayError> {
         assert!(
             self.deadline_factory.is_for_replay(),
@@ -1481,7 +1489,7 @@ impl WorkflowWorker {
         &self,
         execution_id: ExecutionId,
         requested: ReplayAdvanceable,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<AdvanceResponse, AdvanceError> {
         assert!(
             self.deadline_factory.is_for_replay(),
@@ -1576,7 +1584,7 @@ impl WorkflowWorker {
                     .await
                     .map_err(|err| WorkerError::DbError(err.into()))?,
                 parent,
-                false,
+                BacktraceCapture::Disabled,
             )
             .await
             .map_err(|err| match err {
@@ -1775,7 +1783,7 @@ impl Worker for WorkflowWorker {
             db_connection,
             None, // is_replay
             view,
-            false,
+            BacktraceCapture::Disabled,
             local_interrupt_watcher,
         )
         .await;
@@ -4096,7 +4104,7 @@ pub(crate) mod tests {
             cancellation_driver::tick_test(db_connection, &cancel_registry, sim_clock.now()).await;
             let replay = harness
                 .replay_worker
-                .replay(harness.execution_id.clone(), false)
+                .replay(harness.execution_id.clone(), BacktraceCapture::Disabled)
                 .await
                 .unwrap();
 
@@ -4114,7 +4122,11 @@ pub(crate) mod tests {
             let expected_finished = replay.get_return_value().cloned();
             let advance = harness
                 .replay_worker
-                .advance(harness.execution_id.clone(), replay, false)
+                .advance(
+                    harness.execution_id.clone(),
+                    replay,
+                    BacktraceCapture::Disabled,
+                )
                 .await
                 .unwrap();
             assert_eq!(advance.finished, expected_finished);
@@ -4851,7 +4863,7 @@ pub(crate) mod tests {
         // Replay just after creating - execution is unfinished with no events,
         // preview should return the first event(s) the workflow would produce.
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
@@ -4906,7 +4918,10 @@ pub(crate) mod tests {
         assert_eq!(FIBO_10_OUTPUT, fibo);
 
         // Replay after workflow was finished - return_value is present.
-        let replay = replay_worker.replay(execution_id, false).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+            .unwrap();
         let result = assert_matches!(replay, ReplayResponse::Finished { result } => result);
         assert_matches!(result, SupportedFunctionReturnValue::Ok(_));
     }
@@ -4966,7 +4981,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
         );
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
@@ -4976,7 +4991,7 @@ pub(crate) mod tests {
         );
 
         replay_worker
-            .advance(execution_id, replay, false)
+            .advance(execution_id, replay, BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -5241,7 +5256,7 @@ pub(crate) mod tests {
             cancellation_driver::tick_test(db_connection, &cancel_registry, sim_clock.now()).await;
             let replay = harness
                 .replay_worker
-                .replay(harness.execution_id.clone(), false)
+                .replay(harness.execution_id.clone(), BacktraceCapture::Disabled)
                 .await
                 .unwrap();
 
@@ -5286,7 +5301,11 @@ pub(crate) mod tests {
 
             let advance = harness
                 .replay_worker
-                .advance(harness.execution_id.clone(), requested.clone(), false)
+                .advance(
+                    harness.execution_id.clone(),
+                    requested.clone(),
+                    BacktraceCapture::Disabled,
+                )
                 .await
                 .unwrap();
             assert_eq!(advance.finished, requested.get_return_value().cloned());
@@ -5400,7 +5419,7 @@ pub(crate) mod tests {
 
         // Step 1: Replay to get expected events and version.
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -5432,7 +5451,11 @@ pub(crate) mod tests {
             }
         };
         let advance_result = replay_worker
-            .advance(execution_id.clone(), wrong_replay, false)
+            .advance(
+                execution_id.clone(),
+                wrong_replay,
+                BacktraceCapture::Disabled,
+            )
             .await
             .unwrap_err();
         assert_matches!(
@@ -5447,7 +5470,7 @@ pub(crate) mod tests {
                 ReplayAdvanceable {
                     captured_writes: vec![], // empty writes
                 },
-                false,
+                BacktraceCapture::Disabled,
             )
             .await
             .unwrap_err();
@@ -5607,7 +5630,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
         );
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -5651,7 +5674,7 @@ pub(crate) mod tests {
         sim_clock.move_time_forward(Duration::from_millis(100));
 
         let advance = replay_worker
-            .advance(execution_id, requested, false)
+            .advance(execution_id, requested, BacktraceCapture::Disabled)
             .await
             .unwrap();
 

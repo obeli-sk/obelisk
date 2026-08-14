@@ -4,7 +4,7 @@
 //! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
-use super::workflow_worker::{WorkflowWorker, WorkflowWorkerCompiled};
+use super::workflow_worker::{BacktraceCapture, WorkflowWorker, WorkflowWorkerCompiled};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
@@ -236,7 +236,14 @@ impl WorkflowJsWorker {
         );
         let (writes, backtraces, _fatal_error, _db_conn) = self
             .inner
-            .capture_replay_writes_from_log(execution_id, log, ffqn, params, db_conn, true)
+            .capture_replay_writes_from_log(
+                execution_id,
+                log,
+                ffqn,
+                params,
+                db_conn,
+                BacktraceCapture::Full,
+            )
             .await?;
         Ok(WorkflowWorker::collect_write_backtraces(writes, backtraces))
     }
@@ -573,7 +580,7 @@ impl WorkflowJsWorker {
     pub async fn replay(
         &self,
         execution_id: ExecutionId,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<ReplayResponse, ReplayError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
@@ -595,7 +602,7 @@ impl WorkflowJsWorker {
             self.js_entry_path.clone(),
             &self.js_files,
             &self.resolved_imports,
-            backtrace_capture,
+            backtrace_capture != BacktraceCapture::Disabled,
         );
 
         let (captured_writes, _backtraces, mut fatal_error, _db_conn) = self
@@ -653,7 +660,7 @@ impl WorkflowJsWorker {
         &self,
         execution_id: ExecutionId,
         requested: ReplayAdvanceable,
-        backtrace_capture: bool,
+        backtrace_capture: BacktraceCapture,
     ) -> Result<AdvanceResponse, AdvanceError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
@@ -687,7 +694,7 @@ impl WorkflowJsWorker {
             self.js_entry_path.clone(),
             &self.js_files,
             &self.resolved_imports,
-            backtrace_capture,
+            backtrace_capture != BacktraceCapture::Disabled,
         );
         let log_forwarder_sender = self
             .inner
@@ -1818,7 +1825,10 @@ mod tests {
             default_return_type(),
             None, // max_replay_captured_writes
         );
-        replay_worker.replay(execution_id, false).await.unwrap();
+        replay_worker
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+            .unwrap();
         // Drop the worker so the log_sender is closed; otherwise `recv_many` blocks indefinitely.
         drop(replay_worker);
         let mut buffer = Vec::new();
@@ -3846,7 +3856,7 @@ mod tests {
             None, // max_replay_captured_writes
         );
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -3883,7 +3893,7 @@ mod tests {
             .unwrap();
 
         let replay2 = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -3924,7 +3934,7 @@ mod tests {
         );
 
         let replay3 = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -4013,7 +4023,7 @@ mod tests {
             None, // max_replay_captured_writes
         );
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -4039,7 +4049,7 @@ mod tests {
         );
         // Replay should return the return value
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -4135,7 +4145,7 @@ mod tests {
         // Replay bounds the pass to MAX captured writes and returns them as an advanceable prefix
         // rather than looping forever.
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
@@ -4144,10 +4154,13 @@ mod tests {
         // Advancing the prefix persists it; a fresh replay resumes past the tip and yields the next
         // bounded batch, so the never-terminating workflow keeps making progress without erroring.
         replay_worker
-            .advance(execution_id.clone(), replay, false)
+            .advance(execution_id.clone(), replay, BacktraceCapture::Disabled)
             .await
             .unwrap();
-        let replay2 = replay_worker.replay(execution_id, false).await.unwrap();
+        let replay2 = replay_worker
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+            .unwrap();
         let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
         assert_eq!(replay2.captured_writes.len(), MAX);
 
@@ -4630,7 +4643,7 @@ mod tests {
             None, // max_replay_captured_writes
         );
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
@@ -4640,7 +4653,7 @@ mod tests {
         );
 
         replay_worker
-            .advance(execution_id, replay, false)
+            .advance(execution_id, replay, BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -4732,14 +4745,18 @@ mod tests {
         let mut forwarded = Vec::new();
         for expected_len in [3_usize, 2, 1] {
             let replay = replay_worker
-                .replay(execution_id.clone(), false)
+                .replay(execution_id.clone(), BacktraceCapture::Disabled)
                 .await
                 .unwrap();
             let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
             assert_eq!(replay.captured_writes.len(), expected_len);
 
             replay_worker
-                .advance(execution_id.clone(), replay.truncate_to(1), false)
+                .advance(
+                    execution_id.clone(),
+                    replay.truncate_to(1),
+                    BacktraceCapture::Disabled,
+                )
                 .await
                 .unwrap();
 
@@ -4750,7 +4767,10 @@ mod tests {
             forwarded,
             vec!["before create", "before delay", "before join"]
         );
-        let replay = replay_worker.replay(execution_id, false).await.unwrap();
+        let replay = replay_worker
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+            .unwrap();
         assert_matches!(replay, ReplayResponse::Blocked);
     }
 
@@ -4790,7 +4810,7 @@ mod tests {
             .await;
             let replay = harness
                 .replay_worker
-                .replay(harness.execution_id.clone(), false)
+                .replay(harness.execution_id.clone(), BacktraceCapture::Disabled)
                 .await
                 .unwrap();
             let replay = match replay {
@@ -4852,7 +4872,11 @@ mod tests {
 
             let advance = harness
                 .replay_worker
-                .advance(harness.execution_id.clone(), requested.clone(), false)
+                .advance(
+                    harness.execution_id.clone(),
+                    requested.clone(),
+                    BacktraceCapture::Disabled,
+                )
                 .await
                 .unwrap();
             assert_eq!(advance.finished, requested.get_return_value().cloned());
@@ -4970,7 +4994,7 @@ mod tests {
             None, // max_replay_captured_writes
         );
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -5014,7 +5038,7 @@ mod tests {
         sim_clock.move_time_forward(Duration::from_millis(100));
 
         let advance = replay_worker
-            .advance(execution_id, requested, false)
+            .advance(execution_id, requested, BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -5111,7 +5135,7 @@ mod tests {
             None, // max_replay_captured_writes
         );
         let replay = replay_worker
-            .replay(execution_id.clone(), false)
+            .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
 
@@ -5157,7 +5181,7 @@ mod tests {
         sim_clock.move_time_forward(Duration::from_millis(100));
 
         let advance = replay_worker
-            .advance(execution_id, requested, false)
+            .advance(execution_id, requested, BacktraceCapture::Disabled)
             .await
             .unwrap();
 
