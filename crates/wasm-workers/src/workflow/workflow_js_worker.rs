@@ -931,6 +931,7 @@ mod tests {
                 join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
                 lock_extension: Some(Duration::from_secs(1)),
                 max_events_per_run: usize::MAX,
+                response_refresh_interval: usize::MAX,
             },
         };
 
@@ -1010,6 +1011,7 @@ mod tests {
                 join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
                 lock_extension: None,
                 max_events_per_run: usize::MAX,
+                response_refresh_interval: usize::MAX,
             },
         };
 
@@ -1308,6 +1310,7 @@ mod tests {
             deadline_factory,
             default_return_type(),
             usize::MAX,
+            usize::MAX,
         )
     }
 
@@ -1324,6 +1327,7 @@ mod tests {
         deadline_factory: Arc<dyn DeadlineTrackerFactory>,
         return_type: ReturnTypeExtendable,
         max_events_per_run: usize,
+        response_refresh_interval: usize,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let params = default_js_params();
@@ -1346,6 +1350,7 @@ mod tests {
                 join_next_blocking_strategy,
                 lock_extension: None,
                 max_events_per_run,
+                response_refresh_interval,
             },
         };
 
@@ -1988,6 +1993,7 @@ mod tests {
                     join_next_blocking_strategy,
                     deadline_factory,
                     return_type,
+                    usize::MAX,
                     usize::MAX,
                 );
 
@@ -4208,6 +4214,7 @@ mod tests {
                 deadline_tracker_factory_test(&sim_clock),
                 default_return_type(),
                 MAX,
+                usize::MAX,
             );
         let (workflow_exec, _close_tx) =
             new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
@@ -4247,6 +4254,133 @@ mod tests {
             );
             assert_matches!(log.pending_state, PendingState::PendingAt(..));
         }
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_hot_run_refreshes_responses(database: Database) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        const MAX_EVENTS_PER_RUN: usize = 10_000;
+        const RESPONSE_REFRESH_INTERVAL: usize = 4;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = r"
+        export default function poll_until_ready() {
+            const js = obelisk.createJoinSet();
+            js.submit('testing:stub-activity/activity.foo', ['test-input']);
+            for (;;) {
+                if (js.joinNextTry() !== undefined) {
+                    return 'refreshed';
+                }
+            }
+        }";
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "poll-until-ready");
+        let sim_clock = SimClock::epoch();
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, component_id, _) =
+            compile_js_workflow_worker_with_deployment_id_and_return_type(
+                js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                &sim_clock,
+                fn_registry,
+                workflow_engine,
+                DEPLOYMENT_ID_DUMMY,
+                JoinNextBlockingStrategy::Await {
+                    non_blocking_event_batching: 100,
+                    subscription_interruption: None,
+                },
+                deadline_tracker_factory_test(&sim_clock),
+                default_return_type(),
+                MAX_EVENTS_PER_RUN,
+                RESPONSE_REFRESH_INTERVAL,
+            );
+        let (workflow_exec, _close_tx) =
+            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+        let execution_id = ExecutionId::from_parts(0, 43);
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        let progress = workflow_exec
+            .tick_test(sim_clock.now(), RunId::generate())
+            .await;
+        let stub_execution_id = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let log = db_connection.get(&execution_id).await.unwrap();
+                if let Some(child_execution_id) = log.events.iter().find_map(|event| {
+                    if let ExecutionRequest::HistoryEvent {
+                        event:
+                            HistoryEvent::JoinSetRequest {
+                                request:
+                                    JoinSetRequest::ChildExecutionRequest {
+                                        child_execution_id, ..
+                                    },
+                                ..
+                            },
+                    } = &event.event
+                    {
+                        Some(child_execution_id.clone())
+                    } else {
+                        None
+                    }
+                }) {
+                    break child_execution_id;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("response refresh must flush the submitted child");
+        write_stub_response(
+            db_connection.as_ref(),
+            sim_clock.now(),
+            stub_execution_id,
+            SupportedFunctionReturnValue::Ok(None),
+        )
+        .await;
+
+        tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
+            .await
+            .expect("hot workflow must observe the refreshed response");
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert!(
+            log.pending_state.is_finished(),
+            "state: {:?}",
+            log.pending_state
+        );
+        assert!(
+            log.events
+                .iter()
+                .all(|event| !matches!(event.event, ExecutionRequest::Unlocked(_))),
+            "the workflow should finish within one run: {:?}",
+            log.events
+        );
 
         drop(db_connection);
         db_close.close().await;

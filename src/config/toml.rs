@@ -896,6 +896,10 @@ pub(crate) struct WorkflowsGlobalConfigToml {
     #[serde(default = "default_max_events_per_run")]
     #[schemars(range(min = 1))]
     pub(crate) max_events_per_run: usize,
+    /// Number of newly written non-blocking events between database response refreshes.
+    #[serde(default = "default_response_refresh_interval")]
+    #[schemars(range(min = 1))]
+    pub(crate) response_refresh_interval: usize,
 }
 
 impl Default for WorkflowsGlobalConfigToml {
@@ -904,6 +908,7 @@ impl Default for WorkflowsGlobalConfigToml {
             lock_extension_leeway: None,
             max_replay_captured_writes: default_max_replay_captured_writes(),
             max_events_per_run: default_max_events_per_run(),
+            response_refresh_interval: default_response_refresh_interval(),
         }
     }
 }
@@ -914,6 +919,10 @@ const fn default_max_replay_captured_writes() -> usize {
 
 const fn default_max_events_per_run() -> usize {
     100
+}
+
+const fn default_response_refresh_interval() -> usize {
+    32
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -2461,6 +2470,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
 }
 
 pub(crate) trait WorkflowWasmComponentConfigResolvedExt {
+    #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
@@ -2469,6 +2479,7 @@ pub(crate) trait WorkflowWasmComponentConfigResolvedExt {
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
+        response_refresh_interval: usize,
     ) -> Result<WorkflowConfigVerified, anyhow::Error>;
 }
 
@@ -2482,6 +2493,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
+        response_refresh_interval: usize,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
         if retry_exp_backoff == Duration::ZERO {
@@ -2527,6 +2539,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
                     .into_blocking_strategy(subscription_interruption),
                 lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
                 max_events_per_run,
+                response_refresh_interval,
             },
         };
         let frame_files_to_sources = self.backtrace.into_frame_files();
@@ -2550,6 +2563,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
 }
 
 pub(crate) trait WorkflowJsComponentConfigResolvedExt {
+    #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify(
         self,
         wasm_path: Arc<Path>,
@@ -2558,6 +2572,7 @@ pub(crate) trait WorkflowJsComponentConfigResolvedExt {
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
+        response_refresh_interval: usize,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error>;
 }
 
@@ -2571,6 +2586,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
+        response_refresh_interval: usize,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
         let verified = verify_function_interface(
             self.interface,
@@ -2622,6 +2638,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
                     .into_blocking_strategy(subscription_interruption),
                 lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
                 max_events_per_run,
+                response_refresh_interval,
             },
         };
         let retry_config = ComponentRetryConfig {
