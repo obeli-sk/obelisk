@@ -84,6 +84,7 @@ pub enum WorkflowConfigMode {
         // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
         lock_extension: Option<Duration>,
         max_events_per_run: usize,
+        response_refresh_interval: usize,
     },
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
     /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
@@ -140,6 +141,16 @@ impl WorkflowConfig {
             WorkflowConfigMode::Real {
                 max_events_per_run, ..
             } => Some(*max_events_per_run),
+            WorkflowConfigMode::Replay { .. } => None,
+        }
+    }
+
+    fn response_refresh_interval(&self) -> Option<usize> {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                response_refresh_interval,
+                ..
+            } => Some(*response_refresh_interval),
             WorkflowConfigMode::Replay { .. } => None,
         }
     }
@@ -739,14 +750,16 @@ impl WorkflowWorker {
             lock_extension,
             subscription_interruption,
             max_events_per_run,
+            response_refresh_interval,
         ) = if is_replay.is_some() {
-            (JoinNextBlockingStrategy::Interrupt, None, None, None)
+            (JoinNextBlockingStrategy::Interrupt, None, None, None, None)
         } else {
             (
                 view.config.join_next_blocking_strategy(),
                 view.config.lock_extension(),
                 view.config.subscription_interruption(),
                 view.config.max_events_per_run(),
+                view.config.response_refresh_interval(),
             )
         };
         let workflow_ctx = WorkflowCtx::new(
@@ -770,6 +783,7 @@ impl WorkflowWorker {
             is_replay,
             view.config.max_replay_captured_writes(),
             max_events_per_run,
+            response_refresh_interval,
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -2043,6 +2057,7 @@ pub(crate) mod tests {
                             join_next_blocking_strategy,
                             lock_extension: None,
                             max_events_per_run: usize::MAX,
+                            response_refresh_interval: usize::MAX,
                         },
                     },
                     workflow_engine,

@@ -175,6 +175,8 @@ pub(crate) struct EventHistory {
     max_replay_captured_writes: Option<usize>,
     max_events_per_run: Option<usize>,
     written_events_this_run: usize,
+    response_refresh_interval: Option<usize>,
+    events_since_response_refresh: usize,
 }
 
 #[derive(Debug)]
@@ -229,6 +231,7 @@ impl EventHistory {
         replaying_unfinished_execution: bool,
         max_replay_captured_writes: Option<usize>,
         max_events_per_run: Option<usize>,
+        response_refresh_interval: Option<usize>,
     ) -> EventHistory {
         EventHistory {
             replaying_unfinished_execution,
@@ -259,6 +262,8 @@ impl EventHistory {
             max_replay_captured_writes,
             max_events_per_run,
             written_events_this_run: 0,
+            response_refresh_interval,
+            events_since_response_refresh: 0,
         }
     }
 
@@ -456,6 +461,20 @@ impl EventHistory {
                     )
                     .await?;
                 self.event_history.push((event, Unprocessed, version));
+                if self.response_refresh_interval.is_some() {
+                    self.events_since_response_refresh += 1;
+                }
+                let refreshed_responses = if self
+                    .response_refresh_interval
+                    .is_some_and(|interval| self.events_since_response_refresh >= interval)
+                {
+                    db_connection
+                        .flush_non_blocking_event_cache(called_at)
+                        .await?;
+                    Some(self.poll_responses(db_connection).await?)
+                } else {
+                    None
+                };
                 trace!("find_matching_atomic must mark the non-blocking event as Processed");
                 let stored_event_call = EventCall::new(
                     version_range.min_including.clone(),
@@ -465,6 +484,9 @@ impl EventHistory {
                 let non_blocking_resp = assert_matches!(
                     self.find_matching_atomic(&stored_event_call)?,
                     FindMatchingAtomicResponse::Found { value, .. } => value, "just stored the event as Unprocessed, it must be found");
+                if let Some(refreshed_responses) = refreshed_responses {
+                    self.extend_responses(refreshed_responses);
+                }
                 Ok(non_blocking_resp)
             }
             EventCallKind::Blocking(event_call) => {
@@ -496,6 +518,53 @@ impl EventHistory {
             ));
         }
         Ok(value)
+    }
+
+    async fn poll_responses(
+        &mut self,
+        db_connection: &mut dyn WorkflowDbConnection,
+    ) -> Result<Vec<ResponseWithCursor>, ApplyError> {
+        let last_response = self.last_response_cursor();
+        self.events_since_response_refresh = 0;
+        match db_connection
+            .subscribe_to_next_responses(
+                db_connection.execution_id(),
+                last_response,
+                Box::pin(std::future::ready(
+                    ResponseSubscriptionEnd::PollIntervalElapsed,
+                )),
+            )
+            .await
+        {
+            Ok(responses) => Ok(responses),
+            Err(SubscribeToResponsesError::DbErrorRead(err)) => {
+                Err(ApplyError::DbError(DbErrorWrite::from(err)))
+            }
+            Err(SubscribeToResponsesError::SubscriptionEnded(
+                ResponseSubscriptionEnd::PollIntervalElapsed
+                | ResponseSubscriptionEnd::LockDeadlineReached,
+            )) => Ok(Vec::new()),
+            Err(SubscribeToResponsesError::SubscriptionEnded(
+                ResponseSubscriptionEnd::ExecutorClosing,
+            )) => Err(ApplyError::Interrupt(InterruptKind::ExecutorClosing)),
+            Err(SubscribeToResponsesError::SubscriptionEnded(
+                ResponseSubscriptionEnd::ExecutionUpdated,
+            )) => Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel)),
+        }
+    }
+
+    fn last_response_cursor(&self) -> ResponseCursor {
+        self.responses
+            .last()
+            .map(|(resp, _)| resp.cursor)
+            .unwrap_or(ResponseCursor(0))
+    }
+
+    fn extend_responses(&mut self, next_responses: Vec<ResponseWithCursor>) {
+        trace!("Got next responses {next_responses:?}");
+        self.responses
+            .extend(next_responses.into_iter().map(|resp| (resp, Unprocessed)));
+        trace!("All responses: {:?}", self.responses);
     }
 
     async fn persist_replayed_backtrace(
@@ -632,11 +701,8 @@ impl EventHistory {
                             return Err(ApplyError::Interrupt(InterruptKind::PauseOrCancel));
                         }
                     };
-                let last_response = self
-                    .responses
-                    .last()
-                    .map(|(resp, _)| resp.cursor)
-                    .unwrap_or(ResponseCursor(0));
+                let last_response = self.last_response_cursor();
+                self.events_since_response_refresh = 0;
                 match db_connection
                     .subscribe_to_next_responses(
                         db_connection.execution_id(),
@@ -653,10 +719,7 @@ impl EventHistory {
                             first = next_responses.first(),
                             last = next_responses.last(),
                         );
-                        trace!("Got next responses {next_responses:?}");
-                        self.responses
-                            .extend(next_responses.into_iter().map(|resp| (resp, Unprocessed)));
-                        trace!("All responses: {:?}", self.responses);
+                        self.extend_responses(next_responses);
                         if let FindMatchingResponse::Found {
                             value: accept_resp, ..
                         } = self.process_event_by_key(&key)?
@@ -4612,6 +4675,7 @@ mod tests {
             false, // replaying_unfinished_execution
             None,  // max_replay_captured_writes
             None,  // max_events_per_run
+            None,  // response_refresh_interval
         );
 
         (

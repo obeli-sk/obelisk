@@ -727,6 +727,13 @@
           "format": "uint",
           "minimum": 1,
           "default": 100
+        },
+        "response_refresh_interval": {
+          "description": "Number of newly written non-blocking events between database response refreshes.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "default": 32
         }
       },
       "additionalProperties": false

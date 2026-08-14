@@ -1112,6 +1112,7 @@ pub(crate) async fn deployment_verify_config(
         termination_watcher,
         server_verified.database_subscription_interruption,
         server_verified.workflows_max_events_per_run,
+        server_verified.workflows_response_refresh_interval,
         server_verified.api_addr_if_webui_enabled.clone(),
         server_verified.secret_registry.clone(),
         server_verified.global_http_config.clone(),
@@ -1991,6 +1992,7 @@ pub(crate) struct ServerVerified {
     global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     database_subscription_interruption: Option<Duration>,
     workflows_max_events_per_run: usize,
+    workflows_response_refresh_interval: usize,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
     global_http_config: GlobalHttpConfig,
@@ -2067,6 +2069,18 @@ impl ServerVerified {
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
         }
+        let workflows_response_refresh_interval =
+            config.workflows_global_config.response_refresh_interval;
+        if workflows_response_refresh_interval == 0 {
+            bail!("`workflows.response_refresh_interval` must be greater than zero");
+        }
+        if workflows_response_refresh_interval >= workflows_max_events_per_run {
+            warn!(
+                "`workflows.response_refresh_interval` should normally be lower than \
+                 `workflows.max_events_per_run`; otherwise hot-run refreshes will usually be \
+                 preempted by the run limit"
+            );
+        }
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
         let global_executor_instance_limiter = config
             .wasm_global_config
@@ -2102,6 +2116,7 @@ impl ServerVerified {
             global_executor_instance_limiter,
             database_subscription_interruption,
             workflows_max_events_per_run,
+            workflows_response_refresh_interval,
             api_addr_if_webui_enabled: if config.webui.enabled {
                 Some(config.api.listening_addr.to_string()) // `config.api.enabled` checked above
             } else {
@@ -3531,6 +3546,7 @@ impl DeploymentVerified {
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
+        response_refresh_interval: usize,
         api_addr_if_webui_enabled: Option<String>,
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
@@ -3697,6 +3713,7 @@ impl DeploymentVerified {
                             fuel,
                             subscription_interruption,
                             max_events_per_run,
+                            response_refresh_interval,
                         )
                         .in_current_span(),
                 )
@@ -3840,6 +3857,7 @@ impl DeploymentVerified {
                                 fuel,
                                 subscription_interruption,
                                 max_events_per_run,
+                                response_refresh_interval,
                             ).await?
                         );
                     }
@@ -5698,6 +5716,7 @@ mod tests {
             &mut termination_watcher,
             server_verified.database_subscription_interruption,
             server_verified.workflows_max_events_per_run,
+            server_verified.workflows_response_refresh_interval,
             webui_enabled,
             server_verified.secret_registry,
             server_verified.global_http_config,

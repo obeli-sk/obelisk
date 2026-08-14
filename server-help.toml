@@ -103,6 +103,7 @@
 # subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
 # max_replay_captured_writes = 100         # Max captured writes a single replay pass returns; on reaching it replay stops and returns that many as an advanceable prefix (advance them, then replay again to resume). Keeps a non-terminating workflow (e.g. an unresolved `joinNextTry` poll loop) advanceable in bounded batches.
 # max_events_per_run = 100                 # Max history events a real workflow run writes before yielding and unlocking. Replay uses max_replay_captured_writes instead.
+# response_refresh_interval = 32           # Refresh responses from the database after this many newly written non-blocking events while a workflow remains running. Usually set lower than max_events_per_run. Replay ignores it.
 
 # [wasm.codegen_cache]
 ## Defaults:
