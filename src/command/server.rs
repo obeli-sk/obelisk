@@ -31,6 +31,7 @@ use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::AllowExecActivities;
 use crate::config::toml::CancelWatcherTomlConfig;
 use crate::config::toml::ComponentCommon;
+#[cfg(not(feature = "embed-assets"))] // Only the OCI fetch arms below use `.fetch()`.
 use crate::config::toml::ComponentLocationFetchExt as _;
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
@@ -392,14 +393,15 @@ const EPOCH_MILLIS: u64 = 10;
 const CANCELLATION_DRIVER_BATCH_SIZE: u32 = 100;
 /// Default number of concurrent deployment submits the switch manager accepts.
 const DEFAULT_SUBMIT_CONCURRENCY: u32 = 1;
+#[cfg(not(feature = "embed-assets"))]
 const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
-#[cfg(not(feature = "activity-js-local"))]
+#[cfg(all(not(feature = "activity-js-local"), not(feature = "embed-assets")))]
 pub(crate) const ACTIVITY_JS_LOCATION: &str =
     include_str!("../../assets/activity-js-runtime-version.txt");
-#[cfg(not(feature = "workflow-js-local"))]
+#[cfg(all(not(feature = "workflow-js-local"), not(feature = "embed-assets")))]
 pub(crate) const WORKFLOW_JS_LOCATION: &str =
     include_str!("../../assets/workflow-js-runtime-version.txt");
-#[cfg(not(feature = "webhook-js-local"))]
+#[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-assets")))]
 pub(crate) const WEBHOOK_JS_LOCATION: &str =
     include_str!("../../assets/webhook-js-runtime-version.txt");
 
@@ -3577,9 +3579,7 @@ impl DeploymentVerified {
                 .push(webhook::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static(COMPONENT_NAME_WEBUI)).unwrap(),
-                        location: WEBUI_LOCATION
-                            .parse()
-                            .expect("hard-coded webui reference must be parsed"),
+                        location: webui_location(&wasm_cache_dir).await?,
                     },
                     content_digest: None,
                     http_server: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
@@ -4706,8 +4706,19 @@ async fn fetch_activity_js_runtime(
     ))
 }
 
+/// Resolve the activity-js runtime WASM from the bytes embedded at build time.
+#[cfg(all(not(feature = "activity-js-local"), feature = "embed-assets"))]
+async fn fetch_activity_js_runtime(
+    wasm_cache_dir: Arc<Path>,
+    _metadata_dir: Arc<Path>,
+) -> Result<PathBuf, anyhow::Error> {
+    write_embedded_runtime(embedded_assets::ACTIVITY_JS_RUNTIME_WASM, &wasm_cache_dir)
+        .await
+        .context("cannot materialize embedded activity-js runtime")
+}
+
 /// Fetch the activity-js runtime WASM from OCI.
-#[cfg(not(feature = "activity-js-local"))]
+#[cfg(all(not(feature = "activity-js-local"), not(feature = "embed-assets")))]
 async fn fetch_activity_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
@@ -4733,8 +4744,19 @@ async fn fetch_workflow_js_runtime(
     ))
 }
 
+/// Resolve the workflow-js runtime WASM from the bytes embedded at build time.
+#[cfg(all(not(feature = "workflow-js-local"), feature = "embed-assets"))]
+async fn fetch_workflow_js_runtime(
+    wasm_cache_dir: Arc<Path>,
+    _metadata_dir: Arc<Path>,
+) -> Result<PathBuf, anyhow::Error> {
+    write_embedded_runtime(embedded_assets::WORKFLOW_JS_RUNTIME_WASM, &wasm_cache_dir)
+        .await
+        .context("cannot materialize embedded workflow-js runtime")
+}
+
 /// Fetch the workflow-js runtime WASM from OCI.
-#[cfg(not(feature = "workflow-js-local"))]
+#[cfg(all(not(feature = "workflow-js-local"), not(feature = "embed-assets")))]
 async fn fetch_workflow_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
@@ -4760,8 +4782,19 @@ async fn fetch_webhook_js_runtime(
     ))
 }
 
+/// Resolve the webhook-js runtime WASM from the bytes embedded at build time.
+#[cfg(all(not(feature = "webhook-js-local"), feature = "embed-assets"))]
+async fn fetch_webhook_js_runtime(
+    wasm_cache_dir: Arc<Path>,
+    _metadata_dir: Arc<Path>,
+) -> Result<PathBuf, anyhow::Error> {
+    write_embedded_runtime(embedded_assets::WEBHOOK_JS_RUNTIME_WASM, &wasm_cache_dir)
+        .await
+        .context("cannot materialize embedded webhook-js runtime")
+}
+
 /// Fetch the webhook-js runtime WASM from OCI.
-#[cfg(not(feature = "webhook-js-local"))]
+#[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-assets")))]
 #[instrument(skip_all)]
 async fn fetch_webhook_js_runtime(
     wasm_cache_dir: Arc<Path>,
@@ -4775,6 +4808,51 @@ async fn fetch_webhook_js_runtime(
         .await
         .context("cannot fetch webhook-js runtime")?;
     Ok(wasm_path)
+}
+
+/// Write an embedded WASM asset to the wasm cache under its content-digest filename
+/// (idempotent) and return its path. Shared by the `embed-assets` fetch/webui paths.
+#[cfg(feature = "embed-assets")]
+async fn write_embedded_runtime(
+    bytes: &[u8],
+    wasm_cache_dir: &Path,
+) -> Result<PathBuf, anyhow::Error> {
+    use concepts::component_id::{ContentDigest, Digest};
+    use sha2::Digest as _;
+    let digest = ContentDigest(Digest(sha2::Sha256::digest(bytes).into()));
+    let path = crate::config::content_digest_to_wasm_file(wasm_cache_dir, &digest);
+    if crate::oci::verify_cached_file(&path, &digest).await.is_ok() {
+        return Ok(path);
+    }
+    let parent = path
+        .parent()
+        .context("wasm cache path must have a parent")?;
+    let _ = tokio::fs::create_dir_all(parent).await;
+    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    std::fs::write(tmp.path(), bytes)?;
+    // Atomic rename within the cache dir; a racing writer producing identical bytes is fine.
+    tmp.persist(&path)
+        .map_err(|err| err.error)
+        .context("persisting embedded runtime to wasm cache")?;
+    Ok(path)
+}
+
+#[cfg(not(feature = "embed-assets"))]
+#[expect(clippy::unused_async)]
+async fn webui_location(_wasm_cache_dir: &Path) -> Result<ComponentLocationToml, anyhow::Error> {
+    WEBUI_LOCATION
+        .parse()
+        .context("hard-coded webui reference must be parsed")
+}
+
+#[cfg(feature = "embed-assets")]
+async fn webui_location(wasm_cache_dir: &Path) -> Result<ComponentLocationToml, anyhow::Error> {
+    let path = write_embedded_runtime(embedded_assets::WEBUI_WASM, wasm_cache_dir)
+        .await
+        .context("cannot materialize embedded web UI")?;
+    Ok(ComponentLocationToml::Path(
+        path.to_string_lossy().into_owned(),
+    ))
 }
 
 #[instrument(level = "debug", skip_all, fields(

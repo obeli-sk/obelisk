@@ -128,7 +128,10 @@ fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathB
     metadata_dir.join(format!("{}.txt", metadata_file.with_infix("_")))
 }
 
-async fn verify_cached_file(path: &Path, content_digest: &ContentDigest) -> Result<(), ()> {
+pub(crate) async fn verify_cached_file(
+    path: &Path,
+    content_digest: &ContentDigest,
+) -> Result<(), ()> {
     match calculate_sha256_file(&path).await {
         Ok(actual_digest) if actual_digest == *content_digest => Ok(()),
         Ok(wrong_digest) => {

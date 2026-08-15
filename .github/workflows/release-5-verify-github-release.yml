@@ -32,10 +32,16 @@ jobs:
             file: obelisk-x86_64-unknown-linux-gnu.tar.gz
           - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-musl.tar.gz
+          - runner: ubuntu-22.04
+            file: obelisk-x86_64-unknown-linux-musl-embedded.tar.gz
           - runner: macos-14
             file: obelisk-x86_64-apple-darwin.tar.gz
           - runner: macos-14
+            file: obelisk-x86_64-apple-darwin-embedded.tar.gz
+          - runner: macos-14
             file: obelisk-aarch64-apple-darwin.tar.gz
+          - runner: macos-14
+            file: obelisk-aarch64-apple-darwin-embedded.tar.gz
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

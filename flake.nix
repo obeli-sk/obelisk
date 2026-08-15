@@ -21,7 +21,44 @@
             inherit system overlays;
           };
 
-          makeObelisk = buildType: customTarget: rustToolchainToml:
+          # Fixed-output derivation that pre-fetches the four pinned operator-owned WASM
+          # assets (three JS runtimes + web UI) referenced from `assets/*version*.txt`,
+          # so the `embed-assets` build.rs can read them offline inside the Nix sandbox.
+          # Update `outputHash` whenever any version file changes with
+          # `scripts/update-embedded-assets-hash.sh`.
+          embeddedAssets =
+            let
+              assetsDir = ./assets;
+            in
+            pkgs.stdenv.mkDerivation {
+              pname = "obelisk-embedded-assets";
+              version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+              nativeBuildInputs = with pkgs; [ skopeo jq cacert ];
+              outputHashMode = "recursive";
+              outputHashAlgo = "sha256";
+              outputHash = "sha256-larIAt/bRGGa3Y2Pz2dQ8YMhtKbySQ7DzsY6vtYKGz0=";
+              SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              buildCommand = ''
+                mkdir -p "$out"
+                export HOME="$TMPDIR"
+                fetch() {
+                  name="$1"; versionFile="$2"
+                  # Strip the `oci://` scheme and drop the `:tag` (skopeo rejects tag+digest;
+                  # the `@sha256:` digest is the authoritative pin).
+                  ref=$(tr -d '[:space:]' < "$versionFile" | sed 's|^oci://||' | sed -E 's|:[^:@]*@sha256:|@sha256:|')
+                  echo "Fetching $name from $ref"
+                  skopeo --insecure-policy copy "docker://$ref" "dir:$TMPDIR/$name"
+                  layer=$(jq -r '.layers[0].digest' "$TMPDIR/$name/manifest.json" | sed 's|^sha256:||')
+                  cp "$TMPDIR/$name/$layer" "$out/$name.wasm"
+                }
+                fetch activity ${assetsDir}/activity-js-runtime-version.txt
+                fetch workflow ${assetsDir}/workflow-js-runtime-version.txt
+                fetch webhook  ${assetsDir}/webhook-js-runtime-version.txt
+                fetch webui    ${assetsDir}/webui-version.txt
+              '';
+            };
+
+          makeObelisk = buildType: customTarget: rustToolchainToml: embedAssets:
             let
               cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
               version = cargoToml.workspace.package.version;
@@ -125,8 +162,8 @@
                   manualMacOSSdk
                 ];
 
-                # Only used when not cross compiling.
-                cargoBuildFlags = [ ];
+                # Also spliced into the cross (zigbuild) build command below.
+                cargoBuildFlags = pkgs.lib.optionals embedAssets [ "--features" "embed-assets" ];
 
                 installPhase = ''
                   runHook preInstall
@@ -165,8 +202,12 @@
                   runHook postBuild
                 '';
               };
+              # Feed the pre-fetched assets to the `embed-assets` build.rs offline.
+              embedAssetsEnv = pkgs.lib.optionalAttrs embedAssets {
+                OBELISK_EMBED_ASSETS_DIR = "${embeddedAssets}";
+              };
             in
-            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs);
+            pkgs.rustPlatform.buildRustPackage (commonArgs // zigbuildArgs // embedAssetsEnv);
 
         in
         {
@@ -214,26 +255,33 @@
               ];
           };
           packages = rec {
-            obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml;
-            obeliskLibcNix = makeObelisk "release" null ./rust-toolchain.toml;
+            inherit embeddedAssets;
+            obeliskLibcNixDev = makeObelisk "dev" null ./rust-toolchain.toml false;
+            obeliskLibcNix = makeObelisk "release" null ./rust-toolchain.toml false;
+            obeliskLibcNixDev-embedded = makeObelisk "dev" null ./rust-toolchain.toml true;
+            obeliskLibcNix-embedded = makeObelisk "release" null ./rust-toolchain.toml true;
             # Linux
             ## x86_64
-            obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml;
-            obeliskCross-x86_64-unknown-linux-musl = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml;
-            obeliskCrossDev-x86_64-unknown-linux-gnu = makeObelisk "dev" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
-            obeliskCross-x86_64-unknown-linux-gnu = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
+            obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
+            obeliskCross-x86_64-unknown-linux-musl = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
+            obeliskCross-x86_64-unknown-linux-musl-embedded = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml true;
+            obeliskCrossDev-x86_64-unknown-linux-gnu = makeObelisk "dev" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
+            obeliskCross-x86_64-unknown-linux-gnu = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
             ## aarch64
-            obeliskCrossDev-aarch64-unknown-linux-musl = makeObelisk "dev" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml;
-            obeliskCross-aarch64-unknown-linux-musl = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml;
-            obeliskCrossDev-aarch64-unknown-linux-gnu = makeObelisk "dev" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
-            obeliskCross-aarch64-unknown-linux-gnu = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml;
+            obeliskCrossDev-aarch64-unknown-linux-musl = makeObelisk "dev" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
+            obeliskCross-aarch64-unknown-linux-musl = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
+            obeliskCross-aarch64-unknown-linux-musl-embedded = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml true;
+            obeliskCrossDev-aarch64-unknown-linux-gnu = makeObelisk "dev" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
+            obeliskCross-aarch64-unknown-linux-gnu = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
             # MacOS
             ## x86_64
-            obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin" ./rust-toolchain-cross.toml;
-            obeliskCross-x86_64-apple-darwin = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml;
+            obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin" ./rust-toolchain-cross.toml false;
+            obeliskCross-x86_64-apple-darwin = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml false;
+            obeliskCross-x86_64-apple-darwin-embedded = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml true;
             ## aarch64
-            obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin" ./rust-toolchain-cross.toml;
-            obeliskCross-aarch64-apple-darwin = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml;
+            obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin" ./rust-toolchain-cross.toml false;
+            obeliskCross-aarch64-apple-darwin = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml false;
+            obeliskCross-aarch64-apple-darwin-embedded = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml true;
 
             default = obeliskLibcNix;
           };

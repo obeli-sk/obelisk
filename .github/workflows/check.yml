@@ -68,6 +68,21 @@ jobs:
       - name: Check JS runtime version pins are newer than their sources
         run: ./scripts/check-js-runtime-freshness.sh
 
+  check-embedded-assets:
+    name: Embedded asset hash
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify embedded asset hash
+        run: |
+          ./scripts/update-embedded-assets-hash.sh
+          git diff --exit-code -- flake.nix
+
   deny:
     name: cargo deny
     runs-on: ubuntu-24.04
