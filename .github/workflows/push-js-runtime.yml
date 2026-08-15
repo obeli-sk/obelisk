@@ -70,6 +70,9 @@ jobs:
           RUNTIME_TYPE: ${{ github.event.inputs.runtime_type }}
           TAG: ${{ github.event.inputs.tag }}
 
+      - name: Update embedded asset hash
+        run: ./scripts/update-embedded-assets-hash.sh
+
       - name: Configure git before push
         run: |
           git config user.name "github-actions[bot]"

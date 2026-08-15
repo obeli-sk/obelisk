@@ -7,3 +7,4 @@ test-codegen-cache
 obelisk.log
 /.claude/
 /meta
+result

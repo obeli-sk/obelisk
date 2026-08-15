@@ -1,0 +1,24 @@
+[package]
+name = "embedded-assets"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+download = []
+
+[build-dependencies]
+anyhow.workspace = true
+oci-client.workspace = true
+oci-wasm.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

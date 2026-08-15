@@ -24,6 +24,7 @@ wasm-workers.workspace = true
 activity-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 webhook-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 workflow-js-runtime-builder = { workspace = true, optional = true } # Only for local development
+embedded-assets = { workspace = true, optional = true }
 
 anyhow.workspace = true
 assert_matches.workspace = true
@@ -134,6 +135,7 @@ otlp = [
 "activity-js-local" = ["dep:activity-js-runtime-builder"]
 "webhook-js-local" = ["dep:webhook-js-runtime-builder"]
 "workflow-js-local" = ["dep:workflow-js-runtime-builder"]
+"embed-assets" = ["dep:embedded-assets", "embedded-assets/download"]
 default = ["otlp"]
 
 [lints]
@@ -153,6 +155,7 @@ members = [
     "crates/deployment-config",
     "crates/db-postgres",
     "crates/db-sqlite",
+    "crates/embedded-assets",
     "crates/executor",
     "crates/grpc",
     "crates/testing/component-builder",
@@ -213,6 +216,7 @@ db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", v
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.41.0" }
 deployment-config = { package = "obeli-sk-deployment-config", path = "crates/deployment-config", version = "0.41.0" }
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
+embedded-assets = { path = "crates/embedded-assets" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.41.0" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.41.0" }
 obelisk-component-builder = { path = "crates/testing/component-builder", features = [
