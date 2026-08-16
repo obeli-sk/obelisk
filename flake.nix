@@ -262,24 +262,20 @@
             obeliskLibcNix-embedded = makeObelisk "release" null ./rust-toolchain.toml true;
             # Linux
             ## x86_64
-            obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-unknown-linux-musl = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-unknown-linux-musl-embedded = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml true;
-            obeliskCrossDev-x86_64-unknown-linux-gnu = makeObelisk "dev" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-unknown-linux-gnu = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
+            obeliskCross-x86_64-unknown-linux-gnu-embedded = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml true;
             ## aarch64
-            obeliskCrossDev-aarch64-unknown-linux-musl = makeObelisk "dev" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-unknown-linux-musl = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-unknown-linux-musl-embedded = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml true;
-            obeliskCrossDev-aarch64-unknown-linux-gnu = makeObelisk "dev" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-unknown-linux-gnu = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
+            obeliskCross-aarch64-unknown-linux-gnu-embedded = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml true;
             # MacOS
             ## x86_64
-            obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-apple-darwin = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-apple-darwin-embedded = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml true;
             ## aarch64
-            obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-apple-darwin = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-apple-darwin-embedded = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml true;
 

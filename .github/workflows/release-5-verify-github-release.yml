@@ -31,6 +31,8 @@ jobs:
           - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-gnu.tar.gz
           - runner: ubuntu-22.04
+            file: obelisk-x86_64-unknown-linux-gnu-embedded.tar.gz
+          - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-musl.tar.gz
           - runner: ubuntu-22.04
             file: obelisk-x86_64-unknown-linux-musl-embedded.tar.gz
