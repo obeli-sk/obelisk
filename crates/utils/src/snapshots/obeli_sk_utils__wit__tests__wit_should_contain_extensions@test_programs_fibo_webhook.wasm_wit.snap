@@ -5,6 +5,11 @@ expression: wit
 package root:component;
 
 world root {
+    import obelisk:log/log@1.0.0;
+    import obelisk:types/execution@5.0.0;
+    import testing:fibo-workflow/workflow;
+    import obelisk:types/time@5.0.0;
+    import testing:fibo-workflow-obelisk-schedule/workflow;
     import wasi:io/poll@0.2.12;
     import wasi:clocks/monotonic-clock@0.2.12;
     import wasi:io/error@0.2.12;
@@ -13,11 +18,6 @@ world root {
     import wasi:cli/stderr@0.2.12;
     import wasi:cli/stdin@0.2.12;
     import wasi:http/types@0.2.12;
-    import obelisk:log/log@1.0.0;
-    import obelisk:types/execution@5.0.0;
-    import testing:fibo-workflow/workflow;
-    import obelisk:types/time@5.0.0;
-    import testing:fibo-workflow-obelisk-schedule/workflow;
     import wasi:cli/environment@0.2.12;
     import wasi:cli/exit@0.2.12;
     import wasi:cli/terminal-input@0.2.12;
@@ -198,6 +198,23 @@ package obelisk:types@5.0.0 {
 }
 
 
+package testing:fibo-workflow {
+    interface workflow {
+        fiboa: func(n: u8, iterations: u32) -> result<u64>;
+    }
+}
+
+
+package testing:fibo-workflow-obelisk-schedule {
+    interface workflow {
+        use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/execution@5.0.0.{execution-id};
+
+        fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
+    }
+}
+
+
 package wasi:io@0.2.12 {
     interface poll {
         resource pollable {
@@ -213,8 +230,8 @@ package wasi:io@0.2.12 {
         }
     }
     interface streams {
-        use error.{error};
         use poll.{pollable};
+        use error.{error};
 
         resource output-stream {
             check-write: func() -> result<u64, stream-error>;
@@ -298,6 +315,31 @@ package wasi:http@0.2.12 {
         use wasi:io/streams@0.2.12.{output-stream, input-stream};
         use wasi:io/poll@0.2.12.{pollable};
 
+        resource response-outparam {
+            set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
+        }
+
+        resource outgoing-body {
+            write: func() -> result<output-stream>;
+            finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+        }
+
+        resource fields {
+            constructor();
+            append: func(name: field-name, value: field-value) -> result<_, header-error>;
+            entries: func() -> list<tuple<field-name, field-value>>;
+        }
+
+        resource incoming-body {
+            %stream: func() -> result<input-stream>;
+            finish: static func(this: incoming-body) -> future-trailers;
+        }
+
+        resource future-trailers {
+            subscribe: func() -> pollable;
+            get: func() -> option<result<result<option<trailers>, error-code>>>;
+        }
+
         resource incoming-request {
             method: func() -> method;
             path-with-query: func() -> option<string>;
@@ -305,16 +347,6 @@ package wasi:http@0.2.12 {
             authority: func() -> option<string>;
             headers: func() -> headers;
             consume: func() -> result<incoming-body>;
-        }
-
-        resource response-outparam {
-            set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
-        }
-
-        resource fields {
-            constructor();
-            append: func(name: field-name, value: field-value) -> result<_, header-error>;
-            entries: func() -> list<tuple<field-name, field-value>>;
         }
 
         type headers = fields;
@@ -344,11 +376,6 @@ package wasi:http@0.2.12 {
             other(string),
         }
 
-        resource incoming-body {
-            %stream: func() -> result<input-stream>;
-            finish: static func(this: incoming-body) -> future-trailers;
-        }
-
         resource outgoing-response {
             constructor(headers: headers);
             set-status-code: func(status-code: status-code) -> result;
@@ -356,16 +383,6 @@ package wasi:http@0.2.12 {
         }
 
         type status-code = u16;
-
-        resource outgoing-body {
-            write: func() -> result<output-stream>;
-            finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
-        }
-
-        resource future-trailers {
-            subscribe: func() -> pollable;
-            get: func() -> option<result<result<option<trailers>, error-code>>>;
-        }
 
         type trailers = fields;
 
@@ -436,23 +453,6 @@ package wasi:http@0.2.12 {
         use types.{incoming-request, response-outparam};
 
         handle: func(request: incoming-request, response-out: response-outparam);
-    }
-}
-
-
-package testing:fibo-workflow {
-    interface workflow {
-        fiboa: func(n: u8, iterations: u32) -> result<u64>;
-    }
-}
-
-
-package testing:fibo-workflow-obelisk-schedule {
-    interface workflow {
-        use obelisk:types/time@5.0.0.{schedule-at};
-        use obelisk:types/execution@5.0.0.{execution-id};
-
-        fiboa-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> execution-id;
     }
 }
 

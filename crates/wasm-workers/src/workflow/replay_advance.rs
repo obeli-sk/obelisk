@@ -608,7 +608,7 @@ pub(crate) fn merge_requested_overrides_into_fresh_write(
                 batch: requested_batch,
                 ..
             },
-            CapturedDbWrite::AppendBatchCreateNewExecution { child_req: _, .. },
+            CapturedDbWrite::AppendBatchCreateNewExecution { .. },
         ) => {
             let mut merged = fresh.clone();
             let CapturedDbWrite::AppendBatchCreateNewExecution {

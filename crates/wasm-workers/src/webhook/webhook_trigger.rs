@@ -2578,7 +2578,7 @@ pub(crate) mod tests {
             // Check wrong URL
             let resp = reqwest::get(format!(
                 "http://{}/unknown",
-                &fibo_webhook_harness.server_addr
+                fibo_webhook_harness.server_addr
             ))
             .await
             .unwrap();
@@ -2587,7 +2587,7 @@ pub(crate) mod tests {
             // Check panicking inside WASM before response is streamed
             let resp = reqwest::get(format!(
                 "http://{}/fibo/0/1",
-                &fibo_webhook_harness.server_addr
+                fibo_webhook_harness.server_addr
             ))
             .await
             .unwrap();

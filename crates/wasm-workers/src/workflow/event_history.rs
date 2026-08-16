@@ -2373,7 +2373,7 @@ impl EventHistory {
     }
 
     fn next_join_set_name_index(&self, kind: JoinSetKind) -> String {
-        assert!(kind != JoinSetKind::Named);
+        assert_ne!(kind, JoinSetKind::Named);
         (self.join_set_count(kind) + 1).to_string()
     }
 
@@ -2733,7 +2733,7 @@ impl JoinSetCreate {
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
     ) -> Result<JoinSetId, ApplyError> {
-        assert!(self.join_set_id.kind != JoinSetKind::OneOff);
+        assert_ne!(self.join_set_id.kind, JoinSetKind::OneOff);
         let join_set_id = self.join_set_id.clone();
         let value = event_history
             .apply_event_call(

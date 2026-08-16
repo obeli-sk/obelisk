@@ -5,19 +5,20 @@ expression: wit
 package root:component;
 
 world root {
-    import wasi:io/poll@0.2.6;
-    import wasi:io/error@0.2.6;
-    import wasi:io/streams@0.2.6;
-    import wasi:cli/environment@0.2.6;
-    import wasi:cli/exit@0.2.6;
-    import wasi:cli/stdin@0.2.6;
-    import wasi:cli/stdout@0.2.6;
-    import wasi:cli/stderr@0.2.6;
-    import wasi:cli/terminal-input@0.2.6;
-    import wasi:cli/terminal-output@0.2.6;
-    import wasi:cli/terminal-stdin@0.2.6;
-    import wasi:cli/terminal-stdout@0.2.6;
-    import wasi:cli/terminal-stderr@0.2.6;
+    import wasi:io/poll@0.2.9;
+    import wasi:clocks/monotonic-clock@0.2.9;
+    import wasi:io/error@0.2.9;
+    import wasi:io/streams@0.2.9;
+    import wasi:cli/stdout@0.2.9;
+    import wasi:cli/stderr@0.2.9;
+    import wasi:cli/stdin@0.2.9;
+    import wasi:cli/environment@0.2.9;
+    import wasi:cli/exit@0.2.9;
+    import wasi:cli/terminal-input@0.2.9;
+    import wasi:cli/terminal-output@0.2.9;
+    import wasi:cli/terminal-stdin@0.2.9;
+    import wasi:cli/terminal-stdout@0.2.9;
+    import wasi:cli/terminal-stderr@0.2.9;
 
     export testing:stub-activity/activity;
     export testing:stub-activity-obelisk-ext/activity;
@@ -185,11 +186,13 @@ package obelisk:types@5.0.0 {
 }
 
 
-package wasi:io@0.2.6 {
+package wasi:io@0.2.9 {
     interface poll {
         resource pollable {
             block: func();
         }
+
+        poll: func(in: list<borrow<pollable>>) -> list<u32>;
     }
     interface error {
         resource error;
@@ -215,27 +218,38 @@ package wasi:io@0.2.6 {
 }
 
 
-package wasi:cli@0.2.6 {
+package wasi:clocks@0.2.9 {
+    interface monotonic-clock {
+        use wasi:io/poll@0.2.9.{pollable};
+
+        type duration = u64;
+
+        subscribe-duration: func(when: duration) -> pollable;
+    }
+}
+
+
+package wasi:cli@0.2.9 {
+    interface stdout {
+        use wasi:io/streams@0.2.9.{output-stream};
+
+        get-stdout: func() -> output-stream;
+    }
+    interface stderr {
+        use wasi:io/streams@0.2.9.{output-stream};
+
+        get-stderr: func() -> output-stream;
+    }
+    interface stdin {
+        use wasi:io/streams@0.2.9.{input-stream};
+
+        get-stdin: func() -> input-stream;
+    }
     interface environment {
         get-environment: func() -> list<tuple<string, string>>;
     }
     interface exit {
         exit: func(status: result);
-    }
-    interface stdin {
-        use wasi:io/streams@0.2.6.{input-stream};
-
-        get-stdin: func() -> input-stream;
-    }
-    interface stdout {
-        use wasi:io/streams@0.2.6.{output-stream};
-
-        get-stdout: func() -> output-stream;
-    }
-    interface stderr {
-        use wasi:io/streams@0.2.6.{output-stream};
-
-        get-stderr: func() -> output-stream;
     }
     interface terminal-input {
         resource terminal-input;
