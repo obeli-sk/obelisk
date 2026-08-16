@@ -1,8 +1,8 @@
-//! Generate byte constants for Obelisk's four pinned OCI WASM assets if `download` feature is enabled.
+//! Generate byte constants for Obelisk's four pinned OCI WASM assets.
 //!
-//! With `download`, each asset comes from `OBELISK_EMBED_ASSETS_DIR` for offline Nix builds or is
-//! pulled and digest-verified from its packaged `*version*.txt` OCI reference.
-//! Without `download`, empty byte constants keep normal builds network-free; `src/lib.rs` exposes the references.
+//! With `embed-assets`, each asset comes from `OBELISK_EMBED_ASSETS_DIR` for offline Nix builds or
+//! is pulled and digest-verified from its packaged `*version*.txt` OCI reference. Without the
+//! feature, `src/lib.rs` exposes only the references and this script does no work.
 
 use anyhow::{Context, bail};
 use oci_client::secrets::RegistryAuth;
@@ -33,18 +33,11 @@ const ASSETS: &[(&str, &str, &str)] = &[
 const OCI_SCHEMA_PREFIX: &str = "oci://";
 
 fn main() -> anyhow::Result<()> {
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR must be set")?);
-
-    // Normal builds use only the location constants; emit empty byte constants without network I/O.
-    if std::env::var_os("CARGO_FEATURE_DOWNLOAD").is_none() {
-        let mut stubs = String::new();
-        for (const_name, ..) in ASSETS {
-            writeln!(stubs, "pub const {const_name}: &[u8] = &[];")?;
-        }
-        std::fs::write(out_dir.join("gen.rs"), stubs)?;
+    if std::env::var_os("CARGO_FEATURE_EMBED_ASSETS").is_none() {
         return Ok(());
     }
 
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR must be set")?);
     println!("cargo:rerun-if-env-changed=OBELISK_EMBED_ASSETS_DIR");
     let assets_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let prefetched = std::env::var_os("OBELISK_EMBED_ASSETS_DIR").map(PathBuf::from);

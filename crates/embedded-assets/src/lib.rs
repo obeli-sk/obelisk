@@ -1,3 +1,4 @@
+#[cfg(feature = "embed-assets")]
 include!(concat!(env!("OUT_DIR"), "/gen.rs"));
 
 pub const ACTIVITY_JS_RUNTIME_LOCATION: &str = include_str!("../activity-js-runtime-version.txt");

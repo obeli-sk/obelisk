@@ -135,7 +135,7 @@ otlp = [
 "activity-js-local" = ["dep:activity-js-runtime-builder"]
 "webhook-js-local" = ["dep:webhook-js-runtime-builder"]
 "workflow-js-local" = ["dep:workflow-js-runtime-builder"]
-"embed-assets" = ["embedded-assets/download"]
+"embed-assets" = ["embedded-assets/embed-assets"]
 default = ["otlp"]
 
 [lints]
