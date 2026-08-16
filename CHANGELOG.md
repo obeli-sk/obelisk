@@ -6,18 +6,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.1](https://github.com/obeli-sk/obelisk/compare/v0.41.0...v0.41.1)
+
+This release adds multi-file JavaScript modules, richer deployment and execution APIs so the
+Web UI no longer needs to parse deployment TOML, and several fairness and replay-termination controls for
+long-running workflows. It also publishes new self-contained `-embedded` server binaries that contain
+JS runtimes and Web UI for a fully offline experience.
+
+### Added
+
+- JavaScript components can be split across multiple source files within a single module -
+  ([#845](https://github.com/obeli-sk/obelisk/pull/845)).
+- *(deployment)* A component may reference a WIT folder that carries an inline FFQN definition -
+  ([#854](https://github.com/obeli-sk/obelisk/pull/854)).
+- *(api)* Component file references (CAS-backed files, content hashes, imports, and exports) are
+  exposed through the gRPC and Web APIs, so clients no longer parse the deployment TOML to obtain
+  them - ([#846](https://github.com/obeli-sk/obelisk/pull/846)).
+- *(api)* Execution responses can be filtered by join set -
+  ([#857](https://github.com/obeli-sk/obelisk/pull/857)).
+- *(server)* New self-contained `-embedded` Linux and macOS binaries bundle the pinned JavaScript
+  runtimes and Web UI, verifying and materializing them into the WASM cache at startup -
+  ([#876](https://github.com/obeli-sk/obelisk/pull/876)).
+- *(toml)* `max_events_per_run` yields (unlocks) a workflow after it writes a configurable number of
+  events, improving fairness across concurrent workflows -
+  ([#867](https://github.com/obeli-sk/obelisk/pull/867)).
+- *(toml)* `max_replay_captured_writes` bounds replay so a busy `join-next-try` loop can no longer
+  replay indefinitely - ([#863](https://github.com/obeli-sk/obelisk/pull/863)).
+- *(toml)* `response_refresh_interval` periodically loads responses during a run, further limiting
+  redundant `join-next-try` events - ([#869](https://github.com/obeli-sk/obelisk/pull/869)).
+- *(toml)* `lock_extension_leeway` is now configurable per workflow -
+  ([#855](https://github.com/obeli-sk/obelisk/pull/855)).
+
 ### Changed
 
 - *(api)* The switch-deployment flag `hot_redeploy` is renamed to `apply` across the gRPC and Web
   APIs, matching the `deployment apply` CLI verb. The protobuf field number is unchanged, so binary
   gRPC (and gRPC-web) stays wire-compatible; the Web API keeps accepting the old `hot_redeploy` JSON
-  key as an alias.
+  key as an alias - ([#859](https://github.com/obeli-sk/obelisk/pull/859)).
 - *(cli)* `deployment get` omits generated content digests and JavaScript module metadata from the
   exported TOML by default. Pass `--include-generated-metadata` to retain the stored server view.
-  The gRPC and Web APIs accept `include_generated_metadata` when retrieving a deployment.
+  The gRPC and Web APIs accept `include_generated_metadata` when retrieving a deployment -
+  ([#847](https://github.com/obeli-sk/obelisk/pull/847),
+  [#849](https://github.com/obeli-sk/obelisk/pull/849)).
+- *(workflow)* Paused or cancelled workflows are now interrupted promptly instead of running until
+  their next yield. This is best effort on a single node; the database remains the source of truth,
+  and PostgreSQL with a remote executor stays database-driven -
+  ([#864](https://github.com/obeli-sk/obelisk/pull/864),
+  [#865](https://github.com/obeli-sk/obelisk/pull/865)).
 - *(perf)* An already-due workflow sleep (e.g. `sleep(now)`) now appends its delay response in the
   same transaction as the sleep, so the workflow resumes immediately instead of waiting for the
-  expired-timers watcher tick.
+  expired-timers watcher tick - ([#853](https://github.com/obeli-sk/obelisk/pull/853)).
+- *(perf)* Workflow replay skips backtrace capture for the already-replayed prefix -
+  ([#868](https://github.com/obeli-sk/obelisk/pull/868)).
+
+### Deprecated
+
+- *(config)* Component `component_digest` pinning is deprecated and will be removed in 0.42.
+   - ([#848](https://github.com/obeli-sk/obelisk/pull/848)).
+
+### Fixed
+
+- *(toml)* The `fuel` and `subscription_interruption` settings are now applied to JavaScript
+  workflows - ([#863](https://github.com/obeli-sk/obelisk/pull/863)).
+- *(deployment)* WIT import verification compares interface structure instead of generated names,
+  ignores functions that use resource types, and avoids generated type-name clashes when inline WITs
+  share an interface - ([#851](https://github.com/obeli-sk/obelisk/pull/851)).
+- *(server)* A redeployed executor can pick up work from a warm, blocked executor without waiting
+  for the previous lock to expire, and a stale `pending` lock is released when its `unlocked_at`
+  precedes `pending_at` - ([#858](https://github.com/obeli-sk/obelisk/pull/858),
+  [#860](https://github.com/obeli-sk/obelisk/pull/860)).
 
 ## [0.41.0](https://github.com/obeli-sk/obelisk/compare/v0.40.0...v0.41.0)
 
