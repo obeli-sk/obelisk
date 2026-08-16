@@ -32,5 +32,5 @@ location = "$STRIPPED"
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
         target_component "oci://docker.io/getobelisk/activity-js-runtime:$TAG")
-    echo -n $OUTPUT > $OUTPUT_FILE
+    printf '%s' "$OUTPUT" > "$OUTPUT_FILE"
 fi

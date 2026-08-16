@@ -2,7 +2,7 @@
 //!
 //! With `embed-assets`, each asset comes from `OBELISK_EMBED_ASSETS_DIR` for offline Nix builds or
 //! is pulled and digest-verified from its packaged `*version*.txt` OCI reference. Without the
-//! feature, `src/lib.rs` exposes only the references and this script does no work.
+//! feature, `src/lib.rs` exposes only the references and this script only validates them.
 
 use anyhow::{Context, bail};
 use oci_client::secrets::RegistryAuth;
@@ -33,13 +33,20 @@ const ASSETS: &[(&str, &str, &str)] = &[
 const OCI_SCHEMA_PREFIX: &str = "oci://";
 
 fn main() -> anyhow::Result<()> {
+    let assets_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut references = Vec::with_capacity(ASSETS.len());
+    for (_, _, version_file) in ASSETS {
+        let version_path = assets_dir.join(version_file);
+        println!("cargo:rerun-if-changed={}", version_path.display());
+        references.push(read_reference(&version_path)?);
+    }
+
     if std::env::var_os("CARGO_FEATURE_EMBED_ASSETS").is_none() {
         return Ok(());
     }
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR must be set")?);
     println!("cargo:rerun-if-env-changed=OBELISK_EMBED_ASSETS_DIR");
-    let assets_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let prefetched = std::env::var_os("OBELISK_EMBED_ASSETS_DIR").map(PathBuf::from);
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -47,11 +54,7 @@ fn main() -> anyhow::Result<()> {
         .build()?;
 
     let mut generated = String::new();
-    for (const_name, stem, version_file) in ASSETS {
-        let version_path = assets_dir.join(version_file);
-        println!("cargo:rerun-if-changed={}", version_path.display());
-        let reference = read_reference(&version_path)?;
-
+    for ((const_name, stem, _), reference) in ASSETS.iter().zip(&references) {
         let dst = out_dir.join(format!("{stem}.wasm"));
         let bytes = if let Some(prefetched) = &prefetched {
             let src = prefetched.join(format!("{stem}.wasm"));
@@ -59,7 +62,7 @@ fn main() -> anyhow::Result<()> {
                 .with_context(|| format!("cannot read pre-fetched asset {}", src.display()))?
         } else {
             runtime
-                .block_on(pull_wasm_layer(&reference))
+                .block_on(pull_wasm_layer(reference))
                 .with_context(|| format!("cannot pull {reference}"))?
         };
         std::fs::write(&dst, &bytes).with_context(|| format!("cannot write {}", dst.display()))?;
@@ -78,8 +81,13 @@ fn main() -> anyhow::Result<()> {
 fn read_reference(version_path: &Path) -> anyhow::Result<oci_client::Reference> {
     let content = std::fs::read_to_string(version_path)
         .with_context(|| format!("cannot read {}", version_path.display()))?;
-    let trimmed = content.trim();
-    let reference = trimmed.strip_prefix(OCI_SCHEMA_PREFIX).with_context(|| {
+    if content.trim() != content {
+        bail!(
+            "{} must not contain surrounding whitespace",
+            version_path.display()
+        );
+    }
+    let reference = content.strip_prefix(OCI_SCHEMA_PREFIX).with_context(|| {
         format!(
             "{} must start with `{OCI_SCHEMA_PREFIX}`",
             version_path.display()
