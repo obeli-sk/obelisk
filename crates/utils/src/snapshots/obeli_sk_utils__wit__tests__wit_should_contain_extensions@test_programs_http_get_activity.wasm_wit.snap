@@ -290,9 +290,8 @@ package wasi:cli@0.2.12 {
 
 package wasi:http@0.2.12 {
     interface types {
-        use wasi:io/streams@0.2.12.{input-stream};
         use wasi:clocks/monotonic-clock@0.2.12.{duration};
-        use wasi:io/streams@0.2.12.{output-stream};
+        use wasi:io/streams@0.2.12.{output-stream, input-stream};
         use wasi:io/poll@0.2.12.{pollable};
 
         resource outgoing-body {
@@ -305,15 +304,15 @@ package wasi:http@0.2.12 {
             get: func() -> option<result<result<incoming-response, error-code>>>;
         }
 
-        resource incoming-body {
-            %stream: func() -> result<input-stream>;
-            finish: static func(this: incoming-body) -> future-trailers;
-        }
-
         resource fields {
             constructor();
             append: func(name: field-name, value: field-value) -> result<_, header-error>;
             entries: func() -> list<tuple<field-name, field-value>>;
+        }
+
+        resource incoming-body {
+            %stream: func() -> result<input-stream>;
+            finish: static func(this: incoming-body) -> future-trailers;
         }
 
         resource future-trailers {
