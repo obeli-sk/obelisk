@@ -3,7 +3,7 @@
 # Fail if a published JS runtime pin is older than the sources it is built from.
 #
 # Each JS runtime is published out-of-band by the manual `push-js-runtime` workflow,
-# which records the pushed OCI reference in `assets/<name>-js-runtime-version.txt`.
+# which records the pushed OCI reference in `crates/embedded-assets/<name>-js-runtime-version.txt`.
 # Tests run via `scripts/test.sh` and real deployments load that published image, so
 # if a runtime's sources change without the pin being refreshed, they silently run an
 # outdated runtime (only `scripts/test-js-local.sh` builds the runtime locally).
@@ -27,7 +27,7 @@ status=0
 
 check() {
     local name="$1"
-    local pin="assets/${name}-js-runtime-version.txt"
+    local pin="crates/embedded-assets/${name}-js-runtime-version.txt"
     local sources=("crates/${name}-js-runtime" "$COMMON")
 
     local pin_commit

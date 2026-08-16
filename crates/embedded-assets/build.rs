@@ -1,16 +1,8 @@
-//! Materialize the four operator-owned WASM assets into `OUT_DIR` so `src/lib.rs`
-//! can `include_bytes!` them.
+//! Generate byte constants for Obelisk's four pinned OCI WASM assets.
 //!
-//! The assets are the exact pinned artifacts referenced from `assets/*version*.txt`
-//! (three JS runtimes + the web UI). They are obtained one of two ways:
-//!
-//! * `OBELISK_EMBED_ASSETS_DIR` set: read pre-fetched `<name>.wasm` files from that
-//!   directory (the Nix fixed-output derivation path, fully offline).
-//! * otherwise: pull the single WASM layer of each pinned OCI image over the network,
-//!   mirroring `obelisk/src/oci.rs::pull_to_cache_dir`.
-//!
-//! Both paths verify each file against the layer digest, so the two acquisition
-//! methods produce byte-identical embeds.
+//! With `embed-assets`, each asset comes from `OBELISK_EMBED_ASSETS_DIR` for offline Nix builds or
+//! is pulled and digest-verified from its packaged `*version*.txt` OCI reference. Without the
+//! feature, `src/lib.rs` exposes only the references and this script only validates them.
 
 use anyhow::{Context, bail};
 use oci_client::secrets::RegistryAuth;
@@ -18,7 +10,7 @@ use oci_wasm::WasmClient;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-/// (generated const name, `<name>.wasm` file stem, `assets/<version file>`).
+/// (generated const name, `<name>.wasm` file stem, `<version file>`).
 const ASSETS: &[(&str, &str, &str)] = &[
     (
         "ACTIVITY_JS_RUNTIME_WASM",
@@ -41,22 +33,20 @@ const ASSETS: &[(&str, &str, &str)] = &[
 const OCI_SCHEMA_PREFIX: &str = "oci://";
 
 fn main() -> anyhow::Result<()> {
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR must be set")?);
+    let assets_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut references = Vec::with_capacity(ASSETS.len());
+    for (_, _, version_file) in ASSETS {
+        let version_path = assets_dir.join(version_file);
+        println!("cargo:rerun-if-changed={}", version_path.display());
+        references.push(read_reference(&version_path)?);
+    }
 
-    // Without the `download` feature (e.g. a plain `cargo build --workspace`) this crate
-    // is compiled as a bare workspace member but never referenced; emit empty stub consts
-    // so `src/lib.rs` still compiles, and do no network I/O.
-    if std::env::var_os("CARGO_FEATURE_DOWNLOAD").is_none() {
-        let mut stubs = String::new();
-        for (const_name, ..) in ASSETS {
-            writeln!(stubs, "pub const {const_name}: &[u8] = &[];")?;
-        }
-        std::fs::write(out_dir.join("gen.rs"), stubs)?;
+    if std::env::var_os("CARGO_FEATURE_EMBED_ASSETS").is_none() {
         return Ok(());
     }
 
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR must be set")?);
     println!("cargo:rerun-if-env-changed=OBELISK_EMBED_ASSETS_DIR");
-    let assets_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
     let prefetched = std::env::var_os("OBELISK_EMBED_ASSETS_DIR").map(PathBuf::from);
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -64,11 +54,7 @@ fn main() -> anyhow::Result<()> {
         .build()?;
 
     let mut generated = String::new();
-    for (const_name, stem, version_file) in ASSETS {
-        let version_path = assets_dir.join(version_file);
-        println!("cargo:rerun-if-changed={}", version_path.display());
-        let reference = read_reference(&version_path)?;
-
+    for ((const_name, stem, _), reference) in ASSETS.iter().zip(&references) {
         let dst = out_dir.join(format!("{stem}.wasm"));
         let bytes = if let Some(prefetched) = &prefetched {
             let src = prefetched.join(format!("{stem}.wasm"));
@@ -76,7 +62,7 @@ fn main() -> anyhow::Result<()> {
                 .with_context(|| format!("cannot read pre-fetched asset {}", src.display()))?
         } else {
             runtime
-                .block_on(pull_wasm_layer(&reference))
+                .block_on(pull_wasm_layer(reference))
                 .with_context(|| format!("cannot pull {reference}"))?
         };
         std::fs::write(&dst, &bytes).with_context(|| format!("cannot write {}", dst.display()))?;
@@ -91,12 +77,17 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Read `assets/<name>-version.txt`, strip the `oci://` scheme, parse the OCI reference.
+/// Read `<name>-version.txt`, strip the `oci://` scheme, parse the OCI reference.
 fn read_reference(version_path: &Path) -> anyhow::Result<oci_client::Reference> {
     let content = std::fs::read_to_string(version_path)
         .with_context(|| format!("cannot read {}", version_path.display()))?;
-    let trimmed = content.trim();
-    let reference = trimmed.strip_prefix(OCI_SCHEMA_PREFIX).with_context(|| {
+    if content.trim() != content {
+        bail!(
+            "{} must not contain surrounding whitespace",
+            version_path.display()
+        );
+    }
+    let reference = content.strip_prefix(OCI_SCHEMA_PREFIX).with_context(|| {
         format!(
             "{} must start with `{OCI_SCHEMA_PREFIX}`",
             version_path.display()
@@ -109,8 +100,7 @@ fn read_reference(version_path: &Path) -> anyhow::Result<oci_client::Reference> 
 
 /// Pull the single WASM layer of a pinned image and verify it against the layer digest.
 async fn pull_wasm_layer(reference: &oci_client::Reference) -> anyhow::Result<Vec<u8>> {
-    // reqwest is built with `rustls-no-provider`; install the process-global provider,
-    // mirroring `obelisk/src/main.rs`. Ignore the error if already installed.
+    // Match Obelisk's reqwest setup, ignoring the error if another dependency installed a provider.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = WasmClient::new(oci_client::Client::default());
     let (mut manifest, _config, _digest) = client

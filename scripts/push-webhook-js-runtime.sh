@@ -16,7 +16,7 @@ if ! command -v wasm-tools >/dev/null; then
 fi
 
 TAG="$1"
-OUTPUT_FILE="${2:-assets/webhook-js-runtime-version.txt}"
+OUTPUT_FILE="${2:-crates/embedded-assets/webhook-js-runtime-version.txt}"
 
 cargo check --package webhook-js-runtime-builder # triggers build.rs of webhook-js-runtime-builder
 
@@ -33,5 +33,5 @@ routes = [""]
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
         target_component "oci://docker.io/getobelisk/webhook-js-runtime:$TAG")
-    echo -n $OUTPUT > $OUTPUT_FILE
+    printf '%s' "$OUTPUT" > "$OUTPUT_FILE"
 fi

@@ -16,7 +16,7 @@ if ! command -v wasm-tools >/dev/null; then
 fi
 
 TAG="$1"
-OUTPUT_FILE="${2:-assets/workflow-js-runtime-version.txt}"
+OUTPUT_FILE="${2:-crates/embedded-assets/workflow-js-runtime-version.txt}"
 
 cargo check --package workflow-js-runtime-builder # triggers build.rs of workflow-js-runtime-builder
 
@@ -32,5 +32,5 @@ location = "$STRIPPED"
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
         target_component "oci://docker.io/getobelisk/workflow-js-runtime:$TAG")
-    echo -n $OUTPUT > $OUTPUT_FILE
+    printf '%s' "$OUTPUT" > "$OUTPUT_FILE"
 fi

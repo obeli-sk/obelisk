@@ -3,6 +3,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+for version_file in crates/embedded-assets/*-version.txt; do
+    if [ -z "$(tail -c 1 "$version_file")" ]; then
+        echo "$version_file must not end with a newline" >&2
+        exit 1
+    fi
+done
+
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 

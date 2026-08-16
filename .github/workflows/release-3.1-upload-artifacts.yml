@@ -53,33 +53,34 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
+          - target: x86_64-unknown-linux-gnu-embedded
+            os: ubuntu-24.04
 
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
-
           - target: x86_64-unknown-linux-musl-embedded
             os: ubuntu-24.04
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu-embedded
+            os: ubuntu-24.04
 
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04
-
           - target: aarch64-unknown-linux-musl-embedded
             os: ubuntu-24.04
 
           - target: x86_64-apple-darwin
             os: ubuntu-24.04
-
           - target: x86_64-apple-darwin-embedded
             os: ubuntu-24.04
 
           - target: aarch64-apple-darwin
             os: ubuntu-24.04
-
           - target: aarch64-apple-darwin-embedded
             os: ubuntu-24.04
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -104,7 +105,7 @@ jobs:
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
 
-      - uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 

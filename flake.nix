@@ -22,13 +22,13 @@
           };
 
           # Fixed-output derivation that pre-fetches the four pinned operator-owned WASM
-          # assets (three JS runtimes + web UI) referenced from `assets/*version*.txt`,
+          # assets (three JS runtimes + web UI) referenced from `crates/embedded-assets/*version*.txt`,
           # so the `embed-assets` build.rs can read them offline inside the Nix sandbox.
           # Update `outputHash` whenever any version file changes with
           # `scripts/update-embedded-assets-hash.sh`.
           embeddedAssets =
             let
-              assetsDir = ./assets;
+              assetsDir = ./crates/embedded-assets;
             in
             pkgs.stdenv.mkDerivation {
               pname = "obelisk-embedded-assets";
@@ -179,28 +179,32 @@
                 inherit buildType;
               };
 
-              zigbuildArgs = pkgs.lib.optionalAttrs (customTarget != null) {
-                # Override buildPhase only when using zigbuild
-                buildPhase = ''
-                  runHook preBuild
+              zigbuildArgs = pkgs.lib.optionalAttrs (customTarget != null)
+                {
+                  # Override buildPhase only when using zigbuild
+                  buildPhase = ''
+                    runHook preBuild
 
-                  echo "Building with cargo zigbuild for target: ${customTarget}"
-                  echo "Build type: ${buildType}"
+                    echo "Building with cargo zigbuild for target: ${customTarget}"
+                    echo "Build type: ${buildType}"
 
-                  # Use --release flag only if buildType is "release"
-                  RELEASE_FLAG=${pkgs.lib.optionalString (buildType == "release") "--release"}
+                    # Use --release flag only if buildType is "release"
+                    RELEASE_FLAG=${pkgs.lib.optionalString (buildType == "release") "--release"}
 
-                  # Call cargo zigbuild
-                  cargo zigbuild \
-                    $RELEASE_FLAG \
-                    --locked \
-                    --offline \
-                    --target ${customTarget} \
-                    --verbose \
-                    ''${cargoBuildFlags} # Note the bash variable expansion syntax here
+                    # Call cargo zigbuild
+                    cargo zigbuild \
+                      $RELEASE_FLAG \
+                      --locked \
+                      --offline \
+                      --target ${customTarget} \
+                      --verbose \
+                      ''${cargoBuildFlags} # Note the bash variable expansion syntax here
 
-                  runHook postBuild
-                '';
+                    runHook postBuild
+                  '';
+                } // pkgs.lib.optionalAttrs (customTarget == "x86_64-unknown-linux-gnu.2.35") {
+                # Native-architecture Zig probes need Nix's loader inside the build sandbox.
+                CFLAGS_x86_64_unknown_linux_gnu = "-Wl,--dynamic-linker=${pkgs.stdenv.cc.bintools.dynamicLinker}";
               };
               # Feed the pre-fetched assets to the `embed-assets` build.rs offline.
               embedAssetsEnv = pkgs.lib.optionalAttrs embedAssets {
@@ -236,7 +240,7 @@
             nativeBuildInputs = with pkgs;
               [
                 cargo-zigbuild
-            ];
+              ];
           };
           # Used only by release-2-cargo-publish to get a cargo with the
           # workspace-publish fix (rust-lang/cargo#17071), which is missing
@@ -262,24 +266,20 @@
             obeliskLibcNix-embedded = makeObelisk "release" null ./rust-toolchain.toml true;
             # Linux
             ## x86_64
-            obeliskCrossDev-x86_64-unknown-linux-musl = makeObelisk "dev" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-unknown-linux-musl = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-unknown-linux-musl-embedded = makeObelisk "release" "x86_64-unknown-linux-musl" ./rust-toolchain-cross.toml true;
-            obeliskCrossDev-x86_64-unknown-linux-gnu = makeObelisk "dev" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-unknown-linux-gnu = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
+            obeliskCross-x86_64-unknown-linux-gnu-embedded = makeObelisk "release" "x86_64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml true;
             ## aarch64
-            obeliskCrossDev-aarch64-unknown-linux-musl = makeObelisk "dev" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-unknown-linux-musl = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-unknown-linux-musl-embedded = makeObelisk "release" "aarch64-unknown-linux-musl" ./rust-toolchain-cross.toml true;
-            obeliskCrossDev-aarch64-unknown-linux-gnu = makeObelisk "dev" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-unknown-linux-gnu = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml false;
+            obeliskCross-aarch64-unknown-linux-gnu-embedded = makeObelisk "release" "aarch64-unknown-linux-gnu.2.35" ./rust-toolchain-cross.toml true;
             # MacOS
             ## x86_64
-            obeliskCrossDev-x86_64-apple-darwin = makeObelisk "dev" "x86_64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-apple-darwin = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-x86_64-apple-darwin-embedded = makeObelisk "release" "x86_64-apple-darwin" ./rust-toolchain-cross.toml true;
             ## aarch64
-            obeliskCrossDev-aarch64-apple-darwin = makeObelisk "dev" "aarch64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-apple-darwin = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml false;
             obeliskCross-aarch64-apple-darwin-embedded = makeObelisk "release" "aarch64-apple-darwin" ./rust-toolchain-cross.toml true;
 

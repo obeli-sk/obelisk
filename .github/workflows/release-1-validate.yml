@@ -56,21 +56,21 @@ jobs:
         run: |
           ./scripts/prerelease-check-runtime-version.sh \
             crates/activity-js-runtime \
-            assets/activity-js-runtime-version.txt
+            crates/embedded-assets/activity-js-runtime-version.txt
 
       - name: Validate workflow JS runtime version reference
         run: |
           ./scripts/prerelease-check-runtime-version.sh \
             crates/workflow-js-runtime \
-            assets/workflow-js-runtime-version.txt
+            crates/embedded-assets/workflow-js-runtime-version.txt
 
       - name: Validate webhook JS runtime version reference
         run: |
           ./scripts/prerelease-check-runtime-version.sh \
             crates/webhook-js-runtime \
-            assets/webhook-js-runtime-version.txt
+            crates/embedded-assets/webhook-js-runtime-version.txt
 
-      - uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 
       - name: Validate Nix dev build
         run: nix build .#obeliskLibcNixDev

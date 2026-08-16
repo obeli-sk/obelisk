@@ -41,10 +41,10 @@ jobs:
           ref: ${{ github.event.inputs.ref }}
           persist-credentials: false
 
-      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
+          extra_nix_config: |
             extra-substituters = https://obeli-sk.cachix.org
             extra-trusted-public-keys = obeli-sk.cachix.org-1:31iM9GWSEhAXvvuTWQ7CvAcwvgRzsuJ9yJghywSd3Jw=
 

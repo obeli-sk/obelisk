@@ -1,15 +1,15 @@
 [package]
-name = "embedded-assets"
+name = "obeli-sk-embedded-assets"
+description = "Build-time embedding of Obelisk's pinned Web UI and JavaScript runtimes"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
 [features]
-download = []
+embed-assets = []
 
 [build-dependencies]
 anyhow.workspace = true
