@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.2](https://github.com/obeli-sk/obelisk/compare/v0.41.1...v0.41.2)
+Fixes adding `-embedded` release artifacts for every supported platform.
+
 ## [0.41.1](https://github.com/obeli-sk/obelisk/compare/v0.41.0...v0.41.1)
 
 This release adds multi-file JavaScript modules, richer deployment and execution APIs so the
