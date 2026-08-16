@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.41.2](https://github.com/obeli-sk/obelisk/compare/v0.41.1...v0.41.2)
-Fixes adding `-embedded` release artifacts for every supported platform.
+
+This patch release publishes the missing self-contained `-embedded` artifacts for every supported
+platform and makes the x86_64 GNU release build work in sandboxed Nix environments.
+
+### Fixed
+
+- Release workflows now publish `-embedded` variants of all six release targets, which were missing
+  from the 0.41.1 release artifacts.
+- x86_64 GNU cross-builds give native-architecture Zig configuration probes access to Nix's dynamic
+  loader, allowing jemalloc to build without exposing the host filesystem to the derivation.
 
 ## [0.41.1](https://github.com/obeli-sk/obelisk/compare/v0.41.0...v0.41.1)
 
