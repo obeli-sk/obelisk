@@ -52,6 +52,7 @@ jobs:
           nix develop --command echo
       - name: Add cachix cache
         run: |
+          mkdir -p ~/.config/nix
           echo "extra-substituters = https://obeli-sk.cachix.org" >> ~/.config/nix/nix.conf
           echo "extra-trusted-public-keys = obeli-sk.cachix.org-1:31iM9GWSEhAXvvuTWQ7CvAcwvgRzsuJ9yJghywSd3Jw=" >> ~/.config/nix/nix.conf
 
