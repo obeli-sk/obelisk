@@ -1508,19 +1508,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
-name = "embedded-assets"
-version = "0.41.2"
-dependencies = [
- "anyhow",
- "oci-client",
- "oci-wasm",
- "reqwest",
- "rustls",
- "sha2 0.10.9",
- "tokio",
-]
-
-[[package]]
 name = "embedded-io"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3254,6 +3241,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "obeli-sk-embedded-assets"
+version = "0.41.2"
+dependencies = [
+ "anyhow",
+ "oci-client",
+ "oci-wasm",
+ "reqwest",
+ "rustls",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "obeli-sk-executor"
 version = "0.41.2"
 dependencies = [
@@ -3478,7 +3478,6 @@ dependencies = [
  "derive_more",
  "directories",
  "docker_credential",
- "embedded-assets",
  "futures-util",
  "hashbrown 0.16.1",
  "hmac 0.12.1",
@@ -3492,6 +3491,7 @@ dependencies = [
  "obeli-sk-db-postgres",
  "obeli-sk-db-sqlite",
  "obeli-sk-deployment-config",
+ "obeli-sk-embedded-assets",
  "obeli-sk-executor",
  "obeli-sk-grpc",
  "obeli-sk-utils",

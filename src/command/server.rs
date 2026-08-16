@@ -394,16 +394,13 @@ const CANCELLATION_DRIVER_BATCH_SIZE: u32 = 100;
 /// Default number of concurrent deployment submits the switch manager accepts.
 const DEFAULT_SUBMIT_CONCURRENCY: u32 = 1;
 #[cfg(not(feature = "embed-assets"))]
-const WEBUI_LOCATION: &str = include_str!("../../assets/webui-version.txt");
+const WEBUI_LOCATION: &str = embedded_assets::WEBUI_LOCATION;
 #[cfg(all(not(feature = "activity-js-local"), not(feature = "embed-assets")))]
-pub(crate) const ACTIVITY_JS_LOCATION: &str =
-    include_str!("../../assets/activity-js-runtime-version.txt");
+pub(crate) const ACTIVITY_JS_LOCATION: &str = embedded_assets::ACTIVITY_JS_RUNTIME_LOCATION;
 #[cfg(all(not(feature = "workflow-js-local"), not(feature = "embed-assets")))]
-pub(crate) const WORKFLOW_JS_LOCATION: &str =
-    include_str!("../../assets/workflow-js-runtime-version.txt");
+pub(crate) const WORKFLOW_JS_LOCATION: &str = embedded_assets::WORKFLOW_JS_RUNTIME_LOCATION;
 #[cfg(all(not(feature = "webhook-js-local"), not(feature = "embed-assets")))]
-pub(crate) const WEBHOOK_JS_LOCATION: &str =
-    include_str!("../../assets/webhook-js-runtime-version.txt");
+pub(crate) const WEBHOOK_JS_LOCATION: &str = embedded_assets::WEBHOOK_JS_RUNTIME_LOCATION;
 
 const HTTP_SERVER_NAME_WEBUI: &str = "webui";
 const HTTP_SERVER_NAME_EXTERNAL: &str = "external";

@@ -22,13 +22,13 @@
           };
 
           # Fixed-output derivation that pre-fetches the four pinned operator-owned WASM
-          # assets (three JS runtimes + web UI) referenced from `assets/*version*.txt`,
+          # assets (three JS runtimes + web UI) referenced from `crates/embedded-assets/*version*.txt`,
           # so the `embed-assets` build.rs can read them offline inside the Nix sandbox.
           # Update `outputHash` whenever any version file changes with
           # `scripts/update-embedded-assets-hash.sh`.
           embeddedAssets =
             let
-              assetsDir = ./assets;
+              assetsDir = ./crates/embedded-assets;
             in
             pkgs.stdenv.mkDerivation {
               pname = "obelisk-embedded-assets";
@@ -236,7 +236,7 @@
             nativeBuildInputs = with pkgs;
               [
                 cargo-zigbuild
-            ];
+              ];
           };
           # Used only by release-2-cargo-publish to get a cargo with the
           # workspace-publish fix (rust-lang/cargo#17071), which is missing
