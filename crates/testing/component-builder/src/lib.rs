@@ -152,6 +152,16 @@ fn hash_directory_contents(hasher: &mut Sha256, dir: &Path, base: &Path) {
     }
 }
 
+fn rustc_version_verbose() -> String {
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let output = Command::new(rustc)
+        .args(["--version", "--verbose"])
+        .output()
+        .expect("cannot run rustc to determine toolchain version");
+    assert!(output.status.success(), "rustc --version --verbose failed");
+    String::from_utf8(output.stdout).expect("rustc version output must be utf-8")
+}
+
 fn compute_inputs_hash(
     meta: &cargo_metadata::Metadata,
     package: &cargo_metadata::Package,
@@ -171,6 +181,11 @@ fn compute_inputs_hash(
 
     // Builder crate version — invalidates cache when the builder itself changes
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update(b"\x00");
+
+    // rustc version — the wasm32-wasip2 std bakes in a WASI import version, so a
+    // toolchain bump changes the emitted WASM even when nothing else does.
+    hasher.update(rustc_version_verbose().as_bytes());
     hasher.update(b"\x00");
 
     // Cargo.lock — covers all transitive dependency versions
