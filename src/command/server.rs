@@ -4643,7 +4643,7 @@ fn prespawn_activity_exec(
     activity_exec: ActivityExecConfigVerified,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity_exec.component_id().clone();
-    assert!(component_id.component_type == ComponentType::Activity);
+    assert_eq!(component_id.component_type, ComponentType::Activity);
 
     let program = activity_exec.program;
 
