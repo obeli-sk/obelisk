@@ -179,28 +179,32 @@
                 inherit buildType;
               };
 
-              zigbuildArgs = pkgs.lib.optionalAttrs (customTarget != null) {
-                # Override buildPhase only when using zigbuild
-                buildPhase = ''
-                  runHook preBuild
+              zigbuildArgs = pkgs.lib.optionalAttrs (customTarget != null)
+                {
+                  # Override buildPhase only when using zigbuild
+                  buildPhase = ''
+                    runHook preBuild
 
-                  echo "Building with cargo zigbuild for target: ${customTarget}"
-                  echo "Build type: ${buildType}"
+                    echo "Building with cargo zigbuild for target: ${customTarget}"
+                    echo "Build type: ${buildType}"
 
-                  # Use --release flag only if buildType is "release"
-                  RELEASE_FLAG=${pkgs.lib.optionalString (buildType == "release") "--release"}
+                    # Use --release flag only if buildType is "release"
+                    RELEASE_FLAG=${pkgs.lib.optionalString (buildType == "release") "--release"}
 
-                  # Call cargo zigbuild
-                  cargo zigbuild \
-                    $RELEASE_FLAG \
-                    --locked \
-                    --offline \
-                    --target ${customTarget} \
-                    --verbose \
-                    ''${cargoBuildFlags} # Note the bash variable expansion syntax here
+                    # Call cargo zigbuild
+                    cargo zigbuild \
+                      $RELEASE_FLAG \
+                      --locked \
+                      --offline \
+                      --target ${customTarget} \
+                      --verbose \
+                      ''${cargoBuildFlags} # Note the bash variable expansion syntax here
 
-                  runHook postBuild
-                '';
+                    runHook postBuild
+                  '';
+                } // pkgs.lib.optionalAttrs (customTarget == "x86_64-unknown-linux-gnu.2.35") {
+                # Native-architecture Zig probes need Nix's loader inside the build sandbox.
+                CFLAGS_x86_64_unknown_linux_gnu = "-Wl,--dynamic-linker=${pkgs.stdenv.cc.bintools.dynamicLinker}";
               };
               # Feed the pre-fetched assets to the `embed-assets` build.rs offline.
               embedAssetsEnv = pkgs.lib.optionalAttrs embedAssets {
