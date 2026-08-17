@@ -105,14 +105,18 @@ impl Generate {
                 output_directory,
                 force,
                 skip_local,
+                prune,
             } => {
                 let results = generate_wit_deps(
                     project_dirs(),
                     BaseDirs::new(),
                     deployment,
                     output_directory,
-                    force,
-                    skip_local,
+                    GenerateWitDepsOptions {
+                        force,
+                        skip_local,
+                        prune,
+                    },
                     secret_registry,
                 )
                 .await?;
@@ -626,18 +630,23 @@ async fn generate_support_wits(
     Ok(results)
 }
 
+struct GenerateWitDepsOptions {
+    force: bool,
+    skip_local: bool,
+    prune: bool,
+}
+
 async fn generate_wit_deps(
     project_dirs: Option<ProjectDirs>,
     base_dirs: Option<BaseDirs>,
     deployment_toml: PathBuf,
     output_directory: PathBuf,
-    force: bool,
-    skip_local: bool,
+    options: GenerateWitDepsOptions,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let deployment = filter_wit_deps_deployment(
         load_deployment_validated(&deployment_toml).await?,
-        skip_local,
+        options.skip_local,
     );
     let mut server_config = ServerConfigToml::default();
     server_config.webui.enabled = false;
@@ -760,7 +769,7 @@ async fn generate_wit_deps(
             pkg_to_wit.entry(pkg_fqn).or_insert(content);
         }
     }
-    write_wit_deps(&pkg_to_wit, &output_directory, force).await
+    write_wit_deps(&pkg_to_wit, &output_directory, options.force, options.prune).await
 }
 
 fn filter_wit_deps_deployment(
@@ -853,6 +862,7 @@ async fn write_wit_deps(
     pkg_to_wit: &HashMap<PkgFqn, String>,
     output_directory: &std::path::Path,
     force: bool,
+    prune: bool,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
     let mut results = Vec::new();
     for (pkg_fqn, content) in pkg_to_wit {
@@ -895,17 +905,128 @@ async fn write_wit_deps(
             });
         }
     }
+    if prune {
+        results.extend(prune_wit_deps(pkg_to_wit, output_directory).await?);
+    }
     Ok(results)
+}
+
+async fn prune_wit_deps(
+    pkg_to_wit: &HashMap<PkgFqn, String>,
+    output_directory: &std::path::Path,
+) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
+    let desired: HashSet<_> = pkg_to_wit.keys().map(PkgFqn::as_file_name).collect();
+    let mut entries = tokio::fs::read_dir(output_directory)
+        .await
+        .with_context(|| format!("cannot read output directory {output_directory:?}"))?;
+    let mut results = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        if !entry.file_type().await?.is_dir() {
+            continue;
+        }
+        let Some(directory_name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if desired.contains(&directory_name) {
+            continue;
+        }
+        let wit_file = entry.path().join(format!("{directory_name}.wit"));
+        let Ok(content) = tokio::fs::read_to_string(&wit_file).await else {
+            continue;
+        };
+        if !has_obelisk_wit_header(&content) {
+            continue;
+        }
+        tokio::fs::remove_file(&wit_file)
+            .await
+            .with_context(|| format!("cannot remove obsolete WIT dependency {wit_file:?}"))?;
+        if let Err(err) = tokio::fs::remove_dir(entry.path()).await
+            && err.kind() != std::io::ErrorKind::DirectoryNotEmpty
+        {
+            return Err(err).with_context(|| format!("cannot remove directory {:?}", entry.path()));
+        }
+        results.push(GeneratedPathStatus {
+            path: wit_file,
+            status: "removed",
+        });
+    }
+    Ok(results)
+}
+
+fn has_obelisk_wit_header(content: &str) -> bool {
+    content.lines().next().is_some_and(|line| {
+        let matches = |candidate: &str| {
+            candidate
+                .strip_prefix(OBELISK_WIT_HEADER)
+                .is_some_and(|suffix| suffix.starts_with(' '))
+        };
+        matches(line) || line.strip_prefix('/').is_some_and(matches)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        add_token_hash, generate_cli_schema, generate_component_metadata_annotation_schema,
-        generate_db_schema, generate_deployment_schema, generate_openapi_schema,
-        generate_server_config_schema,
+        OBELISK_WIT_HEADER, add_token_hash, generate_cli_schema,
+        generate_component_metadata_annotation_schema, generate_db_schema,
+        generate_deployment_schema, generate_openapi_schema, generate_server_config_schema,
+        write_wit_deps,
     };
+    use concepts::PkgFqn;
+    use hashbrown::HashMap;
     use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn write_wit_deps_prunes_only_obsolete_generated_wits() {
+        let output_directory = tempfile::tempdir().unwrap();
+        let pkg_fqn = PkgFqn {
+            namespace: "test".to_string(),
+            package_name: "required".to_string(),
+            version: Some("1.0.0".to_string()),
+        };
+        let required_name = pkg_fqn.as_file_name();
+        let required_directory = output_directory.path().join(&required_name);
+        tokio::fs::create_dir(&required_directory).await.unwrap();
+        let required_wit = required_directory.join(format!("{required_name}.wit"));
+        let wit = "package test:required@1.0.0;\n";
+        let old_content = format!("{OBELISK_WIT_HEADER} 0.1.0\n{wit}");
+        tokio::fs::write(&required_wit, &old_content).await.unwrap();
+
+        let obsolete_directory = output_directory.path().join("test_obsolete@1.0.0");
+        tokio::fs::create_dir(&obsolete_directory).await.unwrap();
+        let obsolete_wit = obsolete_directory.join("test_obsolete@1.0.0.wit");
+        tokio::fs::write(
+            &obsolete_wit,
+            format!("{OBELISK_WIT_HEADER} 0.1.0\npackage test:obsolete@1.0.0;\n"),
+        )
+        .await
+        .unwrap();
+
+        let authored_directory = output_directory.path().join("test_authored@1.0.0");
+        tokio::fs::create_dir(&authored_directory).await.unwrap();
+        let authored_wit = authored_directory.join("test_authored@1.0.0.wit");
+        tokio::fs::write(&authored_wit, "package test:authored@1.0.0;\n")
+            .await
+            .unwrap();
+
+        let results = write_wit_deps(
+            &HashMap::from([(pkg_fqn, wit.to_string())]),
+            output_directory.path(),
+            true,
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(1, results.len());
+        assert_eq!("removed", results[0].status);
+        assert_eq!(
+            old_content,
+            tokio::fs::read_to_string(required_wit).await.unwrap()
+        );
+        assert!(!obsolete_wit.exists());
+        assert!(authored_wit.exists());
+    }
 
     #[test]
     #[ignore = "updates committed schema assets"]
