@@ -404,6 +404,7 @@
 
 ### Cron components configuration
 ### Schedules trigger a target function on a cron-like schedule.
+### Cron expressions accept five fields, or six fields with seconds first.
 ## On redeployment: if the schedule config is unchanged, the existing pending execution continues uninterrupted.
 # [[cron]]
 # name = "my-daily-job"                                       # Required. Each schedule must be named.

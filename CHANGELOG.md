@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(cron)* Cron schedules accept six-field expressions with seconds in addition to five-field expressions.
+
 ## [0.41.2](https://github.com/obeli-sk/obelisk/compare/v0.41.1...v0.41.2)
 
 This patch release publishes the missing self-contained `-embedded` artifacts for every supported

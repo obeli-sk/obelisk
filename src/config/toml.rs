@@ -4161,12 +4161,15 @@ pub(crate) mod cron {
                 CronOrOnce::Once
             } else {
                 CronOrOnce::Cron(Box::new(
-                    croner::Cron::new(&self.schedule).parse().with_context(|| {
-                        format!(
-                            "invalid cron expression `{}` for schedule `{name}`",
-                            self.schedule
-                        )
-                    })?,
+                    croner::Cron::new(&self.schedule)
+                        .with_seconds_optional()
+                        .parse()
+                        .with_context(|| {
+                            format!(
+                                "invalid cron expression `{}` for schedule `{name}`",
+                                self.schedule
+                            )
+                        })?,
                 ))
             };
             // Validate params JSON
@@ -4205,6 +4208,30 @@ pub(crate) mod cron {
                 cron_schedule,
                 exec_config,
             })
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn cron_verification_accepts_optional_seconds_field() {
+            for schedule in ["*/10 * * * *", "*/10 * * * * *"] {
+                let config: CronComponentConfigToml = toml::from_str(&format!(
+                    r#"
+                    name = "frequent"
+                    ffqn = "testing:integration/activity.run"
+                    schedule = "{schedule}"
+                    "#
+                ))
+                .unwrap();
+
+                assert!(matches!(
+                    config.verify().unwrap().cron_schedule,
+                    CronOrOnce::Cron(_)
+                ));
+            }
         }
     }
 }
