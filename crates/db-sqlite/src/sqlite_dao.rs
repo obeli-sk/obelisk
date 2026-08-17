@@ -95,7 +95,7 @@ const PRAGMA: [[&str; 2]; 10] = [
     ["page_size", "8192"], // 8 KB
     ["mmap_size", "134217728"],
     ["journal_size_limit", "67108864"],
-    ["integrity_check", ""],
+    ["quick_check", ""],
 ];
 
 mod embedded {
