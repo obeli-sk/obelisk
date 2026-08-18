@@ -2627,6 +2627,121 @@ routes = [{ methods = ["GET"], route = "/" }]
     server.shutdown().await;
 }
 
+/// A manifest that declares a `component_files` entry its module graph never imports is
+/// rejected at submit. Otherwise the stray blob is persisted and the deployment -> digest
+/// mapping the orphan GC consults would pin a dead file forever. Built by preparing a
+/// valid graph, then hand-adding an unreferenced module + its blob (a broken client).
+#[tokio::test]
+async fn submit_rejects_stray_declared_component_file_grpc() {
+    let server = TestServer::start(test_addr!(94)).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(dir.path().join("webhook"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/ui-api.js"),
+        "import { util } from './util.js';\n\
+         export default function handle(request) { return new Response(util()); }\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/util.js"),
+        "export function util() { return 'ok'; }\n",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[webhook_endpoint_js]]
+name = "stray"
+location = "webhook/ui-api.js"
+routes = [{ methods = ["GET"], route = "/" }]
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+
+    // Hand-add an extra module nothing imports, plus its blob: a broken client declaring
+    // more than the graph needs.
+    let stray_source = "export const unused = 1;\n";
+    let stray_hash: [u8; 32] = <Sha256 as sha2::Digest>::digest(stray_source.as_bytes()).into();
+    let stray_digest =
+        concepts::ContentDigest(concepts::component_id::Digest(stray_hash)).to_string();
+    let mut doc = prepared.deployment_toml.parse::<DocumentMut>().unwrap();
+    let tables = doc
+        .get_mut("webhook_endpoint_js")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .expect("webhook section");
+    for table in tables.iter_mut() {
+        let component_files = table
+            .get_mut("component_files")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .expect("prepare generated component_files for a multi-file component");
+        component_files.insert("webhook/unused.js", toml_edit::value(stray_digest.clone()));
+    }
+    let broken_toml = doc.to_string();
+
+    let mut files: Vec<grpc::grpc_gen::DeploymentFileContent> = prepared
+        .files
+        .iter()
+        .map(|file| grpc::grpc_gen::DeploymentFileContent {
+            path: file.path.clone(),
+            digest: Some(file.digest.to_string()),
+            content: file.bytes.clone(),
+        })
+        .collect();
+    files.push(grpc::grpc_gen::DeploymentFileContent {
+        path: "webhook/unused.js".to_string(),
+        digest: Some(stray_digest),
+        content: stray_source.as_bytes().to_vec(),
+    });
+
+    let deployment_id = DeploymentId::generate();
+    let grpc_id = GrpcDeploymentId {
+        id: deployment_id.to_string(),
+    };
+    let status = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .submit_deployment(SubmitDeploymentRequest {
+            deployment_toml: broken_toml,
+            created_by: Some("test".to_string()),
+            runtime_config_check: RuntimeConfigCheck::Strict as i32,
+            description: None,
+            deployment_id: Some(grpc_id.clone()),
+            files,
+        })
+        .await
+        .expect_err("a stray declared component file must be rejected");
+    assert!(
+        status.message().contains("webhook/unused.js"),
+        "error must name the stray file, got: {}",
+        status.message()
+    );
+
+    DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .get_deployment(GetDeploymentRequest {
+            deployment_id: Some(grpc_id),
+            include_generated_metadata: None,
+        })
+        .await
+        .expect_err("a deployment with a stray declared file must not be persisted");
+
+    server.shutdown().await;
+}
+
 /// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
 /// verification. Submit is strict by default and tolerant under `ALLOW_UNAVAILABLE`; a
 /// hot redeploy is always strict and rejects `ALLOW_UNAVAILABLE` outright.

@@ -3104,6 +3104,8 @@ async fn resolve_script_toml(
                 // Ensure the entry is in it (an entry-only manifest declares none), then walk
                 // the import graph and require it be fully contained: an import missing from
                 // the package is rejected here rather than trapping at runtime.
+                let declared: std::collections::BTreeSet<String> =
+                    component_files.keys().cloned().collect();
                 let mut known = component_files;
                 match (known.get(&path), content_digest) {
                     (Some(entry_digest), Some(expected)) => ensure!(
@@ -3121,6 +3123,22 @@ async fn resolve_script_toml(
                     .find_map(|(module_path, source)| (module_path == &path).then_some(source))
                     .context("parsed JS graph does not contain its entry")?;
                 verify_content_digest(entry_source.as_bytes(), content_digest, &path)?;
+                // Reject stray declared files: every `component_files` entry must be reachable
+                // from the entry's imports, so the stored file set is exactly what runs and the
+                // deployment -> digest mapping the orphan GC relies on carries no dead blobs.
+                let reached: std::collections::BTreeSet<&str> = files
+                    .iter()
+                    .map(|(module_path, _)| module_path.as_str())
+                    .collect();
+                let stray: Vec<&str> = declared
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|declared_path| !reached.contains(declared_path))
+                    .collect();
+                ensure!(
+                    stray.is_empty(),
+                    "component_files for `{path}` declares {stray:?} that its module graph does not import"
+                );
                 if files.len() > 1 {
                     return Ok(ScriptLocationResolved::Graph {
                         entry_path: path,
