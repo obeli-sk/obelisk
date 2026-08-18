@@ -1379,12 +1379,12 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
         Ok(files)
     }
 
-    async fn read_wit_files(
+    async fn parse_wit_files(
         &self,
         root: &str,
         known_files: &std::collections::BTreeMap<String, ContentDigest>,
     ) -> anyhow::Result<Vec<(String, String)>> {
-        let files = self.inner.read_wit_files(root, known_files).await?;
+        let files = self.inner.parse_wit_files(root, known_files).await?;
         let mut seen = self
             .seen
             .lock()

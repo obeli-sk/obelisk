@@ -2924,7 +2924,7 @@ async fn resolve_function_interface(
         }
     };
     let root = sanitize_deployment_relative_path(&root)?;
-    let files = provider.read_wit_files(&root, component_files).await?;
+    let files = provider.parse_wit_files(&root, component_files).await?;
     let prefix = format!("{root}/");
     for (path, _) in &files {
         ensure!(

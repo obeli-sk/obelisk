@@ -984,7 +984,7 @@ async fn collect_wit_refs(
         };
         let root = sanitize_deployment_relative_path(raw_root)?;
         let parsed_files = provider
-            .read_wit_files(&root, &std::collections::BTreeMap::new())
+            .parse_wit_files(&root, &std::collections::BTreeMap::new()) // disk provider does not need a path -> digest map
             .await?;
 
         let mut refs = InlineTable::new();
