@@ -3100,41 +3100,32 @@ async fn resolve_script_toml(
             let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
             let path = sanitize_deployment_relative_path(path)?;
             if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
-                if !component_files.is_empty() {
-                    let entry_digest = component_files.get(&path).with_context(|| {
-                        format!("component_files for `{path}` does not contain the entry path")
-                    })?;
-                    if let Some(expected) = content_digest {
-                        ensure!(
-                            expected == entry_digest,
-                            "content_digest for `{path}` does not match its component_files digest"
-                        );
+                // `component_files` is the manifest's declared closure (`path -> digest`).
+                // Ensure the entry is in it (an entry-only manifest declares none), then walk
+                // the import graph and require it be fully contained: an import missing from
+                // the package is rejected here rather than trapping at runtime.
+                let mut known = component_files;
+                match (known.get(&path), content_digest) {
+                    (Some(entry_digest), Some(expected)) => ensure!(
+                        expected == entry_digest,
+                        "content_digest for `{path}` does not match its component_files digest"
+                    ),
+                    (None, Some(cd)) => {
+                        known.insert(path.clone(), cd.clone());
                     }
-                    let mut files = Vec::with_capacity(component_files.len());
-                    for (module_path, digest) in component_files {
-                        let module_path = sanitize_deployment_relative_path(&module_path)?;
-                        let bytes = provider.read(&module_path, Some(&digest)).await?;
-                        let source = String::from_utf8(bytes).with_context(|| {
-                            format!("script file {module_path:?} is not valid UTF-8")
-                        })?;
-                        files.push((module_path, source));
-                    }
+                    _ => {}
+                }
+                let files = provider.parse_js_graph(&path, &known).await?;
+                let entry_source = files
+                    .iter()
+                    .find_map(|(module_path, source)| (module_path == &path).then_some(source))
+                    .context("parsed JS graph does not contain its entry")?;
+                verify_content_digest(entry_source.as_bytes(), content_digest, &path)?;
+                if files.len() > 1 {
                     return Ok(ScriptLocationResolved::Graph {
                         entry_path: path,
                         files,
                     });
-                }
-                if let Some((entry_path, files)) = provider.read_js_graph(&path).await? {
-                    let entry_source = files
-                        .iter()
-                        .find_map(|(module_path, source)| {
-                            (module_path == &entry_path).then_some(source)
-                        })
-                        .context("collected JS graph does not contain its entry")?;
-                    verify_content_digest(entry_source.as_bytes(), content_digest, &entry_path)?;
-                    if files.len() > 1 {
-                        return Ok(ScriptLocationResolved::Graph { entry_path, files });
-                    }
                 }
             }
             let content = provider.read(&path, content_digest).await?;

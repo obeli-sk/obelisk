@@ -2506,6 +2506,127 @@ routes = [{ methods = ["GET"], route = "/broken-import" }]
     server.shutdown().await;
 }
 
+/// A webhook whose entry JS imports a relative module that is not part of the submitted
+/// package must be rejected server-side. This mirrors a broken client (e.g. the
+/// workflow-agent) that declares/uploads only the entry file: the manifest carries the
+/// entry's `content_digest` but no `component_files`, so the server must walk the import
+/// graph from the CAS and refuse the open graph rather than persisting a webhook that
+/// only traps at request time. Like the missing-interface case, no runtime config can
+/// resolve it, so both `Strict` and `ALLOW_UNAVAILABLE` must fail and persist nothing.
+#[tokio::test]
+async fn submit_webhook_missing_js_import_file_is_rejected_grpc() {
+    let server = TestServer::start(test_addr!(93)).await;
+
+    // A valid two-file graph on disk, so `prepare` computes the entry digest for us.
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(dir.path().join("webhook/lib"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/ui-api.js"),
+        "import { util } from './lib/util.js';\n\
+         export default function handle(request) { return new Response(util()); }\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/lib/util.js"),
+        "export function util() { return 'ok'; }\n",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[webhook_endpoint_js]]
+name = "broken_import"
+location = "webhook/ui-api.js"
+routes = [{ methods = ["GET"], route = "/" }]
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+
+    // Simulate the broken client: drop `component_files` so only the entry is declared,
+    // and attach only the entry blob. The manifest still carries the entry's content_digest.
+    let mut doc = prepared.deployment_toml.parse::<DocumentMut>().unwrap();
+    if let Some(tables) = doc
+        .get_mut("webhook_endpoint_js")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+    {
+        for table in tables.iter_mut() {
+            table.remove("component_files");
+        }
+    }
+    let broken_toml = doc.to_string();
+    let entry = prepared
+        .files
+        .iter()
+        .find(|file| file.path.ends_with("ui-api.js"))
+        .expect("prepared package contains the entry file");
+
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+
+    let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
+        let mut client = grpc_client.clone();
+        let toml = broken_toml.clone();
+        let files = vec![grpc::grpc_gen::DeploymentFileContent {
+            path: entry.path.clone(),
+            digest: Some(entry.digest.to_string()),
+            content: entry.bytes.clone(),
+        }];
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: toml,
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: check as i32,
+                    description: None,
+                    deployment_id: Some(id),
+                    files,
+                })
+                .await
+        }
+    };
+
+    for check in [
+        RuntimeConfigCheck::Strict,
+        RuntimeConfigCheck::AllowUnavailable,
+    ] {
+        let deployment_id = DeploymentId::generate();
+        let grpc_id = GrpcDeploymentId {
+            id: deployment_id.to_string(),
+        };
+        let status = submit(check, grpc_id.clone())
+            .await
+            .expect_err(&format!("{check:?} submit of an open JS graph must fail"));
+        assert!(
+            status.message().contains("webhook/lib/util.js"),
+            "{check:?} error must name the missing module, got: {}",
+            status.message()
+        );
+        grpc_client
+            .clone()
+            .get_deployment(GetDeploymentRequest {
+                deployment_id: Some(grpc_id),
+                include_generated_metadata: None,
+            })
+            .await
+            .expect_err("a webhook with an unresolved import must not be persisted");
+    }
+
+    server.shutdown().await;
+}
+
 /// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
 /// verification. Submit is strict by default and tolerant under `ALLOW_UNAVAILABLE`; a
 /// hot redeploy is always strict and rejects `ALLOW_UNAVAILABLE` outright.

@@ -1355,6 +1355,30 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
         Ok(bytes)
     }
 
+    async fn parse_js_graph(
+        &self,
+        entry_path: &str,
+        known_files: &std::collections::BTreeMap<String, ContentDigest>,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let files = self.inner.parse_js_graph(entry_path, known_files).await?;
+        let mut seen = self
+            .seen
+            .lock()
+            .expect("RecordingCasProvider mutex poisoned");
+        for (path, source) in &files {
+            let digest = known_files
+                .get(path)
+                .expect("CAS JS graph walker only reads files present in known_files");
+            seen.push(concepts::storage::DeploymentFileRecord {
+                path: path.clone(),
+                digest: digest.clone(),
+                size: u64::try_from(source.len()).expect("file length fits u64"),
+            });
+        }
+        drop(seen);
+        Ok(files)
+    }
+
     async fn read_wit_files(
         &self,
         root: &str,

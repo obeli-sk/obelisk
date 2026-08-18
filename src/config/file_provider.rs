@@ -21,12 +21,18 @@ pub(crate) trait FileProvider: Send + Sync {
     /// to `digest` when one is supplied.
     async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>>;
 
-    async fn read_js_graph(
+    /// Parse the JS module at `entry_path` and return its closed import graph: the
+    /// entry plus every transitively-imported relative module, as `(deployment-relative
+    /// path, source)`. Every relative import must resolve to a module the provider can
+    /// supply, so a manifest that under-declares its graph is rejected here rather than
+    /// failing at runtime. `known_files` is the manifest's declared `path -> digest` map;
+    /// CAS-backed resolution reads each module through it, the disk provider walks the
+    /// filesystem and ignores it. Non-JS scripts never call this.
+    async fn parse_js_graph(
         &self,
-        _entry_path: &str,
-    ) -> anyhow::Result<Option<(String, Vec<(String, String)>)>> {
-        Ok(None)
-    }
+        entry_path: &str,
+        known_files: &BTreeMap<String, ContentDigest>,
+    ) -> anyhow::Result<Vec<(String, String)>>;
 
     /// Read exactly the WIT source files selected by `wit-parser` for `root`.
     async fn read_wit_files(
@@ -52,13 +58,14 @@ impl FileProvider for DiskProvider {
         Ok(bytes)
     }
 
-    async fn read_js_graph(
+    async fn parse_js_graph(
         &self,
         entry_path: &str,
-    ) -> anyhow::Result<Option<(String, Vec<(String, String)>)>> {
+        _known_files: &BTreeMap<String, ContentDigest>,
+    ) -> anyhow::Result<Vec<(String, String)>> {
         let graph =
             crate::javascript::graph::collect_graph(&self.deployment_dir, entry_path).await?;
-        Ok(Some((graph.entry_path, graph.files.into_iter().collect())))
+        Ok(graph.files.into_iter().collect())
     }
 
     async fn read_wit_files(
@@ -133,6 +140,32 @@ pub(crate) struct CasFileProvider {
     pub(crate) cas: Arc<dyn Cas>,
 }
 
+/// Reads JS module sources from the CAS, resolving each deployment-relative path
+/// against the manifest's declared `component_files`. An import with no declared
+/// digest is rejected: it was never uploaded, so the graph is open.
+struct CasModuleReader<'a> {
+    cas: &'a Arc<dyn Cas>,
+    known_files: &'a BTreeMap<String, ContentDigest>,
+}
+
+#[async_trait::async_trait]
+impl crate::javascript::graph::ModuleSourceReader for CasModuleReader<'_> {
+    async fn read_source(&self, dep_path: &str) -> anyhow::Result<String> {
+        let digest = self.known_files.get(dep_path).with_context(|| {
+            format!(
+                "JS module `{dep_path}` is imported but not part of the deployment package \
+                 (no matching `component_files` entry)"
+            )
+        })?;
+        let bytes =
+            self.cas.read_blob(digest).await?.with_context(|| {
+                format!("blob {digest} for JS module `{dep_path}` not in the CAS")
+            })?;
+        String::from_utf8(bytes)
+            .with_context(|| format!("JS module `{dep_path}` is not valid UTF-8"))
+    }
+}
+
 #[async_trait::async_trait]
 impl FileProvider for CasFileProvider {
     async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>> {
@@ -143,6 +176,19 @@ impl FileProvider for CasFileProvider {
             .read_blob(digest)
             .await?
             .with_context(|| format!("blob {digest} for `{path}` not present in the CAS"))
+    }
+
+    async fn parse_js_graph(
+        &self,
+        entry_path: &str,
+        known_files: &BTreeMap<String, ContentDigest>,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let reader = CasModuleReader {
+            cas: &self.cas,
+            known_files,
+        };
+        let graph = crate::javascript::graph::collect_graph_with(&reader, entry_path).await?;
+        Ok(graph.files.into_iter().collect())
     }
 
     async fn read_wit_files(
