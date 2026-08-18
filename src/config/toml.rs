@@ -171,6 +171,7 @@ impl DeploymentTomlValidated {
 }
 
 impl DeploymentToml {
+    // backcompat: Delete ${DEPLOYMENT_DIR} in 0.42
     /// Expand `${DEPLOYMENT_DIR}/` prefixes in WASM component paths,
     /// verify that every component name is unique, and return a `DeploymentTomlValidated`
     /// that also carries the name→type index and the deployment directory.
@@ -2133,6 +2134,10 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub(crate) content_digest: Option<ContentDigest>,
+    /// Generated CAS references for backtrace source files.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(skip)]
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
     /// Deprecated override of the auto-computed component digest used for locking.
     /// This option will be removed in 0.42.
     #[serde(default)]
@@ -2202,7 +2207,7 @@ pub(crate) struct ComponentBacktraceConfig {
     /// computation. A relative path is deployment-dir-relative (a leading
     /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.
     #[serde(rename = "sources")]
-    #[schemars(with = "std::collections::HashMap<String, BacktraceSourceToml>")]
+    #[schemars(with = "std::collections::HashMap<String, String>")]
     pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceToml>,
 }
 
@@ -2210,6 +2215,7 @@ pub(crate) struct ComponentBacktraceConfig {
 #[serde(untagged)]
 pub(crate) enum BacktraceSourceToml {
     Path(String),
+    // backcompat: Remove in 0.42
     Detailed {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2712,7 +2718,7 @@ async fn resolve_local_refs(
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
-            backtrace: resolve_backtrace(&w.backtrace, provider).await?,
+            backtrace: resolve_backtrace(&w.backtrace, &w.component_files, provider).await?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
             lock_extension_leeway: w.lock_extension_leeway,
@@ -2760,7 +2766,7 @@ async fn resolve_local_refs(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars,
-            backtrace: resolve_backtrace(&w.backtrace, provider).await?,
+            backtrace: resolve_backtrace(&w.backtrace, &w.component_files, provider).await?,
             backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts,
@@ -3158,12 +3164,12 @@ async fn resolve_script_toml(
 
 async fn resolve_backtrace(
     backtrace: &ComponentBacktraceConfig,
+    component_files: &BTreeMap<String, ContentDigest>,
     provider: &dyn FileProvider,
 ) -> anyhow::Result<ComponentBacktraceConfigResolved> {
     let mut frame_files_to_sources = HashMap::new();
     for (key, source) in &backtrace.frame_files_to_sources {
         let path = source.path();
-        let content_digest = source.content_digest();
         // Classify the source path like a script: a relative path (bare or
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on export.
         let file_name = if let Some(rest) = strip_deployment_dir_prefix(path) {
@@ -3173,6 +3179,11 @@ async fn resolve_backtrace(
         } else {
             sanitize_deployment_relative_path(path)?
         };
+        // backcompat: 0.41 processed manifests stored the digest beside each source path.
+        // Remove `source.content_digest()` in 0.42 as clients must supply the content_digest in `component_files`.
+        let content_digest = component_files
+            .get(&file_name)
+            .or_else(|| source.content_digest());
         let content = provider
             .read(&file_name, content_digest)
             .await
@@ -3519,6 +3530,10 @@ pub(crate) mod webhook {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(with = "Option<String>")]
         pub(crate) content_digest: Option<ContentDigest>,
+        /// Generated CAS references for backtrace source files.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        #[schemars(skip)]
+        pub(crate) component_files: BTreeMap<String, ContentDigest>,
         #[serde(default = "default_external_server_name")]
         pub(crate) http_server: ConfigName,
         pub(crate) routes: Vec<WebhookRoute>,
@@ -5207,7 +5222,9 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, &provider).await.unwrap();
+            let resolved = resolve_backtrace(&bt, &BTreeMap::new(), &provider)
+                .await
+                .unwrap();
             let src = resolved
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
@@ -5233,7 +5250,9 @@ name = "my_stub"
                 ".../src/lib.rs".to_string(),
                 "crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, &provider).await.unwrap();
+            let resolved = resolve_backtrace(&bt, &BTreeMap::new(), &provider)
+                .await
+                .unwrap();
             let src = resolved
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
@@ -5253,7 +5272,12 @@ name = "my_stub"
                 "frame".to_string(),
                 "${DEPLOYMENT_DIR}/../escape.rs".to_string().into(),
             );
-            let err = format!("{:#}", resolve_backtrace(&bt, &provider).await.unwrap_err());
+            let err = format!(
+                "{:#}",
+                resolve_backtrace(&bt, &BTreeMap::new(), &provider)
+                    .await
+                    .unwrap_err()
+            );
             assert!(err.contains("`..`"), "unexpected error: {err}");
         }
 
@@ -5273,7 +5297,7 @@ name = "my_stub"
             let provider = DiskProvider {
                 deployment_dir: other_dir.path().to_path_buf(),
             };
-            let err = resolve_backtrace(&bt, &provider)
+            let err = resolve_backtrace(&bt, &BTreeMap::new(), &provider)
                 .await
                 .unwrap_err()
                 .to_string();

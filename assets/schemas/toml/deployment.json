@@ -965,37 +965,13 @@
           "description": "Maps a frame-symbol key to a backtrace source file path. On-disk format only;\nresolved to `ComponentBacktraceConfigResolved` before transmission and hash\ncomputation. A relative path is deployment-dir-relative (a leading\n`${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/$defs/BacktraceSourceToml"
+            "type": "string"
           }
         }
       },
       "additionalProperties": false,
       "required": [
         "sources"
-      ]
-    },
-    "BacktraceSourceToml": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "path": {
-              "type": "string"
-            },
-            "content_digest": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          "required": [
-            "path"
-          ]
-        }
       ]
     },
     "WorkflowJsComponentConfigToml": {
