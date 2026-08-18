@@ -2429,6 +2429,83 @@ ffqn = "testing:integration/deferred.run"
     server.shutdown().await;
 }
 
+/// A deployment whose JS imports an interface that no component exports fails to
+/// compile+link on the server. This is a structural error that no runtime config can
+/// resolve, so it must be rejected regardless of `RuntimeConfigCheck` and persist
+/// nothing. The manifest is submitted verbatim over gRPC (inline content, no attached
+/// files) so verification does not lean on any client-side import checking.
+#[tokio::test]
+async fn submit_broken_js_import_fails_regardless_of_runtime_config_check_grpc() {
+    let server = TestServer::start(test_addr!(92)).await;
+
+    // Inline webhook importing an interface no component exports. Inline content needs
+    // no attached file blobs, so the whole package travels in the manifest.
+    let deployment_toml = r#"
+[[webhook_endpoint_js]]
+name = "broken_import"
+content = """
+import { add } from 'testing:integration/nonexistent';
+export default function handle(request) {
+    return Response.json({ result: add(5, 7) });
+}
+"""
+routes = [{ methods = ["GET"], route = "/broken-import" }]
+"#;
+
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+
+    let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
+        let mut client = grpc_client.clone();
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: deployment_toml.to_string(),
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: check as i32,
+                    description: None,
+                    deployment_id: Some(id),
+                    files: Vec::new(),
+                })
+                .await
+        }
+    };
+
+    // Both a strict and an allow-unavailable submit must be rejected: the missing import
+    // is a link failure, not a missing env var / secret / exec allowlist entry, so no
+    // runtime config tolerance can make it verify.
+    for check in [
+        RuntimeConfigCheck::Strict,
+        RuntimeConfigCheck::AllowUnavailable,
+    ] {
+        let deployment_id = DeploymentId::generate();
+        let grpc_id = GrpcDeploymentId {
+            id: deployment_id.to_string(),
+        };
+        let status = submit(check, grpc_id.clone())
+            .await
+            .expect_err(&format!("{check:?} submit of a broken import must fail"));
+        assert!(
+            status.message().contains("testing:integration/nonexistent"),
+            "{check:?} error must name the unresolved import, got: {}",
+            status.message()
+        );
+        grpc_client
+            .clone()
+            .get_deployment(GetDeploymentRequest {
+                deployment_id: Some(grpc_id),
+                include_generated_metadata: None,
+            })
+            .await
+            .expect_err("a broken deployment must not be persisted");
+    }
+
+    server.shutdown().await;
+}
+
 /// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
 /// verification. Submit is strict by default and tolerant under `ALLOW_UNAVAILABLE`; a
 /// hot redeploy is always strict and rejects `ALLOW_UNAVAILABLE` outright.
