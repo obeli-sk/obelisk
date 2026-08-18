@@ -2680,75 +2680,102 @@ pub(crate) async fn submit_deployment(
         }
     }
 
-    // Fully validate the deployment before persisting it, so a stored deployment is
-    // already known-good: resolve from the CAS (resolving env vars/secrets),
-    // parse JS, validate WIT/WASM, and compile + link every component. Activation no
-    // longer performs first-time package validation. Blobs already written to the CAS
-    // when verification fails are acceptable GC input; no deployment row is inserted.
-    let deployment_resolved = deployment_resolved_from_manifest(&*db_pool, deployment_toml)
-        .await
-        .map_err(SubmitDeploymentError::Other)?;
-    let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool
-        .cas_conn()
-        .await
-        .map_err(anyhow::Error::from)?
-        .into();
+    // Fully validate the deployment before persisting it, so a stored deployment is already
+    // known-good: resolve from the CAS (resolving env vars/secrets), parse JS, validate
+    // WIT/WASM, and compile + link every component. Activation no longer performs first-time
+    // package validation. Any failure from here through the insert leaves the blobs just
+    // written to the CAS as orphans, reclaimed by the best-effort sweep below; no deployment
+    // row is inserted on failure.
     let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
-    config_prepass::preflight(
-        &server_verified,
-        Some(&deployment_resolved),
-        runtime_config_availability,
-    )
-    .map_err(SubmitDeploymentError::Other)?;
-    let compiled_linked = deployment_verify_config_compile_link(
-        server_verified,
-        prepared_dirs,
-        deployment_resolved,
-        Some(cas_arc),
-        deployment_id,
-        VerifyParams {
-            dir_params: PrepareDirsParams {
-                clean_cache: false,
-                clean_codegen_cache: false,
-            },
-            runtime_config_availability,
-            suppress_type_checking_errors: false,
-            suppress_linking_errors: false,
-        },
-        termination_watcher,
-    )
-    .await
-    .map_err(SubmitDeploymentError::Other)?;
+    let validate_and_persist = {
+        let db_pool_ref: &dyn DbPool = &*db_pool;
+        let conn_ref = conn.as_ref();
+        let manifest_ref = &manifest;
+        let digest_ref = &digest;
+        async move {
+            let deployment_resolved =
+                deployment_resolved_from_manifest(db_pool_ref, deployment_toml)
+                    .await
+                    .map_err(SubmitDeploymentError::Other)?;
+            let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool_ref
+                .cas_conn()
+                .await
+                .map_err(anyhow::Error::from)?
+                .into();
+            config_prepass::preflight(
+                &server_verified,
+                Some(&deployment_resolved),
+                runtime_config_availability,
+            )
+            .map_err(SubmitDeploymentError::Other)?;
+            let compiled_linked = deployment_verify_config_compile_link(
+                server_verified,
+                prepared_dirs,
+                deployment_resolved,
+                Some(cas_arc),
+                deployment_id,
+                VerifyParams {
+                    dir_params: PrepareDirsParams {
+                        clean_cache: false,
+                        clean_codegen_cache: false,
+                    },
+                    runtime_config_availability,
+                    suppress_type_checking_errors: false,
+                    suppress_linking_errors: false,
+                },
+                termination_watcher,
+            )
+            .await
+            .map_err(SubmitDeploymentError::Other)?;
 
-    let now = chrono::Utc::now();
+            let now = chrono::Utc::now();
 
-    // Persist the deployment row together with its verified component metadata in a single
-    // transaction so the DB-backed ListComponents / GetWit see this deployment without waiting
-    // for a server restart, and so the submit is cancel-safe: this future runs inline in the
-    // request handler and is dropped if the client disconnects, so the row that makes a
-    // deployment queryable and its component rows must commit together or not at all.
-    // Verification above already compiled and linked every component.
-    let (component_metadata, deployment_components) =
-        build_component_metadata_records(deployment_id, &compiled_linked.component_registry_ro);
-    conn.insert_deployment_with_components(
-        DeploymentRecord {
-            deployment_id,
-            description,
-            digest: digest.clone(),
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-            created_by,
-            deployment_toml: deployment_toml.to_string(),
-            files: manifest.file_records(),
-        },
-        component_metadata,
-        deployment_components,
-        manifest.component_file_records(),
-    )
-    .await
-    .map_err(anyhow::Error::from)?;
+            // Persist the deployment row together with its verified component metadata in a
+            // single transaction so the DB-backed ListComponents / GetWit see this deployment
+            // without waiting for a server restart, and so the submit is cancel-safe: this
+            // future runs inline in the request handler and is dropped if the client
+            // disconnects, so the row that makes a deployment queryable and its component rows
+            // must commit together or not at all. Verification above already compiled and
+            // linked every component.
+            let (component_metadata, deployment_components) = build_component_metadata_records(
+                deployment_id,
+                &compiled_linked.component_registry_ro,
+            );
+            conn_ref
+                .insert_deployment_with_components(
+                    DeploymentRecord {
+                        deployment_id,
+                        description,
+                        digest: digest_ref.clone(),
+                        created_at: now,
+                        last_active_at: None,
+                        status: DeploymentStatus::Inactive,
+                        obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+                        created_by,
+                        deployment_toml: deployment_toml.to_string(),
+                        files: manifest_ref.file_records(),
+                    },
+                    component_metadata,
+                    deployment_components,
+                    manifest_ref.component_file_records(),
+                )
+                .await
+                .map_err(anyhow::Error::from)?;
+            Ok::<_, SubmitDeploymentError>(compiled_linked)
+        }
+    };
+    let compiled_linked = match validate_and_persist.await {
+        Ok(compiled_linked) => compiled_linked,
+        Err(err) => {
+            // Best-effort: reclaim the blobs this submit wrote. Submits are serialized by the
+            // submit lane, so the only unreferenced blobs are this rejected submit's. Keep the
+            // original rejection reason regardless of the sweep's outcome.
+            if let Err(gc_err) = conn.gc_orphan_files().await {
+                warn!(%deployment_id, "orphan blob GC after a rejected submit failed: {gc_err}");
+            }
+            return Err(err);
+        }
+    };
 
     // Backtrace sources are content-addressed and deployment-independent (keyed by component
     // digest), only consulted once a component runs and produces a backtrace, so they are
