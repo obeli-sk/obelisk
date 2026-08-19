@@ -426,13 +426,12 @@ pub struct ActivityStubExtInlineConfigResolved {
     pub interface: FunctionInterfaceResolved,
 }
 
-/// Authored WIT files belonging to a deployment component.
+/// Parsed authored WIT belonging to a deployment component.
 #[derive(Debug, Clone)]
 pub struct WitSourceResolved {
-    /// Deployment-relative root supplied by the author.
     pub root: String,
-    /// Parser-selected deployment-relative WIT paths and their contents.
-    pub files: Vec<(String, String)>,
+    pub resolve: wit_parser::Resolve,
+    pub main_pkg_id: wit_parser::PackageId,
 }
 
 #[derive(Debug, Clone)]
@@ -443,7 +442,7 @@ pub struct InlineFunctionInterfaceResolved {
 
 #[derive(Debug, Clone)]
 pub enum FunctionInterfaceResolved {
-    Authored { wit: WitSourceResolved },
+    Authored { wit: Box<WitSourceResolved> },
     Inline(InlineFunctionInterfaceResolved),
 }
 

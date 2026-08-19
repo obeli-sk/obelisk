@@ -24,6 +24,7 @@ strum.workspace = true
 thiserror.workspace = true
 tokio-postgres = { workspace = true, optional = true }
 tracing.workspace = true
+wit-parser.workspace = true
 
 [features]
 test = ["dep:arbitrary"]

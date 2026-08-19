@@ -1383,13 +1383,13 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
         &self,
         root: &str,
         known_files: &std::collections::BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>> {
-        let files = self.inner.parse_wit_files(root, known_files).await?;
+    ) -> anyhow::Result<crate::config::file_provider::ParsedWitFiles> {
+        let parsed = self.inner.parse_wit_files(root, known_files).await?;
         let mut seen = self
             .seen
             .lock()
             .expect("RecordingCasProvider mutex poisoned");
-        for (path, source) in &files {
+        for (path, source) in &parsed.files {
             let digest = known_files
                 .get(path)
                 .expect("CAS WIT reader only returns known files");
@@ -1400,7 +1400,7 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
             });
         }
         drop(seen);
-        Ok(files)
+        Ok(parsed)
     }
 }
 

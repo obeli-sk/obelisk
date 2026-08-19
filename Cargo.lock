@@ -3240,6 +3240,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio-postgres",
  "tracing",
+ "wit-parser 0.252.0",
 ]
 
 [[package]]

@@ -1378,20 +1378,14 @@ fn verify_function_interface(
             })
         }
         FunctionInterfaceResolved::Authored { wit } => {
-            let temporary = tempfile::tempdir().context("cannot create temporary WIT directory")?;
-            for (path, source) in &wit.files {
-                let path = sanitize_deployment_relative_path(path)?;
-                let destination = temporary.path().join(path);
-                let parent = destination.parent().expect("WIT path has a parent");
-                std::fs::create_dir_all(parent)?;
-                std::fs::write(&destination, source)?;
-            }
-            let root = sanitize_deployment_relative_path(&wit.root)?;
-            let component = WasmComponent::new_from_wit_folder_for_ffqn(
-                temporary.path().join(root),
+            let root = wit.root;
+            let component = WasmComponent::new_from_wit_resolve_for_ffqn(
+                wit.resolve,
+                wit.main_pkg_id,
                 component_type,
                 ffqn,
-            )?;
+            )
+            .with_context(|| format!("cannot verify authored WIT directory `{root}`"))?;
             let exports = component.exported_functions(false);
             ensure!(
                 exports.len() == 1 && exports[0].ffqn == *ffqn,
@@ -2931,9 +2925,10 @@ async fn resolve_function_interface(
         }
     };
     let root = sanitize_deployment_relative_path(&root)?;
-    let files = provider.parse_wit_files(&root, component_files).await?;
+    // TODO: Cache parsed WIT packages by root during deployment resolution.
+    let parsed = provider.parse_wit_files(&root, component_files).await?;
     let prefix = format!("{root}/");
-    for (path, _) in &files {
+    for (path, _) in &parsed.files {
         ensure!(
             path.starts_with(&prefix),
             "parsed WIT file `{path}` is outside configured WIT directory `{root}`"
@@ -2941,7 +2936,11 @@ async fn resolve_function_interface(
         component_files.remove(path);
     }
     Ok(FunctionInterfaceResolved::Authored {
-        wit: WitSourceResolved { root, files },
+        wit: Box::new(WitSourceResolved {
+            root,
+            resolve: parsed.resolve,
+            main_pkg_id: parsed.main_pkg_id,
+        }),
     })
 }
 

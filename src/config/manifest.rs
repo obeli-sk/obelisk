@@ -983,7 +983,7 @@ async fn collect_wit_refs(
             continue;
         };
         let root = sanitize_deployment_relative_path(raw_root)?;
-        let parsed_files = provider
+        let parsed = provider
             .parse_wit_files(&root, &std::collections::BTreeMap::new()) // disk provider does not need a path -> digest map
             .await?;
 
@@ -1000,7 +1000,7 @@ async fn collect_wit_refs(
                 );
             }
         }
-        for (path, source) in parsed_files {
+        for (path, source) in parsed.files {
             let bytes = source.into_bytes();
             let digest = content_digest(&bytes);
             if let Some(previous) = refs.get(&path).and_then(Value::as_str) {

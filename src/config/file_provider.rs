@@ -7,6 +7,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{collections::BTreeMap, path::Path};
 
+#[derive(Debug)]
+pub(crate) struct ParsedWitFiles {
+    pub(crate) files: Vec<(String, String)>,
+    pub(crate) resolve: wit_parser::Resolve,
+    pub(crate) main_pkg_id: wit_parser::PackageId,
+}
+
 /// Source of deployment-owned file bytes during deployment resolution.
 ///
 /// Resolution inlines every deployment-owned script/source into the
@@ -34,23 +41,20 @@ pub(crate) trait FileProvider: Send + Sync {
         known_files: &BTreeMap<String, ContentDigest>,
     ) -> anyhow::Result<Vec<(String, String)>>;
 
-    /// Parse the WIT package rooted at `root` and return exactly the `.wit` sources
-    /// `wit-parser` selects, as `(deployment-relative path, source)`. The parser (not the
-    /// client) decides the file set, so malformed WIT is rejected and stray declarations
-    /// cannot smuggle in unused sources. `known_files` is the manifest's declared `path ->
-    /// digest` map; CAS-backed resolution materializes those blobs to parse them, the disk
-    /// provider parses the folder in place and ignores it.
+    /// Parse the WIT package rooted at `root`, retaining the resolve, main package ID, and
+    /// exactly the `.wit` sources selected as `(deployment-relative path, source)`. The parser
+    /// decides the file set, so malformed WIT is rejected and stray declarations cannot smuggle
+    /// in unused sources. `known_files` is the manifest's declared `path -> digest` map;
+    /// CAS-backed resolution materializes those blobs, while the disk provider ignores it.
     async fn parse_wit_files(
         &self,
         root: &str,
         known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>>;
+    ) -> anyhow::Result<ParsedWitFiles>;
 }
 
-/// Parse the WIT package under `deployment_dir/root` and return the `.wit` sources
-/// `wit-parser` selects, keyed by deployment-relative path. Shared by the disk provider
-/// and the CAS provider (which first materializes the declared blobs into a temp dir).
-async fn parse_wit_dir(deployment_dir: &Path, root: &str) -> anyhow::Result<Vec<(String, String)>> {
+/// Parse the WIT package under `deployment_dir/root` and retain its resolve and selected sources.
+async fn parse_wit_dir(deployment_dir: &Path, root: &str) -> anyhow::Result<ParsedWitFiles> {
     let root = crate::config::toml::sanitize_deployment_relative_path(root)?;
     let deployment_dir = deployment_dir
         .canonicalize()
@@ -68,7 +72,7 @@ async fn parse_wit_dir(deployment_dir: &Path, root: &str) -> anyhow::Result<Vec<
     ensure!(wit_root.is_dir(), "WIT path `{root}` is not a directory");
 
     let mut resolve = wit_parser::Resolve::default();
-    let (_, parsed_sources) = resolve
+    let (main_pkg_id, parsed_sources) = resolve
         .push_dir(&wit_root)
         .with_context(|| format!("cannot parse WIT directory `{root}`"))?;
     let parsed_paths: Vec<_> = parsed_sources.paths().map(Path::to_path_buf).collect();
@@ -103,7 +107,11 @@ async fn parse_wit_dir(deployment_dir: &Path, root: &str) -> anyhow::Result<Vec<
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
     files.dedup_by(|a, b| a.0 == b.0);
-    Ok(files)
+    Ok(ParsedWitFiles {
+        files,
+        resolve,
+        main_pkg_id,
+    })
 }
 
 /// Reads from the submitter's disk, under the deployment directory.
@@ -136,7 +144,7 @@ impl FileProvider for DiskProvider {
         &self,
         root: &str,
         _known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>> {
+    ) -> anyhow::Result<ParsedWitFiles> {
         parse_wit_dir(&self.deployment_dir, root).await
     }
 }
@@ -204,7 +212,7 @@ impl FileProvider for CasFileProvider {
         &self,
         root: &str,
         known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>> {
+    ) -> anyhow::Result<ParsedWitFiles> {
         let root = crate::config::toml::sanitize_deployment_relative_path(root)?;
         let prefix = format!("{root}/");
         // Materialize every declared blob under `root` into a temp dir, then let
@@ -238,12 +246,12 @@ impl FileProvider for CasFileProvider {
                 .with_context(|| format!("cannot stage WIT file `{path}`"))?;
         }
 
-        let files = parse_wit_dir(temp_dir.path(), &root).await?;
+        let parsed = parse_wit_dir(temp_dir.path(), &root).await?;
 
         // Reject stray declarations: a declared `.wit` file `wit-parser` did not select is
         // dead weight the deployment -> digest mapping would pin, so refuse it here.
         let selected: std::collections::BTreeSet<&str> =
-            files.iter().map(|(path, _)| path.as_str()).collect();
+            parsed.files.iter().map(|(path, _)| path.as_str()).collect();
         let stray: Vec<&str> = declared
             .iter()
             .map(|(path, _)| path.as_str())
@@ -253,7 +261,7 @@ impl FileProvider for CasFileProvider {
             stray.is_empty(),
             "WIT directory `{root}` declares {stray:?} that `wit-parser` does not select"
         );
-        Ok(files)
+        Ok(parsed)
     }
 }
 
@@ -334,8 +342,11 @@ mod tests {
         let digest = cas.insert(src.as_bytes());
         let provider = CasFileProvider { cas };
         let known = BTreeMap::from([("a/wit/impl.wit".to_string(), digest)]);
-        let files = provider.parse_wit_files("a/wit", &known).await.unwrap();
-        assert_eq!(files, vec![("a/wit/impl.wit".to_string(), src.to_string())]);
+        let parsed = provider.parse_wit_files("a/wit", &known).await.unwrap();
+        assert_eq!(
+            parsed.files,
+            vec![("a/wit/impl.wit".to_string(), src.to_string())]
+        );
     }
 
     #[tokio::test]
