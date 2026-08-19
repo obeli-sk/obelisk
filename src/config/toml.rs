@@ -5,7 +5,9 @@ use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use crate::config::env_var::{
     EnvVarError, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
 };
-use crate::config::file_provider::{DiskProvider, FileProvider, verify_content_digest};
+use crate::config::file_provider::{
+    parse_js_graph_from_cas, parse_wit_files_from_cas, read_package_blob, verify_content_digest,
+};
 use crate::config::secret_registry::{
     RestrictedSecretRegistry, SecretRegistry, SecretViolation, SecretsToml,
 };
@@ -16,6 +18,7 @@ use anyhow::{Context, ensure};
 use anyhow::{anyhow, bail};
 use concepts::ContentDigest;
 use concepts::ReturnType;
+use concepts::cas::Cas;
 use concepts::component_id::Digest;
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, StrVariant,
@@ -149,24 +152,14 @@ pub(crate) struct DeploymentTomlValidated {
     pub(crate) crons: Vec<CronComponentConfigToml>,
 
     pub(crate) component_names_to_types: hashbrown::HashMap<String, crate::args::TomlComponentType>,
-
-    /// Canonicalized deployment directory, used to decide whether a script path is
-    /// owned by the deployment (under this dir) or an external reference.
-    pub(crate) deployment_dir: PathBuf,
 }
 impl DeploymentTomlValidated {
-    pub(crate) async fn resolve(self) -> Result<DeploymentResolved, anyhow::Error> {
-        let provider = DiskProvider {
-            deployment_dir: self.deployment_dir.clone(),
-        };
-        self.resolve_with_provider(&provider).await
-    }
-
-    pub(crate) async fn resolve_with_provider(
-        self,
-        provider: &dyn FileProvider,
-    ) -> Result<DeploymentResolved, anyhow::Error> {
-        resolve_local_refs(self, provider).await
+    /// Resolve every deployment-owned reference by reading its blob from `cas` by digest.
+    ///
+    /// The manifest must be processed (every deployment-owned reference carries a digest in
+    /// `content_digest` / `component_files`); resolution never touches the submitter's disk.
+    pub(crate) async fn resolve(self, cas: &dyn Cas) -> Result<DeploymentResolved, anyhow::Error> {
+        resolve_local_refs(self, cas).await
     }
 }
 
@@ -285,7 +278,6 @@ impl DeploymentToml {
             crons: self.crons,
 
             component_names_to_types,
-            deployment_dir: deployment_dir.to_path_buf(),
         })
     }
 
@@ -2676,12 +2668,12 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
 /// source files.
 async fn resolve_local_refs(
     deployment: DeploymentTomlValidated,
-    provider: &dyn FileProvider,
+    cas: &dyn Cas,
 ) -> anyhow::Result<DeploymentResolved> {
     let mut activities_js = Vec::with_capacity(deployment.activities_js.len());
     for (mut a, name) in deployment.activities_js {
         let interface =
-            resolve_function_interface(a.interface, &mut a.component_files, provider).await?;
+            resolve_function_interface(a.interface, &mut a.component_files, cas).await?;
         activities_js.push(ActivityJsComponentConfigResolved {
             location: resolve_script_toml(
                 ScriptToml::JavaScript {
@@ -2690,7 +2682,7 @@ async fn resolve_local_refs(
                     component_files: a.component_files,
                 },
                 format!("{name}.js"),
-                provider,
+                cas,
                 a.content_digest.as_ref(),
             )
             .await?,
@@ -2719,7 +2711,7 @@ async fn resolve_local_refs(
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
-            backtrace: resolve_backtrace(&w.backtrace, &w.component_files, provider).await?,
+            backtrace: resolve_backtrace(&w.backtrace, &w.component_files)?,
             stub_wasi: w.stub_wasi,
             lock_extension: w.lock_extension,
             lock_extension_leeway: w.lock_extension_leeway,
@@ -2730,7 +2722,7 @@ async fn resolve_local_refs(
     let mut workflows_js = Vec::with_capacity(deployment.workflows_js.len());
     for (mut w, name) in deployment.workflows_js {
         let interface =
-            resolve_function_interface(w.interface, &mut w.component_files, provider).await?;
+            resolve_function_interface(w.interface, &mut w.component_files, cas).await?;
         workflows_js.push(WorkflowJsComponentConfigResolved {
             location: resolve_script_toml(
                 ScriptToml::JavaScript {
@@ -2739,7 +2731,7 @@ async fn resolve_local_refs(
                     component_files: w.component_files,
                 },
                 format!("{name}.js"),
-                provider,
+                cas,
                 w.content_digest.as_ref(),
             )
             .await?,
@@ -2767,7 +2759,7 @@ async fn resolve_local_refs(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars,
-            backtrace: resolve_backtrace(&w.backtrace, &w.component_files, provider).await?,
+            backtrace: resolve_backtrace(&w.backtrace, &w.component_files)?,
             backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
             allowed_hosts: w.allowed_hosts,
@@ -2785,7 +2777,7 @@ async fn resolve_local_refs(
                     component_files: w.component_files,
                 },
                 format!("{}.js", w.name),
-                provider,
+                cas,
                 w.content_digest.as_ref(),
             )
             .await?,
@@ -2805,7 +2797,7 @@ async fn resolve_local_refs(
     let mut activities_exec = Vec::with_capacity(deployment.activities_exec.len());
     for (mut a, name) in deployment.activities_exec {
         let interface =
-            resolve_function_interface(a.interface, &mut a.component_files, provider).await?;
+            resolve_function_interface(a.interface, &mut a.component_files, cas).await?;
         ensure!(
             a.component_files.is_empty(),
             "activity_exec component_files contains files not selected by its WIT"
@@ -2816,7 +2808,7 @@ async fn resolve_local_refs(
                 content: a.content,
             },
             name.to_string(),
-            provider,
+            cas,
             a.content_digest.as_ref(),
         )
         .await?;
@@ -2849,8 +2841,7 @@ async fn resolve_local_refs(
             }
             ActivityStubComponentConfigToml::Inline(mut i) => {
                 let interface =
-                    resolve_function_interface(i.interface, &mut i.component_files, provider)
-                        .await?;
+                    resolve_function_interface(i.interface, &mut i.component_files, cas).await?;
                 ensure!(
                     i.component_files.is_empty(),
                     "activity_stub component_files contains files not selected by its WIT"
@@ -2871,8 +2862,7 @@ async fn resolve_local_refs(
             }
             ActivityExternalComponentConfigToml::Inline(mut i) => {
                 let interface =
-                    resolve_function_interface(i.interface, &mut i.component_files, provider)
-                        .await?;
+                    resolve_function_interface(i.interface, &mut i.component_files, cas).await?;
                 ensure!(
                     i.component_files.is_empty(),
                     "activity_external component_files contains files not selected by its WIT"
@@ -2908,7 +2898,7 @@ async fn resolve_local_refs(
 async fn resolve_function_interface(
     interface: FunctionInterfaceToml,
     component_files: &mut BTreeMap<String, ContentDigest>,
-    provider: &dyn FileProvider,
+    cas: &dyn Cas,
 ) -> anyhow::Result<FunctionInterfaceResolved> {
     let root = match interface {
         FunctionInterfaceToml::Authored(AuthoredFunctionInterfaceToml { wit }) => wit,
@@ -2926,7 +2916,7 @@ async fn resolve_function_interface(
     };
     let root = sanitize_deployment_relative_path(&root)?;
     // TODO: Cache parsed WIT packages by root during deployment resolution.
-    let parsed = provider.parse_wit_files(&root, component_files).await?;
+    let parsed = parse_wit_files_from_cas(cas, &root, component_files).await?;
     let prefix = format!("{root}/");
     for (path, _) in &parsed.files {
         ensure!(
@@ -3074,7 +3064,7 @@ enum ModuleGraphResolution {
 async fn resolve_script_toml(
     script: ScriptToml,
     default_file_name: String,
-    provider: &dyn FileProvider,
+    cas: &dyn Cas,
     content_digest: Option<&ContentDigest>,
 ) -> anyhow::Result<ScriptLocationResolved> {
     let (location, content, module_graph) = match script {
@@ -3129,7 +3119,7 @@ async fn resolve_script_toml(
                     }
                     _ => {}
                 }
-                let files = provider.parse_js_graph(&path, &known).await?;
+                let files = parse_js_graph_from_cas(cas, &path, &known).await?;
                 let entry_source = files
                     .iter()
                     .find_map(|(module_path, source)| (module_path == &path).then_some(source))
@@ -3158,7 +3148,12 @@ async fn resolve_script_toml(
                     });
                 }
             }
-            let content = provider.read(&path, content_digest).await?;
+            let digest = content_digest.with_context(|| {
+                // TODO: resolved deployment must have content_digest set, this can only happen on a corrupted deployment record.
+                // This should be fixed by having a separate schema for DB deployment.
+                format!("deployment-owned script `{path}` is missing a content digest")
+            })?;
+            let content = read_package_blob(cas, digest, &path).await?;
             let content = String::from_utf8(content)
                 .with_context(|| format!("script file {path:?} is not valid UTF-8"))?;
             Ok(ScriptLocationResolved::Content {
@@ -3181,10 +3176,9 @@ async fn resolve_script_toml(
     }
 }
 
-async fn resolve_backtrace(
+fn resolve_backtrace(
     backtrace: &ComponentBacktraceConfig,
     component_files: &BTreeMap<String, ContentDigest>,
-    provider: &dyn FileProvider,
 ) -> anyhow::Result<ComponentBacktraceConfigResolved> {
     let mut frame_files_to_sources = HashMap::new();
     for (key, source) in &backtrace.frame_files_to_sources {
@@ -3198,29 +3192,17 @@ async fn resolve_backtrace(
         } else {
             sanitize_deployment_relative_path(path)?
         };
-        // backcompat: 0.41 processed manifests stored the digest beside each source path.
-        // Remove `source.content_digest()` in 0.42 as clients must supply the content_digest in `component_files`.
-        // The bytes are uploaded to the CAS with the deployment files, so a known digest is a
-        // complete reference. An authored manifest with no pinned digest (disk resolution)
-        // falls back to reading the file once to hash it.
-        let content_digest = if let Some(digest) = component_files
+        // The processed manifest carries every deployment-owned backtrace source's digest in
+        // `component_files`; the bytes are in the CAS, so the digest is a complete reference.
+        // backcompat: 0.41 processed manifests stored the digest beside each source path
+        // (`source.content_digest()`); remove that fallback in 0.42.
+        let content_digest = component_files
             .get(&file_name)
             .or_else(|| source.content_digest())
-        {
-            digest.clone()
-        } else {
-            // Reached only on the `server run -d` raw-resolution path, where `provider` is a
-            // `DiskProvider`: this is a disk read, never a CAS read (the RPC/DB path always
-            // has a populated `component_files`). Removed once both paths resolve the
-            // processed manifest from the CAS: see meta/designs/cas-first-deployment-pipeline.md.
-            match provider.read(&file_name, None).await {
-                Ok(bytes) => ContentDigest(Digest(Sha256::digest(&bytes).into())),
-                Err(err) => {
-                    warn!("Cannot read backtrace source {file_name:?} - {err:?}");
-                    continue;
-                }
-            }
-        };
+            .with_context(|| {
+                format!("backtrace source `{file_name}` has no digest in `component_files`")
+            })?
+            .clone();
         frame_files_to_sources.insert(
             key.clone(),
             BacktraceSourceResolved {
@@ -4290,6 +4272,13 @@ pub(crate) mod cron {
 
 #[cfg(test)]
 mod tests {
+    use concepts::{ContentDigest, component_id::Digest};
+    use sha2::{Digest as _, Sha256};
+
+    fn digest_of(bytes: &[u8]) -> ContentDigest {
+        ContentDigest(Digest(Sha256::digest(bytes).into()))
+    }
+
     mod outbound_http {
         use super::super::*;
 
@@ -4635,12 +4624,9 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
     }
 
     mod activity_stub {
-        use super::super::*;
+        use crate::config::toml::tests::digest_of;
 
-        fn digest_of(bytes: &[u8]) -> ContentDigest {
-            let hash: [u8; 32] = Sha256::digest(bytes).into();
-            ContentDigest(Digest(hash))
-        }
+        use super::super::*;
 
         #[test]
         fn deserialize_file_mode() {
@@ -4711,6 +4697,8 @@ name = "my_stub"
     mod activity_exec {
         use secrecy::{ExposeSecret as _, SecretString};
 
+        use crate::config::toml::tests::digest_of;
+
         use super::super::*;
 
         /// A config that references the registered secret name `MY_SECRET`.
@@ -4768,14 +4756,10 @@ name = "my_stub"
             }
         }
 
-        fn content_digest_of(bytes: &[u8]) -> ContentDigest {
-            ContentDigest(Digest(Sha256::digest(bytes).into()))
-        }
-
         fn inline_program() -> ResolvedExecProgram {
             ResolvedExecProgram {
                 program: PathBuf::from("/tmp/fake-exec-script.sh"),
-                content_digest: content_digest_of(b"#!/usr/bin/env bash\necho null\n"),
+                content_digest: digest_of(b"#!/usr/bin/env bash\necho null\n"),
             }
         }
 
@@ -4843,7 +4827,7 @@ name = "my_stub"
                 .fetch_and_verify(
                     ResolvedExecProgram {
                         program: PathBuf::from("/tmp/fake-exec-script.sh"),
-                        content_digest: content_digest_of(&source),
+                        content_digest: digest_of(&source),
                     },
                     true,
                     &std::sync::Arc::new(SecretRegistry::empty()),
@@ -4854,7 +4838,7 @@ name = "my_stub"
                 .fetch_and_verify(
                     ResolvedExecProgram {
                         program: PathBuf::from("/tmp/fake-exec-script.sh"),
-                        content_digest: content_digest_of(&source),
+                        content_digest: digest_of(&source),
                     },
                     true,
                     &std::sync::Arc::new(SecretRegistry::empty()),
@@ -4891,7 +4875,10 @@ name = "my_stub"
     }
 
     mod script_location {
+        use crate::config::toml::tests::digest_of;
+
         use super::super::*;
+        use concepts::cas::InMemoryCas;
 
         fn javascript(
             location: Option<JsLocationToml>,
@@ -4905,21 +4892,9 @@ name = "my_stub"
             }
         }
 
-        fn digest_of(bytes: &[u8]) -> ContentDigest {
-            let hash: [u8; 32] = Sha256::digest(bytes).into();
-            ContentDigest(Digest(hash))
-        }
-
-        fn disk_provider(dir: &Path) -> DiskProvider {
-            DiskProvider {
-                deployment_dir: dir.to_path_buf(),
-            }
-        }
-
         #[tokio::test]
         async fn inline_content_becomes_owned() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = disk_provider(dir.path());
+            let cas = InMemoryCas::default();
             let location = resolve_script_toml(
                 javascript(
                     None,
@@ -4927,7 +4902,7 @@ name = "my_stub"
                     BTreeMap::new(),
                 ),
                 "foo.js".to_string(),
-                &provider,
+                &cas,
                 None,
             )
             .await
@@ -4941,11 +4916,9 @@ name = "my_stub"
 
         #[tokio::test]
         async fn relative_file_is_owned_and_mirrors_subpath() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = disk_provider(dir.path());
-            let sub = dir.path().join("scripts");
-            std::fs::create_dir_all(&sub).unwrap();
-            std::fs::write(sub.join("a.js"), "export default 'owned content';").unwrap();
+            let cas = InMemoryCas::default();
+            let source = "export default 'owned content';";
+            let digest = cas.write_blob(source.as_bytes()).await.unwrap();
 
             // Bare relative path (implicit `${DEPLOYMENT_DIR}` prefix).
             let location = resolve_script_toml(
@@ -4955,25 +4928,25 @@ name = "my_stub"
                     BTreeMap::new(),
                 ),
                 "ignored.js".to_string(),
-                &provider,
-                None,
+                &cas,
+                Some(&digest),
             )
             .await
             .unwrap();
             assert_matches::assert_matches!(
                 location,
                 ScriptLocationResolved::Content { content, file_name }
-                    if content == "export default 'owned content';" && file_name == "scripts/a.js"
+                    if content == source && file_name == "scripts/a.js"
             );
         }
 
         #[tokio::test]
         async fn explicit_deployment_dir_prefix_is_owned() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = disk_provider(dir.path());
-            let sub = dir.path().join("scripts");
-            std::fs::create_dir_all(&sub).unwrap();
-            std::fs::write(sub.join("a.js"), "export default 'owned content';").unwrap();
+            let cas = InMemoryCas::default();
+            let digest = cas
+                .write_blob(b"export default 'owned content';")
+                .await
+                .unwrap();
 
             let location = resolve_script_toml(
                 javascript(
@@ -4984,8 +4957,8 @@ name = "my_stub"
                     BTreeMap::new(),
                 ),
                 "ignored.js".to_string(),
-                &provider,
-                None,
+                &cas,
+                Some(&digest),
             )
             .await
             .unwrap();
@@ -4997,12 +4970,8 @@ name = "my_stub"
 
         #[tokio::test]
         async fn absolute_path_is_rejected() {
-            let root = tempfile::tempdir().unwrap();
-            let provider = disk_provider(root.path());
-            let outside = root.path().join("outside.js");
-            std::fs::write(&outside, "external content").unwrap();
-            let abs = outside.to_string_lossy().into_owned();
-
+            let cas = InMemoryCas::default();
+            let abs = "/tmp/outside.js".to_string();
             let err = resolve_script_toml(
                 javascript(
                     Some(JsLocationToml::Path(abs.clone())),
@@ -5010,7 +4979,7 @@ name = "my_stub"
                     BTreeMap::new(),
                 ),
                 "ignored.js".to_string(),
-                &provider,
+                &cas,
                 None,
             )
             .await
@@ -5024,8 +4993,7 @@ name = "my_stub"
 
         #[tokio::test]
         async fn parent_dir_escape_is_rejected() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = disk_provider(dir.path());
+            let cas = InMemoryCas::default();
             for raw in ["../escape.js", "${DEPLOYMENT_DIR}/../escape.js"] {
                 let err = resolve_script_toml(
                     javascript(
@@ -5034,7 +5002,7 @@ name = "my_stub"
                         BTreeMap::new(),
                     ),
                     "ignored.js".to_string(),
-                    &provider,
+                    &cas,
                     None,
                 )
                 .await
@@ -5046,14 +5014,13 @@ name = "my_stub"
 
         #[tokio::test]
         async fn oci_becomes_oci() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = disk_provider(dir.path());
+            let cas = InMemoryCas::default();
             let reference =
                 oci_client::Reference::from_str("docker.io/library/example:latest").unwrap();
             let location = resolve_script_toml(
                 javascript(Some(JsLocationToml::Oci(reference)), None, BTreeMap::new()),
                 "ignored.js".to_string(),
-                &provider,
+                &cas,
                 None,
             )
             .await
@@ -5067,26 +5034,25 @@ name = "my_stub"
 
         #[tokio::test]
         async fn content_digest_verified_at_submit() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = disk_provider(dir.path());
+            let cas = InMemoryCas::default();
             let content = "export const x = 1;";
 
             // Matching digest succeeds.
             resolve_script_toml(
                 javascript(None, Some(content.to_string()), BTreeMap::new()),
                 "foo.js".to_string(),
-                &provider,
+                &cas,
                 Some(&digest_of(content.as_bytes())),
             )
             .await
             .expect("matching digest should pass");
 
-            // Mismatching digest fails.
+            // Mismatching digest on inline content fails.
             let wrong = digest_of(b"different");
             let err = resolve_script_toml(
                 javascript(None, Some(content.to_string()), BTreeMap::new()),
                 "foo.js".to_string(),
-                &provider,
+                &cas,
                 Some(&wrong),
             )
             .await
@@ -5099,16 +5065,11 @@ name = "my_stub"
         }
 
         #[tokio::test]
-        async fn relative_file_content_digest_verified_at_submit() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = disk_provider(dir.path());
-            std::fs::write(
-                dir.path().join("script.js"),
-                "export default 'owned content';",
-            )
-            .unwrap();
-
-            let wrong = digest_of(b"nope");
+        async fn relative_file_missing_blob_is_rejected() {
+            // A relative script whose pinned digest is not in the CAS cannot be resolved: in the
+            // content-addressed model a wrong digest is a missing blob, not a hash mismatch.
+            let cas = InMemoryCas::default();
+            let missing = digest_of(b"nope");
             let err = resolve_script_toml(
                 javascript(
                     Some(JsLocationToml::Path("script.js".to_string())),
@@ -5116,14 +5077,14 @@ name = "my_stub"
                     BTreeMap::new(),
                 ),
                 "ignored.js".to_string(),
-                &provider,
-                Some(&wrong),
+                &cas,
+                Some(&missing),
             )
             .await
-            .unwrap_err()
-            .to_string();
+            .unwrap_err();
+            let err = format!("{err:#}");
             assert!(
-                err.contains("content digest mismatch"),
+                err.contains("not present in the CAS"),
                 "unexpected error: {err}"
             );
         }
@@ -5203,6 +5164,8 @@ name = "my_stub"
     }
 
     mod backtrace {
+        use crate::config::toml::tests::digest_of;
+
         use super::super::*;
 
         #[test]
@@ -5244,72 +5207,50 @@ name = "my_stub"
             );
         }
 
-        #[tokio::test]
-        async fn resolved_retains_relative_subpath() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = DiskProvider {
-                deployment_dir: dir.path().to_path_buf(),
-            };
-            let sub = dir.path().join("crates/foo/src");
-            std::fs::create_dir_all(&sub).unwrap();
-            std::fs::write(sub.join("lib.rs"), "SRC").unwrap();
+        #[test]
+        fn resolved_retains_relative_subpath() {
+            let digest = digest_of(b"SRC");
+            let component_files =
+                BTreeMap::from([("crates/foo/src/lib.rs".to_string(), digest.clone())]);
 
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
                 "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, &BTreeMap::new(), &provider)
-                .await
-                .unwrap();
+            let resolved = resolve_backtrace(&bt, &component_files).unwrap();
             let src = resolved
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
                 .unwrap();
-            assert_eq!(
-                src.content_digest,
-                ContentDigest(Digest(Sha256::digest(b"SRC").into()))
-            );
+            assert_eq!(src.content_digest, digest);
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
 
-        #[tokio::test]
-        async fn bare_relative_source_is_deployment_dir_relative() {
-            // A bare relative backtrace source (no `${DEPLOYMENT_DIR}` prefix) is resolved
-            // against the deployment dir, same as the explicit-prefix form.
-            let dir = tempfile::tempdir().unwrap();
-            let provider = DiskProvider {
-                deployment_dir: dir.path().to_path_buf(),
-            };
-            let sub = dir.path().join("crates/foo/src");
-            std::fs::create_dir_all(&sub).unwrap();
-            std::fs::write(sub.join("lib.rs"), "SRC").unwrap();
+        #[test]
+        fn bare_relative_source_is_deployment_dir_relative() {
+            // A bare relative backtrace source (no `${DEPLOYMENT_DIR}` prefix) resolves to the
+            // same deployment-relative file name as the explicit-prefix form.
+            let digest = digest_of(b"SRC");
+            let component_files =
+                BTreeMap::from([("crates/foo/src/lib.rs".to_string(), digest.clone())]);
 
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
                 "crates/foo/src/lib.rs".to_string().into(),
             );
-            let resolved = resolve_backtrace(&bt, &BTreeMap::new(), &provider)
-                .await
-                .unwrap();
+            let resolved = resolve_backtrace(&bt, &component_files).unwrap();
             let src = resolved
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
                 .unwrap();
-            assert_eq!(
-                src.content_digest,
-                ContentDigest(Digest(Sha256::digest(b"SRC").into()))
-            );
+            assert_eq!(src.content_digest, digest);
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
 
-        #[tokio::test]
-        async fn source_parent_dir_escape_is_rejected() {
-            let dir = tempfile::tempdir().unwrap();
-            let provider = DiskProvider {
-                deployment_dir: dir.path().to_path_buf(),
-            };
+        #[test]
+        fn source_parent_dir_escape_is_rejected() {
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 "frame".to_string(),
@@ -5317,31 +5258,19 @@ name = "my_stub"
             );
             let err = format!(
                 "{:#}",
-                resolve_backtrace(&bt, &BTreeMap::new(), &provider)
-                    .await
-                    .unwrap_err()
+                resolve_backtrace(&bt, &BTreeMap::new()).unwrap_err()
             );
             assert!(err.contains("`..`"), "unexpected error: {err}");
         }
 
-        #[tokio::test]
-        async fn absolute_source_is_rejected() {
-            let dir = tempfile::tempdir().unwrap();
-            let abs = dir.path().join("nested/lib.rs");
-            std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
-            std::fs::write(&abs, "SRC").unwrap();
-
+        #[test]
+        fn absolute_source_is_rejected() {
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                abs.to_string_lossy().into_owned().into(),
+                "/nested/lib.rs".to_string().into(),
             );
-            let other_dir = tempfile::tempdir().unwrap();
-            let provider = DiskProvider {
-                deployment_dir: other_dir.path().to_path_buf(),
-            };
-            let err = resolve_backtrace(&bt, &BTreeMap::new(), &provider)
-                .await
+            let err = resolve_backtrace(&bt, &BTreeMap::new())
                 .unwrap_err()
                 .to_string();
             assert!(
