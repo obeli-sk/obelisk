@@ -601,7 +601,7 @@
           "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
           "anyOf": [
             {
-              "$ref": "#/$defs/JsLocationToml"
+              "$ref": "#/$defs/ScriptLocationPathOrOci"
             },
             {
               "type": "null"
@@ -702,7 +702,7 @@
         }
       ]
     },
-    "JsLocationToml": {
+    "ScriptLocationPathOrOci": {
       "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`ScriptLocationResolved`] before hash computation.",
       "type": "string"
     },
@@ -725,7 +725,7 @@
           "description": "Location of the exec script.\nSupports local file paths and OCI registry references (`oci://...`).",
           "anyOf": [
             {
-              "$ref": "#/$defs/JsLocationToml"
+              "$ref": "#/$defs/ScriptLocationPathOrOci"
             },
             {
               "type": "null"
@@ -993,7 +993,7 @@
           "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
           "anyOf": [
             {
-              "$ref": "#/$defs/JsLocationToml"
+              "$ref": "#/$defs/ScriptLocationPathOrOci"
             },
             {
               "type": "null"
@@ -1191,7 +1191,7 @@
           "description": "Location of the JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).",
           "anyOf": [
             {
-              "$ref": "#/$defs/JsLocationToml"
+              "$ref": "#/$defs/ScriptLocationPathOrOci"
             },
             {
               "type": "null"

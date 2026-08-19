@@ -101,7 +101,7 @@
             },
             {
               "name": "--skip-db",
-              "help": "Skip opening the sqlite database and validating its schema"
+              "help": "Skip opening the sqlite database and validating its schema. Requires `--deployment`, since with no database there is no active deployment to fall back to"
             },
             {
               "name": "--fix",

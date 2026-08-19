@@ -1,7 +1,6 @@
 use super::env_var::interpolate_path_template;
 use super::secret_registry::SecretRegistry;
 use super::toml::{DeploymentToml, ServerConfigToml};
-use crate::config::toml::DeploymentResolved;
 use crate::config::toml::DeploymentTomlValidated;
 use anyhow::{Context as _, bail};
 use config::{Config, ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
@@ -195,18 +194,6 @@ pub(crate) async fn load_deployment_validated(
     deployment
         .validate(&deployment_dir)
         .with_context(|| format!("cannot validate {deployment_toml:?}"))
-}
-
-pub(crate) async fn load_deployment_resolved(
-    deployment_toml: &Path,
-) -> Result<DeploymentResolved, anyhow::Error> {
-    let mut deployment = load_deployment_validated(deployment_toml)
-        .await?
-        .resolve()
-        .await
-        .with_context(|| format!("cannot resolve {deployment_toml:?}"))?;
-    deployment.source_path = Some(deployment_toml.to_path_buf());
-    Ok(deployment)
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

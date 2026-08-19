@@ -6,16 +6,15 @@ use crate::command::server::{
 };
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{
-    ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, load_deployment_validated, server_config_template,
+    ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, server_config_template,
 };
+use crate::config::manifest::{prepare_deployment_manifest, resolve_manifest};
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::toml::{
-    ActivityExternalComponentConfigToml, ActivityStubComponentConfigToml, ComponentLocationToml,
-    DeploymentTomlValidated, JsLocationToml, ServerConfigToml,
-};
+use crate::config::toml::{OCI_SCHEMA_PREFIX, ServerConfigToml};
 use crate::init::{self};
 use crate::project_dirs;
-use anyhow::Context;
+use anyhow::{Context, ensure};
+use concepts::cas::{Cas, InMemoryCas};
 use concepts::{ComponentType, ExecutionId, PackageIfcFns, PkgFqn, prefixed_ulid::DeploymentId};
 use directories::{BaseDirs, ProjectDirs};
 use hashbrown::{HashMap, HashSet};
@@ -24,6 +23,7 @@ use std::{borrow::Cow, path::PathBuf, sync::Arc};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::watch;
+use toml_edit::{DocumentMut, Item};
 use utils::{wasm_tools::WasmComponent, wit};
 use wasm_workers::registry::WitOrigin;
 
@@ -644,15 +644,40 @@ async fn generate_wit_deps(
     options: GenerateWitDepsOptions,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<Vec<GeneratedPathStatus>, anyhow::Error> {
-    let deployment = filter_wit_deps_deployment(
-        load_deployment_validated(&deployment_toml).await?,
-        options.skip_local,
-    );
+    let raw = tokio::fs::read_to_string(&deployment_toml)
+        .await
+        .with_context(|| format!("cannot read deployment manifest {deployment_toml:?}"))?;
+    let filtered = filter_wit_deps_toml(&raw, options.skip_local)
+        .with_context(|| format!("cannot filter {deployment_toml:?}"))?;
+    let deployment_dir = deployment_toml
+        .canonicalize()
+        .with_context(|| format!("cannot canonicalize {deployment_toml:?}"))?
+        .parent()
+        .with_context(|| format!("cannot resolve parent of {deployment_toml:?}"))?
+        .to_path_buf();
     let mut server_config = ServerConfigToml::default();
     server_config.webui.enabled = false;
     let _guard = init::init(&server_config)?; // Configure logging
-    let deployment = deployment
-        .resolve()
+
+    // Route through the shared CAS-based pipeline: prepare the filtered manifest into an
+    // ephemeral in-memory CAS, then resolve it by digest exactly like a server would.
+    let prepared = prepare_deployment_manifest(&filtered, &deployment_dir)
+        .await
+        .with_context(|| format!("cannot prepare {deployment_toml:?}"))?;
+    let cas = Arc::new(InMemoryCas::default());
+    for file in &prepared.files {
+        let stored = cas
+            .write_blob(&file.bytes)
+            .await
+            .with_context(|| format!("cannot store deployment file `{}`", file.path))?;
+        ensure!(
+            stored == file.digest,
+            "prepared blob digest mismatch for `{}`",
+            file.path
+        );
+    }
+    let cas: Arc<dyn Cas> = cas;
+    let deployment = resolve_manifest(&prepared.deployment_toml, cas.as_ref())
         .await
         .with_context(|| format!("cannot resolve {deployment_toml:?}"))?;
     let (termination_sender, mut termination_watcher) = watch::channel(());
@@ -679,12 +704,11 @@ async fn generate_wit_deps(
 
     // WIT extraction resolves no secrets; the caller passes a no-secrets registry.
     let server_verified = Box::pin(server_verify(server_config, engines, secret_registry)).await?;
-    // Disk-authored resolved form: only absolute paths, so it resolves without a CAS.
     let deployment_verified = deployment_verify_config(
         &server_verified,
         &prepared_dirs,
         deployment,
-        None,
+        cas,
         verify_params.clone(),
         &mut termination_watcher,
     )
@@ -772,90 +796,56 @@ async fn generate_wit_deps(
     write_wit_deps(&pkg_to_wit, &output_directory, options.force, options.prune).await
 }
 
-fn filter_wit_deps_deployment(
-    mut deployment: DeploymentTomlValidated,
-    skip_local: bool,
-) -> DeploymentTomlValidated {
-    if skip_local {
-        deployment
-            .activities_wasm
-            .retain(|c| matches!(c.common.location, ComponentLocationToml::Oci(_)));
-        deployment.activities_stub.retain(|(c, _)| match c {
-            ActivityStubComponentConfigToml::File(f) => {
-                matches!(f.common.location, ComponentLocationToml::Oci(_))
-            }
-            ActivityStubComponentConfigToml::Inline(_) => true,
-        });
-        deployment.activities_external.retain(|(c, _)| match c {
-            ActivityExternalComponentConfigToml::File(f) => {
-                matches!(f.common.location, ComponentLocationToml::Oci(_))
-            }
-            ActivityExternalComponentConfigToml::Inline(_) => true,
-        });
-        deployment.activities_js.retain(|(c, _)| {
-            c.content.is_none() && !matches!(c.location, Some(JsLocationToml::Path(_)))
-        });
-        deployment.activities_exec.retain(|(c, _)| {
-            c.content.is_none() && !matches!(c.location, Some(JsLocationToml::Path(_)))
-        });
-        deployment
-            .workflows_wasm
-            .retain(|c| matches!(c.common.location, ComponentLocationToml::Oci(_)));
-        deployment.workflows_js.retain(|(c, _)| {
-            c.content.is_none() && !matches!(c.location, Some(JsLocationToml::Path(_)))
-        });
+/// Prune a deployment manifest for WIT-deps extraction: webhooks and crons never contribute WITs,
+/// and `--skip-local` drops every deployment-owned (non-OCI) component so only OCI dependencies
+/// remain. Operating on the manifest text keeps a single resolution path: the pruned manifest is
+/// prepared and resolved through the CAS like any other.
+fn filter_wit_deps_toml(deployment_toml: &str, skip_local: bool) -> anyhow::Result<String> {
+    /// Whether a component table's `location` is an OCI reference.
+    fn table_is_oci_location(table: &toml_edit::Table) -> bool {
+        table
+            .get("location")
+            .and_then(Item::as_str)
+            .is_some_and(|location| location.starts_with(OCI_SCHEMA_PREFIX))
     }
 
-    deployment.webhooks_wasm.clear();
-    deployment.webhooks_js.clear();
-    deployment.crons.clear();
+    fn retain_tables(
+        doc: &mut DocumentMut,
+        section: &str,
+        keep: impl Fn(&toml_edit::Table) -> bool,
+    ) {
+        if let Some(tables) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) {
+            tables.retain(keep);
+        }
+    }
 
-    let remaining_names: HashSet<String> = deployment
-        .activities_wasm
-        .iter()
-        .map(|c| c.common.name.to_string())
-        .chain(
-            deployment
-                .activities_stub
-                .iter()
-                .map(|(_, name)| name.to_string()),
-        )
-        .chain(
-            deployment
-                .activities_external
-                .iter()
-                .map(|(_, name)| name.to_string()),
-        )
-        .chain(
-            deployment
-                .activities_js
-                .iter()
-                .map(|(_, name)| name.to_string()),
-        )
-        .chain(
-            deployment
-                .activities_exec
-                .iter()
-                .map(|(_, name)| name.to_string()),
-        )
-        .chain(
-            deployment
-                .workflows_wasm
-                .iter()
-                .map(|c| c.common.name.to_string()),
-        )
-        .chain(
-            deployment
-                .workflows_js
-                .iter()
-                .map(|(_, name)| name.to_string()),
-        )
-        .collect();
-    deployment
-        .component_names_to_types
-        .retain(|name, _| remaining_names.contains(name));
+    let mut doc = deployment_toml
+        .parse::<DocumentMut>()
+        .context("cannot parse deployment manifest as TOML")?;
 
-    deployment
+    for section in ["webhook_endpoint_wasm", "webhook_endpoint_js", "cron"] {
+        doc.remove(section);
+    }
+
+    if skip_local {
+        for section in ["activity_wasm", "workflow_wasm"] {
+            retain_tables(&mut doc, section, table_is_oci_location);
+        }
+        // Stub/external File entries carry a `location`; Inline entries (no `location`) are kept.
+        for section in ["activity_stub", "activity_external"] {
+            retain_tables(&mut doc, section, |table| {
+                table.get("location").is_none() || table_is_oci_location(table)
+            });
+        }
+        // Script components are local when they carry inline `content` or a non-OCI `location`.
+        for section in ["activity_js", "workflow_js", "activity_exec"] {
+            retain_tables(&mut doc, section, |table| {
+                table.get("content").is_none() && table_is_oci_location(table)
+            });
+        }
+    }
+
+    Ok(doc.to_string())
 }
 
 async fn write_wit_deps(

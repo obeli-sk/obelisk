@@ -1,10 +1,12 @@
-use crate::config::file_provider::{DiskProvider, FileProvider};
+use crate::command::server::cas_deployment_dir;
+use crate::config::file_provider::parse_wit_dir;
 use crate::config::toml::{
     DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
     strip_deployment_dir_prefix,
 };
 use anyhow::{Context, bail, ensure};
 use concepts::ContentDigest;
+use concepts::cas::Cas;
 use concepts::component_id::Digest;
 use concepts::storage::{ComponentFileRole, DeploymentComponentFileRecord, DeploymentFileRecord};
 use hashbrown::{HashMap, HashSet};
@@ -38,17 +40,21 @@ impl PreparedDeploymentManifest {
     }
 }
 
-/// Parse a verbatim manifest and resolve it using the supplied file provider.
+/// Resolve a processed deployment manifest against `cas`, reading every deployment-owned
+/// reference from the content-addressed store by digest.
 ///
-/// `deployment_dir` remains explicit until later slices move all `${DEPLOYMENT_DIR}` and
-/// WASM path resolution to the runtime environment.
-pub(crate) async fn manifest_to_resolved(
+/// This is the single resolution entry point shared by RPC submit, activation,
+/// `server run (-d)`, and offline `deployment verify`. The manifest is addressed by content:
+/// deployment-relative paths stay logical filenames (for imports, diagnostics, and exported
+/// sources) and are never storage addresses, so resolution never touches the submitter's disk.
+pub(crate) async fn resolve_manifest(
     deployment_toml: &str,
-    deployment_dir: &Path,
-    provider: &dyn FileProvider,
+    cas: &dyn Cas,
 ) -> anyhow::Result<DeploymentResolved> {
-    parse_manifest(deployment_toml, deployment_dir)?
-        .resolve_with_provider(provider)
+    // A processed manifest carries no submitter host, so relative WASM/script paths stay
+    // relative (addressed by digest in the CAS) after validation against an empty root.
+    parse_manifest(deployment_toml, &cas_deployment_dir())?
+        .resolve(cas)
         .await
 }
 
@@ -975,17 +981,12 @@ async fn collect_wit_refs(
     let Some(components) = doc.get_mut(section).and_then(Item::as_array_of_tables_mut) else {
         return Ok(());
     };
-    let provider = DiskProvider {
-        deployment_dir: deployment_dir.to_path_buf(),
-    };
     for table in components.iter_mut() {
         let Some(raw_root) = table.get("wit").and_then(Item::as_str) else {
             continue;
         };
         let root = sanitize_deployment_relative_path(raw_root)?;
-        let parsed = provider
-            .parse_wit_files(&root, &std::collections::BTreeMap::new()) // disk provider does not need a path -> digest map
-            .await?;
+        let parsed = parse_wit_dir(deployment_dir, &root).await?;
 
         let mut refs = InlineTable::new();
         if let Some(existing) = table.get("component_files").and_then(Item::as_table_like) {
@@ -1326,7 +1327,20 @@ async fn reconcile_backtrace_section(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::file_provider::DiskProvider;
+    use concepts::cas::InMemoryCas;
+
+    /// Upload a prepared manifest's blobs to an in-memory CAS (checking each digest), then
+    /// resolve the processed TOML through the shared CAS-based path.
+    async fn resolve_prepared(prepared: &PreparedDeploymentManifest) -> DeploymentResolved {
+        let cas = InMemoryCas::default();
+        for file in &prepared.files {
+            let stored = cas.write_blob(&file.bytes).await.unwrap();
+            assert_eq!(stored, file.digest, "prepared blob digest mismatch");
+        }
+        resolve_manifest(&prepared.deployment_toml, &cas)
+            .await
+            .unwrap()
+    }
 
     #[tokio::test]
     async fn prepare_fills_relative_script_digest_and_collects_blob() {
@@ -1555,12 +1569,7 @@ ffqn = "ns:pkg/ifc.fn"
             ComponentFileRole::JsModule
         );
 
-        let provider = DiskProvider {
-            deployment_dir: dir.path().to_path_buf(),
-        };
-        let resolved = manifest_to_resolved(&prepared.deployment_toml, dir.path(), &provider)
-            .await
-            .unwrap();
+        let resolved = resolve_prepared(&prepared).await;
         assert_matches::assert_matches!(
             &resolved.activities_js[0].location,
             crate::config::toml::ScriptLocationResolved::Graph { entry_path, files }
@@ -1698,12 +1707,7 @@ location = "components/w.wasm"
             ComponentFileRole::BacktraceSource
         );
 
-        let provider = DiskProvider {
-            deployment_dir: dir.path().to_path_buf(),
-        };
-        let resolved = manifest_to_resolved(&prepared.deployment_toml, dir.path(), &provider)
-            .await
-            .unwrap();
+        let resolved = resolve_prepared(&prepared).await;
         assert_eq!(
             resolved.workflows_wasm[0].backtrace.frame_files_to_sources[".../src/lib.rs"]
                 .content_digest,
@@ -1911,7 +1915,7 @@ location = "components/a.wasm"
     }
 
     #[tokio::test]
-    async fn manifest_to_resolved_uses_supplied_provider() {
+    async fn resolve_manifest_reads_blobs_from_cas() {
         let dir = tempfile::tempdir().unwrap();
         tokio::fs::write(dir.path().join("a.js"), "export const x = 1;")
             .await
@@ -1922,13 +1926,11 @@ name = "a"
 location = "a.js"
 ffqn = "ns:pkg/ifc.fn"
 "#;
-        let provider = DiskProvider {
-            deployment_dir: dir.path().to_path_buf(),
-        };
-
-        let resolved = manifest_to_resolved(manifest, dir.path(), &provider)
+        let prepared = prepare_deployment_manifest(manifest, dir.path())
             .await
             .unwrap();
+
+        let resolved = resolve_prepared(&prepared).await;
 
         assert_eq!(resolved.activities_js.len(), 1);
     }

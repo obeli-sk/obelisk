@@ -5,13 +5,13 @@ use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
-use crate::config::config_holder::load_deployment_resolved;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
-use crate::config::file_provider::CasFileProvider;
 use crate::config::manifest::DeploymentManifest;
 use crate::config::manifest::DeploymentManifestFile;
+use crate::config::manifest::prepare_deployment_manifest_from_disk;
 use crate::config::manifest::reconcile_deployment_digests;
+use crate::config::manifest::resolve_manifest;
 use crate::config::secret_registry::EnvVarCleanupStrategy;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
@@ -69,6 +69,7 @@ use crate::server::web_api_server::WebApiState;
 use crate::server::web_api_server::app_router;
 use anyhow::Context;
 use anyhow::bail;
+use anyhow::ensure;
 use chrono::Utc;
 use concepts::ComponentId;
 use concepts::ComponentType;
@@ -84,6 +85,8 @@ use concepts::Params;
 use concepts::ReturnTypeExtendable;
 use concepts::SUFFIX_FN_SCHEDULE;
 use concepts::StrVariant;
+use concepts::cas::Cas;
+use concepts::cas::InMemoryCas;
 use concepts::component_id::ComponentDigest;
 use concepts::component_id::Digest;
 use concepts::prefixed_ulid::DeploymentId;
@@ -655,15 +658,20 @@ pub(crate) struct VerifyParams {
     pub(crate) suppress_linking_errors: bool,
 }
 
+/// Called from `server verify [-d deployment.toml]` or `deployment verify -d deployment.toml`
 pub(crate) async fn verify(
     config_holder: ConfigHolder,
     config: ServerConfigToml,
-    deployment: Option<PathBuf>,
+    deployment: Option<PathBuf>, // None if `server verify` contains no explicit `deployment.toml` - verify current active deployment.
     verify_params: VerifyParams,
     skip_db: bool,
     fix: bool,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
+    ensure!(
+        !skip_db || deployment.is_some(),
+        "cannot skip database when deployment TOML file is not specified"
+    );
     let _guard: Guard = init::init(&config)?;
     let deployment_opt = if let Some(deployment_path) = deployment {
         let broken = reconcile_deployment_digests(&deployment_path, fix).await?;
@@ -699,10 +707,17 @@ pub(crate) async fn verify(
                 );
             }
         }
-        Some(load_deployment_resolved(&deployment_path).await?)
+        // Create a in-memory CAS with the deployment referenced files.
+        Some(resolve_deployment_offline(&deployment_path).await?)
     } else {
         None
     };
+    // Split the offline result into the resolved deployment and its ephemeral in-memory CAS.
+    let (deployment_opt, offline_cas): (Option<DeploymentResolved>, Option<Arc<dyn Cas>>) =
+        match deployment_opt {
+            Some((resolved, cas)) => (Some(resolved), Some(cas)),
+            None => (None, None),
+        };
 
     let (config_holder, config, secret_registry) = if fix
         && let Some(server_config_path) = config_holder.config_source.as_deref()
@@ -800,10 +815,16 @@ pub(crate) async fn verify(
         Some(&deployment),
         verify_params.runtime_config_availability,
     )?;
-    let cas: Option<Arc<dyn concepts::cas::Cas>> = if let Some((pool, _)) = db_pool.as_ref() {
-        Some(pool.cas_conn().await?.into())
+    // The offline `-d` path resolved into an in-memory CAS; the DB path reads blobs from the
+    // pool's CAS. Resolution and WASM materialization always have a CAS.
+    let cas: Arc<dyn Cas> = if let Some(cas) = offline_cas {
+        cas
+    } else if let Some((pool, _)) = db_pool.as_ref() {
+        pool.cas_conn().await?.into()
     } else {
-        None
+        unreachable!(
+            "skip_db == true && deployment.is_none() is disallowed at the start of this function"
+        );
     };
     deployment_verify_config_compile_link(
         server_verified,
@@ -973,7 +994,7 @@ pub(crate) async fn deployment_verify_config_compile_link(
     server_verified: ServerVerified,
     prepared_dirs: &PreparedDirs,
     deployment: DeploymentResolved,
-    cas: Option<Arc<dyn concepts::cas::Cas>>,
+    cas: Arc<dyn Cas>,
     deployment_id: DeploymentId,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
@@ -1028,7 +1049,7 @@ pub(crate) async fn deployment_verify_config(
     server_verified: &ServerVerified,
     prepared_dirs: &PreparedDirs,
     deployment: DeploymentResolved,
-    cas: Option<Arc<dyn concepts::cas::Cas>>,
+    cas: Arc<dyn Cas>,
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
@@ -1098,7 +1119,7 @@ pub(crate) async fn deployment_verify_config(
     }
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
     let deployment =
-        DeploymentRunnable::resolve(deployment, cas.as_deref(), &prepared_dirs.wasm_cache_dir)
+        DeploymentRunnable::resolve(deployment, cas.as_ref(), &prepared_dirs.wasm_cache_dir)
             .await?;
     let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
         deployment,
@@ -1288,166 +1309,81 @@ async fn get_deployment_resolved_from_db(
 }
 
 /// A deployment authored locally and passed via `server run -d <toml>` / `--empty`.
-///
-/// Carries the verbatim manifest (stored as the source of truth), its referenced file
-/// blobs (uploaded to the CAS so later restarts can resolve from it), and the
-/// already-resolved form used to compile/link this run.
 pub(crate) struct LocalDeployment {
-    deployment_toml: String,
-    resolved: DeploymentResolved,
+    processed_deployment_toml: String,
     files: Vec<DeploymentManifestFile>,
 }
 
 impl LocalDeployment {
     pub(crate) async fn from_path(deployment_path: &Path) -> anyhow::Result<Self> {
-        let resolved = load_deployment_resolved(deployment_path).await?;
-        let prepared =
-            crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_path).await?;
+        let prepared = prepare_deployment_manifest_from_disk(deployment_path).await?;
         Ok(Self {
-            deployment_toml: prepared.deployment_toml,
-            resolved,
+            processed_deployment_toml: prepared.deployment_toml,
             files: prepared.files,
         })
     }
 
     pub(crate) fn empty() -> Self {
         Self {
-            deployment_toml: String::new(),
-            resolved: DeploymentResolved::default(),
+            processed_deployment_toml: String::new(),
             files: Vec::new(),
         }
     }
 }
 
-/// Root for resolving a stored manifest against the CAS.
+/// Root for parsing a stored manifest for resolution against the CAS.
 ///
-/// Empty on purpose: a stored manifest has no submitter host to anchor relative paths to.
-/// Deployment-owned references are addressed by content digest in the CAS, so joining a
-/// `${DEPLOYMENT_DIR}` / relative path against an empty root leaves it relative. That keeps
-/// deployment-owned WASM locations relative in the resulting `DeploymentResolved` (no
-/// fabricated host paths); they become concrete on-disk paths only later, in
+/// Empty on purpose: a stored (processed) manifest has no submitter host to anchor relative paths
+/// to. Deployment-owned references are addressed by content digest in the CAS, so a relative /
+/// `${DEPLOYMENT_DIR}` path validated against an empty root stays relative: a logical filename,
+/// never a storage address. Those become concrete on-disk paths only later, in
 /// [`DeploymentRunnable::resolve`], which materializes their blobs from the CAS.
-fn cas_deployment_dir() -> std::path::PathBuf {
+pub(crate) fn cas_deployment_dir() -> std::path::PathBuf {
     std::path::PathBuf::new()
 }
 
-/// A [`FileProvider`] that reads from the CAS and records the `(path, digest)` of every blob
-/// it serves, so the caller learns exactly which files the manifest references.
-struct RecordingCasProvider {
-    inner: crate::config::file_provider::CasFileProvider,
-    seen: std::sync::Mutex<Vec<concepts::storage::DeploymentFileRecord>>,
+/// Offline resolution for `deployment verify`: prepare the manifest from disk,
+/// then insert all of its files into an in-memory CAS.
+async fn resolve_deployment_offline(
+    deployment_path: &Path,
+) -> anyhow::Result<(DeploymentResolved, Arc<dyn Cas>)> {
+    let prepared = prepare_deployment_manifest_from_disk(deployment_path).await?;
+    let cas = Arc::new(InMemoryCas::default());
+    for file in &prepared.files {
+        let stored = cas
+            .write_blob(&file.bytes)
+            .await
+            .with_context(|| format!("cannot store deployment file `{}`", file.path))?;
+        ensure!(
+            stored == file.digest,
+            "prepared blob digest mismatch for `{}`: expected {}, got {stored}",
+            file.path,
+            file.digest
+        );
+    }
+    let cas: Arc<dyn Cas> = cas;
+    let mut resolved = resolve_manifest(&prepared.deployment_toml, cas.as_ref())
+        .await
+        .with_context(|| format!("cannot resolve deployment {deployment_path:?}"))?;
+    resolved.source_path = Some(deployment_path.to_path_buf());
+    Ok((resolved, cas))
 }
 
-#[async_trait::async_trait]
-impl crate::config::file_provider::FileProvider for RecordingCasProvider {
-    async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>> {
-        let bytes = self.inner.read(path, digest).await?;
-        if let Some(digest) = digest {
-            self.seen
-                .lock()
-                .expect("RecordingCasProvider mutex poisoned")
-                .push(concepts::storage::DeploymentFileRecord {
-                    path: path.to_string(),
-                    digest: digest.clone(),
-                    size: u64::try_from(bytes.len()).expect("file length fits u64"),
-                });
-        }
-        Ok(bytes)
-    }
-
-    async fn parse_js_graph(
-        &self,
-        entry_path: &str,
-        known_files: &std::collections::BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>> {
-        let files = self.inner.parse_js_graph(entry_path, known_files).await?;
-        let mut seen = self
-            .seen
-            .lock()
-            .expect("RecordingCasProvider mutex poisoned");
-        for (path, source) in &files {
-            let digest = known_files
-                .get(path)
-                .expect("CAS JS graph walker only reads files present in known_files");
-            seen.push(concepts::storage::DeploymentFileRecord {
-                path: path.clone(),
-                digest: digest.clone(),
-                size: u64::try_from(source.len()).expect("file length fits u64"),
-            });
-        }
-        drop(seen);
-        Ok(files)
-    }
-
-    async fn parse_wit_files(
-        &self,
-        root: &str,
-        known_files: &std::collections::BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<crate::config::file_provider::ParsedWitFiles> {
-        let parsed = self.inner.parse_wit_files(root, known_files).await?;
-        let mut seen = self
-            .seen
-            .lock()
-            .expect("RecordingCasProvider mutex poisoned");
-        for (path, source) in &parsed.files {
-            let digest = known_files
-                .get(path)
-                .expect("CAS WIT reader only returns known files");
-            seen.push(concepts::storage::DeploymentFileRecord {
-                path: path.clone(),
-                digest: digest.clone(),
-                size: u64::try_from(source.len()).expect("file length fits u64"),
-            });
-        }
-        drop(seen);
-        Ok(parsed)
-    }
-}
-
-/// Resolve a stored verbatim TOML manifest by reading its referenced blobs from the CAS,
-/// returning the resolved form and the `(path, digest)` of every file it referenced.
+/// Resolve a stored processed manifest by reading its referenced blobs from the CAS.
 ///
 /// `${...}` env vars and secrets resolve here, in the server's environment.
-async fn deployment_resolved_and_files_from_manifest(
-    db_pool: &dyn concepts::storage::DbPool,
-    deployment_toml: &str,
-) -> anyhow::Result<(
-    DeploymentResolved,
-    Vec<concepts::storage::DeploymentFileRecord>,
-)> {
-    let cas: Arc<dyn concepts::cas::Cas> = db_pool
-        .cas_conn()
-        .await
-        .context("cannot get CAS connection for deployment resolution")?
-        .into();
-    let provider = RecordingCasProvider {
-        inner: CasFileProvider { cas },
-        seen: std::sync::Mutex::new(Vec::new()),
-    };
-    let resolved = crate::config::manifest::manifest_to_resolved(
-        deployment_toml,
-        &cas_deployment_dir(),
-        &provider,
-    )
-    .await
-    .context("cannot resolve deployment manifest from the content-addressed store")?;
-    let files = provider
-        .seen
-        .into_inner()
-        .expect("RecordingCasProvider mutex poisoned");
-    Ok((resolved, files))
-}
-
-/// Resolve a stored verbatim manifest by reading its referenced blobs from the CAS.
 async fn deployment_resolved_from_manifest(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_toml: &str,
 ) -> anyhow::Result<DeploymentResolved> {
-    Ok(
-        deployment_resolved_and_files_from_manifest(db_pool, deployment_toml)
-            .await?
-            .0,
-    )
+    let cas: Arc<dyn Cas> = db_pool
+        .cas_conn()
+        .await
+        .context("cannot get CAS connection for deployment resolution")?
+        .into();
+    resolve_manifest(deployment_toml, cas.as_ref())
+        .await
+        .context("cannot resolve deployment manifest from the content-addressed store")
 }
 
 /// Transient server state whose every WASM component location is a concrete, runnable
@@ -1457,9 +1393,7 @@ async fn deployment_resolved_from_manifest(
 /// addressed by content digest in the CAS (a stored manifest carries no submitter host).
 /// Compiling/linking needs real files, so [`Self::resolve`] materializes each deployment-owned
 /// blob from the CAS into the wasm cache and rewrites its location to that path. OCI
-/// references already are concrete and pass through unchanged. The current disk-authored
-/// local-run resolved form expands valid relative WASM paths to absolute internal paths, so it
-/// resolves to itself.
+/// references already are concrete and pass through unchanged.
 ///
 /// The inner value is private so the only way to obtain one is `resolve`; that makes it
 /// impossible to feed an unresolved (relative-path) `DeploymentResolved` into compilation.
@@ -1469,14 +1403,9 @@ pub(crate) struct DeploymentRunnable {
 
 impl DeploymentRunnable {
     /// Resolve every deployment-owned WASM location against the CAS.
-    ///
-    /// `cas` may be `None` for disk/offline flows (e.g. `obelisk deployment verify`), whose
-    /// current resolved form holds internal absolute paths and OCI refs;
-    /// encountering a deployment-owned (relative) WASM there is an error because there is no
-    /// store to read it.
     pub(crate) async fn resolve(
         mut deployment: DeploymentResolved,
-        cas: Option<&dyn concepts::cas::Cas>,
+        cas: &dyn Cas,
         wasm_cache_dir: &Path,
     ) -> anyhow::Result<Self> {
         for c in &mut deployment.activities_wasm {
@@ -1545,20 +1474,17 @@ impl DeploymentRunnable {
 async fn materialize_wasm_location(
     location: &mut ComponentLocationToml,
     content_digest: Option<&ContentDigest>,
-    cas: Option<&dyn concepts::cas::Cas>,
+    cas: &dyn Cas,
     wasm_cache_dir: &Path,
 ) -> anyhow::Result<()> {
     let ComponentLocationToml::Path(path) = location else {
         return Ok(()); // OCI reference: pulled later, during fetch.
     };
     if Path::new(path).is_absolute() {
-        return Ok(()); // External / disk-authored file, read from disk at runtime.
+        return Ok(()); // External file, read from disk at runtime.
     }
     let digest = content_digest.with_context(|| {
         format!("deployment-owned WASM component `{path}` is missing a content digest")
-    })?;
-    let cas = cas.with_context(|| {
-        format!("cannot resolve deployment-owned WASM component `{path}` without a content-addressed store")
     })?;
     let target = content_digest_to_wasm_file(wasm_cache_dir, digest);
     if !target.exists() {
@@ -1577,7 +1503,7 @@ async fn materialize_wasm_location(
 /// without inserting it. Deferring the insert until after a successful
 /// compile with [`DbExternalApi::insert_deployment_with_components`]
 /// means startup, like submit, never persists a deployment that failed verification.
-async fn prepare_new_deployment_record(
+async fn write_to_cas_prepare_deployment_record(
     db_pool: &dyn concepts::storage::DbPool,
     deployment_id: DeploymentId,
     deployment_toml: String,
@@ -1720,70 +1646,90 @@ pub(crate) async fn run_internal(
         }
     };
     let span = Span::current();
-    let (active_deployment_id, deployment_resolved, new_deployment_record) =
-        if let Some(deployment) = deployment {
-            // --deployment or `--deployment-empty` provided: prepare, insert+activate after compile.
+    // What to persist once the deployment has compiled and verified. Deferring activation past
+    // verification keeps a broken deployment from being marked active.
+    enum DeploymentPersist {
+        AlreadyActive,
+        ActivateEnqueued,
+        Insert {
+            record: Box<DeploymentRecord>,
+            component_files: Vec<DeploymentComponentFileRecord>,
+        },
+    }
+    let (active_deployment_id, deployment_resolved, persist) = if let Some(deployment) = deployment
+    {
+        // --deployment or `--deployment-empty` provided: prepare, insert+activate after verify.
+        let new_deployment_id = DeploymentId::generate();
+        span.record("deployment_id", tracing::field::display(&new_deployment_id));
+        let (record, component_files) = write_to_cas_prepare_deployment_record(
+            &*db_pool,
+            new_deployment_id,
+            deployment.processed_deployment_toml,
+            deployment.files,
+            description,
+        )
+        .await?;
+        // Same as if `DeploymentRecord` was in DB already.
+        let resolved =
+            deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
+        (
+            new_deployment_id,
+            resolved,
+            DeploymentPersist::Insert {
+                record: Box::new(record),
+                component_files,
+            },
+        )
+    } else {
+        // No --deployment: pick up from the DB. An Enqueued deployment (queued for this
+        // restart) is activated only after it verifies; see the post-verify block below.
+        let conn = db_pool
+            .external_api_conn()
+            .await
+            .context("cannot get db connection for deployment lookup")?;
+        if let Some(record) = conn
+            .get_current_deployment()
+            .await
+            .context("cannot query current deployment")?
+        {
+            let resolved =
+                deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
+            span.record(
+                "deployment_id",
+                tracing::field::display(&record.deployment_id),
+            );
+            let persist = if record.status == DeploymentStatus::Enqueued {
+                info!("Verifying enqueued deployment before activation");
+                DeploymentPersist::ActivateEnqueued
+            } else {
+                info!("Using the currently active deployment");
+                DeploymentPersist::AlreadyActive
+            };
+            (record.deployment_id, resolved, persist)
+        } else {
+            // empty db
             let new_deployment_id = DeploymentId::generate();
             span.record("deployment_id", tracing::field::display(&new_deployment_id));
-            let record = prepare_new_deployment_record(
+            info!("No deployment found in DB; starting with empty deployment");
+            let (record, component_files) = write_to_cas_prepare_deployment_record(
                 &*db_pool,
                 new_deployment_id,
-                deployment.deployment_toml,
-                deployment.files,
-                description,
+                String::new(),
+                Vec::new(),
+                None,
             )
             .await?;
-            (new_deployment_id, deployment.resolved, Some(record))
-        } else {
-            // No --deployment: pick up from the DB.
-            // Activate any Enqueued deployment (queued for this restart), then use active.
-            let conn = db_pool
-                .external_api_conn()
-                .await
-                .context("cannot get db connection for deployment lookup")?;
-            if let Some(record) = conn
-                .get_current_deployment()
-                .await
-                .context("cannot query current deployment")?
-            {
-                if record.status == concepts::storage::DeploymentStatus::Enqueued {
-                    conn.activate_deployment(record.deployment_id, chrono::Utc::now())
-                        .await
-                        .context("cannot activate enqueued deployment")?;
-                }
-                let resolved =
-                    deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
-                span.record(
-                    "deployment_id",
-                    tracing::field::display(&record.deployment_id),
-                );
-                if record.status == concepts::storage::DeploymentStatus::Enqueued {
-                    info!("Activated enqueued deployment");
-                } else {
-                    info!("Using the currently active deployment");
-                }
 
-                (record.deployment_id, resolved, None)
-            } else {
-                let new_deployment_id = DeploymentId::generate();
-                span.record("deployment_id", tracing::field::display(&new_deployment_id));
-                info!("No deployment found in DB; starting with empty deployment");
-                let record = prepare_new_deployment_record(
-                    &*db_pool,
-                    new_deployment_id,
-                    String::new(),
-                    Vec::new(),
-                    None,
-                )
-                .await?;
-
-                (
-                    new_deployment_id,
-                    DeploymentResolved::default(),
-                    Some(record),
-                )
-            }
-        };
+            (
+                new_deployment_id,
+                DeploymentResolved::default(),
+                DeploymentPersist::Insert {
+                    record: Box::new(record),
+                    component_files,
+                },
+            )
+        }
+    };
     let engines = create_engines(&config, &prepared_dirs)?;
     let server_verified = server_verify(config, engines, secret_registry).await?;
     config_prepass::preflight(
@@ -1791,12 +1737,12 @@ pub(crate) async fn run_internal(
         Some(&deployment_resolved),
         RuntimeConfigAvailability::Strict,
     )?;
-    let cas: Arc<dyn concepts::cas::Cas> = db_pool.cas_conn().await?.into();
+    let cas: Arc<dyn Cas> = db_pool.cas_conn().await?.into();
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
         &prepared_dirs,
         deployment_resolved,
-        Some(cas),
+        cas,
         active_deployment_id,
         VerifyParams {
             dir_params: PrepareDirsParams {
@@ -1811,30 +1757,47 @@ pub(crate) async fn run_internal(
     ))
     .instrument(span.clone())
     .await?;
-    // Persist a freshly created deployment only now that it has compiled and verified, matching the submit path.
-    if let Some((record, component_files)) = new_deployment_record {
-        let api_conn = db_pool
-            .external_api_conn()
-            .await
-            .context("cannot get db connection for deployment insertion")?;
-        let (component_metadata, deployment_components) = build_component_metadata_records(
-            active_deployment_id,
-            &compiled_and_linked.component_registry_ro,
-        );
-        api_conn
-            .insert_deployment_with_components(
-                record,
-                component_metadata,
-                deployment_components,
-                component_files,
-            )
-            .await
-            .context("cannot insert deployment")?;
-        api_conn
-            .activate_deployment(active_deployment_id, chrono::Utc::now())
-            .await
-            .context("cannot activate deployment")?;
-        info!("Activated new deployment");
+    // Persist only now that the deployment has compiled and verified, matching the submit path.
+    match persist {
+        DeploymentPersist::AlreadyActive => {}
+        DeploymentPersist::ActivateEnqueued => {
+            let api_conn = db_pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment activation")?;
+            api_conn
+                .activate_deployment(active_deployment_id, chrono::Utc::now())
+                .await
+                .context("cannot activate enqueued deployment")?;
+            info!("Activated enqueued deployment");
+        }
+        DeploymentPersist::Insert {
+            record,
+            component_files,
+        } => {
+            let api_conn = db_pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment insertion")?;
+            let (component_metadata, deployment_components) = build_component_metadata_records(
+                active_deployment_id,
+                &compiled_and_linked.component_registry_ro,
+            );
+            api_conn
+                .insert_deployment_with_components(
+                    *record,
+                    component_metadata,
+                    deployment_components,
+                    component_files,
+                )
+                .await
+                .context("cannot insert deployment")?;
+            api_conn
+                .activate_deployment(active_deployment_id, chrono::Utc::now())
+                .await
+                .context("cannot activate deployment")?;
+            info!("Activated new deployment");
+        }
     }
 
     let cancel_registry = CancelRegistry::new();
@@ -2693,7 +2656,7 @@ pub(crate) async fn submit_deployment(
                 deployment_resolved_from_manifest(db_pool_ref, deployment_toml)
                     .await
                     .map_err(SubmitDeploymentError::Other)?;
-            let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool_ref
+            let cas_arc: Arc<dyn Cas> = db_pool_ref
                 .cas_conn()
                 .await
                 .map_err(anyhow::Error::from)?
@@ -2708,7 +2671,7 @@ pub(crate) async fn submit_deployment(
                 server_verified,
                 prepared_dirs,
                 deployment_resolved,
-                Some(cas_arc),
+                cas_arc,
                 deployment_id,
                 VerifyParams {
                     dir_params: PrepareDirsParams {
@@ -2989,7 +2952,7 @@ async fn prepare_switch_deployment(
     .await
     .map_err(SwitchError::Other)?;
 
-    let cas: Arc<dyn concepts::cas::Cas> = deployment_switch_manager
+    let cas: Arc<dyn Cas> = deployment_switch_manager
         .inner
         .db_pool
         .cas_conn()
@@ -3019,7 +2982,7 @@ async fn prepare_switch_deployment(
         deployment_switch_manager.inner.server_verified.clone(),
         &deployment_switch_manager.inner.prepared_dirs,
         target_deployment,
-        Some(cas),
+        cas,
         deployment_id,
         verify_params,
         termination_watcher,
@@ -5450,10 +5413,10 @@ mod tests {
                 report_missing_outbound_http_secret_replacements,
             },
             create_engines, deployment_verify_config, fix_server_exec_digests, prepare_dirs,
-            webhook_global_http_allowlist,
+            resolve_deployment_offline, webhook_global_http_allowlist,
         },
         config::{
-            config_holder::{ConfigHolder, load_deployment_resolved},
+            config_holder::ConfigHolder,
             secret_registry::SecretRegistry,
             toml::{
                 AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
@@ -5805,7 +5768,7 @@ mod tests {
             deployment_toml,
         )
         .await?;
-        let deployment = load_deployment_resolved(fixture.path()).await?;
+        let (deployment, cas) = resolve_deployment_offline(fixture.path()).await?;
 
         let prepared_dirs = prepare_dirs(
             &config,
@@ -5833,10 +5796,10 @@ mod tests {
         };
         let webui_enabled = None;
 
-        // Verify deployment. The current disk-authored resolved form holds internal absolute
-        // paths, so it resolves to itself without a CAS.
+        // Materialize deployment-owned WASM from the ephemeral CAS before compiling.
         let deployment =
-            DeploymentRunnable::resolve(deployment, None, &prepared_dirs.wasm_cache_dir).await?;
+            DeploymentRunnable::resolve(deployment, cas.as_ref(), &prepared_dirs.wasm_cache_dir)
+                .await?;
         let deployment_verified = Box::pin(DeploymentVerified::fetch_and_verify_all(
             deployment,
             server_verified.http_servers,
@@ -5888,7 +5851,7 @@ mod tests {
             "deployment-testing-wasm-local.toml",
         )
         .await?;
-        let mut deployment = load_deployment_resolved(fixture.path()).await?;
+        let (mut deployment, cas) = resolve_deployment_offline(fixture.path()).await?;
         let shared_digest: ComponentDigest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 .parse()
@@ -5915,7 +5878,7 @@ mod tests {
             &server_verified,
             &prepared_dirs,
             deployment,
-            None,
+            cas,
             VerifyParams {
                 dir_params: PrepareDirsParams {
                     clean_cache: false,
@@ -5950,8 +5913,8 @@ mod tests {
         )?;
         let config = config_holder.load_config()?;
         assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
-        let deployment =
-            load_deployment_resolved(&workspace.join("deployment-testing-exec.toml")).await?;
+        let (deployment, cas) =
+            resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
             &config,
             &PrepareDirsParams {
@@ -5971,7 +5934,7 @@ mod tests {
             &server_verified,
             &prepared_dirs,
             deployment.clone(),
-            None,
+            cas.clone(),
             VerifyParams {
                 dir_params: PrepareDirsParams {
                     clean_cache: false,
@@ -5995,7 +5958,7 @@ mod tests {
             &server_verified,
             &prepared_dirs,
             deployment,
-            None,
+            cas,
             VerifyParams {
                 dir_params: PrepareDirsParams {
                     clean_cache: false,
@@ -6023,8 +5986,8 @@ mod tests {
         test_utils::set_up();
 
         let workspace = get_workspace_dir();
-        let deployment =
-            load_deployment_resolved(&workspace.join("deployment-testing-exec.toml")).await?;
+        let (deployment, _cas) =
+            resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let dir = tempfile::tempdir()?;
         let server_config_path = dir.path().join("server.toml");
         let wrong = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -6077,8 +6040,8 @@ mod tests {
             Some(workspace.join("server-sqlite.toml")),
         )?;
         let mut config = config_holder.load_config()?;
-        let deployment =
-            load_deployment_resolved(&workspace.join("deployment-testing-exec.toml")).await?;
+        let (deployment, cas) =
+            resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let digests = deployment
             .activities_exec
             .iter()
@@ -6137,7 +6100,7 @@ mod tests {
             &server_verified,
             &prepared_dirs,
             deployment.clone(),
-            None,
+            cas.clone(),
             verify_params.clone(),
             &mut termination_watcher,
         )
@@ -6165,7 +6128,7 @@ mod tests {
             &server_verified,
             &prepared_dirs,
             deployment,
-            None,
+            cas,
             verify_params,
             &mut termination_watcher,
         )

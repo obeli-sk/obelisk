@@ -3,8 +3,6 @@ use concepts::ContentDigest;
 use concepts::cas::Cas;
 use concepts::component_id::Digest;
 use sha2::{Digest as _, Sha256};
-use std::path::PathBuf;
-use std::sync::Arc;
 use std::{collections::BTreeMap, path::Path};
 
 #[derive(Debug)]
@@ -14,47 +12,126 @@ pub(crate) struct ParsedWitFiles {
     pub(crate) main_pkg_id: wit_parser::PackageId,
 }
 
-/// Source of deployment-owned file bytes during deployment resolution.
+/// Read a deployment-owned blob from the CAS by digest.
 ///
-/// Resolution inlines every deployment-owned script/source into the
-/// `DeploymentResolved`; where the bytes come from depends on context.
-/// OCI refs are not deployment-owned and are not read through a provider.
+/// `what` is a human-readable label (a deployment-relative path) used only for error context.
+/// Every deployment-owned reference in a processed manifest carries a digest, so resolution
+/// addresses content purely by digest and never touches the submitter's disk.
+pub(crate) async fn read_package_blob(
+    cas: &dyn Cas,
+    digest: &ContentDigest,
+    what: &str,
+) -> anyhow::Result<Vec<u8>> {
+    cas.read_blob(digest)
+        .await?
+        .with_context(|| format!("blob {digest} for `{what}` not present in the CAS"))
+}
+
+/// Reads JS module sources from the CAS, resolving each deployment-relative path
+/// against the manifest's declared `component_files`. An import with no declared
+/// digest is rejected: it was never uploaded, so the graph is open.
+struct CasModuleReader<'a> {
+    cas: &'a dyn Cas,
+    known_files: &'a BTreeMap<String, ContentDigest>,
+}
+
 #[async_trait::async_trait]
-pub(crate) trait FileProvider: Send + Sync {
-    /// Read the bytes of a deployment-owned file.
-    ///
-    /// `path` is its deployment-relative path; `digest`, when present, is the
-    /// expected content hash. Implementations must ensure returned bytes hash
-    /// to `digest` when one is supplied.
-    async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>>;
+impl crate::javascript::graph::ModuleSourceReader for CasModuleReader<'_> {
+    async fn read_source(&self, dep_path: &str) -> anyhow::Result<String> {
+        let digest = self.known_files.get(dep_path).with_context(|| {
+            format!(
+                "JS module `{dep_path}` is imported but not part of the deployment package \
+                 (no matching `component_files` entry)"
+            )
+        })?;
+        let bytes = read_package_blob(self.cas, digest, dep_path).await?;
+        String::from_utf8(bytes)
+            .with_context(|| format!("JS module `{dep_path}` is not valid UTF-8"))
+    }
+}
 
-    /// Parse the JS module at `entry_path` and return its closed import graph: the
-    /// entry plus every transitively-imported relative module, as `(deployment-relative
-    /// path, source)`. Every relative import must resolve to a module the provider can
-    /// supply, so a manifest that under-declares its graph is rejected here rather than
-    /// failing at runtime. `known_files` is the manifest's declared `path -> digest` map;
-    /// CAS-backed resolution reads each module through it, the disk provider walks the
-    /// filesystem and ignores it. Non-JS scripts never call this.
-    async fn parse_js_graph(
-        &self,
-        entry_path: &str,
-        known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>>;
+/// Parse the JS module at `entry_path` and return its closed import graph: the entry plus every
+/// transitively-imported relative module, as `(deployment-relative path, source)`. Every
+/// relative import must resolve to a module declared in `known_files` and present in the CAS, so
+/// a manifest that under-declares its graph is rejected here rather than failing at runtime.
+pub(crate) async fn parse_js_graph_from_cas(
+    cas: &dyn Cas,
+    entry_path: &str,
+    known_files: &BTreeMap<String, ContentDigest>,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let reader = CasModuleReader { cas, known_files };
+    let graph = crate::javascript::graph::collect_graph_with(&reader, entry_path).await?;
+    Ok(graph.files.into_iter().collect())
+}
 
-    /// Parse the WIT package rooted at `root`, retaining the resolve, main package ID, and
-    /// exactly the `.wit` sources selected as `(deployment-relative path, source)`. The parser
-    /// decides the file set, so malformed WIT is rejected and stray declarations cannot smuggle
-    /// in unused sources. `known_files` is the manifest's declared `path -> digest` map;
-    /// CAS-backed resolution materializes those blobs, while the disk provider ignores it.
-    async fn parse_wit_files(
-        &self,
-        root: &str,
-        known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<ParsedWitFiles>;
+/// Parse the WIT package rooted at `root`, retaining the resolve, main package ID, and exactly
+/// the `.wit` sources selected as `(deployment-relative path, source)`.
+///
+/// Every declared blob under `root` is materialized from the CAS into a temp dir, then
+/// `wit-parser` decides the file set. Trusting the declared prefix instead would let a broken
+/// client smuggle garbage or unused `.wit` files past submit, so malformed WIT is rejected and a
+/// declared source the parser does not select is refused.
+pub(crate) async fn parse_wit_files_from_cas(
+    cas: &dyn Cas,
+    root: &str,
+    known_files: &BTreeMap<String, ContentDigest>,
+) -> anyhow::Result<ParsedWitFiles> {
+    let root = crate::config::toml::sanitize_deployment_relative_path(root)?;
+    let prefix = format!("{root}/");
+    let declared: Vec<(String, &ContentDigest)> = known_files
+        .iter()
+        .filter(|(path, _)| path.starts_with(&prefix))
+        .map(|(path, digest)| (path.clone(), digest))
+        .collect();
+    ensure!(
+        !declared.is_empty(),
+        "CAS-backed resolution has no declared WIT files for `{root}`"
+    );
+    let temp_dir = tempfile::tempdir().context("cannot create temp dir to parse WIT")?;
+    for (path, digest) in &declared {
+        let path = crate::config::toml::sanitize_deployment_relative_path(path)?;
+        ensure!(
+            Path::new(&path).extension().and_then(|ext| ext.to_str()) == Some("wit"),
+            "declared WIT source is not a .wit file: `{path}`"
+        );
+        let full = temp_dir.path().join(&path);
+        if let Some(parent) = full.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("cannot stage WIT file `{path}`"))?;
+        }
+        let bytes = read_package_blob(cas, digest, &path).await?;
+        tokio::fs::write(&full, &bytes)
+            .await
+            .with_context(|| format!("cannot stage WIT file `{path}`"))?;
+    }
+
+    let parsed = parse_wit_dir(temp_dir.path(), &root).await?;
+
+    // Reject stray declarations: a declared `.wit` file `wit-parser` did not select is
+    // dead weight the deployment -> digest mapping would pin, so refuse it here.
+    let selected: std::collections::BTreeSet<&str> =
+        parsed.files.iter().map(|(path, _)| path.as_str()).collect();
+    let stray: Vec<&str> = declared
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .filter(|path| !selected.contains(path))
+        .collect();
+    ensure!(
+        stray.is_empty(),
+        "WIT directory `{root}` declares {stray:?} that `wit-parser` does not select"
+    );
+    Ok(parsed)
 }
 
 /// Parse the WIT package under `deployment_dir/root` and retain its resolve and selected sources.
-async fn parse_wit_dir(deployment_dir: &Path, root: &str) -> anyhow::Result<ParsedWitFiles> {
+///
+/// Used by prepare on the submitter's disk, and by CAS resolution on a temp dir of materialized
+/// blobs.
+pub(crate) async fn parse_wit_dir(
+    deployment_dir: &Path,
+    root: &str,
+) -> anyhow::Result<ParsedWitFiles> {
     let root = crate::config::toml::sanitize_deployment_relative_path(root)?;
     let deployment_dir = deployment_dir
         .canonicalize()
@@ -114,157 +191,6 @@ async fn parse_wit_dir(deployment_dir: &Path, root: &str) -> anyhow::Result<Pars
     })
 }
 
-/// Reads from the submitter's disk, under the deployment directory.
-pub(crate) struct DiskProvider {
-    pub(crate) deployment_dir: PathBuf,
-}
-
-#[async_trait::async_trait]
-impl FileProvider for DiskProvider {
-    async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>> {
-        let full = self.deployment_dir.join(path);
-        let bytes = tokio::fs::read(&full)
-            .await
-            .with_context(|| format!("cannot read file {full:?}"))?;
-        verify_content_digest(&bytes, digest, path)?;
-        Ok(bytes)
-    }
-
-    async fn parse_js_graph(
-        &self,
-        entry_path: &str,
-        _known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>> {
-        let graph =
-            crate::javascript::graph::collect_graph(&self.deployment_dir, entry_path).await?;
-        Ok(graph.files.into_iter().collect())
-    }
-
-    async fn parse_wit_files(
-        &self,
-        root: &str,
-        _known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<ParsedWitFiles> {
-        parse_wit_dir(&self.deployment_dir, root).await
-    }
-}
-
-/// Reads blobs from the content-addressed store by digest.
-///
-/// A digest is required; later manifest work makes digests mandatory on every
-/// relative ref before this provider is used for resolution.
-pub(crate) struct CasFileProvider {
-    pub(crate) cas: Arc<dyn Cas>,
-}
-
-/// Reads JS module sources from the CAS, resolving each deployment-relative path
-/// against the manifest's declared `component_files`. An import with no declared
-/// digest is rejected: it was never uploaded, so the graph is open.
-struct CasModuleReader<'a> {
-    cas: &'a Arc<dyn Cas>,
-    known_files: &'a BTreeMap<String, ContentDigest>,
-}
-
-#[async_trait::async_trait]
-impl crate::javascript::graph::ModuleSourceReader for CasModuleReader<'_> {
-    async fn read_source(&self, dep_path: &str) -> anyhow::Result<String> {
-        let digest = self.known_files.get(dep_path).with_context(|| {
-            format!(
-                "JS module `{dep_path}` is imported but not part of the deployment package \
-                 (no matching `component_files` entry)"
-            )
-        })?;
-        let bytes =
-            self.cas.read_blob(digest).await?.with_context(|| {
-                format!("blob {digest} for JS module `{dep_path}` not in the CAS")
-            })?;
-        String::from_utf8(bytes)
-            .with_context(|| format!("JS module `{dep_path}` is not valid UTF-8"))
-    }
-}
-
-#[async_trait::async_trait]
-impl FileProvider for CasFileProvider {
-    async fn read(&self, path: &str, digest: Option<&ContentDigest>) -> anyhow::Result<Vec<u8>> {
-        let digest = digest.with_context(|| {
-            format!("CAS-backed resolution requires a content digest for `{path}`")
-        })?;
-        self.cas
-            .read_blob(digest)
-            .await?
-            .with_context(|| format!("blob {digest} for `{path}` not present in the CAS"))
-    }
-
-    async fn parse_js_graph(
-        &self,
-        entry_path: &str,
-        known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<Vec<(String, String)>> {
-        let reader = CasModuleReader {
-            cas: &self.cas,
-            known_files,
-        };
-        let graph = crate::javascript::graph::collect_graph_with(&reader, entry_path).await?;
-        Ok(graph.files.into_iter().collect())
-    }
-
-    async fn parse_wit_files(
-        &self,
-        root: &str,
-        known_files: &BTreeMap<String, ContentDigest>,
-    ) -> anyhow::Result<ParsedWitFiles> {
-        let root = crate::config::toml::sanitize_deployment_relative_path(root)?;
-        let prefix = format!("{root}/");
-        // Materialize every declared blob under `root` into a temp dir, then let
-        // `wit-parser` decide the file set. Trusting the declared prefix instead would
-        // let a broken client smuggle garbage or unused `.wit` files past submit.
-        let declared: Vec<(String, &ContentDigest)> = known_files
-            .iter()
-            .filter(|(path, _)| path.starts_with(&prefix))
-            .map(|(path, digest)| (path.clone(), digest))
-            .collect();
-        ensure!(
-            !declared.is_empty(),
-            "CAS-backed resolution has no declared WIT files for `{root}`"
-        );
-        let temp_dir = tempfile::tempdir().context("cannot create temp dir to parse WIT")?;
-        for (path, digest) in &declared {
-            let path = crate::config::toml::sanitize_deployment_relative_path(path)?;
-            ensure!(
-                Path::new(&path).extension().and_then(|ext| ext.to_str()) == Some("wit"),
-                "declared WIT source is not a .wit file: `{path}`"
-            );
-            let full = temp_dir.path().join(&path);
-            if let Some(parent) = full.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .with_context(|| format!("cannot stage WIT file `{path}`"))?;
-            }
-            let bytes = self.read(&path, Some(digest)).await?;
-            tokio::fs::write(&full, &bytes)
-                .await
-                .with_context(|| format!("cannot stage WIT file `{path}`"))?;
-        }
-
-        let parsed = parse_wit_dir(temp_dir.path(), &root).await?;
-
-        // Reject stray declarations: a declared `.wit` file `wit-parser` did not select is
-        // dead weight the deployment -> digest mapping would pin, so refuse it here.
-        let selected: std::collections::BTreeSet<&str> =
-            parsed.files.iter().map(|(path, _)| path.as_str()).collect();
-        let stray: Vec<&str> = declared
-            .iter()
-            .map(|(path, _)| path.as_str())
-            .filter(|path| !selected.contains(path))
-            .collect();
-        ensure!(
-            stray.is_empty(),
-            "WIT directory `{root}` declares {stray:?} that `wit-parser` does not select"
-        );
-        Ok(parsed)
-    }
-}
-
 fn path_to_deployment_string(path: &Path) -> anyhow::Result<String> {
     let mut parts = Vec::new();
     for component in path.components() {
@@ -300,49 +226,21 @@ pub(crate) fn verify_content_digest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concepts::cas::CasError;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use concepts::cas::InMemoryCas;
 
-    fn digest_of(bytes: &[u8]) -> ContentDigest {
-        ContentDigest(Digest(Sha256::digest(bytes).into()))
-    }
-
-    #[derive(Default)]
-    struct MemCas {
-        blobs: Mutex<HashMap<ContentDigest, Vec<u8>>>,
-    }
-    impl MemCas {
-        fn insert(&self, bytes: &[u8]) -> ContentDigest {
-            let digest = digest_of(bytes);
-            self.blobs
-                .lock()
-                .unwrap()
-                .insert(digest.clone(), bytes.to_vec());
-            digest
-        }
-    }
-    #[async_trait::async_trait]
-    impl Cas for MemCas {
-        async fn read_blob(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, CasError> {
-            Ok(self.blobs.lock().unwrap().get(digest).cloned())
-        }
-        async fn write_blob(&self, content: &[u8]) -> Result<ContentDigest, CasError> {
-            Ok(self.insert(content))
-        }
-        async fn contains_blob(&self, digest: &ContentDigest) -> Result<bool, CasError> {
-            Ok(self.blobs.lock().unwrap().contains_key(digest))
-        }
+    async fn insert(cas: &InMemoryCas, bytes: &[u8]) -> ContentDigest {
+        cas.write_blob(bytes).await.unwrap()
     }
 
     #[tokio::test]
     async fn cas_parse_wit_files_parses_a_valid_package() {
-        let cas = Arc::new(MemCas::default());
+        let cas = InMemoryCas::default();
         let src = "package any:any;\n\nworld any {}\n";
-        let digest = cas.insert(src.as_bytes());
-        let provider = CasFileProvider { cas };
+        let digest = insert(&cas, src.as_bytes()).await;
         let known = BTreeMap::from([("a/wit/impl.wit".to_string(), digest)]);
-        let parsed = provider.parse_wit_files("a/wit", &known).await.unwrap();
+        let parsed = parse_wit_files_from_cas(&cas, "a/wit", &known)
+            .await
+            .unwrap();
         assert_eq!(
             parsed.files,
             vec![("a/wit/impl.wit".to_string(), src.to_string())]
@@ -352,12 +250,10 @@ mod tests {
     #[tokio::test]
     async fn cas_parse_wit_files_rejects_malformed_wit() {
         // Before parsing on the CAS path, a client could push arbitrary bytes as `.wit`.
-        let cas = Arc::new(MemCas::default());
-        let digest = cas.insert(b"this is not valid wit @@@");
-        let provider = CasFileProvider { cas };
+        let cas = InMemoryCas::default();
+        let digest = insert(&cas, b"this is not valid wit @@@").await;
         let known = BTreeMap::from([("a/wit/impl.wit".to_string(), digest)]);
-        let err = provider
-            .parse_wit_files("a/wit", &known)
+        let err = parse_wit_files_from_cas(&cas, "a/wit", &known)
             .await
             .unwrap_err()
             .to_string();
@@ -371,17 +267,15 @@ mod tests {
     async fn cas_parse_wit_files_rejects_stray_declared_wit() {
         // A declared `.wit` `wit-parser` does not select (here, one buried in a non-`deps`
         // subdirectory) must be refused rather than silently persisted.
-        let cas = Arc::new(MemCas::default());
+        let cas = InMemoryCas::default();
         let impl_src = "package any:any;\n\nworld any {}\n";
-        let impl_digest = cas.insert(impl_src.as_bytes());
-        let stray_digest = cas.insert(b"package other:other;\n");
-        let provider = CasFileProvider { cas };
+        let impl_digest = insert(&cas, impl_src.as_bytes()).await;
+        let stray_digest = insert(&cas, b"package other:other;\n").await;
         let known = BTreeMap::from([
             ("a/wit/impl.wit".to_string(), impl_digest),
             ("a/wit/notes/scratch.wit".to_string(), stray_digest),
         ]);
-        let err = provider
-            .parse_wit_files("a/wit", &known)
+        let err = parse_wit_files_from_cas(&cas, "a/wit", &known)
             .await
             .unwrap_err()
             .to_string();
