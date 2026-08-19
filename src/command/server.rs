@@ -2751,9 +2751,13 @@ pub(crate) async fn submit_deployment(
     let compiled_linked = match validate_and_persist.await {
         Ok(compiled_linked) => compiled_linked,
         Err(err) => {
-            // Best-effort: reclaim the blobs this submit wrote. Submits are serialized by the
-            // submit lane, so the only unreferenced blobs are this rejected submit's. Keep the
-            // original rejection reason regardless of the sweep's outcome.
+            // Best-effort: reclaim the blobs this submit wrote. This is a global sweep of every
+            // unreferenced blob, safe only because the submit lane serializes submits: with one
+            // submit in flight, the only unreferenced blobs are this rejected submit's. If
+            // `DEFAULT_SUBMIT_CONCURRENCY` is ever raised, a concurrent submit's not-yet-referenced
+            // blobs would be swept too; delete exactly this submit's `to_write` digests instead.
+            // Keep the original rejection reason regardless of the sweep's outcome.
+            const { assert!(DEFAULT_SUBMIT_CONCURRENCY == 1) };
             if let Err(gc_err) = conn.gc_orphan_files().await {
                 warn!(%deployment_id, "orphan blob GC after a rejected submit failed: {gc_err}");
             }
