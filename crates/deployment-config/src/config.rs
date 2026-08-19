@@ -498,6 +498,7 @@ pub enum ScriptLocationResolved {
     },
     /// OCI-sourced script. No `oci://` prefix.
     Oci {
+        // String, not `oci_client::Reference`: this crate compiles to wasm32 for the webui and cannot depend on `oci_client`. Always built from a valid reference; callers re-parse it.
         image: String,
     },
 }
