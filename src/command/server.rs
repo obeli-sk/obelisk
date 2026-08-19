@@ -1855,19 +1855,7 @@ pub(crate) async fn run_internal(
     )
     .instrument(span)
     .await?;
-    let mut server_init = server_init;
-    let deployment_switch_manager = DeploymentSwitchManagerHandle::new(
-        server_init.server_verified.clone(),
-        server_init.prepared_dirs.clone(),
-        server_init.db_pool.clone(),
-        termination_watcher.clone(),
-        server_init.deployment_ctx.clone(),
-        server_init.webhook_registry.clone(),
-        cancel_registry.clone(),
-        server_init.log_forwarder_sender.clone(),
-        DEFAULT_SUBMIT_CONCURRENCY,
-    );
-    server_init.deployment_switch_manager = Some(deployment_switch_manager.clone());
+    let deployment_switch_manager = server_init.deployment_switch_manager.clone();
     switch_deployment(
         deployment_switch_manager.clone(),
         active_deployment_id,
@@ -2603,14 +2591,10 @@ pub(crate) async fn submit_deployment(
     supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
-    deployment_switch_manager: Option<DeploymentSwitchManagerHandle>,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
-    let _submit_permit = if let Some(manager) = &deployment_switch_manager {
-        Some(manager.try_acquire_submit_permit()?)
-    } else {
-        None
-    };
+    let _submit_permit = deployment_switch_manager.try_acquire_submit_permit()?;
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
     // every referenced file because the manifest embeds each file's content digest. It is
     // used only for idempotency, not returned (the client already has the manifest).
@@ -2785,10 +2769,8 @@ pub(crate) async fn submit_deployment(
     // Only cache strict-verified artifacts. A hot redeploy is always strict, so an
     // artifact compiled while tolerating unavailable runtime config must not be
     // reused to satisfy a later strict switch; a strict artifact satisfies any consumer.
-    if let Some(manager) = deployment_switch_manager
-        && runtime_config_availability == RuntimeConfigAvailability::Strict
-    {
-        manager
+    if runtime_config_availability == RuntimeConfigAvailability::Strict {
+        deployment_switch_manager
             .store_latest_prepared(PreparedDeploymentSwitch {
                 deployment_id,
                 digest,
@@ -3272,6 +3254,18 @@ async fn spawn_tasks_and_threads(
             cancel_registry,
             &log_forwarder_sender,
         )));
+    let webhook_registry = Arc::new(webhook_registry);
+    let deployment_switch_manager = DeploymentSwitchManagerHandle::new(
+        server_verified.clone(),
+        prepared_dirs.clone(),
+        db_pool.clone(),
+        termination_watcher.clone(),
+        deployment_ctx.clone(),
+        webhook_registry.clone(),
+        cancel_registry.clone(),
+        log_forwarder_sender.clone(),
+        DEFAULT_SUBMIT_CONCURRENCY,
+    );
     let server_init = ServerInit {
         server_verified,
         deployment_ctx,
@@ -3287,9 +3281,9 @@ async fn spawn_tasks_and_threads(
         log_db_forarder,
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
-        webhook_registry: Arc::new(webhook_registry),
+        webhook_registry,
         prepared_dirs,
-        deployment_switch_manager: None,
+        deployment_switch_manager,
     };
     Ok(server_init)
 }
@@ -3309,7 +3303,7 @@ struct ServerInit {
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
     prepared_dirs: PreparedDirs,
-    deployment_switch_manager: Option<DeploymentSwitchManagerHandle>,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
 }
 impl ServerInit {
     async fn close(self) {
@@ -3333,9 +3327,7 @@ impl ServerInit {
             deployment_switch_manager,
         } = self;
 
-        if let Some(deployment_switch_manager) = deployment_switch_manager {
-            deployment_switch_manager.close().await;
-        }
+        deployment_switch_manager.close().await;
 
         debug!("Closing executors");
         let executors = {
