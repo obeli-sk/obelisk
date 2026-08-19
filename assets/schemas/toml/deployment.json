@@ -703,7 +703,7 @@
       ]
     },
     "JsLocationToml": {
-      "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`ScriptLocationResolved`] before transmission and hash computation.",
+      "description": "Location of a JavaScript source file.\nSupports local file paths and OCI registry references (`oci://...`).\nOn-disk format only; replaced by [`ScriptLocationResolved`] before hash computation.",
       "type": "string"
     },
     "ActivityExecComponentConfigToml": {
@@ -962,7 +962,7 @@
       "type": "object",
       "properties": {
         "sources": {
-          "description": "Maps a frame-symbol key to a backtrace source file path. On-disk format only;\nresolved to `ComponentBacktraceConfigResolved` before transmission and hash\ncomputation. A relative path is deployment-dir-relative (a leading\n`${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.",
+          "description": "Maps a frame-symbol key to a backtrace source file path. On-disk format only;\nresolved to `ComponentBacktraceConfigResolved` before hash\ncomputation. A relative path is deployment-dir-relative (a leading\n`${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.",
           "type": "object",
           "additionalProperties": {
             "type": "string"
