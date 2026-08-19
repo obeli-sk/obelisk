@@ -4989,7 +4989,10 @@ async fn deployment_insert_and_get(database: Database) {
         created_by: Some("test".to_string()),
         files: Vec::new(),
     };
-    api_conn.insert_deployment(record).await.unwrap();
+    api_conn
+        .insert_deployment_with_components(record, Vec::new(), Vec::new(), Vec::new())
+        .await
+        .unwrap();
 
     let fetched = api_conn
         .get_deployment(deployment_id)
@@ -5029,18 +5032,23 @@ async fn deployment_files_roundtrip_and_missing_digests(database: Database) {
         size: 0,
     };
     api_conn
-        .insert_deployment(DeploymentRecord {
-            deployment_id,
-            description: None,
-            digest: DeploymentRecord::compute_digest("{}"),
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            deployment_toml: "{}".to_string(),
-            obelisk_version: "0.0.0-test".to_string(),
-            created_by: None,
-            files: vec![file.clone()],
-        })
+        .insert_deployment_with_components(
+            DeploymentRecord {
+                deployment_id,
+                description: None,
+                digest: DeploymentRecord::compute_digest("{}"),
+                created_at: now,
+                last_active_at: None,
+                status: DeploymentStatus::Inactive,
+                deployment_toml: "{}".to_string(),
+                obelisk_version: "0.0.0-test".to_string(),
+                created_by: None,
+                files: vec![file.clone()],
+            },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
         .await
         .unwrap();
 
@@ -5112,18 +5120,23 @@ async fn deployment_activate(database: Database) {
     let deployment_id = concepts::prefixed_ulid::DeploymentId::generate();
     let now = sim_clock.now();
     api_conn
-        .insert_deployment(DeploymentRecord {
-            deployment_id,
-            description: None,
-            digest: DeploymentRecord::compute_digest("{}"),
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            deployment_toml: "{}".to_string(),
-            obelisk_version: "0.0.0-test".to_string(),
-            created_by: None,
-            files: Vec::new(),
-        })
+        .insert_deployment_with_components(
+            DeploymentRecord {
+                deployment_id,
+                description: None,
+                digest: DeploymentRecord::compute_digest("{}"),
+                created_at: now,
+                last_active_at: None,
+                status: DeploymentStatus::Inactive,
+                deployment_toml: "{}".to_string(),
+                obelisk_version: "0.0.0-test".to_string(),
+                created_by: None,
+                files: Vec::new(),
+            },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
         .await
         .unwrap();
 
@@ -5154,18 +5167,23 @@ async fn deployment_only_one_active_allowed(database: Database) {
     let now = sim_clock.now();
     let id1 = concepts::prefixed_ulid::DeploymentId::generate();
     api_conn
-        .insert_deployment(DeploymentRecord {
-            deployment_id: id1,
-            description: None,
-            digest: DeploymentRecord::compute_digest("{}"),
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            deployment_toml: "{}".to_string(),
-            obelisk_version: "0.0.0-test".to_string(),
-            created_by: None,
-            files: Vec::new(),
-        })
+        .insert_deployment_with_components(
+            DeploymentRecord {
+                deployment_id: id1,
+                description: None,
+                digest: DeploymentRecord::compute_digest("{}"),
+                created_at: now,
+                last_active_at: None,
+                status: DeploymentStatus::Inactive,
+                deployment_toml: "{}".to_string(),
+                obelisk_version: "0.0.0-test".to_string(),
+                created_by: None,
+                files: Vec::new(),
+            },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
         .await
         .unwrap();
     api_conn.activate_deployment(id1, now).await.unwrap();
@@ -5173,18 +5191,23 @@ async fn deployment_only_one_active_allowed(database: Database) {
     // Activating a second deployment must deactivate the first.
     let id2 = concepts::prefixed_ulid::DeploymentId::generate();
     api_conn
-        .insert_deployment(DeploymentRecord {
-            deployment_id: id2,
-            description: None,
-            digest: DeploymentRecord::compute_digest("{}"),
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            deployment_toml: "{}".to_string(),
-            obelisk_version: "0.0.0-test".to_string(),
-            created_by: None,
-            files: Vec::new(),
-        })
+        .insert_deployment_with_components(
+            DeploymentRecord {
+                deployment_id: id2,
+                description: None,
+                digest: DeploymentRecord::compute_digest("{}"),
+                created_at: now,
+                last_active_at: None,
+                status: DeploymentStatus::Inactive,
+                deployment_toml: "{}".to_string(),
+                obelisk_version: "0.0.0-test".to_string(),
+                created_by: None,
+                files: Vec::new(),
+            },
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
         .await
         .unwrap();
     api_conn.activate_deployment(id2, now).await.unwrap();
@@ -5215,18 +5238,23 @@ async fn deployment_enqueue_active_clears_pending(database: Database) {
     let pending_id = concepts::prefixed_ulid::DeploymentId::generate();
     for id in [active_id, pending_id] {
         api_conn
-            .insert_deployment(DeploymentRecord {
-                deployment_id: id,
-                description: None,
-                digest: DeploymentRecord::compute_digest("{}"),
-                created_at: now,
-                last_active_at: None,
-                status: DeploymentStatus::Inactive,
-                deployment_toml: "{}".to_string(),
-                obelisk_version: "0.0.0-test".to_string(),
-                created_by: None,
-                files: Vec::new(),
-            })
+            .insert_deployment_with_components(
+                DeploymentRecord {
+                    deployment_id: id,
+                    description: None,
+                    digest: DeploymentRecord::compute_digest("{}"),
+                    created_at: now,
+                    last_active_at: None,
+                    status: DeploymentStatus::Inactive,
+                    deployment_toml: "{}".to_string(),
+                    obelisk_version: "0.0.0-test".to_string(),
+                    created_by: None,
+                    files: Vec::new(),
+                },
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
             .await
             .unwrap();
     }
@@ -5283,18 +5311,23 @@ async fn deployment_list(database: Database) {
     let id2 = concepts::prefixed_ulid::DeploymentId::generate();
     for id in [id1, id2] {
         api_conn
-            .insert_deployment(DeploymentRecord {
-                deployment_id: id,
-                description: None,
-                digest: DeploymentRecord::compute_digest("{}"),
-                created_at: now,
-                last_active_at: None,
-                status: DeploymentStatus::Inactive,
-                deployment_toml: "{}".to_string(),
-                obelisk_version: "0.0.0-test".to_string(),
-                created_by: None,
-                files: Vec::new(),
-            })
+            .insert_deployment_with_components(
+                DeploymentRecord {
+                    deployment_id: id,
+                    description: None,
+                    digest: DeploymentRecord::compute_digest("{}"),
+                    created_at: now,
+                    last_active_at: None,
+                    status: DeploymentStatus::Inactive,
+                    deployment_toml: "{}".to_string(),
+                    obelisk_version: "0.0.0-test".to_string(),
+                    created_by: None,
+                    files: Vec::new(),
+                },
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
             .await
             .unwrap();
     }

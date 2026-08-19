@@ -3230,6 +3230,8 @@ dependencies = [
  "const_format",
  "derive_more",
  "hashbrown 0.16.1",
+ "oci-client",
+ "reqwest",
  "rusqlite",
  "schemars 1.2.1",
  "serde",
@@ -3238,6 +3240,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio-postgres",
  "tracing",
+ "wit-parser 0.252.0",
 ]
 
 [[package]]

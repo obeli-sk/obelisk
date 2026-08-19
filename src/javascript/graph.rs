@@ -13,6 +13,31 @@ use boa_engine::Source;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 
+/// Reads a JS module's source by its deployment-relative path (forward slashes).
+///
+/// Lets the graph walker be driven from either the submitter's disk
+/// ([`DiskModuleReader`]) or the content-addressed store (a CAS-backed reader),
+/// so the same closure check runs client-side and server-side.
+#[async_trait::async_trait]
+pub(crate) trait ModuleSourceReader: Send + Sync {
+    async fn read_source(&self, dep_path: &str) -> anyhow::Result<String>;
+}
+
+/// Reads module sources from the submitter's disk, under `deployment_dir`.
+struct DiskModuleReader<'a> {
+    deployment_dir: &'a Path,
+}
+
+#[async_trait::async_trait]
+impl ModuleSourceReader for DiskModuleReader<'_> {
+    async fn read_source(&self, dep_path: &str) -> anyhow::Result<String> {
+        let path = self.deployment_dir.join(dep_path);
+        tokio::fs::read_to_string(&path)
+            .await
+            .with_context(|| format!("cannot read JS file {path:?}"))
+    }
+}
+
 /// A closed multi-file JS module graph.
 ///
 /// `entry_path` is one of the keys in `files`. Every relative `import` in the
@@ -38,6 +63,15 @@ pub(crate) async fn collect_graph(
     deployment_dir: &Path,
     entry_rel: &str,
 ) -> anyhow::Result<JsGraph> {
+    collect_graph_with(&DiskModuleReader { deployment_dir }, entry_rel).await
+}
+
+/// Walk the module graph starting from `entry_rel`, reading each reachable file
+/// through `reader`. See [`collect_graph`]; this is the provider-agnostic core.
+pub(crate) async fn collect_graph_with(
+    reader: &dyn ModuleSourceReader,
+    entry_rel: &str,
+) -> anyhow::Result<JsGraph> {
     let entry_key = sanitize_deployment_relative_path(entry_rel)?;
     reject_typescript(&entry_key)?;
 
@@ -50,13 +84,13 @@ pub(crate) async fn collect_graph(
             // Cycle: an earlier walk path already pulled this file in.
             continue;
         }
-        let path = deployment_dir.join(&key);
-        let source = tokio::fs::read_to_string(&path)
+        let source = reader
+            .read_source(&key)
             .await
-            .with_context(|| format!("cannot read JS file {path:?}"))?;
+            .with_context(|| format!("cannot read JS module `{key}`"))?;
 
         let specifiers = extract_module_specifiers(&source)
-            .with_context(|| format!("parse error in {path:?}"))?;
+            .with_context(|| format!("parse error in `{key}`"))?;
 
         let importer_dir = Path::new(&key).parent().map(Path::to_path_buf);
 

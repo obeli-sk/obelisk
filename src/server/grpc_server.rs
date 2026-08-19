@@ -1865,7 +1865,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             supplied_files,
             self.db_pool.clone(),
             &mut termination_watcher,
-            Some(self.deployment_switch_manager.clone()),
+            self.deployment_switch_manager.clone(),
         ))
         .await;
         let deployment_id = match result {

@@ -2429,6 +2429,401 @@ ffqn = "testing:integration/deferred.run"
     server.shutdown().await;
 }
 
+/// A deployment whose JS imports an interface that no component exports fails to
+/// compile+link on the server. This is a structural error that no runtime config can
+/// resolve, so it must be rejected regardless of `RuntimeConfigCheck` and persist
+/// nothing. The manifest is submitted verbatim over gRPC (inline content, no attached
+/// files) so verification does not lean on any client-side import checking.
+#[tokio::test]
+async fn submit_broken_js_import_fails_regardless_of_runtime_config_check_grpc() {
+    let server = TestServer::start(test_addr!(92)).await;
+
+    // Inline webhook importing an interface no component exports. Inline content needs
+    // no attached file blobs, so the whole package travels in the manifest.
+    let deployment_toml = r#"
+[[webhook_endpoint_js]]
+name = "broken_import"
+content = """
+import { add } from 'testing:integration/nonexistent';
+export default function handle(request) {
+    return Response.json({ result: add(5, 7) });
+}
+"""
+routes = [{ methods = ["GET"], route = "/broken-import" }]
+"#;
+
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+
+    let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
+        let mut client = grpc_client.clone();
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: deployment_toml.to_string(),
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: check as i32,
+                    description: None,
+                    deployment_id: Some(id),
+                    files: Vec::new(),
+                })
+                .await
+        }
+    };
+
+    // Both a strict and an allow-unavailable submit must be rejected: the missing import
+    // is a link failure, not a missing env var / secret / exec allowlist entry, so no
+    // runtime config tolerance can make it verify.
+    for check in [
+        RuntimeConfigCheck::Strict,
+        RuntimeConfigCheck::AllowUnavailable,
+    ] {
+        let deployment_id = DeploymentId::generate();
+        let grpc_id = GrpcDeploymentId {
+            id: deployment_id.to_string(),
+        };
+        let status = submit(check, grpc_id.clone())
+            .await
+            .expect_err(&format!("{check:?} submit of a broken import must fail"));
+        assert!(
+            status.message().contains("testing:integration/nonexistent"),
+            "{check:?} error must name the unresolved import, got: {}",
+            status.message()
+        );
+        grpc_client
+            .clone()
+            .get_deployment(GetDeploymentRequest {
+                deployment_id: Some(grpc_id),
+                include_generated_metadata: None,
+            })
+            .await
+            .expect_err("a broken deployment must not be persisted");
+    }
+
+    server.shutdown().await;
+}
+
+/// A webhook whose entry JS imports a relative module that is not part of the submitted
+/// package must be rejected server-side. This mirrors a broken client (e.g. the
+/// workflow-agent) that declares/uploads only the entry file: the manifest carries the
+/// entry's `content_digest` but no `component_files`, so the server must walk the import
+/// graph from the CAS and refuse the open graph rather than persisting a webhook that
+/// only traps at request time. Like the missing-interface case, no runtime config can
+/// resolve it, so both `Strict` and `ALLOW_UNAVAILABLE` must fail and persist nothing.
+#[tokio::test]
+async fn submit_webhook_missing_js_import_file_is_rejected_grpc() {
+    let server = TestServer::start(test_addr!(93)).await;
+
+    // A valid two-file graph on disk, so `prepare` computes the entry digest for us.
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(dir.path().join("webhook/lib"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/ui-api.js"),
+        "import { util } from './lib/util.js';\n\
+         export default function handle(request) { return new Response(util()); }\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/lib/util.js"),
+        "export function util() { return 'ok'; }\n",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[webhook_endpoint_js]]
+name = "broken_import"
+location = "webhook/ui-api.js"
+routes = [{ methods = ["GET"], route = "/" }]
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+
+    // Simulate the broken client: drop `component_files` so only the entry is declared,
+    // and attach only the entry blob. The manifest still carries the entry's content_digest.
+    let mut doc = prepared.deployment_toml.parse::<DocumentMut>().unwrap();
+    if let Some(tables) = doc
+        .get_mut("webhook_endpoint_js")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+    {
+        for table in tables.iter_mut() {
+            table.remove("component_files");
+        }
+    }
+    let broken_toml = doc.to_string();
+    let entry = prepared
+        .files
+        .iter()
+        .find(|file| file.path.ends_with("ui-api.js"))
+        .expect("prepared package contains the entry file");
+
+    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+
+    let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
+        let mut client = grpc_client.clone();
+        let toml = broken_toml.clone();
+        let files = vec![grpc::grpc_gen::DeploymentFileContent {
+            path: entry.path.clone(),
+            digest: Some(entry.digest.to_string()),
+            content: entry.bytes.clone(),
+        }];
+        async move {
+            client
+                .submit_deployment(SubmitDeploymentRequest {
+                    deployment_toml: toml,
+                    created_by: Some("test".to_string()),
+                    runtime_config_check: check as i32,
+                    description: None,
+                    deployment_id: Some(id),
+                    files,
+                })
+                .await
+        }
+    };
+
+    for check in [
+        RuntimeConfigCheck::Strict,
+        RuntimeConfigCheck::AllowUnavailable,
+    ] {
+        let deployment_id = DeploymentId::generate();
+        let grpc_id = GrpcDeploymentId {
+            id: deployment_id.to_string(),
+        };
+        let status = submit(check, grpc_id.clone())
+            .await
+            .expect_err(&format!("{check:?} submit of an open JS graph must fail"));
+        assert!(
+            status.message().contains("webhook/lib/util.js"),
+            "{check:?} error must name the missing module, got: {}",
+            status.message()
+        );
+        grpc_client
+            .clone()
+            .get_deployment(GetDeploymentRequest {
+                deployment_id: Some(grpc_id),
+                include_generated_metadata: None,
+            })
+            .await
+            .expect_err("a webhook with an unresolved import must not be persisted");
+    }
+
+    server.shutdown().await;
+}
+
+/// A manifest that declares a `component_files` entry its module graph never imports is
+/// rejected at submit. Otherwise the stray blob is persisted and the deployment -> digest
+/// mapping the orphan GC consults would pin a dead file forever. Built by preparing a
+/// valid graph, then hand-adding an unreferenced module + its blob (a broken client).
+#[tokio::test]
+async fn submit_rejects_stray_declared_component_file_grpc() {
+    let server = TestServer::start(test_addr!(94)).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(dir.path().join("webhook"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/ui-api.js"),
+        "import { util } from './util.js';\n\
+         export default function handle(request) { return new Response(util()); }\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook/util.js"),
+        "export function util() { return 'ok'; }\n",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[webhook_endpoint_js]]
+name = "stray"
+location = "webhook/ui-api.js"
+routes = [{ methods = ["GET"], route = "/" }]
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+
+    // Hand-add an extra module nothing imports, plus its blob: a broken client declaring
+    // more than the graph needs.
+    let stray_source = "export const unused = 1;\n";
+    let stray_hash: [u8; 32] = <Sha256 as sha2::Digest>::digest(stray_source.as_bytes()).into();
+    let stray_digest =
+        concepts::ContentDigest(concepts::component_id::Digest(stray_hash)).to_string();
+    let mut doc = prepared.deployment_toml.parse::<DocumentMut>().unwrap();
+    let tables = doc
+        .get_mut("webhook_endpoint_js")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .expect("webhook section");
+    for table in tables.iter_mut() {
+        let component_files = table
+            .get_mut("component_files")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .expect("prepare generated component_files for a multi-file component");
+        component_files.insert("webhook/unused.js", toml_edit::value(stray_digest.clone()));
+    }
+    let broken_toml = doc.to_string();
+
+    let mut files: Vec<grpc::grpc_gen::DeploymentFileContent> = prepared
+        .files
+        .iter()
+        .map(|file| grpc::grpc_gen::DeploymentFileContent {
+            path: file.path.clone(),
+            digest: Some(file.digest.to_string()),
+            content: file.bytes.clone(),
+        })
+        .collect();
+    files.push(grpc::grpc_gen::DeploymentFileContent {
+        path: "webhook/unused.js".to_string(),
+        digest: Some(stray_digest),
+        content: stray_source.as_bytes().to_vec(),
+    });
+
+    let deployment_id = DeploymentId::generate();
+    let grpc_id = GrpcDeploymentId {
+        id: deployment_id.to_string(),
+    };
+    let status = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .submit_deployment(SubmitDeploymentRequest {
+            deployment_toml: broken_toml,
+            created_by: Some("test".to_string()),
+            runtime_config_check: RuntimeConfigCheck::Strict as i32,
+            description: None,
+            deployment_id: Some(grpc_id.clone()),
+            files,
+        })
+        .await
+        .expect_err("a stray declared component file must be rejected");
+    assert!(
+        status.message().contains("webhook/unused.js"),
+        "error must name the stray file, got: {}",
+        status.message()
+    );
+
+    DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .get_deployment(GetDeploymentRequest {
+            deployment_id: Some(grpc_id),
+            include_generated_metadata: None,
+        })
+        .await
+        .expect_err("a deployment with a stray declared file must not be persisted");
+
+    server.shutdown().await;
+}
+
+/// Submit writes referenced blobs to the CAS before validating (persist-then-validate). A
+/// submit rejected after that write must reclaim its blobs, or they leak as orphans until a
+/// manual GC. Here a webhook file blob is written, then compile+link fails on a missing
+/// interface; the follow-up GC must find nothing left to delete.
+#[tokio::test]
+async fn rejected_submit_reclaims_orphan_blobs_grpc() {
+    let server = TestServer::start(test_addr!(95)).await;
+
+    // A single-file webhook (its only import is a WIT interface, so no `component_files`)
+    // whose interface no component exports: resolution succeeds and writes the blob, then
+    // compile+link fails.
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        dir.path().join("webhook.js"),
+        "import { nope } from 'testing:integration/nonexistent';\n\
+         export default function handle(request) { return new Response(nope()); }\n",
+    )
+    .await
+    .unwrap();
+    let deployment_toml_path = dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &deployment_toml_path,
+        r#"
+[[webhook_endpoint_js]]
+name = "orphan_probe"
+location = "webhook.js"
+routes = [{ methods = ["GET"], route = "/" }]
+"#,
+    )
+    .await
+    .unwrap();
+    let prepared =
+        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+            .await
+            .unwrap();
+    assert_eq!(prepared.files.len(), 1, "webhook must contribute one blob");
+    let files: Vec<grpc::grpc_gen::DeploymentFileContent> = prepared
+        .files
+        .iter()
+        .map(|file| grpc::grpc_gen::DeploymentFileContent {
+            path: file.path.clone(),
+            digest: Some(file.digest.to_string()),
+            content: file.bytes.clone(),
+        })
+        .collect();
+
+    let mut grpc_client =
+        DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap()
+            .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+            .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+    grpc_client
+        .submit_deployment(SubmitDeploymentRequest {
+            deployment_toml: prepared.deployment_toml.clone(),
+            created_by: Some("test".to_string()),
+            runtime_config_check: RuntimeConfigCheck::Strict as i32,
+            description: None,
+            deployment_id: Some(GrpcDeploymentId {
+                id: DeploymentId::generate().to_string(),
+            }),
+            files,
+        })
+        .await
+        .expect_err("compile+link must reject the missing interface");
+
+    // Fresh server: the only blob that could be orphaned is the one this rejected submit
+    // wrote. The submit's own best-effort sweep must already have reclaimed it.
+    let deleted = grpc_client
+        .gc_orphan_files(grpc::grpc_gen::GcOrphanFilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .deleted_count;
+    assert_eq!(
+        deleted, 0,
+        "a rejected submit must not leak orphan blobs, found {deleted}"
+    );
+
+    server.shutdown().await;
+}
+
 /// Phase 5: `RuntimeConfigCheck` governs whether missing env vars / secrets fail
 /// verification. Submit is strict by default and tolerant under `ALLOW_UNAVAILABLE`; a
 /// hot redeploy is always strict and rejects `ALLOW_UNAVAILABLE` outright.
@@ -2663,9 +3058,10 @@ ffqn = "testing:integration/pkg.run"
     server.shutdown().await;
 }
 
-/// Phase 8: a submit that writes file blobs and then fails verification leaves orphan
-/// blobs in the CAS. `GcOrphanFiles` deletes blobs not referenced by any stored
-/// deployment while keeping those a valid deployment still references.
+/// `GcOrphanFiles` deletes CAS blobs not referenced by any stored deployment while keeping
+/// those a valid deployment still references. A rejected submit now reclaims its own blobs
+/// (see `rejected_submit_reclaims_orphan_blobs_grpc`), so the orphan here is seeded straight
+/// into the CAS to give GC something to reclaim.
 #[tokio::test]
 async fn gc_orphan_files_grpc() {
     let server = TestServer::start(test_addr!(81)).await;
@@ -2676,43 +3072,34 @@ async fn gc_orphan_files_grpc() {
         .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
         .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
-    // Prepare a deployment-owned JS file (digest-enriched) from disk. `section` selects
-    // `activity_js` or `workflow_js` (a JS workflow validates its source at link time, so
-    // a syntax error there fails submit verification).
-    async fn prepare(
-        section: &str,
-        source: &str,
-    ) -> (
-        tempfile::TempDir,
-        crate::config::manifest::PreparedDeploymentManifest,
-    ) {
-        let dir = tempfile::tempdir().unwrap();
-        tokio::fs::write(dir.path().join("a.js"), source)
-            .await
-            .unwrap();
-        let toml_path = dir.path().join("deployment.toml");
-        tokio::fs::write(
-            &toml_path,
-            format!(
-                r#"
-[[{section}]]
+    // A valid deployment: its blob is referenced and must survive GC.
+    let good_dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        good_dir.path().join("a.js"),
+        "export function run() { return 'ok'; }",
+    )
+    .await
+    .unwrap();
+    let toml_path = good_dir.path().join("deployment.toml");
+    tokio::fs::write(
+        &toml_path,
+        r#"
+[[activity_js]]
 name = "a"
 location = "a.js"
 ffqn = "testing:integration/a.run"
-"#
-            ),
-        )
+"#,
+    )
+    .await
+    .unwrap();
+    let good = crate::config::manifest::prepare_deployment_manifest_from_disk(&toml_path)
         .await
         .unwrap();
-        let prepared = crate::config::manifest::prepare_deployment_manifest_from_disk(&toml_path)
-            .await
-            .unwrap();
-        (dir, prepared)
-    }
-
-    let submit_request =
-        |prepared: &crate::config::manifest::PreparedDeploymentManifest| SubmitDeploymentRequest {
-            deployment_toml: prepared.deployment_toml.clone(),
+    let good_digest = good.files[0].digest.to_string();
+    grpc_client
+        .clone()
+        .submit_deployment(SubmitDeploymentRequest {
+            deployment_toml: good.deployment_toml.clone(),
             created_by: Some("test".to_string()),
             runtime_config_check: RuntimeConfigCheck::Strict as i32,
             description: None,
@@ -2721,34 +3108,30 @@ ffqn = "testing:integration/a.run"
             }),
             files: vec![grpc::grpc_gen::DeploymentFileContent {
                 path: "a.js".to_string(),
-                digest: Some(prepared.files[0].digest.to_string()),
-                content: prepared.files[0].bytes.clone(),
+                digest: Some(good.files[0].digest.to_string()),
+                content: good.files[0].bytes.clone(),
             }],
-        };
-
-    // A valid deployment: its blob is referenced and must survive GC.
-    let (_good_dir, good) = prepare("activity_js", "export function run() { return 'ok'; }").await;
-    let good_digest = good.files[0].digest.to_string();
-    grpc_client
-        .clone()
-        .submit_deployment(submit_request(&good))
+        })
         .await
         .expect("valid deployment must persist");
 
-    // An invalid deployment: the blob is written, then verification fails, so no
-    // deployment row references it. The source parses during graph collection, but its
-    // unknown host import fails during workflow linking.
-    let (_bad_dir, bad) = prepare(
-        "workflow_js",
-        "import { missing } from 'testing:integration/activity'; export default () => missing();",
-    )
-    .await;
-    let bad_digest = bad.files[0].digest.to_string();
-    grpc_client
-        .clone()
-        .submit_deployment(submit_request(&bad))
-        .await
-        .expect_err("invalid deployment must fail verification");
+    // Seed an orphan blob directly in the CAS: no deployment references it. A rejected submit
+    // sweeps its own blobs before returning, so a genuine orphan cannot be produced through
+    // the submit path anymore.
+    let orphan_digest = {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let digest = pool
+            .cas_conn()
+            .await
+            .unwrap()
+            .write_blob(b"orphan blob referenced by no deployment")
+            .await
+            .unwrap();
+        pool.close().await;
+        digest.to_string()
+    };
 
     // Before GC: both blobs are present in the CAS.
     grpc_client
@@ -2761,7 +3144,7 @@ ffqn = "testing:integration/a.run"
     grpc_client
         .clone()
         .get_file(GetFileRequest {
-            digest: bad_digest.clone(),
+            digest: orphan_digest.clone(),
         })
         .await
         .expect("orphan blob present before gc");
@@ -2786,7 +3169,9 @@ ffqn = "testing:integration/a.run"
         .expect("referenced blob must survive gc");
     let status = grpc_client
         .clone()
-        .get_file(GetFileRequest { digest: bad_digest })
+        .get_file(GetFileRequest {
+            digest: orphan_digest,
+        })
         .await
         .expect_err("orphan blob must be gone after gc");
     assert_eq!(status.code(), tonic::Code::NotFound);

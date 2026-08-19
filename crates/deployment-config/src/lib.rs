@@ -1,10 +1,9 @@
-//! Shared deployment configuration schema and core naming types.
+//! Deployment configuration schema, transient resolution types, and core naming types.
 //!
-//! This crate holds the data model that is shared between the obelisk server
-//! (TOML parsing, resolution, DB storage) and the webui. It must keep
-//! compiling for `wasm32-unknown-unknown`, so it contains plain data types only;
-//! all behavior that needs the server runtime (OCI fetching, executor
-//! configuration, env var resolution) lives in the obelisk binary.
+//! This crate holds the manifest data model used for TOML parsing and DB storage, plus
+//! transient resolved forms used by the local server and `obelisk deployment verify`.
+//! Behavior that needs the server runtime (OCI fetching, executor configuration, env var
+//! resolution) lives in the obelisk binary.
 
 pub mod component_id;
 pub mod config;

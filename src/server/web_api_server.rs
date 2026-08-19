@@ -3846,7 +3846,7 @@ mod deployment {
             inputs.files,
             state.db_pool.clone(),
             &mut termination_watcher,
-            Some(state.deployment_switch_manager.clone()),
+            state.deployment_switch_manager.clone(),
         ))
         .await;
 

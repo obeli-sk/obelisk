@@ -983,8 +983,8 @@ async fn collect_wit_refs(
             continue;
         };
         let root = sanitize_deployment_relative_path(raw_root)?;
-        let parsed_files = provider
-            .read_wit_files(&root, &std::collections::BTreeMap::new())
+        let parsed = provider
+            .parse_wit_files(&root, &std::collections::BTreeMap::new()) // disk provider does not need a path -> digest map
             .await?;
 
         let mut refs = InlineTable::new();
@@ -1000,7 +1000,7 @@ async fn collect_wit_refs(
                 );
             }
         }
-        for (path, source) in parsed_files {
+        for (path, source) in parsed.files {
             let bytes = source.into_bytes();
             let digest = content_digest(&bytes);
             if let Some(previous) = refs.get(&path).and_then(Value::as_str) {
@@ -1705,8 +1705,9 @@ location = "components/w.wasm"
             .await
             .unwrap();
         assert_eq!(
-            resolved.workflows_wasm[0].backtrace.frame_files_to_sources[".../src/lib.rs"].content,
-            "fn workflow() {}"
+            resolved.workflows_wasm[0].backtrace.frame_files_to_sources[".../src/lib.rs"]
+                .content_digest,
+            content_digest(b"fn workflow() {}")
         );
     }
 

@@ -5102,16 +5102,6 @@ impl DbExternalApi for SqlitePool {
         .await
     }
 
-    #[instrument(skip(self))]
-    async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite> {
-        self.transaction(
-            move |tx| Self::insert_deployment_tx(tx, &record),
-            TxType::MultipleWrites,
-            "insert_deployment",
-        )
-        .await
-    }
-
     async fn insert_deployment_with_components(
         &self,
         record: DeploymentRecord,

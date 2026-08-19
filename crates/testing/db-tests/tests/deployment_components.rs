@@ -49,7 +49,12 @@ async fn insert_deployment(
     now: chrono::DateTime<chrono::Utc>,
 ) {
     api_conn
-        .insert_deployment(mk_deployment_record(deployment_id, now))
+        .insert_deployment_with_components(
+            mk_deployment_record(deployment_id, now),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
         .await
         .unwrap();
 }

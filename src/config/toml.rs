@@ -1,6 +1,6 @@
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
 use crate::args::TomlComponentType;
-use crate::command::server::FrameFilesToSourceContent;
+use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use crate::config::env_var::{
     EnvVarError, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
@@ -1106,7 +1106,7 @@ impl HasOptionalNameAndFfqn for ActivityStubExtInlineConfigToml {
 
 /// Location of a JavaScript source file.
 /// Supports local file paths and OCI registry references (`oci://...`).
-/// On-disk format only; replaced by [`ScriptLocationResolved`] before transmission and hash computation.
+/// On-disk format only; replaced by [`ScriptLocationResolved`] before hash computation.
 #[derive(Debug, Clone, Hash, JsonSchema, SerializeDisplay, DeserializeFromStr)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
@@ -1378,20 +1378,14 @@ fn verify_function_interface(
             })
         }
         FunctionInterfaceResolved::Authored { wit } => {
-            let temporary = tempfile::tempdir().context("cannot create temporary WIT directory")?;
-            for (path, source) in &wit.files {
-                let path = sanitize_deployment_relative_path(path)?;
-                let destination = temporary.path().join(path);
-                let parent = destination.parent().expect("WIT path has a parent");
-                std::fs::create_dir_all(parent)?;
-                std::fs::write(&destination, source)?;
-            }
-            let root = sanitize_deployment_relative_path(&wit.root)?;
-            let component = WasmComponent::new_from_wit_folder_for_ffqn(
-                temporary.path().join(root),
+            let root = wit.root;
+            let component = WasmComponent::new_from_wit_resolve_for_ffqn(
+                wit.resolve,
+                wit.main_pkg_id,
                 component_type,
                 ffqn,
-            )?;
+            )
+            .with_context(|| format!("cannot verify authored WIT directory `{root}`"))?;
             let exports = component.exported_functions(false);
             ensure!(
                 exports.len() == 1 && exports[0].ffqn == *ffqn,
@@ -1777,8 +1771,12 @@ impl ActivityJsConfigVerified {
         &self.activity_config.component_id
     }
 
-    pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-        self.js_files.clone().into_iter().collect()
+    pub(crate) fn as_frame_sources(&self) -> FrameFilesToSource {
+        self.js_files
+            .clone()
+            .into_iter()
+            .map(|(name, content)| (name, FrameSource::Content(content)))
+            .collect()
     }
 }
 
@@ -1923,13 +1921,10 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                 bail!("activity_exec does not support module graphs")
             }
             ScriptLocationResolved::Oci { image } => {
-                let oci_ref = oci_client::Reference::from_str(image)
-                    .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
                 tokio::fs::create_dir_all(&exec_cache_dir).await?;
                 let metadata_dir = wasm_cache_metadata_dir(wasm_cache_dir);
                 let result =
-                    crate::oci::pull_exec_to_cache(&oci_ref, &exec_cache_dir, &metadata_dir)
-                        .await?;
+                    crate::oci::pull_exec_to_cache(image, &exec_cache_dir, &metadata_dir).await?;
                 if let Some(expected) = self.content_digest.as_ref() {
                     let actual = utils::sha256sum::calculate_sha256_file(&result.exec_path).await?;
                     ensure!(
@@ -2120,8 +2115,11 @@ impl WorkflowJsConfigVerified {
         &self.workflow_config.component_id
     }
 
-    pub(crate) fn frame_sources(js_files: BTreeMap<String, String>) -> FrameFilesToSourceContent {
-        js_files.into_iter().collect()
+    pub(crate) fn frame_sources(js_files: BTreeMap<String, String>) -> FrameFilesToSource {
+        js_files
+            .into_iter()
+            .map(|(name, content)| (name, FrameSource::Content(content)))
+            .collect()
     }
 }
 
@@ -2203,7 +2201,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
     /// Maps a frame-symbol key to a backtrace source file path. On-disk format only;
-    /// resolved to `ComponentBacktraceConfigResolved` before transmission and hash
+    /// resolved to `ComponentBacktraceConfigResolved` before hash
     /// computation. A relative path is deployment-dir-relative (a leading
     /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.
     #[serde(rename = "sources")]
@@ -2309,8 +2307,6 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                 files: files.iter().cloned().collect(),
             }),
             ScriptLocationResolved::Oci { image } => {
-                let oci_ref = oci_client::Reference::from_str(image)
-                    .map_err(|e| anyhow::anyhow!("invalid OCI reference in resolved form: {e}"))?;
                 let js_cache_dir = wasm_cache_dir.join("js");
                 tokio::fs::create_dir_all(&js_cache_dir)
                     .await
@@ -2324,7 +2320,7 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                         format!("cannot create metadata directory {metadata_dir:?}")
                     })?;
                 let crate::oci::JsCacheResult { js_path, .. } =
-                    crate::oci::pull_js_to_cache(&oci_ref, &js_cache_dir, &metadata_dir)
+                    crate::oci::pull_js_to_cache(image, &js_cache_dir, &metadata_dir)
                         .await
                         .with_context(|| format!("cannot pull JS from OCI: {image}"))?;
                 if let Some(expected) = expected_digest {
@@ -2356,7 +2352,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
+    pub(crate) frame_files_to_sources: FrameFilesToSource,
     pub(crate) logs_store_min_level: Option<LogLevel>,
     pub(crate) lock_extension_leeway: Duration,
 }
@@ -2548,7 +2544,12 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
                 response_refresh_interval,
             },
         };
-        let frame_files_to_sources = self.backtrace.into_frame_files();
+        let frame_files_to_sources: FrameFilesToSource = self
+            .backtrace
+            .into_frame_files()
+            .into_iter()
+            .map(|(name, digest)| (name, FrameSource::Digest(digest)))
+            .collect();
         let retry_config = ComponentRetryConfig {
             max_retries: None,
             retry_exp_backoff,
@@ -2924,9 +2925,10 @@ async fn resolve_function_interface(
         }
     };
     let root = sanitize_deployment_relative_path(&root)?;
-    let files = provider.read_wit_files(&root, component_files).await?;
+    // TODO: Cache parsed WIT packages by root during deployment resolution.
+    let parsed = provider.parse_wit_files(&root, component_files).await?;
     let prefix = format!("{root}/");
-    for (path, _) in &files {
+    for (path, _) in &parsed.files {
         ensure!(
             path.starts_with(&prefix),
             "parsed WIT file `{path}` is outside configured WIT directory `{root}`"
@@ -2934,7 +2936,11 @@ async fn resolve_function_interface(
         component_files.remove(path);
     }
     Ok(FunctionInterfaceResolved::Authored {
-        wit: WitSourceResolved { root, files },
+        wit: Box::new(WitSourceResolved {
+            root,
+            resolve: parsed.resolve,
+            main_pkg_id: parsed.main_pkg_id,
+        }),
     })
 }
 
@@ -2945,14 +2951,20 @@ async fn resolve_function_interface(
 /// `file_name` and refuses to clobber. Identical re-uses of a name are allowed (they dedupe
 /// to a single file). This surfaces the failure at submit time rather than on a later round-trip.
 fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Result<()> {
+    // Compare by content digest: scripts carry inline content (hashed here), backtrace
+    // sources already carry their CAS digest. Differing digests at the same `file_name` are
+    // the collision `deployment get` cannot round-trip.
+    fn digest_of(content: &str) -> ContentDigest {
+        ContentDigest(Digest(Sha256::digest(content.as_bytes()).into()))
+    }
     fn register<'a>(
-        seen: &mut HashMap<&'a str, &'a str>,
+        seen: &mut HashMap<&'a str, ContentDigest>,
         file_name: &'a str,
-        content: &'a str,
+        digest: &ContentDigest,
     ) -> anyhow::Result<()> {
-        if let Some(existing) = seen.insert(file_name, content) {
+        if let Some(existing) = seen.insert(file_name, digest.clone()) {
             ensure!(
-                existing == content,
+                existing == *digest,
                 "two deployment-owned source files would be written to `{file_name}`; rename \
                  one of the colliding scripts or backtrace sources so the deployment can be \
                  retrieved with `deployment get`"
@@ -2961,7 +2973,7 @@ fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Re
         Ok(())
     }
 
-    let mut seen: HashMap<&str, &str> = HashMap::new();
+    let mut seen: HashMap<&str, ContentDigest> = HashMap::new();
 
     let script_locations = resolved
         .activities_js
@@ -2973,11 +2985,11 @@ fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Re
     for loc in script_locations {
         match loc {
             ScriptLocationResolved::Content { content, file_name } => {
-                register(&mut seen, file_name, content)?;
+                register(&mut seen, file_name, &digest_of(content))?;
             }
             ScriptLocationResolved::Graph { files, .. } => {
                 for (file_name, content) in files {
-                    register(&mut seen, file_name, content)?;
+                    register(&mut seen, file_name, &digest_of(content))?;
                 }
             }
             ScriptLocationResolved::Oci { .. } => {}
@@ -2991,7 +3003,7 @@ fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Re
         .chain(resolved.webhooks_wasm.iter().map(|c| &c.backtrace));
     for bt in backtraces {
         for source in bt.frame_files_to_sources.values() {
-            register(&mut seen, &source.file_name, &source.content)?;
+            register(&mut seen, &source.file_name, &source.content_digest)?;
         }
     }
     Ok(())
@@ -3100,41 +3112,50 @@ async fn resolve_script_toml(
             let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
             let path = sanitize_deployment_relative_path(path)?;
             if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
-                if !component_files.is_empty() {
-                    let entry_digest = component_files.get(&path).with_context(|| {
-                        format!("component_files for `{path}` does not contain the entry path")
-                    })?;
-                    if let Some(expected) = content_digest {
-                        ensure!(
-                            expected == entry_digest,
-                            "content_digest for `{path}` does not match its component_files digest"
-                        );
+                // `component_files` is the manifest's declared closure (`path -> digest`).
+                // Ensure the entry is in it (an entry-only manifest declares none), then walk
+                // the import graph and require it be fully contained: an import missing from
+                // the package is rejected here rather than trapping at runtime.
+                let declared: std::collections::BTreeSet<String> =
+                    component_files.keys().cloned().collect();
+                let mut known = component_files;
+                match (known.get(&path), content_digest) {
+                    (Some(entry_digest), Some(expected)) => ensure!(
+                        expected == entry_digest,
+                        "content_digest for `{path}` does not match its component_files digest"
+                    ),
+                    (None, Some(cd)) => {
+                        known.insert(path.clone(), cd.clone());
                     }
-                    let mut files = Vec::with_capacity(component_files.len());
-                    for (module_path, digest) in component_files {
-                        let module_path = sanitize_deployment_relative_path(&module_path)?;
-                        let bytes = provider.read(&module_path, Some(&digest)).await?;
-                        let source = String::from_utf8(bytes).with_context(|| {
-                            format!("script file {module_path:?} is not valid UTF-8")
-                        })?;
-                        files.push((module_path, source));
-                    }
+                    _ => {}
+                }
+                let files = provider.parse_js_graph(&path, &known).await?;
+                let entry_source = files
+                    .iter()
+                    .find_map(|(module_path, source)| (module_path == &path).then_some(source))
+                    .context("parsed JS graph does not contain its entry")?;
+                verify_content_digest(entry_source.as_bytes(), content_digest, &path)?;
+                // Reject stray declared files: every `component_files` entry must be reachable
+                // from the entry's imports, so the stored file set is exactly what runs and the
+                // deployment -> digest mapping the orphan GC relies on carries no dead blobs.
+                let reached: std::collections::BTreeSet<&str> = files
+                    .iter()
+                    .map(|(module_path, _)| module_path.as_str())
+                    .collect();
+                let stray: Vec<&str> = declared
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|declared_path| !reached.contains(declared_path))
+                    .collect();
+                ensure!(
+                    stray.is_empty(),
+                    "component_files for `{path}` declares {stray:?} that its module graph does not import"
+                );
+                if files.len() > 1 {
                     return Ok(ScriptLocationResolved::Graph {
                         entry_path: path,
                         files,
                     });
-                }
-                if let Some((entry_path, files)) = provider.read_js_graph(&path).await? {
-                    let entry_source = files
-                        .iter()
-                        .find_map(|(module_path, source)| {
-                            (module_path == &entry_path).then_some(source)
-                        })
-                        .context("collected JS graph does not contain its entry")?;
-                    verify_content_digest(entry_source.as_bytes(), content_digest, &entry_path)?;
-                    if files.len() > 1 {
-                        return Ok(ScriptLocationResolved::Graph { entry_path, files });
-                    }
                 }
             }
             let content = provider.read(&path, content_digest).await?;
@@ -3152,9 +3173,7 @@ async fn resolve_script_toml(
                     "OCI scripts cannot set `component_files`"
                 );
             }
-            Ok(ScriptLocationResolved::Oci {
-                image: reference.to_string(),
-            })
+            Ok(ScriptLocationResolved::Oci { image: reference })
         }
         (None, None) | (Some(_), Some(_)) => {
             bail!("exactly one of `location` or `content` must be set for script components")
@@ -3181,25 +3200,34 @@ async fn resolve_backtrace(
         };
         // backcompat: 0.41 processed manifests stored the digest beside each source path.
         // Remove `source.content_digest()` in 0.42 as clients must supply the content_digest in `component_files`.
-        let content_digest = component_files
+        // The bytes are uploaded to the CAS with the deployment files, so a known digest is a
+        // complete reference. An authored manifest with no pinned digest (disk resolution)
+        // falls back to reading the file once to hash it.
+        let content_digest = if let Some(digest) = component_files
             .get(&file_name)
-            .or_else(|| source.content_digest());
-        let content = provider
-            .read(&file_name, content_digest)
-            .await
-            .and_then(|bytes| {
-                String::from_utf8(bytes)
-                    .with_context(|| format!("backtrace source {file_name:?} is not valid UTF-8"))
-            });
-        match content {
-            Ok(content) => {
-                frame_files_to_sources
-                    .insert(key.clone(), BacktraceSourceResolved { content, file_name });
+            .or_else(|| source.content_digest())
+        {
+            digest.clone()
+        } else {
+            // Reached only on the `server run -d` raw-resolution path, where `provider` is a
+            // `DiskProvider`: this is a disk read, never a CAS read (the RPC/DB path always
+            // has a populated `component_files`). Removed once both paths resolve the
+            // processed manifest from the CAS: see meta/designs/cas-first-deployment-pipeline.md.
+            match provider.read(&file_name, None).await {
+                Ok(bytes) => ContentDigest(Digest(Sha256::digest(&bytes).into())),
+                Err(err) => {
+                    warn!("Cannot read backtrace source {file_name:?} - {err:?}");
+                    continue;
+                }
             }
-            Err(err) => {
-                warn!("Cannot read backtrace source {file_name:?} - {err:?}");
-            }
-        }
+        };
+        frame_files_to_sources.insert(
+            key.clone(),
+            BacktraceSourceResolved {
+                content_digest,
+                file_name,
+            },
+        );
     }
     Ok(ComponentBacktraceConfigResolved {
         frame_files_to_sources,
@@ -3485,7 +3513,7 @@ pub(crate) mod webhook {
         resolve_allowed_hosts, resolve_env_vars_plaintext, restricted_secret_registry,
         validate_no_env_collision,
     };
-    use crate::command::server::FrameFilesToSourceContent;
+    use crate::command::server::{FrameFilesToSource, FrameSource};
     use crate::config::secret_registry::SecretRegistry;
     use crate::config::{env_var::EnvVarConfig, toml::LogLevelToml};
     use anyhow::Context;
@@ -3563,7 +3591,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
         pub(crate) env_vars: Arc<[EnvVar]>,
-        pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
+        pub(crate) frame_files_to_sources: FrameFilesToSource,
         pub(crate) backtrace_persist: bool,
         pub(crate) subscription_interruption: Option<Duration>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -3665,8 +3693,12 @@ pub(crate) mod webhook {
     }
 
     impl WebhookJsConfigVerified {
-        pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-            self.js_files.clone().into_iter().collect()
+        pub(crate) fn as_frame_sources(&self) -> FrameFilesToSource {
+            self.js_files
+                .clone()
+                .into_iter()
+                .map(|(name, content)| (name, FrameSource::Content(content)))
+                .collect()
         }
     }
 
@@ -3699,7 +3731,12 @@ pub(crate) mod webhook {
                 expected_content_digest.as_ref(),
                 &common.location.to_string(),
             )?;
-            let frame_files_to_sources = self.backtrace.into_frame_files();
+            let frame_files_to_sources: FrameFilesToSource = self
+                .backtrace
+                .into_frame_files()
+                .into_iter()
+                .map(|(name, digest)| (name, FrameSource::Digest(digest)))
+                .collect();
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
@@ -4797,7 +4834,7 @@ name = "my_stub"
             );
             let oci = exec_config_with_source(
                 ScriptLocationResolved::Oci {
-                    image: "registry.example.com/ns/exec:latest".into(),
+                    image: "registry.example.com/ns/exec:latest".parse().unwrap(),
                 },
                 None,
             );
@@ -5024,7 +5061,7 @@ name = "my_stub"
             assert_matches::assert_matches!(
                 location,
                 ScriptLocationResolved::Oci { image }
-                    if image == "docker.io/library/example:latest"
+                    if image.to_string() == "docker.io/library/example:latest"
             );
         }
 
@@ -5229,7 +5266,10 @@ name = "my_stub"
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
                 .unwrap();
-            assert_eq!(src.content, "SRC");
+            assert_eq!(
+                src.content_digest,
+                ContentDigest(Digest(Sha256::digest(b"SRC").into()))
+            );
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
 
@@ -5257,7 +5297,10 @@ name = "my_stub"
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
                 .unwrap();
-            assert_eq!(src.content, "SRC");
+            assert_eq!(
+                src.content_digest,
+                ContentDigest(Digest(Sha256::digest(b"SRC").into()))
+            );
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
 

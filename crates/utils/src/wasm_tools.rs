@@ -285,11 +285,21 @@ impl WasmComponent {
                 source,
             )
         })?;
+        Self::new_from_wit_resolve_for_ffqn(resolve, main_pkg_id, component_type, ffqn)
+    }
+
+    /// Build an authored WIT component from an already-parsed package.
+    pub fn new_from_wit_resolve_for_ffqn(
+        resolve: Resolve,
+        main_pkg_id: PackageId,
+        component_type: ComponentType,
+        ffqn: &FunctionFqn,
+    ) -> Result<Self, DecodeError> {
         let world_id = resolve
             .select_world(&[main_pkg_id], None)
             .map_err(|source| {
                 DecodeError::new_with_source(
-                    format!("cannot select the default world of {path:?}"),
+                    "cannot select the default world of authored WIT",
                     source,
                 )
             })?;
@@ -314,33 +324,21 @@ impl WasmComponent {
             .retain(|interface| !interface.fns.is_empty());
         if exim_lite.exports.len() != 1 || exim_lite.exports[0].fns.len() != 1 {
             return Err(DecodeError::new_without_source(format!(
-                "WIT directory {path:?} does not export selected function `{ffqn}`"
+                "authored WIT does not export selected function `{ffqn}`"
             )));
         }
         let full_exim = ExIm::decode(full_exim_lite, component_type)?;
         let (authored_resolve, authored_main_pkg_id) =
             crate::wit::rebuild_resolve(&full_exim, resolve.clone(), main_pkg_id).map_err(
-                |err| {
-                    DecodeError::new_with_source(
-                        format!("cannot rebuild full authored resolve from {path:?}"),
-                        err,
-                    )
-                },
+                |err| DecodeError::new_with_source("cannot rebuild full authored resolve", err),
             )?;
         let authored_wit =
             authored_wit_without_extension_world_exports(&authored_resolve, authored_main_pkg_id)
-                .map_err(|err| {
-                DecodeError::new_with_source(
-                    format!("cannot print authored WIT from {path:?}"),
-                    err,
-                )
-            })?;
+                .map_err(|err| DecodeError::new_with_source("cannot print authored WIT", err))?;
 
         let exim = ExIm::decode(exim_lite, component_type)?;
         let (resolve, main_pkg_id) = crate::wit::rebuild_resolve(&exim, resolve, main_pkg_id)
-            .map_err(|err| {
-                DecodeError::new_with_source(format!("cannot rebuild resolve from {path:?}"), err)
-            })?;
+            .map_err(|err| DecodeError::new_with_source("cannot rebuild resolve", err))?;
         Ok(Self {
             exim,
             resolve,

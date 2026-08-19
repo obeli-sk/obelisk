@@ -1355,17 +1355,41 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
         Ok(bytes)
     }
 
-    async fn read_wit_files(
+    async fn parse_js_graph(
         &self,
-        root: &str,
+        entry_path: &str,
         known_files: &std::collections::BTreeMap<String, ContentDigest>,
     ) -> anyhow::Result<Vec<(String, String)>> {
-        let files = self.inner.read_wit_files(root, known_files).await?;
+        let files = self.inner.parse_js_graph(entry_path, known_files).await?;
         let mut seen = self
             .seen
             .lock()
             .expect("RecordingCasProvider mutex poisoned");
         for (path, source) in &files {
+            let digest = known_files
+                .get(path)
+                .expect("CAS JS graph walker only reads files present in known_files");
+            seen.push(concepts::storage::DeploymentFileRecord {
+                path: path.clone(),
+                digest: digest.clone(),
+                size: u64::try_from(source.len()).expect("file length fits u64"),
+            });
+        }
+        drop(seen);
+        Ok(files)
+    }
+
+    async fn parse_wit_files(
+        &self,
+        root: &str,
+        known_files: &std::collections::BTreeMap<String, ContentDigest>,
+    ) -> anyhow::Result<crate::config::file_provider::ParsedWitFiles> {
+        let parsed = self.inner.parse_wit_files(root, known_files).await?;
+        let mut seen = self
+            .seen
+            .lock()
+            .expect("RecordingCasProvider mutex poisoned");
+        for (path, source) in &parsed.files {
             let digest = known_files
                 .get(path)
                 .expect("CAS WIT reader only returns known files");
@@ -1376,7 +1400,7 @@ impl crate::config::file_provider::FileProvider for RecordingCasProvider {
             });
         }
         drop(seen);
-        Ok(files)
+        Ok(parsed)
     }
 }
 
@@ -1426,7 +1450,7 @@ async fn deployment_resolved_from_manifest(
     )
 }
 
-/// A [`DeploymentResolved`] whose every WASM component location is a concrete, runnable
+/// Transient server state whose every WASM component location is a concrete, runnable
 /// reference: an absolute on-disk path or an OCI image.
 ///
 /// `DeploymentResolved` is host-independent: a deployment-owned WASM is a *relative* path
@@ -1831,19 +1855,7 @@ pub(crate) async fn run_internal(
     )
     .instrument(span)
     .await?;
-    let mut server_init = server_init;
-    let deployment_switch_manager = DeploymentSwitchManagerHandle::new(
-        server_init.server_verified.clone(),
-        server_init.prepared_dirs.clone(),
-        server_init.db_pool.clone(),
-        termination_watcher.clone(),
-        server_init.deployment_ctx.clone(),
-        server_init.webhook_registry.clone(),
-        cancel_registry.clone(),
-        server_init.log_forwarder_sender.clone(),
-        DEFAULT_SUBMIT_CONCURRENCY,
-    );
-    server_init.deployment_switch_manager = Some(deployment_switch_manager.clone());
+    let deployment_switch_manager = server_init.deployment_switch_manager.clone();
     switch_deployment(
         deployment_switch_manager.clone(),
         active_deployment_id,
@@ -2130,9 +2142,18 @@ impl ServerVerified {
     }
 }
 
-pub(crate) type FrameFilesToSourceContent = HashMap<
+/// A backtrace source to persist for `GetBacktraceSource`, addressed either by inlined
+/// `Content` (JS/exec sources, materialized into the CAS at startup) or by a CAS `Digest`
+/// (WASM backtrace sources, already uploaded with the deployment files).
+#[derive(Debug)]
+pub(crate) enum FrameSource {
+    Content(String),
+    Digest(ContentDigest),
+}
+
+pub(crate) type FrameFilesToSource = HashMap<
     String, // file name, can contain `.../` prefix
-    String, //content
+    FrameSource,
 >;
 
 pub(crate) type HttpServersToWebhooksAndState = Vec<(
@@ -2147,7 +2168,7 @@ pub(crate) struct ServerCompiledLinked {
     pub(crate) workers_linked: Vec<WorkerLinked>,
     pub(crate) http_servers_to_webhooks_and_state: HttpServersToWebhooksAndState,
     supressed_errors: Option<String>,
-    frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
+    frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
 }
 
 impl ServerCompiledLinked {
@@ -2286,9 +2307,9 @@ pub(crate) async fn upsert_backtrace_sources(
     cas: &dyn concepts::cas::Cas,
     server_compiled_linked: &ServerCompiledLinked,
 ) {
-    // Persist source files so GetBacktraceSource can serve them without filesystem access.
-    // The bytes go to the content-addressed store (shared with deployment files); only the
-    // (component, frame_key) -> digest mapping lives in the DB.
+    // Persist the (component, frame_key) -> digest mapping so GetBacktraceSource can serve
+    // sources without filesystem access. WASM backtrace sources are already CAS blobs (a
+    // digest reference); inlined JS/exec sources are written to the CAS here.
     for (component_digest, frame_files) in &server_compiled_linked.frame_files {
         for (config_key, source) in frame_files {
             // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
@@ -2297,12 +2318,15 @@ pub(crate) async fn upsert_backtrace_sources(
             } else {
                 (config_key.clone(), false)
             };
-            let digest = match cas.write_blob(source.as_bytes()).await {
-                Ok(digest) => digest,
-                Err(err) => {
-                    warn!("Cannot store backtrace source {config_key:?} in CAS: {err:?}");
-                    continue;
-                }
+            let digest = match source {
+                FrameSource::Digest(digest) => digest.clone(),
+                FrameSource::Content(content) => match cas.write_blob(content.as_bytes()).await {
+                    Ok(digest) => digest,
+                    Err(err) => {
+                        warn!("Cannot store backtrace source {config_key:?} in CAS: {err:?}");
+                        continue;
+                    }
+                },
             };
             if let Err(err) = conn
                 .upsert_source_mapping(component_digest, &frame_key, is_suffix, &digest)
@@ -2579,14 +2603,10 @@ pub(crate) async fn submit_deployment(
     supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
     termination_watcher: &mut watch::Receiver<()>,
-    deployment_switch_manager: Option<DeploymentSwitchManagerHandle>,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
-    let _submit_permit = if let Some(manager) = &deployment_switch_manager {
-        Some(manager.try_acquire_submit_permit()?)
-    } else {
-        None
-    };
+    let _submit_permit = deployment_switch_manager.try_acquire_submit_permit()?;
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
     // every referenced file because the manifest embeds each file's content digest. It is
     // used only for idempotency, not returned (the client already has the manifest).
@@ -2656,75 +2676,106 @@ pub(crate) async fn submit_deployment(
         }
     }
 
-    // Fully validate the deployment before persisting it, so a stored deployment is
-    // already known-good: resolve from the CAS (resolving env vars/secrets),
-    // parse JS, validate WIT/WASM, and compile + link every component. Activation no
-    // longer performs first-time package validation. Blobs already written to the CAS
-    // when verification fails are acceptable GC input; no deployment row is inserted.
-    let deployment_resolved = deployment_resolved_from_manifest(&*db_pool, deployment_toml)
-        .await
-        .map_err(SubmitDeploymentError::Other)?;
-    let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool
-        .cas_conn()
-        .await
-        .map_err(anyhow::Error::from)?
-        .into();
+    // Fully validate the deployment before persisting it, so a stored deployment is already
+    // known-good: resolve from the CAS (resolving env vars/secrets), parse JS, validate
+    // WIT/WASM, and compile + link every component. Activation no longer performs first-time
+    // package validation. Any failure from here through the insert leaves the blobs just
+    // written to the CAS as orphans, reclaimed by the best-effort sweep below; no deployment
+    // row is inserted on failure.
     let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
-    config_prepass::preflight(
-        &server_verified,
-        Some(&deployment_resolved),
-        runtime_config_availability,
-    )
-    .map_err(SubmitDeploymentError::Other)?;
-    let compiled_linked = deployment_verify_config_compile_link(
-        server_verified,
-        prepared_dirs,
-        deployment_resolved,
-        Some(cas_arc),
-        deployment_id,
-        VerifyParams {
-            dir_params: PrepareDirsParams {
-                clean_cache: false,
-                clean_codegen_cache: false,
-            },
-            runtime_config_availability,
-            suppress_type_checking_errors: false,
-            suppress_linking_errors: false,
-        },
-        termination_watcher,
-    )
-    .await
-    .map_err(SubmitDeploymentError::Other)?;
+    let validate_and_persist = {
+        let db_pool_ref: &dyn DbPool = &*db_pool;
+        let conn_ref = conn.as_ref();
+        let manifest_ref = &manifest;
+        let digest_ref = &digest;
+        async move {
+            let deployment_resolved =
+                deployment_resolved_from_manifest(db_pool_ref, deployment_toml)
+                    .await
+                    .map_err(SubmitDeploymentError::Other)?;
+            let cas_arc: Arc<dyn concepts::cas::Cas> = db_pool_ref
+                .cas_conn()
+                .await
+                .map_err(anyhow::Error::from)?
+                .into();
+            config_prepass::preflight(
+                &server_verified,
+                Some(&deployment_resolved),
+                runtime_config_availability,
+            )
+            .map_err(SubmitDeploymentError::Other)?;
+            let compiled_linked = deployment_verify_config_compile_link(
+                server_verified,
+                prepared_dirs,
+                deployment_resolved,
+                Some(cas_arc),
+                deployment_id,
+                VerifyParams {
+                    dir_params: PrepareDirsParams {
+                        clean_cache: false,
+                        clean_codegen_cache: false,
+                    },
+                    runtime_config_availability,
+                    suppress_type_checking_errors: false,
+                    suppress_linking_errors: false,
+                },
+                termination_watcher,
+            )
+            .await
+            .map_err(SubmitDeploymentError::Other)?;
 
-    let now = chrono::Utc::now();
+            let now = chrono::Utc::now();
 
-    // Persist the deployment row together with its verified component metadata in a single
-    // transaction so the DB-backed ListComponents / GetWit see this deployment without waiting
-    // for a server restart, and so the submit is cancel-safe: this future runs inline in the
-    // request handler and is dropped if the client disconnects, so the row that makes a
-    // deployment queryable and its component rows must commit together or not at all.
-    // Verification above already compiled and linked every component.
-    let (component_metadata, deployment_components) =
-        build_component_metadata_records(deployment_id, &compiled_linked.component_registry_ro);
-    conn.insert_deployment_with_components(
-        DeploymentRecord {
-            deployment_id,
-            description,
-            digest: digest.clone(),
-            created_at: now,
-            last_active_at: None,
-            status: DeploymentStatus::Inactive,
-            obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
-            created_by,
-            deployment_toml: deployment_toml.to_string(),
-            files: manifest.file_records(),
-        },
-        component_metadata,
-        deployment_components,
-        manifest.component_file_records(),
-    )
-    .await
-    .map_err(anyhow::Error::from)?;
+            // Persist the deployment row together with its verified component metadata in a
+            // single transaction so the DB-backed ListComponents / GetWit see this deployment
+            // without waiting for a server restart, and so the submit is cancel-safe: this
+            // future runs inline in the request handler and is dropped if the client
+            // disconnects, so the row that makes a deployment queryable and its component rows
+            // must commit together or not at all. Verification above already compiled and
+            // linked every component.
+            let (component_metadata, deployment_components) = build_component_metadata_records(
+                deployment_id,
+                &compiled_linked.component_registry_ro,
+            );
+            conn_ref
+                .insert_deployment_with_components(
+                    DeploymentRecord {
+                        deployment_id,
+                        description,
+                        digest: digest_ref.clone(),
+                        created_at: now,
+                        last_active_at: None,
+                        status: DeploymentStatus::Inactive,
+                        obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
+                        created_by,
+                        deployment_toml: deployment_toml.to_string(),
+                        files: manifest_ref.file_records(),
+                    },
+                    component_metadata,
+                    deployment_components,
+                    manifest_ref.component_file_records(),
+                )
+                .await
+                .map_err(anyhow::Error::from)?;
+            Ok::<_, SubmitDeploymentError>(compiled_linked)
+        }
+    };
+    let compiled_linked = match validate_and_persist.await {
+        Ok(compiled_linked) => compiled_linked,
+        Err(err) => {
+            // Best-effort: reclaim the blobs this submit wrote. This is a global sweep of every
+            // unreferenced blob, safe only because the submit lane serializes submits: with one
+            // submit in flight, the only unreferenced blobs are this rejected submit's. If
+            // `DEFAULT_SUBMIT_CONCURRENCY` is ever raised, a concurrent submit's not-yet-referenced
+            // blobs would be swept too; delete exactly this submit's `to_write` digests instead.
+            // Keep the original rejection reason regardless of the sweep's outcome.
+            const { assert!(DEFAULT_SUBMIT_CONCURRENCY == 1) };
+            if let Err(gc_err) = conn.gc_orphan_files().await {
+                warn!(%deployment_id, "orphan blob GC after a rejected submit failed: {gc_err}");
+            }
+            return Err(err);
+        }
+    };
 
     // Backtrace sources are content-addressed and deployment-independent (keyed by component
     // digest), only consulted once a component runs and produces a backtrace, so they are
@@ -2734,10 +2785,8 @@ pub(crate) async fn submit_deployment(
     // Only cache strict-verified artifacts. A hot redeploy is always strict, so an
     // artifact compiled while tolerating unavailable runtime config must not be
     // reused to satisfy a later strict switch; a strict artifact satisfies any consumer.
-    if let Some(manager) = deployment_switch_manager
-        && runtime_config_availability == RuntimeConfigAvailability::Strict
-    {
-        manager
+    if runtime_config_availability == RuntimeConfigAvailability::Strict {
+        deployment_switch_manager
             .store_latest_prepared(PreparedDeploymentSwitch {
                 deployment_id,
                 digest,
@@ -3221,6 +3270,18 @@ async fn spawn_tasks_and_threads(
             cancel_registry,
             &log_forwarder_sender,
         )));
+    let webhook_registry = Arc::new(webhook_registry);
+    let deployment_switch_manager = DeploymentSwitchManagerHandle::new(
+        server_verified.clone(),
+        prepared_dirs.clone(),
+        db_pool.clone(),
+        termination_watcher.clone(),
+        deployment_ctx.clone(),
+        webhook_registry.clone(),
+        cancel_registry.clone(),
+        log_forwarder_sender.clone(),
+        DEFAULT_SUBMIT_CONCURRENCY,
+    );
     let server_init = ServerInit {
         server_verified,
         deployment_ctx,
@@ -3236,9 +3297,9 @@ async fn spawn_tasks_and_threads(
         log_db_forarder,
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
-        webhook_registry: Arc::new(webhook_registry),
+        webhook_registry,
         prepared_dirs,
-        deployment_switch_manager: None,
+        deployment_switch_manager,
     };
     Ok(server_init)
 }
@@ -3258,7 +3319,7 @@ struct ServerInit {
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
     prepared_dirs: PreparedDirs,
-    deployment_switch_manager: Option<DeploymentSwitchManagerHandle>,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
 }
 impl ServerInit {
     async fn close(self) {
@@ -3282,9 +3343,7 @@ impl ServerInit {
             deployment_switch_manager,
         } = self;
 
-        if let Some(deployment_switch_manager) = deployment_switch_manager {
-            deployment_switch_manager.close().await;
-        }
+        deployment_switch_manager.close().await;
 
         debug!("Closing executors");
         let executors = {
@@ -3932,7 +3991,7 @@ struct Linked {
     webhooks_wasm_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
     component_registry_ro: ComponentConfigRegistryRO,
     supressed_errors: Option<String>,
-    all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
+    all_frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -3940,13 +3999,13 @@ enum CompiledComponent {
     ActivityOrWorkflow {
         worker: WorkerCompiled,
         component_config: ComponentConfig,
-        frame_files: FrameFilesToSourceContent,
+        frame_files: FrameFilesToSource,
     },
     Webhook {
         webhook_name: ConfigName,
         webhook_compiled: WebhookEndpointCompiled,
         routes: Vec<WebhookRouteVerified>,
-        frame_files: FrameFilesToSourceContent,
+        frame_files: FrameFilesToSource,
     },
     ActivityStubOrExternal {
         component_config: ComponentConfig,
@@ -4093,7 +4152,7 @@ async fn compile_and_link(
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files: FrameFilesToSourceContent::default(),
+                            frame_files: FrameFilesToSource::default(),
                         }
                     })
                 })
@@ -4308,7 +4367,7 @@ async fn compile_and_link(
     let mut component_registry = ComponentConfigRegistry::default();
     let mut workers_compiled = Vec::with_capacity(results_of_results.len());
     let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
-    let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)> = Vec::new();
+    let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSource)> = Vec::new();
     for handle in results_of_results {
         match handle?? {
             CompiledComponent::ActivityOrWorkflow {
@@ -4558,7 +4617,7 @@ fn prespawn_activity_wasm(
             Ok(CompiledComponent::ActivityOrWorkflow {
                 worker,
                 component_config,
-                frame_files: FrameFilesToSourceContent::new(),
+                frame_files: FrameFilesToSource::new(),
             })
         }
         Err(err) if suppress_linking_errors => {
@@ -4586,7 +4645,7 @@ fn prespawn_activity_js(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
     runnable_component: RunnableComponent,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
     let frame_files = activity_js.as_frame_sources();
@@ -4862,7 +4921,7 @@ fn prespawn_workflow_wasm(
     engines: &Engines,
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
@@ -4894,7 +4953,7 @@ fn prespawn_workflow_js(
     runnable_component: RunnableComponent,
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     let engine = engines.workflow_engine.clone();
@@ -5048,9 +5107,9 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         wit: String,
         logs_store_min_level: Option<LogLevel>,
-        frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
+        frame_files: FrameFilesToSource, // to be served by GetBacktraceSource
         wit_origin: WitOrigin,
-    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSource) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -5106,10 +5165,8 @@ impl WorkerCompiled {
         wit: String,
         workflows_lock_extension_leeway: Duration,
         max_replay_captured_writes: usize,
-    ) -> Result<
-        (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent),
-        utils::wasm_tools::DecodeError,
-    > {
+    ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), utils::wasm_tools::DecodeError>
+    {
         let replay_compiled = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
             replay_workflow_config(&workflow.workflow_config, max_replay_captured_writes),
@@ -5159,7 +5216,7 @@ impl WorkerCompiled {
         wit: String,
         js_files: std::collections::BTreeMap<String, String>,
         wit_origin: WitOrigin,
-    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSource) {
         let frame_files = WorkflowJsConfigVerified::frame_sources(js_files);
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
