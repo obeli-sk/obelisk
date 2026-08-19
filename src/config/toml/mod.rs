@@ -2357,7 +2357,7 @@ impl WorkflowConfigVerified {
     }
 }
 
-// Resolved component config types live in the `deployment-config` crate.
+// Resolved component config types live in the `model` submodule.
 
 pub(crate) trait ActivityJsComponentConfigResolvedExt {
     #[expect(clippy::too_many_arguments)]
