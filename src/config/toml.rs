@@ -1,6 +1,6 @@
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
 use crate::args::TomlComponentType;
-use crate::command::server::FrameFilesToSourceContent;
+use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX};
 use crate::config::env_var::{
     EnvVarError, EnvVarsMissing, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
@@ -1777,8 +1777,12 @@ impl ActivityJsConfigVerified {
         &self.activity_config.component_id
     }
 
-    pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-        self.js_files.clone().into_iter().collect()
+    pub(crate) fn as_frame_sources(&self) -> FrameFilesToSource {
+        self.js_files
+            .clone()
+            .into_iter()
+            .map(|(name, content)| (name, FrameSource::Content(content)))
+            .collect()
     }
 }
 
@@ -2120,8 +2124,11 @@ impl WorkflowJsConfigVerified {
         &self.workflow_config.component_id
     }
 
-    pub(crate) fn frame_sources(js_files: BTreeMap<String, String>) -> FrameFilesToSourceContent {
-        js_files.into_iter().collect()
+    pub(crate) fn frame_sources(js_files: BTreeMap<String, String>) -> FrameFilesToSource {
+        js_files
+            .into_iter()
+            .map(|(name, content)| (name, FrameSource::Content(content)))
+            .collect()
     }
 }
 
@@ -2356,7 +2363,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
-    pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
+    pub(crate) frame_files_to_sources: FrameFilesToSource,
     pub(crate) logs_store_min_level: Option<LogLevel>,
     pub(crate) lock_extension_leeway: Duration,
 }
@@ -2548,7 +2555,12 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
                 response_refresh_interval,
             },
         };
-        let frame_files_to_sources = self.backtrace.into_frame_files();
+        let frame_files_to_sources: FrameFilesToSource = self
+            .backtrace
+            .into_frame_files()
+            .into_iter()
+            .map(|(name, digest)| (name, FrameSource::Digest(digest)))
+            .collect();
         let retry_config = ComponentRetryConfig {
             max_retries: None,
             retry_exp_backoff,
@@ -2945,14 +2957,20 @@ async fn resolve_function_interface(
 /// `file_name` and refuses to clobber. Identical re-uses of a name are allowed (they dedupe
 /// to a single file). This surfaces the failure at submit time rather than on a later round-trip.
 fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Result<()> {
+    // Compare by content digest: scripts carry inline content (hashed here), backtrace
+    // sources already carry their CAS digest. Differing digests at the same `file_name` are
+    // the collision `deployment get` cannot round-trip.
+    fn digest_of(content: &str) -> ContentDigest {
+        ContentDigest(Digest(Sha256::digest(content.as_bytes()).into()))
+    }
     fn register<'a>(
-        seen: &mut HashMap<&'a str, &'a str>,
+        seen: &mut HashMap<&'a str, ContentDigest>,
         file_name: &'a str,
-        content: &'a str,
+        digest: &ContentDigest,
     ) -> anyhow::Result<()> {
-        if let Some(existing) = seen.insert(file_name, content) {
+        if let Some(existing) = seen.insert(file_name, digest.clone()) {
             ensure!(
-                existing == content,
+                existing == *digest,
                 "two deployment-owned source files would be written to `{file_name}`; rename \
                  one of the colliding scripts or backtrace sources so the deployment can be \
                  retrieved with `deployment get`"
@@ -2961,7 +2979,7 @@ fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Re
         Ok(())
     }
 
-    let mut seen: HashMap<&str, &str> = HashMap::new();
+    let mut seen: HashMap<&str, ContentDigest> = HashMap::new();
 
     let script_locations = resolved
         .activities_js
@@ -2973,11 +2991,11 @@ fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Re
     for loc in script_locations {
         match loc {
             ScriptLocationResolved::Content { content, file_name } => {
-                register(&mut seen, file_name, content)?;
+                register(&mut seen, file_name, &digest_of(content))?;
             }
             ScriptLocationResolved::Graph { files, .. } => {
                 for (file_name, content) in files {
-                    register(&mut seen, file_name, content)?;
+                    register(&mut seen, file_name, &digest_of(content))?;
                 }
             }
             ScriptLocationResolved::Oci { .. } => {}
@@ -2991,7 +3009,7 @@ fn validate_owned_source_file_names(resolved: &DeploymentResolved) -> anyhow::Re
         .chain(resolved.webhooks_wasm.iter().map(|c| &c.backtrace));
     for bt in backtraces {
         for source in bt.frame_files_to_sources.values() {
-            register(&mut seen, &source.file_name, &source.content)?;
+            register(&mut seen, &source.file_name, &source.content_digest)?;
         }
     }
     Ok(())
@@ -3190,25 +3208,34 @@ async fn resolve_backtrace(
         };
         // backcompat: 0.41 processed manifests stored the digest beside each source path.
         // Remove `source.content_digest()` in 0.42 as clients must supply the content_digest in `component_files`.
-        let content_digest = component_files
+        // The bytes are uploaded to the CAS with the deployment files, so a known digest is a
+        // complete reference. An authored manifest with no pinned digest (disk resolution)
+        // falls back to reading the file once to hash it.
+        let content_digest = if let Some(digest) = component_files
             .get(&file_name)
-            .or_else(|| source.content_digest());
-        let content = provider
-            .read(&file_name, content_digest)
-            .await
-            .and_then(|bytes| {
-                String::from_utf8(bytes)
-                    .with_context(|| format!("backtrace source {file_name:?} is not valid UTF-8"))
-            });
-        match content {
-            Ok(content) => {
-                frame_files_to_sources
-                    .insert(key.clone(), BacktraceSourceResolved { content, file_name });
+            .or_else(|| source.content_digest())
+        {
+            digest.clone()
+        } else {
+            // Reached only on the `server run -d` raw-resolution path, where `provider` is a
+            // `DiskProvider`: this is a disk read, never a CAS read (the RPC/DB path always
+            // has a populated `component_files`). Removed once both paths resolve the
+            // processed manifest from the CAS: see meta/designs/cas-first-deployment-pipeline.md.
+            match provider.read(&file_name, None).await {
+                Ok(bytes) => ContentDigest(Digest(Sha256::digest(&bytes).into())),
+                Err(err) => {
+                    warn!("Cannot read backtrace source {file_name:?} - {err:?}");
+                    continue;
+                }
             }
-            Err(err) => {
-                warn!("Cannot read backtrace source {file_name:?} - {err:?}");
-            }
-        }
+        };
+        frame_files_to_sources.insert(
+            key.clone(),
+            BacktraceSourceResolved {
+                content_digest,
+                file_name,
+            },
+        );
     }
     Ok(ComponentBacktraceConfigResolved {
         frame_files_to_sources,
@@ -3494,7 +3521,7 @@ pub(crate) mod webhook {
         resolve_allowed_hosts, resolve_env_vars_plaintext, restricted_secret_registry,
         validate_no_env_collision,
     };
-    use crate::command::server::FrameFilesToSourceContent;
+    use crate::command::server::{FrameFilesToSource, FrameSource};
     use crate::config::secret_registry::SecretRegistry;
     use crate::config::{env_var::EnvVarConfig, toml::LogLevelToml};
     use anyhow::Context;
@@ -3572,7 +3599,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<StdOutputConfig>,
         pub(crate) forward_stderr: Option<StdOutputConfig>,
         pub(crate) env_vars: Arc<[EnvVar]>,
-        pub(crate) frame_files_to_sources: FrameFilesToSourceContent,
+        pub(crate) frame_files_to_sources: FrameFilesToSource,
         pub(crate) backtrace_persist: bool,
         pub(crate) subscription_interruption: Option<Duration>,
         pub(crate) logs_store_min_level: Option<LogLevel>,
@@ -3674,8 +3701,12 @@ pub(crate) mod webhook {
     }
 
     impl WebhookJsConfigVerified {
-        pub(crate) fn as_frame_sources(&self) -> FrameFilesToSourceContent {
-            self.js_files.clone().into_iter().collect()
+        pub(crate) fn as_frame_sources(&self) -> FrameFilesToSource {
+            self.js_files
+                .clone()
+                .into_iter()
+                .map(|(name, content)| (name, FrameSource::Content(content)))
+                .collect()
         }
     }
 
@@ -3708,7 +3739,12 @@ pub(crate) mod webhook {
                 expected_content_digest.as_ref(),
                 &common.location.to_string(),
             )?;
-            let frame_files_to_sources = self.backtrace.into_frame_files();
+            let frame_files_to_sources: FrameFilesToSource = self
+                .backtrace
+                .into_frame_files()
+                .into_iter()
+                .map(|(name, digest)| (name, FrameSource::Digest(digest)))
+                .collect();
             let component_id = ComponentId::new(
                 ComponentType::WebhookEndpoint,
                 StrVariant::from(common.name.clone()),
@@ -5238,7 +5274,10 @@ name = "my_stub"
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
                 .unwrap();
-            assert_eq!(src.content, "SRC");
+            assert_eq!(
+                src.content_digest,
+                ContentDigest(Digest(Sha256::digest(b"SRC").into()))
+            );
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
 
@@ -5266,7 +5305,10 @@ name = "my_stub"
                 .frame_files_to_sources
                 .get(".../src/lib.rs")
                 .unwrap();
-            assert_eq!(src.content, "SRC");
+            assert_eq!(
+                src.content_digest,
+                ContentDigest(Digest(Sha256::digest(b"SRC").into()))
+            );
             assert_eq!(src.file_name, "crates/foo/src/lib.rs");
         }
 

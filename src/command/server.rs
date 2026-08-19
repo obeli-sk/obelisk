@@ -2142,9 +2142,18 @@ impl ServerVerified {
     }
 }
 
-pub(crate) type FrameFilesToSourceContent = HashMap<
+/// A backtrace source to persist for `GetBacktraceSource`, addressed either by inlined
+/// `Content` (JS/exec sources, materialized into the CAS at startup) or by a CAS `Digest`
+/// (WASM backtrace sources, already uploaded with the deployment files).
+#[derive(Debug)]
+pub(crate) enum FrameSource {
+    Content(String),
+    Digest(ContentDigest),
+}
+
+pub(crate) type FrameFilesToSource = HashMap<
     String, // file name, can contain `.../` prefix
-    String, //content
+    FrameSource,
 >;
 
 pub(crate) type HttpServersToWebhooksAndState = Vec<(
@@ -2159,7 +2168,7 @@ pub(crate) struct ServerCompiledLinked {
     pub(crate) workers_linked: Vec<WorkerLinked>,
     pub(crate) http_servers_to_webhooks_and_state: HttpServersToWebhooksAndState,
     supressed_errors: Option<String>,
-    frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
+    frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
 }
 
 impl ServerCompiledLinked {
@@ -2298,9 +2307,9 @@ pub(crate) async fn upsert_backtrace_sources(
     cas: &dyn concepts::cas::Cas,
     server_compiled_linked: &ServerCompiledLinked,
 ) {
-    // Persist source files so GetBacktraceSource can serve them without filesystem access.
-    // The bytes go to the content-addressed store (shared with deployment files); only the
-    // (component, frame_key) -> digest mapping lives in the DB.
+    // Persist the (component, frame_key) -> digest mapping so GetBacktraceSource can serve
+    // sources without filesystem access. WASM backtrace sources are already CAS blobs (a
+    // digest reference); inlined JS/exec sources are written to the CAS here.
     for (component_digest, frame_files) in &server_compiled_linked.frame_files {
         for (config_key, source) in frame_files {
             // Keys starting with ".../" become suffix keys (strip "...", prepend "/").
@@ -2309,12 +2318,15 @@ pub(crate) async fn upsert_backtrace_sources(
             } else {
                 (config_key.clone(), false)
             };
-            let digest = match cas.write_blob(source.as_bytes()).await {
-                Ok(digest) => digest,
-                Err(err) => {
-                    warn!("Cannot store backtrace source {config_key:?} in CAS: {err:?}");
-                    continue;
-                }
+            let digest = match source {
+                FrameSource::Digest(digest) => digest.clone(),
+                FrameSource::Content(content) => match cas.write_blob(content.as_bytes()).await {
+                    Ok(digest) => digest,
+                    Err(err) => {
+                        warn!("Cannot store backtrace source {config_key:?} in CAS: {err:?}");
+                        continue;
+                    }
+                },
             };
             if let Err(err) = conn
                 .upsert_source_mapping(component_digest, &frame_key, is_suffix, &digest)
@@ -3979,7 +3991,7 @@ struct Linked {
     webhooks_wasm_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
     component_registry_ro: ComponentConfigRegistryRO,
     supressed_errors: Option<String>,
-    all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)>,
+    all_frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
 }
 
 #[expect(clippy::large_enum_variant)]
@@ -3987,13 +3999,13 @@ enum CompiledComponent {
     ActivityOrWorkflow {
         worker: WorkerCompiled,
         component_config: ComponentConfig,
-        frame_files: FrameFilesToSourceContent,
+        frame_files: FrameFilesToSource,
     },
     Webhook {
         webhook_name: ConfigName,
         webhook_compiled: WebhookEndpointCompiled,
         routes: Vec<WebhookRouteVerified>,
-        frame_files: FrameFilesToSourceContent,
+        frame_files: FrameFilesToSource,
     },
     ActivityStubOrExternal {
         component_config: ComponentConfig,
@@ -4140,7 +4152,7 @@ async fn compile_and_link(
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
-                            frame_files: FrameFilesToSourceContent::default(),
+                            frame_files: FrameFilesToSource::default(),
                         }
                     })
                 })
@@ -4355,7 +4367,7 @@ async fn compile_and_link(
     let mut component_registry = ComponentConfigRegistry::default();
     let mut workers_compiled = Vec::with_capacity(results_of_results.len());
     let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
-    let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSourceContent)> = Vec::new();
+    let mut all_frame_files: Vec<(ComponentDigest, FrameFilesToSource)> = Vec::new();
     for handle in results_of_results {
         match handle?? {
             CompiledComponent::ActivityOrWorkflow {
@@ -4605,7 +4617,7 @@ fn prespawn_activity_wasm(
             Ok(CompiledComponent::ActivityOrWorkflow {
                 worker,
                 component_config,
-                frame_files: FrameFilesToSourceContent::new(),
+                frame_files: FrameFilesToSource::new(),
             })
         }
         Err(err) if suppress_linking_errors => {
@@ -4633,7 +4645,7 @@ fn prespawn_activity_js(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
     runnable_component: RunnableComponent,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
     let frame_files = activity_js.as_frame_sources();
@@ -4909,7 +4921,7 @@ fn prespawn_workflow_wasm(
     engines: &Engines,
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     debug!("Instantiating workflow");
@@ -4941,7 +4953,7 @@ fn prespawn_workflow_js(
     runnable_component: RunnableComponent,
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
-) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSourceContent), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
     let engine = engines.workflow_engine.clone();
@@ -5095,9 +5107,9 @@ impl WorkerCompiled {
         exec_config: ExecConfig,
         wit: String,
         logs_store_min_level: Option<LogLevel>,
-        frame_files: FrameFilesToSourceContent, // to be served by GetBacktraceSource
+        frame_files: FrameFilesToSource, // to be served by GetBacktraceSource
         wit_origin: WitOrigin,
-    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSource) {
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),
             workflow_or_activity_config: Some(ComponentConfigImportable {
@@ -5153,10 +5165,8 @@ impl WorkerCompiled {
         wit: String,
         workflows_lock_extension_leeway: Duration,
         max_replay_captured_writes: usize,
-    ) -> Result<
-        (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent),
-        utils::wasm_tools::DecodeError,
-    > {
+    ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), utils::wasm_tools::DecodeError>
+    {
         let replay_compiled = WorkflowWorkerCompiled::new_with_config(
             runnable_component.clone(),
             replay_workflow_config(&workflow.workflow_config, max_replay_captured_writes),
@@ -5206,7 +5216,7 @@ impl WorkerCompiled {
         wit: String,
         js_files: std::collections::BTreeMap<String, String>,
         wit_origin: WitOrigin,
-    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSourceContent) {
+    ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSource) {
         let frame_files = WorkflowJsConfigVerified::frame_sources(js_files);
         let component = ComponentConfig {
             component_id: exec_config.component_id.clone(),

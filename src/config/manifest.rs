@@ -1705,8 +1705,9 @@ location = "components/w.wasm"
             .await
             .unwrap();
         assert_eq!(
-            resolved.workflows_wasm[0].backtrace.frame_files_to_sources[".../src/lib.rs"].content,
-            "fn workflow() {}"
+            resolved.workflows_wasm[0].backtrace.frame_files_to_sources[".../src/lib.rs"]
+                .content_digest,
+            content_digest(b"fn workflow() {}")
         );
     }
 

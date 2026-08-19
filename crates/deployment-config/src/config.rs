@@ -502,11 +502,12 @@ pub enum ScriptLocationResolved {
     },
 }
 
-/// Resolved backtrace source: the inlined source `content` plus the deployment-relative
-/// `file_name` it was read from (used to recreate the file, mirroring subfolders, on export).
+/// Resolved backtrace source: a CAS reference (`content_digest`) to the source bytes,
+/// which are uploaded to the CAS with the deployment files, plus the deployment-relative
+/// `file_name` it was read from (used to detect owned-source name collisions).
 #[derive(Debug, Clone)]
 pub struct BacktraceSourceResolved {
-    pub content: String,
+    pub content_digest: ContentDigest,
     pub file_name: String,
 }
 
@@ -516,13 +517,13 @@ pub struct ComponentBacktraceConfigResolved {
 }
 
 impl ComponentBacktraceConfigResolved {
-    /// Map each frame-symbol key to its source content (dropping the recreate path),
-    /// as needed by the runtime backtrace lookup.
+    /// Map each frame-symbol key to the CAS digest of its source (dropping the recreate
+    /// path), as needed to persist the runtime backtrace-source lookup.
     #[must_use]
-    pub fn into_frame_files(self) -> HashMap<String, String> {
+    pub fn into_frame_files(self) -> HashMap<String, ContentDigest> {
         self.frame_files_to_sources
             .into_iter()
-            .map(|(k, v)| (k, v.content))
+            .map(|(k, v)| (k, v.content_digest))
             .collect()
     }
 }
