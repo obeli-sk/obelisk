@@ -468,8 +468,9 @@ pub(crate) struct VerifyArgs {
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
     #[arg(long)]
     pub(crate) suppress_type_checking_errors: bool,
-    /// Skip opening the sqlite database and validating its schema.
-    #[arg(long)]
+    /// Skip opening the sqlite database and validating its schema. Requires `--deployment`,
+    /// since with no database there is no active deployment to fall back to.
+    #[arg(long, requires = "deployment")]
     pub(crate) skip_db: bool,
     /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds.
     #[arg(long, requires = "deployment")]
