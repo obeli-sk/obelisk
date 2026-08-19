@@ -36,29 +36,28 @@ use crate::config::toml::ComponentLocationFetchExt as _;
 use crate::config::toml::ComponentLocationToml;
 use crate::config::toml::ComponentStdOutputToml;
 use crate::config::toml::ConfigName;
+use crate::config::toml::CronComponentConfigTomlExt as _;
+use crate::config::toml::CronConfigVerified;
 use crate::config::toml::DatabaseConfigToml;
 use crate::config::toml::DeploymentResolved;
+use crate::config::toml::HttpServer;
 use crate::config::toml::InflightSemaphoreExt as _;
 use crate::config::toml::LogLevelToml;
 use crate::config::toml::SQLITE_FILE_NAME;
 use crate::config::toml::ServerConfigToml;
 use crate::config::toml::TimersWatcherTomlConfig;
 use crate::config::toml::WasmtimeAllocatorConfig;
+use crate::config::toml::WebhookJsComponentConfigResolvedExt as _;
+use crate::config::toml::WebhookJsConfigVerified;
+use crate::config::toml::WebhookRoute;
+use crate::config::toml::WebhookRouteVerified;
+use crate::config::toml::WebhookWasmComponentConfigResolvedExt as _;
+use crate::config::toml::WebhookWasmComponentConfigVerified;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowJsComponentConfigResolvedExt as _;
 use crate::config::toml::WorkflowJsConfigVerified;
 use crate::config::toml::WorkflowWasmComponentConfigResolvedExt as _;
-use crate::config::toml::cron::CronComponentConfigTomlExt as _;
-use crate::config::toml::cron::CronConfigVerified;
 use crate::config::toml::resolve_allowed_hosts;
-use crate::config::toml::webhook;
-use crate::config::toml::webhook::HttpServer;
-use crate::config::toml::webhook::WebhookJsComponentConfigResolvedExt as _;
-use crate::config::toml::webhook::WebhookJsConfigVerified;
-use crate::config::toml::webhook::WebhookRoute;
-use crate::config::toml::webhook::WebhookRouteVerified;
-use crate::config::toml::webhook::WebhookWasmComponentConfigResolvedExt as _;
-use crate::config::toml::webhook::WebhookWasmComponentConfigVerified;
 use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
@@ -2006,7 +2005,7 @@ impl ServerVerified {
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
-            http_servers.push(webhook::HttpServer {
+            http_servers.push(HttpServer {
                 name: ConfigName::new(HTTP_SERVER_NAME_WEBUI.into()).unwrap(),
                 listening_addr: webui_listening_addr
                     .parse()
@@ -2019,7 +2018,7 @@ impl ServerVerified {
             }
         }
         if config.external.enabled {
-            http_servers.push(webhook::HttpServer {
+            http_servers.push(HttpServer {
                 name: ConfigName::new(HTTP_SERVER_NAME_EXTERNAL.into()).unwrap(),
                 listening_addr: config.external.listening_addr,
             });
@@ -2120,7 +2119,7 @@ pub(crate) type FrameFilesToSource = HashMap<
 >;
 
 pub(crate) type HttpServersToWebhooksAndState = Vec<(
-    webhook::HttpServer,
+    HttpServer,
     (Vec<WebhookInstancesAndRoutes>, Arc<WebhookServerState>),
 )>;
 
@@ -2226,9 +2225,9 @@ impl ServerCompiledLinked {
     }
 
     fn connect_http_servers_to_webhooks(
-        http_servers_to_webhook_names: &[(webhook::HttpServer, Vec<ConfigName>)],
+        http_servers_to_webhook_names: &[(HttpServer, Vec<ConfigName>)],
         mut webhooks_wasm_by_names: IndexMap<ConfigName, WebhookInstancesAndRoutes>,
-    ) -> Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)> {
+    ) -> Vec<(HttpServer, Vec<WebhookInstancesAndRoutes>)> {
         http_servers_to_webhook_names
             .iter()
             .map(|(http_server, webhook_names)| {
@@ -3377,7 +3376,7 @@ pub(crate) fn build_webhook_server_state(
 }
 
 async fn start_http_servers(
-    http_servers: impl Iterator<Item = &webhook::HttpServer>,
+    http_servers: impl Iterator<Item = &HttpServer>,
     webhook_registry: &WebhookRegistry,
     engines: &Engines,
     db_pool: Arc<dyn DbPool>,
@@ -3437,7 +3436,7 @@ pub(crate) struct DeploymentVerified {
     webhooks_wasm_by_names: IndexMap<ConfigName, WebhookWasmComponentConfigVerified>,
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     crons: Vec<CronConfigVerified>,
-    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<ConfigName>)>,
+    http_servers_to_webhook_names: Vec<(HttpServer, Vec<ConfigName>)>,
     fuel: Option<u64>,
     global_http_config: GlobalHttpConfig,
 }
@@ -3558,7 +3557,7 @@ impl DeploymentVerified {
     #[expect(clippy::too_many_arguments)]
     async fn fetch_and_verify_all(
         deployment: DeploymentRunnable,
-        http_servers: Vec<webhook::HttpServer>,
+        http_servers: Vec<HttpServer>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         runtime_config_availability: RuntimeConfigAvailability,
@@ -3593,9 +3592,8 @@ impl DeploymentVerified {
 
         if let Some(api_listening_addr) = api_addr_if_webui_enabled {
             let target_url = format!("http://{api_listening_addr}");
-            deployment
-                .webhooks_wasm
-                .push(webhook::WebhookWasmComponentConfigResolved {
+            deployment.webhooks_wasm.push(
+                crate::config::toml::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static(COMPONENT_NAME_WEBUI)).unwrap(),
                         location: webui_location(&wasm_cache_dir).await?,
@@ -3620,7 +3618,8 @@ impl DeploymentVerified {
                         replace_in: Vec::new(),
                     }],
                     is_webui: true,
-                });
+                },
+            );
         }
 
         let http_servers_to_webhook_names = {

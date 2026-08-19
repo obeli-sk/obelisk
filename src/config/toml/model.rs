@@ -1,23 +1,22 @@
-//! Deployment configuration data model.
+//! Serde data shapes shared by the authored and processed manifests: the primitive
+//! config enums (durations, locations, exec, log levels, hosts) plus the resolved forms
+//! ([`DeploymentResolved`] and the `*Resolved` component types). The authored WASM
+//! `*ConfigToml` structs live here too since they double as their own resolved form.
 //!
-//! Contains the stored manifest representation used for deployment submission and DB storage,
-//! plus transient resolved configuration ([`DeploymentResolved`]) used by the local server and
-//! `obelisk deployment verify`. Some types double as the TOML representation (their original
-//! `*Toml` names are kept).
-//!
-//! Behavior that requires the server runtime (OCI fetching, executor configuration,
-//! env var resolution) lives in the obelisk binary as extension traits.
+//! Authored-side validation lives in [`super::authored`]; fetching/verifying lives in
+//! [`super::processed`]. Behavior needing the server runtime (OCI fetching, executor
+//! configuration, env var resolution) is expressed as extension traits there.
 
 use crate::config::env_var::EnvVarConfig;
 use concepts::component_id::{ComponentDigest, ContentDigest, InvalidNameError, check_name};
 use concepts::{FunctionFqn, StrVariant};
-use wasm_workers::workflow::workflow_worker::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
 use hashbrown::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::Display;
 use std::str::FromStr;
 use std::time::Duration;
+use wasm_workers::workflow::workflow_worker::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
 
 pub const OCI_SCHEMA_PREFIX: &str = "oci://";
 
