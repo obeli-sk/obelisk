@@ -1101,29 +1101,29 @@ impl HasOptionalNameAndFfqn for ActivityStubExtInlineConfigToml {
 /// On-disk format only; replaced by [`ScriptLocationResolved`] before hash computation.
 #[derive(Debug, Clone, Hash, JsonSchema, SerializeDisplay, DeserializeFromStr)]
 #[schemars(with = "String")]
-pub(crate) enum JsLocationToml {
+pub(crate) enum ScriptLocationPathOrOci {
     Path(String),
     Oci(oci_client::Reference),
 }
-impl Display for JsLocationToml {
+impl Display for ScriptLocationPathOrOci {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            JsLocationToml::Path(p) => write!(f, "{p}"),
-            JsLocationToml::Oci(r) => write!(f, "{OCI_SCHEMA_PREFIX}{r}"),
+            ScriptLocationPathOrOci::Path(p) => write!(f, "{p}"),
+            ScriptLocationPathOrOci::Oci(r) => write!(f, "{OCI_SCHEMA_PREFIX}{r}"),
         }
     }
 }
-impl FromStr for JsLocationToml {
+impl FromStr for ScriptLocationPathOrOci {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(location) = s.strip_prefix(OCI_SCHEMA_PREFIX) {
-            Ok(JsLocationToml::Oci(
+            Ok(ScriptLocationPathOrOci::Oci(
                 oci_client::Reference::from_str(location)
                     .map_err(|e| anyhow::anyhow!("invalid OCI reference: {e}"))?,
             ))
         } else {
-            Ok(JsLocationToml::Path(s.to_string()))
+            Ok(ScriptLocationPathOrOci::Path(s.to_string()))
         }
     }
 }
@@ -1700,7 +1700,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).
     #[serde(default)]
-    pub(crate) location: Option<JsLocationToml>,
+    pub(crate) location: Option<ScriptLocationPathOrOci>,
     /// Inline JavaScript source embedded in the TOML.
     /// Exactly one of `location` or `content` must be set.
     #[serde(default)]
@@ -1782,7 +1782,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Location of the exec script.
     /// Supports local file paths and OCI registry references (`oci://...`).
     #[serde(default)]
-    pub(crate) location: Option<JsLocationToml>,
+    pub(crate) location: Option<ScriptLocationPathOrOci>,
     /// Inline script content embedded in the TOML.
     /// Exactly one of `location` or `content` must be set.
     #[serde(default)]
@@ -2046,7 +2046,7 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     /// Location of the JavaScript source file.
     /// Supports local file paths and OCI registry references (`oci://...`).
     #[serde(default)]
-    pub(crate) location: Option<JsLocationToml>,
+    pub(crate) location: Option<ScriptLocationPathOrOci>,
     /// Inline JavaScript source embedded in the TOML.
     /// Exactly one of `location` or `content` must be set.
     #[serde(default)]
@@ -3036,12 +3036,12 @@ pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<Str
 
 enum ScriptToml {
     JavaScript {
-        location: Option<JsLocationToml>,
+        location: Option<ScriptLocationPathOrOci>,
         content: Option<String>,
         component_files: BTreeMap<String, ContentDigest>,
     },
     Exec {
-        location: Option<JsLocationToml>,
+        location: Option<ScriptLocationPathOrOci>,
         content: Option<String>,
     },
 }
@@ -3095,7 +3095,7 @@ async fn resolve_script_toml(
                 file_name: default_file_name,
             })
         }
-        (Some(JsLocationToml::Path(path)), None) => {
+        (Some(ScriptLocationPathOrOci::Path(path)), None) => {
             if std::path::Path::new(&path).is_absolute() {
                 bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
             }
@@ -3161,7 +3161,7 @@ async fn resolve_script_toml(
                 file_name: path,
             })
         }
-        (Some(JsLocationToml::Oci(reference)), None) => {
+        (Some(ScriptLocationPathOrOci::Oci(reference)), None) => {
             if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
                 ensure!(
                     component_files.is_empty(),
@@ -3491,7 +3491,7 @@ pub(crate) mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentCommonFetchExt,
         ComponentStdOutputToml, ComponentStdOutputTomlExt, ConfigName, JsContent,
-        JsLocationResolvedExt, JsLocationToml, LogLevelTomlExt, SecretResolver, hash_js_graph,
+        JsLocationResolvedExt, ScriptLocationPathOrOci, LogLevelTomlExt, SecretResolver, hash_js_graph,
         resolve_allowed_hosts, resolve_env_vars_plaintext, restricted_secret_registry,
         validate_no_env_collision,
     };
@@ -3621,7 +3621,7 @@ pub(crate) mod webhook {
         /// Location of the JavaScript source file.
         /// Supports local file paths and OCI registry references (`oci://...`).
         #[serde(default)]
-        pub(crate) location: Option<JsLocationToml>,
+        pub(crate) location: Option<ScriptLocationPathOrOci>,
         /// Inline JavaScript source embedded in the TOML.
         /// Exactly one of `location` or `content` must be set.
         #[serde(default)]
@@ -4881,7 +4881,7 @@ name = "my_stub"
         use concepts::cas::InMemoryCas;
 
         fn javascript(
-            location: Option<JsLocationToml>,
+            location: Option<ScriptLocationPathOrOci>,
             content: Option<String>,
             component_files: BTreeMap<String, ContentDigest>,
         ) -> ScriptToml {
@@ -4923,7 +4923,7 @@ name = "my_stub"
             // Bare relative path (implicit `${DEPLOYMENT_DIR}` prefix).
             let location = resolve_script_toml(
                 javascript(
-                    Some(JsLocationToml::Path("scripts/a.js".to_string())),
+                    Some(ScriptLocationPathOrOci::Path("scripts/a.js".to_string())),
                     None,
                     BTreeMap::new(),
                 ),
@@ -4950,7 +4950,7 @@ name = "my_stub"
 
             let location = resolve_script_toml(
                 javascript(
-                    Some(JsLocationToml::Path(
+                    Some(ScriptLocationPathOrOci::Path(
                         "${DEPLOYMENT_DIR}/scripts/a.js".to_string(),
                     )),
                     None,
@@ -4974,7 +4974,7 @@ name = "my_stub"
             let abs = "/tmp/outside.js".to_string();
             let err = resolve_script_toml(
                 javascript(
-                    Some(JsLocationToml::Path(abs.clone())),
+                    Some(ScriptLocationPathOrOci::Path(abs.clone())),
                     None,
                     BTreeMap::new(),
                 ),
@@ -4997,7 +4997,7 @@ name = "my_stub"
             for raw in ["../escape.js", "${DEPLOYMENT_DIR}/../escape.js"] {
                 let err = resolve_script_toml(
                     javascript(
-                        Some(JsLocationToml::Path(raw.to_string())),
+                        Some(ScriptLocationPathOrOci::Path(raw.to_string())),
                         None,
                         BTreeMap::new(),
                     ),
@@ -5018,7 +5018,7 @@ name = "my_stub"
             let reference =
                 oci_client::Reference::from_str("docker.io/library/example:latest").unwrap();
             let location = resolve_script_toml(
-                javascript(Some(JsLocationToml::Oci(reference)), None, BTreeMap::new()),
+                javascript(Some(ScriptLocationPathOrOci::Oci(reference)), None, BTreeMap::new()),
                 "ignored.js".to_string(),
                 &cas,
                 None,
@@ -5072,7 +5072,7 @@ name = "my_stub"
             let missing = digest_of(b"nope");
             let err = resolve_script_toml(
                 javascript(
-                    Some(JsLocationToml::Path("script.js".to_string())),
+                    Some(ScriptLocationPathOrOci::Path("script.js".to_string())),
                     None,
                     BTreeMap::new(),
                 ),

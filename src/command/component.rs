@@ -11,7 +11,7 @@ use crate::config::toml::ConfigName;
 use crate::config::toml::DeploymentTomlValidated;
 use crate::config::toml::DurationConfig;
 use crate::config::toml::FunctionInterfaceToml;
-use crate::config::toml::JsLocationToml;
+use crate::config::toml::ScriptLocationPathOrOci;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
 use crate::config::wasm_cache_metadata_dir;
 use crate::oci;
@@ -164,9 +164,9 @@ fn find_component_for_push(
                 .expect("name is in map so it must be in the list");
             let source = match (&cfg.location, &cfg.content) {
                 (None, Some(content)) => content.clone(),
-                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                (Some(ScriptLocationPathOrOci::Path(path)), None) => std::fs::read_to_string(path)
                     .with_context(|| format!("cannot read JS file {path:?}"))?,
-                (Some(JsLocationToml::Oci(_)), None) => {
+                (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
                     bail!(
                         "component '{name}' uses OCI source, only local sources are supported for push"
                     );
@@ -196,9 +196,9 @@ fn find_component_for_push(
                 .expect("name is in map so it must be in the list");
             let source = match (&cfg.location, &cfg.content) {
                 (None, Some(content)) => content.clone(),
-                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                (Some(ScriptLocationPathOrOci::Path(path)), None) => std::fs::read_to_string(path)
                     .with_context(|| format!("cannot read JS file {path:?}"))?,
-                (Some(JsLocationToml::Oci(_)), None) => {
+                (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
                     bail!(
                         "component '{name}' uses OCI source, only local sources are supported for push"
                     );
@@ -226,9 +226,9 @@ fn find_component_for_push(
                 .expect("name is in map so it must be in the list");
             let source = match (&cfg.location, &cfg.content) {
                 (None, Some(content)) => content.clone(),
-                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                (Some(ScriptLocationPathOrOci::Path(path)), None) => std::fs::read_to_string(path)
                     .with_context(|| format!("cannot read JS file {path:?}"))?,
-                (Some(JsLocationToml::Oci(_)), None) => {
+                (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
                     bail!(
                         "component '{name}' uses OCI source, only local sources are supported for push"
                     );
@@ -253,9 +253,9 @@ fn find_component_for_push(
                 .expect("name is in map so it must be in the list");
             let script = match (&cfg.location, &cfg.content) {
                 (None, Some(content)) => content.clone(),
-                (Some(JsLocationToml::Path(path)), None) => std::fs::read_to_string(path)
+                (Some(ScriptLocationPathOrOci::Path(path)), None) => std::fs::read_to_string(path)
                     .with_context(|| format!("cannot read exec file {path:?}"))?,
-                (Some(JsLocationToml::Oci(_)), None) => {
+                (Some(ScriptLocationPathOrOci::Oci(_)), None) => {
                     bail!(
                         "component '{name}' uses OCI source, only local sources are supported for push"
                     );
@@ -998,7 +998,7 @@ mod tests {
             act.name.as_ref().expect("name set").to_string(),
             "my_exec_activity"
         );
-        assert!(matches!(act.location, Some(JsLocationToml::Oci(_))));
+        assert!(matches!(act.location, Some(ScriptLocationPathOrOci::Oci(_))));
         assert!(act.content.is_none());
         assert_eq!(act.content_digest, Some(content_digest));
         assert_eq!(act.ffqn.to_string(), "my-pkg:my-iface/my-ifc.my-fn");
