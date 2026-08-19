@@ -64,7 +64,8 @@ pub enum JoinNextBlockingStrategy {
     },
 }
 
-pub use deployment_config::config::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
+/// Default for `non_blocking_event_batching` of the `await` blocking strategy.
+pub const DEFAULT_NON_BLOCKING_EVENT_BATCHING: u32 = 100;
 
 #[derive(Clone, Debug)]
 pub struct WorkflowConfig {

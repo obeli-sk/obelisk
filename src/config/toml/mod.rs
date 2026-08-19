@@ -64,7 +64,9 @@ use wasm_workers::{
 };
 use webhook::{HttpServer, WebhookJsComponentConfigToml, WebhookWasmComponentConfigToml};
 
-pub(crate) use deployment_config::config::{
+pub(crate) mod model;
+
+pub(crate) use crate::config::toml::model::{
     ActivityExecComponentConfigResolved, ActivityExternalComponentConfigResolved,
     ActivityExternalFileConfigToml, ActivityJsComponentConfigResolved,
     ActivityStubComponentConfigResolved, ActivityStubExtInlineConfigResolved,
@@ -2163,7 +2165,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
         self,
         subscription_interruption: Option<Duration>,
     ) -> JoinNextBlockingStrategy {
-        use deployment_config::config::{
+        use crate::config::toml::model::{
             BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
             BlockingStrategyConfigSimple,
         };
@@ -3504,7 +3506,7 @@ pub(crate) mod webhook {
         component_id::{ComponentDigest, Digest},
         storage::LogLevel,
     };
-    pub(crate) use deployment_config::config::webhook::{
+    pub(crate) use crate::config::toml::model::webhook::{
         WebhookJsComponentConfigResolved, WebhookRoute, WebhookRouteDetail,
         WebhookWasmComponentConfigResolved, default_external_server_name,
     };
@@ -4173,7 +4175,7 @@ fn default_cancel_watcher_tick_sleep() -> DurationConfig {
 pub(crate) mod cron {
     use super::*;
 
-    pub(crate) use deployment_config::config::cron::CronComponentConfigToml;
+    pub(crate) use crate::config::toml::model::cron::CronComponentConfigToml;
 
     #[derive(Debug)]
     pub(crate) struct CronConfigVerified {
@@ -4318,7 +4320,7 @@ mod tests {
 
     mod blocking_strategy {
         use super::super::*;
-        use deployment_config::config::{
+        use crate::config::toml::model::{
             BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
             BlockingStrategyConfigSimple, default_non_blocking_event_batching,
         };

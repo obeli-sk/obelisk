@@ -1,12 +1,8 @@
-//! Deployment configuration schema, transient resolution types, and core naming types.
+//! Core naming/id types and the deployment env-var config, shared via `concepts`.
 //!
-//! This crate holds the manifest data model used for TOML parsing and DB storage, plus
-//! transient resolved forms used by the local server and `obelisk deployment verify`.
-//! Behavior that needs the server runtime (OCI fetching, executor configuration, env var
-//! resolution) lives in the obelisk binary.
+//! The deployment manifest data model lives in the obelisk binary (`config::toml`).
 
 pub mod component_id;
-pub mod config;
 pub mod env_var;
 pub mod naming;
 #[cfg(feature = "postgres")]

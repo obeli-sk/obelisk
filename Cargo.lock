@@ -3411,7 +3411,6 @@ dependencies = [
  "obeli-sk-concepts",
  "obeli-sk-db-common",
  "obeli-sk-db-sqlite",
- "obeli-sk-deployment-config",
  "obeli-sk-executor",
  "obeli-sk-utils",
  "obeli-sk-val-json",

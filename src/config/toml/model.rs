@@ -8,9 +8,10 @@
 //! Behavior that requires the server runtime (OCI fetching, executor configuration,
 //! env var resolution) lives in the obelisk binary as extension traits.
 
-use crate::component_id::{ComponentDigest, ContentDigest, InvalidNameError, check_name};
-use crate::env_var::EnvVarConfig;
-use crate::naming::{FunctionFqn, StrVariant};
+use crate::config::env_var::EnvVarConfig;
+use concepts::component_id::{ComponentDigest, ContentDigest, InvalidNameError, check_name};
+use concepts::{FunctionFqn, StrVariant};
+use wasm_workers::workflow::workflow_worker::DEFAULT_NON_BLOCKING_EVENT_BATCHING;
 use hashbrown::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -19,11 +20,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 pub const OCI_SCHEMA_PREFIX: &str = "oci://";
-
-/// Default for `non_blocking_event_batching` of the `await` blocking strategy.
-/// Must stay in sync with `wasm_workers::workflow::workflow_worker::DEFAULT_NON_BLOCKING_EVENT_BATCHING`,
-/// which is asserted at compile time in the obelisk binary.
-pub const DEFAULT_NON_BLOCKING_EVENT_BATCHING: u32 = 100;
 
 /// Activity, Webhook, Workflow or a Http server
 #[derive(
@@ -641,9 +637,9 @@ pub mod webhook {
         AllowedHostToml, ComponentBacktraceConfigResolved, ComponentCommon, ComponentStdOutputToml,
         ConfigName, LogLevelToml, ScriptLocationResolved,
     };
-    use crate::component_id::ContentDigest;
-    use crate::env_var::EnvVarConfig;
-    use crate::naming::StrVariant;
+    use crate::config::env_var::EnvVarConfig;
+    use concepts::StrVariant;
+    use concepts::component_id::ContentDigest;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
@@ -710,7 +706,7 @@ pub mod webhook {
 
 pub mod cron {
     use super::{ConfigName, ExecConfigToml};
-    use crate::naming::FunctionFqn;
+    use concepts::FunctionFqn;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
