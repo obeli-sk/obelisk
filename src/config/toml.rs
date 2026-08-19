@@ -1106,7 +1106,7 @@ impl HasOptionalNameAndFfqn for ActivityStubExtInlineConfigToml {
 
 /// Location of a JavaScript source file.
 /// Supports local file paths and OCI registry references (`oci://...`).
-/// On-disk format only; replaced by [`ScriptLocationResolved`] before transmission and hash computation.
+/// On-disk format only; replaced by [`ScriptLocationResolved`] before hash computation.
 #[derive(Debug, Clone, Hash, JsonSchema, SerializeDisplay, DeserializeFromStr)]
 #[schemars(with = "String")]
 pub(crate) enum JsLocationToml {
@@ -2203,7 +2203,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentBacktraceConfig {
     /// Maps a frame-symbol key to a backtrace source file path. On-disk format only;
-    /// resolved to `ComponentBacktraceConfigResolved` before transmission and hash
+    /// resolved to `ComponentBacktraceConfigResolved` before hash
     /// computation. A relative path is deployment-dir-relative (a leading
     /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.
     #[serde(rename = "sources")]

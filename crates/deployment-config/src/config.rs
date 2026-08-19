@@ -419,18 +419,15 @@ pub struct ActivityExternalFileConfigToml {
     pub component_digest: Option<ComponentDigest>,
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[derive(Debug, Clone)]
 pub struct ActivityStubExtInlineConfigResolved {
     pub name: ConfigName,
-    #[schemars(with = "String")]
     pub ffqn: FunctionFqn,
-    #[serde(flatten)]
     pub interface: FunctionInterfaceResolved,
 }
 
 /// Authored WIT files belonging to a deployment component.
-#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct WitSourceResolved {
     /// Deployment-relative root supplied by the author.
     pub root: String,
@@ -438,24 +435,19 @@ pub struct WitSourceResolved {
     pub files: Vec<(String, String)>,
 }
 
-#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct InlineFunctionInterfaceResolved {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Vec<JsParamToml>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_type: Option<String>,
 }
 
-#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum FunctionInterfaceResolved {
     Authored { wit: WitSourceResolved },
     Inline(InlineFunctionInterfaceResolved),
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum ActivityStubComponentConfigResolved {
     File(ActivityStubFileConfigToml),
     Inline(ActivityStubExtInlineConfigResolved),
@@ -471,8 +463,7 @@ impl ActivityStubComponentConfigResolved {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum ActivityExternalComponentConfigResolved {
     File(ActivityExternalFileConfigToml),
     Inline(ActivityStubExtInlineConfigResolved),
@@ -495,33 +486,27 @@ impl ActivityExternalComponentConfigResolved {
 ///   deployment-relative path (which may include subfolders), used for source names and
 ///   backtraces.
 /// - `Oci` is an external registry reference.
-#[derive(Debug, Clone, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Hash)]
 pub enum ScriptLocationResolved {
-    #[schemars(with = "String")]
     Content { content: String, file_name: String },
-    // backcompat: 0.41 deployments keep using `Content`; graphs use the new explicit shape.
     Graph {
         entry_path: String,
         files: Vec<(String, String)>,
     },
     /// OCI-sourced script. No `oci://` prefix.
-    #[schemars(with = "String")]
     Oci { image: String },
 }
 
 /// Resolved backtrace source: the inlined source `content` plus the deployment-relative
 /// `file_name` it was read from (used to recreate the file, mirroring subfolders, on export).
-#[derive(JsonSchema, Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct BacktraceSourceResolved {
     pub content: String,
     pub file_name: String,
 }
 
-#[derive(JsonSchema, Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone)]
 pub struct ComponentBacktraceConfigResolved {
-    #[schemars(with = "std::collections::HashMap<String, BacktraceSourceResolved>")]
     pub frame_files_to_sources: HashMap<String, BacktraceSourceResolved>,
 }
 
@@ -538,14 +523,13 @@ impl ComponentBacktraceConfigResolved {
 }
 
 /// Resolved form of `ActivityJsComponentConfigToml`.
-#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct ActivityJsComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
-    #[serde(flatten)]
     pub interface: FunctionInterfaceResolved,
     pub exec: ExecConfigToml,
     pub max_retries: u32,
@@ -558,13 +542,12 @@ pub struct ActivityJsComponentConfigResolved {
 }
 
 /// Resolved form of `ActivityExecComponentConfigToml`.
-#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct ActivityExecComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub ffqn: FunctionFqn,
-    #[serde(flatten)]
     pub interface: FunctionInterfaceResolved,
     pub component_digest: Option<ComponentDigest>,
     pub exec: ExecConfigToml,
@@ -577,9 +560,7 @@ pub struct ActivityExecComponentConfigResolved {
     pub max_output_bytes: u64,
     /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
     /// table) to expose to the script in the stdin JSON `secrets` object.
-    #[serde(default)]
     pub secrets: Vec<String>,
-    #[serde(default)]
     pub params_via_stdin: bool,
 }
 
@@ -618,11 +599,9 @@ pub enum BlockingStrategyConfigSimple {
 }
 
 /// Resolved form of `WorkflowWasmComponentConfigToml`.
-#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct WorkflowWasmComponentConfigResolved {
     pub common: ComponentCommon,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub exec: ExecConfigToml,
@@ -631,27 +610,24 @@ pub struct WorkflowWasmComponentConfigResolved {
     pub backtrace: ComponentBacktraceConfigResolved,
     pub stub_wasi: bool,
     pub lock_extension: bool,
-    #[serde(default = "default_lock_extension_leeway")]
     pub lock_extension_leeway: DurationConfig,
     pub logs_store_min_level: LogLevelToml,
 }
 
 /// Resolved form of `WorkflowJsComponentConfigToml`.
-#[derive(JsonSchema, Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct WorkflowJsComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
     pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
-    #[serde(flatten)]
     pub interface: FunctionInterfaceResolved,
     pub exec: ExecConfigToml,
     pub retry_exp_backoff: DurationConfig,
     pub blocking_strategy: BlockingStrategyConfigToml,
     pub logs_store_min_level: LogLevelToml,
     pub lock_extension: bool,
-    #[serde(default = "default_lock_extension_leeway")]
     pub lock_extension_leeway: DurationConfig,
 }
 
@@ -694,56 +670,35 @@ pub mod webhook {
     }
 
     /// Resolved form of `WebhookWasmComponentConfigToml`.
-    #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
-    #[serde(deny_unknown_fields)]
+    #[derive(Debug, Clone)]
     pub struct WebhookWasmComponentConfigResolved {
-        #[serde(flatten)]
         pub common: ComponentCommon,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         pub content_digest: Option<ContentDigest>,
-        #[serde(default = "default_external_server_name")]
         pub http_server: ConfigName,
         pub routes: Vec<WebhookRoute>,
-        #[serde(default)]
         pub forward_stdout: ComponentStdOutputToml,
-        #[serde(default)]
         pub forward_stderr: ComponentStdOutputToml,
-        #[serde(default)]
         pub env_vars: Vec<EnvVarConfig>,
-        #[serde(default)]
         pub backtrace: ComponentBacktraceConfigResolved,
-        #[serde(default)]
         pub backtrace_persist: bool,
-        #[serde(default)]
         pub logs_store_min_level: LogLevelToml,
-        #[serde(default, rename = "allowed_host")]
         pub allowed_hosts: Vec<AllowedHostToml>,
-        #[serde(skip)]
         pub is_webui: bool,
     }
 
     /// Resolved form of `WebhookJsComponentConfigToml`.
-    #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
-    #[serde(deny_unknown_fields)]
+    #[derive(Debug, Clone)]
     pub struct WebhookJsComponentConfigResolved {
         pub name: ConfigName,
         pub location: ScriptLocationResolved,
-        #[serde(default)]
         pub content_digest: Option<ContentDigest>,
-        #[serde(default = "default_external_server_name")]
         pub http_server: ConfigName,
         pub routes: Vec<WebhookRoute>,
-        #[serde(default)]
         pub forward_stdout: ComponentStdOutputToml,
-        #[serde(default)]
         pub forward_stderr: ComponentStdOutputToml,
-        #[serde(default)]
         pub logs_store_min_level: LogLevelToml,
-        #[serde(default)]
         pub env_vars: Vec<EnvVarConfig>,
-        #[serde(default)]
         pub backtrace_persist: bool,
-        #[serde(default, rename = "allowed_host")]
         pub allowed_hosts: Vec<AllowedHostToml>,
     }
 }
@@ -779,10 +734,12 @@ pub mod cron {
 /// Resolved deployment configuration after resolving deployment-owned text sources.
 ///
 /// This is a runtime/verification shape derived from the stored manifest plus a file
-/// provider. It is not the stored deployment source of truth. Deployment-owned scripts
-/// and backtrace sources are inlined as content; deployment-owned WASM locations remain
-/// relative path + content digest until `DeploymentRunnable` materializes them from the
-/// CAS into a runnable cache path. OCI references remain external references.
+/// provider. It is not the stored deployment source of truth, and is an in-memory value
+/// only (never serialized): it is rebuilt on each server from the stored manifest and the
+/// CAS. Deployment-owned scripts and backtrace sources are inlined as content;
+/// deployment-owned WASM locations remain relative path + content digest until
+/// `DeploymentRunnable` materializes them from the CAS into a runnable cache path. OCI
+/// references remain external references.
 #[derive(Debug, Default, Clone)]
 pub struct DeploymentResolved {
     /// Path of the deployment manifest this configuration was loaded from, when available.
