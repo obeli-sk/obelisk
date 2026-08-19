@@ -488,13 +488,18 @@ impl ActivityExternalComponentConfigResolved {
 /// - `Oci` is an external registry reference.
 #[derive(Debug, Clone, Hash)]
 pub enum ScriptLocationResolved {
-    Content { content: String, file_name: String },
+    Content {
+        content: String,
+        file_name: String,
+    },
     Graph {
         entry_path: String,
         files: Vec<(String, String)>,
     },
     /// OCI-sourced script. No `oci://` prefix.
-    Oci { image: String },
+    Oci {
+        image: String,
+    },
 }
 
 /// Resolved backtrace source: the inlined source `content` plus the deployment-relative
