@@ -1927,13 +1927,10 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                 bail!("activity_exec does not support module graphs")
             }
             ScriptLocationResolved::Oci { image } => {
-                let oci_ref = oci_client::Reference::from_str(image)
-                    .map_err(|e| anyhow!("invalid OCI reference `{image}`: {e}"))?;
                 tokio::fs::create_dir_all(&exec_cache_dir).await?;
                 let metadata_dir = wasm_cache_metadata_dir(wasm_cache_dir);
                 let result =
-                    crate::oci::pull_exec_to_cache(&oci_ref, &exec_cache_dir, &metadata_dir)
-                        .await?;
+                    crate::oci::pull_exec_to_cache(image, &exec_cache_dir, &metadata_dir).await?;
                 if let Some(expected) = self.content_digest.as_ref() {
                     let actual = utils::sha256sum::calculate_sha256_file(&result.exec_path).await?;
                     ensure!(
@@ -2316,8 +2313,6 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                 files: files.iter().cloned().collect(),
             }),
             ScriptLocationResolved::Oci { image } => {
-                let oci_ref = oci_client::Reference::from_str(image)
-                    .map_err(|e| anyhow::anyhow!("invalid OCI reference in resolved form: {e}"))?;
                 let js_cache_dir = wasm_cache_dir.join("js");
                 tokio::fs::create_dir_all(&js_cache_dir)
                     .await
@@ -2331,7 +2326,7 @@ impl JsLocationResolvedExt for ScriptLocationResolved {
                         format!("cannot create metadata directory {metadata_dir:?}")
                     })?;
                 let crate::oci::JsCacheResult { js_path, .. } =
-                    crate::oci::pull_js_to_cache(&oci_ref, &js_cache_dir, &metadata_dir)
+                    crate::oci::pull_js_to_cache(image, &js_cache_dir, &metadata_dir)
                         .await
                         .with_context(|| format!("cannot pull JS from OCI: {image}"))?;
                 if let Some(expected) = expected_digest {
@@ -3179,9 +3174,7 @@ async fn resolve_script_toml(
                     "OCI scripts cannot set `component_files`"
                 );
             }
-            Ok(ScriptLocationResolved::Oci {
-                image: reference.to_string(),
-            })
+            Ok(ScriptLocationResolved::Oci { image: reference })
         }
         (None, None) | (Some(_), Some(_)) => {
             bail!("exactly one of `location` or `content` must be set for script components")
@@ -4842,7 +4835,7 @@ name = "my_stub"
             );
             let oci = exec_config_with_source(
                 ScriptLocationResolved::Oci {
-                    image: "registry.example.com/ns/exec:latest".into(),
+                    image: "registry.example.com/ns/exec:latest".parse().unwrap(),
                 },
                 None,
             );
@@ -5069,7 +5062,7 @@ name = "my_stub"
             assert_matches::assert_matches!(
                 location,
                 ScriptLocationResolved::Oci { image }
-                    if image == "docker.io/library/example:latest"
+                    if image.to_string() == "docker.io/library/example:latest"
             );
         }
 

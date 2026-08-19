@@ -1450,7 +1450,7 @@ async fn deployment_resolved_from_manifest(
     )
 }
 
-/// A [`DeploymentResolved`] whose every WASM component location is a concrete, runnable
+/// Transient server state whose every WASM component location is a concrete, runnable
 /// reference: an absolute on-disk path or an OCI image.
 ///
 /// `DeploymentResolved` is host-independent: a deployment-owned WASM is a *relative* path

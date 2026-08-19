@@ -1,9 +1,9 @@
-//! Deployment configuration data model shared between the obelisk server and the webui.
+//! Deployment configuration data model.
 //!
-//! Contains the resolved deployment configuration ([`DeploymentResolved`]), the stored
-//! manifest representation used for deployment submission and DB storage, plus the data
-//! types it is composed of. Some of these types double as the TOML representation
-//! (their original `*Toml` names are kept).
+//! Contains the stored manifest representation used for deployment submission and DB storage,
+//! plus transient resolved configuration ([`DeploymentResolved`]) used by the local server and
+//! `obelisk deployment verify`. Some types double as the TOML representation (their original
+//! `*Toml` names are kept).
 //!
 //! Behavior that requires the server runtime (OCI fetching, executor configuration,
 //! env var resolution) lives in the obelisk binary as extension traits.
@@ -498,8 +498,7 @@ pub enum ScriptLocationResolved {
     },
     /// OCI-sourced script. No `oci://` prefix.
     Oci {
-        // String, not `oci_client::Reference`: this crate compiles to wasm32 for the webui and cannot depend on `oci_client`. Always built from a valid reference; callers re-parse it.
-        image: String,
+        image: oci_client::Reference,
     },
 }
 
@@ -740,10 +739,10 @@ pub mod cron {
 
 /// Resolved deployment configuration after resolving deployment-owned text sources.
 ///
-/// This is a runtime/verification shape derived from the stored manifest plus a file
-/// provider. It is not the stored deployment source of truth, and is an in-memory value
-/// only (never serialized): it is rebuilt on each server from the stored manifest and the
-/// CAS. Deployment-owned scripts and backtrace sources are inlined as content;
+/// This is a transient runtime/verification shape used by the local server and
+/// `obelisk deployment verify`. It is derived from the stored manifest plus a file provider,
+/// never serialized, and rebuilt on each server from the stored manifest and the CAS.
+/// Deployment-owned scripts and backtrace sources are inlined as content;
 /// deployment-owned WASM locations remain relative path + content digest until
 /// `DeploymentRunnable` materializes them from the CAS into a runnable cache path. OCI
 /// references remain external references.

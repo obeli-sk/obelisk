@@ -3230,6 +3230,8 @@ dependencies = [
  "const_format",
  "derive_more",
  "hashbrown 0.16.1",
+ "oci-client",
+ "reqwest",
  "rusqlite",
  "schemars 1.2.1",
  "serde",
