@@ -5220,15 +5220,6 @@ impl DbExternalApi for PostgresConnection {
         Ok(deployments)
     }
 
-    #[instrument(skip(self))]
-    async fn insert_deployment(&self, record: DeploymentRecord) -> Result<(), DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
-        let tx = client_guard.transaction().await?;
-        insert_deployment_tx(&tx, &record).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     async fn insert_deployment_with_components(
         &self,
         record: DeploymentRecord,

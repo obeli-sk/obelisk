@@ -37,18 +37,23 @@ async fn create_deployment_with_execution(
         .is_none()
     {
         db_connection
-            .insert_deployment(DeploymentRecord {
-                deployment_id,
-                description: None,
-                digest: DeploymentRecord::compute_digest("{}"),
-                created_at: now,
-                last_active_at: None,
-                status: DeploymentStatus::Inactive,
-                deployment_toml: "{}".to_string(),
-                obelisk_version: "0.0.0-test".to_string(),
-                created_by: None,
-                files: Vec::new(),
-            })
+            .insert_deployment_with_components(
+                DeploymentRecord {
+                    deployment_id,
+                    description: None,
+                    digest: DeploymentRecord::compute_digest("{}"),
+                    created_at: now,
+                    last_active_at: None,
+                    status: DeploymentStatus::Inactive,
+                    deployment_toml: "{}".to_string(),
+                    obelisk_version: "0.0.0-test".to_string(),
+                    created_by: None,
+                    files: Vec::new(),
+                },
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
             .await
             .unwrap();
     }
