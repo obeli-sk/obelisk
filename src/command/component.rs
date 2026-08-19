@@ -11,8 +11,8 @@ use crate::config::toml::ConfigName;
 use crate::config::toml::DeploymentTomlValidated;
 use crate::config::toml::DurationConfig;
 use crate::config::toml::FunctionInterfaceToml;
-use crate::config::toml::ScriptLocationPathOrOci;
 use crate::config::toml::OCI_SCHEMA_PREFIX;
+use crate::config::toml::ScriptLocationPathOrOci;
 use crate::config::wasm_cache_metadata_dir;
 use crate::oci;
 use crate::oci::ComponentMetadataAnnotation;
@@ -998,7 +998,10 @@ mod tests {
             act.name.as_ref().expect("name set").to_string(),
             "my_exec_activity"
         );
-        assert!(matches!(act.location, Some(ScriptLocationPathOrOci::Oci(_))));
+        assert!(matches!(
+            act.location,
+            Some(ScriptLocationPathOrOci::Oci(_))
+        ));
         assert!(act.content.is_none());
         assert_eq!(act.content_digest, Some(content_digest));
         assert_eq!(act.ffqn.to_string(), "my-pkg:my-iface/my-ifc.my-fn");

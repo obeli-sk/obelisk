@@ -3491,9 +3491,9 @@ pub(crate) mod webhook {
     use super::{
         AllowedHostToml, ComponentBacktraceConfig, ComponentCommon, ComponentCommonFetchExt,
         ComponentStdOutputToml, ComponentStdOutputTomlExt, ConfigName, JsContent,
-        JsLocationResolvedExt, ScriptLocationPathOrOci, LogLevelTomlExt, SecretResolver, hash_js_graph,
-        resolve_allowed_hosts, resolve_env_vars_plaintext, restricted_secret_registry,
-        validate_no_env_collision,
+        JsLocationResolvedExt, LogLevelTomlExt, ScriptLocationPathOrOci, SecretResolver,
+        hash_js_graph, resolve_allowed_hosts, resolve_env_vars_plaintext,
+        restricted_secret_registry, validate_no_env_collision,
     };
     use crate::command::server::{FrameFilesToSource, FrameSource};
     use crate::config::secret_registry::SecretRegistry;
@@ -5018,7 +5018,11 @@ name = "my_stub"
             let reference =
                 oci_client::Reference::from_str("docker.io/library/example:latest").unwrap();
             let location = resolve_script_toml(
-                javascript(Some(ScriptLocationPathOrOci::Oci(reference)), None, BTreeMap::new()),
+                javascript(
+                    Some(ScriptLocationPathOrOci::Oci(reference)),
+                    None,
+                    BTreeMap::new(),
+                ),
                 "ignored.js".to_string(),
                 &cas,
                 None,
