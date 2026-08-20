@@ -145,10 +145,15 @@ impl WasmComponent {
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let mut resolve = Resolve::default();
-        let group =
-            wit_parser::UnresolvedPackageGroup::parse(PathBuf::new(), wit).map_err(|source| {
-                DecodeError::new_with_source(format!("cannot parse synthesized WIT: {wit}"), source)
-            })?;
+        let group = wit_parser::UnresolvedPackageGroup::parse(PathBuf::new(), wit).map_err(
+            |(map, err)| {
+                let rendered = err.render(&map);
+                DecodeError::new_with_source(
+                    format!("cannot parse synthesized WIT: {wit}"),
+                    anyhow::Error::from(err).context(rendered),
+                )
+            },
+        )?;
         let main_pkg_id = resolve.push_group(group).map_err(|source| {
             DecodeError::new_with_source(
                 format!("cannot push synthesized WIT group: {wit}"),

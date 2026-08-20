@@ -9,8 +9,7 @@ use executor::worker::WorkerContext;
 use wasmtime::Engine;
 use wasmtime::{Store, component::ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::WasiHttpCtx;
-use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wasmtime_wasi_io::IoView;
 
 pub struct ActivityCtx {

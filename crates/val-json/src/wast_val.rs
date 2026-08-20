@@ -174,6 +174,7 @@ impl TryFrom<wasmtime::component::Val> for WastVal {
             Val::Stream(_) => Err(WastValConversionError("stream")),
             Val::ErrorContext(_) => Err(WastValConversionError("error-context")),
             Val::Map(_) => Err(WastValConversionError("map")),
+            Val::FixedLengthList(_) => Err(WastValConversionError("fixed-length-list")),
         }
     }
 }
