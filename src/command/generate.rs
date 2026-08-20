@@ -266,7 +266,7 @@ fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::
 }
 
 #[cfg(test)]
-fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+fn generate_authored_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
     write_schema::<crate::config::toml::DeploymentToml>(output)
 }
 
@@ -958,8 +958,8 @@ fn has_obelisk_wit_header(content: &str) -> bool {
 mod tests {
     use super::{
         OBELISK_WIT_HEADER, add_token_hash, generate_cli_schema,
-        generate_component_metadata_annotation_schema, generate_db_schema,
-        generate_deployment_schema, generate_openapi_schema, generate_server_config_schema,
+        generate_authored_schema, generate_component_metadata_annotation_schema,
+        generate_db_schema, generate_openapi_schema, generate_server_config_schema,
         write_wit_deps,
     };
     use concepts::PkgFqn;
@@ -1023,7 +1023,7 @@ mod tests {
     fn update_toml_schemas() {
         generate_server_config_schema(Some(PathBuf::from("assets/schemas/toml/server.json")))
             .unwrap();
-        generate_deployment_schema(Some(PathBuf::from("assets/schemas/toml/deployment.json")))
+        generate_authored_schema(Some(PathBuf::from("assets/schemas/toml/authored.json")))
             .unwrap();
     }
 
