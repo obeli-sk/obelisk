@@ -897,3 +897,91 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
 const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::deployment::{MethodsInput, ReplaceIn};
+
+    mod outbound_http {
+        use super::*;
+
+        #[test]
+        fn server_allowlist_uses_deployment_allowed_host_shape() {
+            let config: ServerConfigToml = toml::from_str(
+                r#"
+                [secrets]
+                API_KEY = { env = "API_KEY_SOURCE" }
+
+                [[outbound_http.allowed_host]]
+                pattern = "api.example.com"
+                methods = ["POST"]
+                request_url_regex = "^POST https://api\\.example\\.com/v1/"
+                secrets = ["API_KEY"]
+                replace_in = ["headers"]
+                "#,
+            )
+            .unwrap();
+
+            let entry = &config.outbound_http.allowed_hosts[0];
+            assert_eq!(entry.pattern, "api.example.com");
+            assert_eq!(entry.secrets, ["API_KEY"]);
+            assert!(matches!(
+                entry.methods,
+                Some(MethodsInput::List(ref methods)) if methods.as_slice() == ["POST"]
+            ));
+            assert!(matches!(entry.replace_in.as_slice(), [ReplaceIn::Headers]));
+        }
+
+        #[test]
+        fn omitted_server_allowlist_is_empty() {
+            let config: ServerConfigToml = toml::from_str("").unwrap();
+            assert!(config.outbound_http.allowed_hosts.is_empty());
+        }
+    }
+
+    mod allow_exec_activities {
+        use super::*;
+
+        #[derive(serde::Deserialize, Debug)]
+        struct TestConfig {
+            #[serde(default)]
+            allow: AllowExecActivities,
+        }
+
+        const DIGEST: &str =
+            "sha256:abababababababababababababababababababababababababababababababab";
+
+        #[test]
+        fn deserialize_bool_map_and_legacy_digest_list() {
+            let actual: TestConfig = toml::from_str("allow = true").unwrap();
+            assert_eq!(AllowExecActivities::AllowAny, actual.allow);
+            let actual: TestConfig = toml::from_str("allow = false").unwrap();
+            assert_eq!(AllowExecActivities::Deny, actual.allow);
+            let actual: TestConfig = toml::from_str("").unwrap();
+            assert_eq!(AllowExecActivities::Deny, actual.allow);
+            let actual: TestConfig =
+                toml::from_str(&format!("[allow]\ngreet = \"{DIGEST}\"")).unwrap();
+            assert_eq!(
+                AllowExecActivities::Allowlist(BTreeMap::from([(
+                    "greet".to_string(),
+                    DIGEST.parse().unwrap()
+                )])),
+                actual.allow
+            );
+            let actual: TestConfig = toml::from_str(&format!("allow = [\"{DIGEST}\"]")).unwrap();
+            assert_eq!(
+                AllowExecActivities::LegacyAllowlist(vec![DIGEST.parse().unwrap()]),
+                actual.allow
+            );
+        }
+
+        #[test]
+        fn deserialize_bool_string_as_sent_by_env_override() {
+            // `OBELISK__ALLOW_EXEC_ACTIVITIES=true` reaches serde as a string.
+            let actual: TestConfig = toml::from_str(r#"allow = "true""#).unwrap();
+            assert_eq!(AllowExecActivities::AllowAny, actual.allow);
+            toml::from_str::<TestConfig>(r#"allow = "yes""#).unwrap_err();
+        }
+    }
+}
