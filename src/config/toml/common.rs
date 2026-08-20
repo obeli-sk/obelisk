@@ -3,6 +3,7 @@
 //! and the serde defaults. Authored component structs live in [`super::authored`], the
 //! resolved forms in [`super::resolve`], and server config in [`super::server`].
 
+use anyhow::{Context, bail, ensure};
 use concepts::component_id::{InvalidNameError, check_name};
 use concepts::{FunctionFqn, StrVariant};
 use schemars::JsonSchema;
@@ -456,4 +457,59 @@ pub struct WebhookRouteDetail {
     #[serde(default)]
     pub methods: Vec<String>,
     pub route: String,
+}
+
+/// The literal prefix used to anchor a path at the deployment directory.
+pub(crate) const DEPLOYMENT_DIR_PREFIX: &str = "${DEPLOYMENT_DIR}";
+
+/// Strip an optional `${DEPLOYMENT_DIR}` (and following `/`) prefix, returning the remainder.
+pub(crate) fn strip_deployment_dir_prefix(s: &str) -> Option<&str> {
+    s.strip_prefix(DEPLOYMENT_DIR_PREFIX)
+        .map(|rest| rest.strip_prefix('/').unwrap_or(rest))
+}
+
+/// Normalize a deployment-owned relative path to forward-slash form, rejecting anything
+/// that would escape the deployment directory (`..`, absolute paths, drive prefixes).
+pub(crate) fn sanitize_deployment_relative_path(rel: &str) -> anyhow::Result<String> {
+    use std::path::Component;
+    let mut parts: Vec<&str> = Vec::new();
+    for comp in std::path::Path::new(rel).components() {
+        match comp {
+            Component::Normal(s) => parts.push(
+                s.to_str()
+                    .with_context(|| format!("non-UTF8 path component in `{rel}`"))?,
+            ),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                bail!(
+                    "path must not contain `..` (cannot escape the deployment directory): `{rel}`"
+                )
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                bail!("path must be relative to the deployment directory: `{rel}`")
+            }
+        }
+    }
+    ensure!(!parts.is_empty(), "empty deployment-relative path: `{rel}`");
+    Ok(parts.join("/"))
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(untagged)]
+pub(crate) enum ValueOrUnlimited<T> {
+    Unlimited(Unlimited),
+    Some(T),
+}
+impl<T> Default for ValueOrUnlimited<T> {
+    fn default() -> Self {
+        Self::Unlimited(Unlimited::Unlimited)
+    }
+}
+impl<T> From<ValueOrUnlimited<T>> for Option<T> {
+    fn from(value: ValueOrUnlimited<T>) -> Self {
+        match value {
+            ValueOrUnlimited::Some(val) => Some(val),
+            ValueOrUnlimited::Unlimited(Unlimited::Unlimited) => None,
+        }
+    }
 }

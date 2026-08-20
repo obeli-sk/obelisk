@@ -1,13 +1,23 @@
 
-use concepts::{ContentDigest, component_id::Digest};
+use super::*;
+use crate::config::env_var::EnvVarConfig;
+use crate::config::secret_registry::SecretRegistry;
+use concepts::cas::Cas;
+use concepts::{ContentDigest, StrVariant, component_id::Digest};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::str::FromStr;
+use wasm_workers::workflow::workflow_worker::{
+    DEFAULT_NON_BLOCKING_EVENT_BATCHING, JoinNextBlockingStrategy,
+};
 
 fn digest_of(bytes: &[u8]) -> ContentDigest {
     ContentDigest(Digest(Sha256::digest(bytes).into()))
 }
 
 mod outbound_http {
-    use super::super::*;
+    use super::*;
 
     #[test]
     fn server_allowlist_uses_deployment_allowed_host_shape() {
@@ -44,7 +54,7 @@ mod outbound_http {
 }
 
 mod blocking_strategy {
-    use super::super::*;
+    use super::*;
     use crate::config::toml::common::{
         BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
         BlockingStrategyConfigSimple, default_non_blocking_event_batching,
@@ -201,7 +211,7 @@ strategy = { kind = "await", non_blocking_event_batching = 25, extra_stuff = "he
 }
 
 mod allow_exec_activities {
-    use super::super::*;
+    use super::*;
 
     #[derive(serde::Deserialize, Debug)]
     struct TestConfig {
@@ -244,7 +254,7 @@ mod allow_exec_activities {
 }
 
 mod allowed_hosts {
-    use super::super::*;
+    use super::*;
 
     fn allowed_host_with_regex(request_url_regex: &str) -> AllowedHostToml {
         AllowedHostToml {
@@ -303,7 +313,7 @@ mod allowed_hosts {
 }
 
 mod env_vars {
-    use super::super::*;
+    use super::*;
 
     #[test]
     fn missing_key_value_interpolation_honors_ignore_missing() {
@@ -326,7 +336,7 @@ mod env_vars {
 }
 
 mod component_location {
-    use super::super::*;
+    use super::*;
 
     #[test]
     fn parse_local_path() {
@@ -345,7 +355,7 @@ mod component_location {
 mod activity_stub {
     use crate::config::toml::tests::digest_of;
 
-    use super::super::*;
+    use super::*;
 
     #[test]
     fn deserialize_file_mode() {
@@ -418,7 +428,7 @@ mod activity_exec {
 
     use crate::config::toml::tests::digest_of;
 
-    use super::super::*;
+    use super::*;
 
     /// A config that references the registered secret name `MY_SECRET`.
     fn exec_config_with_secret() -> ActivityExecComponentConfigResolved {
@@ -596,7 +606,7 @@ mod activity_exec {
 mod script_location {
     use crate::config::toml::tests::digest_of;
 
-    use super::super::*;
+    use super::*;
     use concepts::cas::InMemoryCas;
 
     fn javascript(
@@ -814,7 +824,7 @@ mod script_location {
 }
 
 mod export {
-    use super::super::*;
+    use super::*;
 
     fn js_activity(
         name: &str,
@@ -889,7 +899,7 @@ mod export {
 mod backtrace {
     use crate::config::toml::tests::digest_of;
 
-    use super::super::*;
+    use super::*;
 
     #[test]
     fn wasm_deployment_dir_escape_rejected_but_subpath_ok() {

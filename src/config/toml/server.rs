@@ -2,6 +2,21 @@
 //! globals, watchers, allocator, and telemetry. Orthogonal to the deployment manifest.
 
 use super::*;
+use self::log::{LoggingConfig, LoggingStyle};
+use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX, PathPrefixes};
+use crate::config::env_var::{interpolate_env_vars_plaintext, interpolate_env_vars_secret};
+use crate::config::secret_registry::{SecretRegistry, SecretsToml};
+use concepts::ContentDigest;
+use concepts::component_id::Digest;
+use db_postgres::postgres_dao::{self, PostgresConfig};
+use db_sqlite::sqlite_dao::SqliteConfig;
+use schemars::JsonSchema;
+use secrecy::SecretString;
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -865,3 +880,17 @@ pub(crate) struct HttpServer {
     pub(crate) name: ConfigName,
     pub(crate) listening_addr: SocketAddr,
 }
+
+// Default on-disk locations and size limits for the server's data/cache directories.
+
+const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
+    const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
+const DEFAULT_SQLITE_DIR: &str = "obelisk-sqlite";
+pub(crate) const SQLITE_FILE_NAME: &str = "obelisk.sqlite";
+const DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
+    const_format::formatcp!("{}wasm", CACHE_DIR_PREFIX);
+const DEFAULT_WASM_DIRECTORY: &str = "cache/wasm";
+const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
+    const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
+const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
+pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
