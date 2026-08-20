@@ -53,6 +53,12 @@ pub(crate) async fn resolve_manifest(
 ) -> anyhow::Result<DeploymentResolved> {
     // A processed manifest carries no submitter host, so relative WASM/script paths stay
     // relative (addressed by digest in the CAS) after validation against an empty root.
+    //
+    // Validate the processed shape (deployment-owned locations carry a `content_digest`,
+    // JS/WIT/backtrace sources are present in `component_files`) up front, so resolution can
+    // treat those invariants as guaranteed rather than re-checking them lazily.
+    DeploymentManifest::try_from_toml(deployment_toml, &cas_deployment_dir())
+        .context("cannot validate processed deployment manifest")?;
     parse_manifest(deployment_toml, &cas_deployment_dir())?
         .resolve(cas)
         .await
@@ -123,6 +129,11 @@ pub(crate) async fn prepare_deployment_manifest(
     files.retain(|file| seen.insert(file.path.clone()));
 
     let deployment_toml = doc.to_string();
+    // Self-check: the injected `content_digest`/`component_files` must satisfy the
+    // processed-shape invariants, so a bug in the collectors surfaces here at preparation
+    // rather than lazily during resolution.
+    DeploymentManifest::try_from_toml(&deployment_toml, deployment_dir)
+        .context("prepared deployment manifest failed processed-shape validation")?;
     let digest = compute_manifest_digest(&deployment_toml);
     Ok(PreparedDeploymentManifest {
         deployment_toml,

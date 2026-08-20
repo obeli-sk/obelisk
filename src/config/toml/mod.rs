@@ -1578,17 +1578,14 @@ name = "my_stub"
         }
 
         #[test]
-        fn absolute_source_is_rejected() {
+        #[should_panic(expected = "must be rejected before resolution")]
+        fn absolute_source_panics_after_validation() {
+            // Absolute backtrace sources are rejected by the pre-resolve validation pass,
+            // so reaching `resolve_backtrace` with one is an internal invariant violation.
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources
                 .insert(".../src/lib.rs".to_string(), "/nested/lib.rs".to_string());
-            let err = resolve_backtrace(&bt, &BTreeMap::new())
-                .unwrap_err()
-                .to_string();
-            assert!(
-                err.contains("absolute local paths are not allowed"),
-                "unexpected error: {err}"
-            );
+            let _ = resolve_backtrace(&bt, &BTreeMap::new());
         }
     }
 }

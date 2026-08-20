@@ -1685,20 +1685,22 @@ pub(crate) fn resolve_backtrace(
     for (key, path) in &backtrace.frame_files_to_sources {
         // Classify the source path like a script: a relative path (bare or
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on export.
+        // The pre-resolve validation pass already rejected absolute paths.
         let file_name = if let Some(rest) = strip_deployment_dir_prefix(path) {
             sanitize_deployment_relative_path(rest)?
         } else if std::path::Path::new(path).is_absolute() {
-            bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
+            unreachable!("absolute backtrace source `{path}` must be rejected before resolution")
         } else {
             sanitize_deployment_relative_path(path)?
         };
         // The processed manifest carries every deployment-owned backtrace source's digest in
         // `component_files`; the bytes are in the CAS, so the digest is a complete reference.
+        // The pre-resolve validation pass guarantees the entry is present.
         let content_digest = component_files
             .get(&file_name)
-            .with_context(|| {
-                format!("backtrace source `{file_name}` has no digest in `component_files`")
-            })?
+            .unwrap_or_else(|| {
+                unreachable!("backtrace source `{file_name}` must have a digest in `component_files`")
+            })
             .clone();
         frame_files_to_sources.insert(
             key.clone(),
