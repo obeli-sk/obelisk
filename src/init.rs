@@ -1,6 +1,6 @@
 use std::io::IsTerminal as _;
 
-use crate::config::deployment::{
+use crate::config::server::{
     ServerConfigToml,
     log::{AppenderConsoleWriter, LoggingStyle},
 };

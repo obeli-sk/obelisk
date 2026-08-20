@@ -1,6 +1,7 @@
 use super::env_var::interpolate_path_template;
 use super::secret_registry::SecretRegistry;
-use super::deployment::{DeploymentToml, ServerConfigToml};
+use super::deployment::DeploymentToml;
+use super::server::ServerConfigToml;
 use crate::config::deployment::DeploymentTomlValidated;
 use anyhow::{Context as _, bail};
 use config::{Config, ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
@@ -236,7 +237,8 @@ async fn write_config_file(
 #[cfg(test)]
 mod tests {
     use super::{OBELISK_TRUSTED_SERVER_TOML, ServerConfigToml};
-    use crate::config::deployment::{AllowExecActivities, MethodsInput};
+    use crate::config::deployment::MethodsInput;
+    use crate::config::server::AllowExecActivities;
 
     #[test]
     fn trusted_server_config_allows_exec_and_outbound_http_without_secrets() {

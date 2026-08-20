@@ -807,7 +807,7 @@ impl TestServer {
         }
 
         let webhook_base_url = format!("http://{ip}:{WEBHOOK_PORT}");
-        let sqlite_file = tmp_dir.path().join(crate::config::deployment::SQLITE_FILE_NAME);
+        let sqlite_file = tmp_dir.path().join(crate::config::server::SQLITE_FILE_NAME);
         TestServer {
             ip,
             base_url,

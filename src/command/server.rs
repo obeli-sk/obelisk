@@ -29,8 +29,8 @@ use crate::config::deployment::ActivityStubExtConfigVerified;
 use crate::config::deployment::ActivityStubExtInlineConfigVerified;
 use crate::config::deployment::ActivityWasmComponentConfigTomlExt as _;
 use crate::config::deployment::ActivityWasmConfigVerified;
-use crate::config::deployment::AllowExecActivities;
-use crate::config::deployment::CancelWatcherTomlConfig;
+use crate::config::server::AllowExecActivities;
+use crate::config::server::CancelWatcherTomlConfig;
 use crate::config::deployment::ComponentCommon;
 #[cfg(not(feature = "embed-assets"))] // Only the OCI fetch arms below use `.fetch()`.
 use crate::config::deployment::ComponentLocationFetchExt as _;
@@ -39,15 +39,15 @@ use crate::config::deployment::ComponentStdOutputToml;
 use crate::config::deployment::ConfigName;
 use crate::config::deployment::CronComponentConfigTomlExt as _;
 use crate::config::deployment::CronConfigVerified;
-use crate::config::deployment::DatabaseConfigToml;
+use crate::config::server::DatabaseConfigToml;
 use crate::config::deployment::DeploymentResolved;
-use crate::config::deployment::HttpServer;
+use crate::config::server::HttpServer;
 use crate::config::deployment::InflightSemaphoreExt as _;
 use crate::config::deployment::LogLevelToml;
-use crate::config::deployment::SQLITE_FILE_NAME;
-use crate::config::deployment::ServerConfigToml;
-use crate::config::deployment::TimersWatcherTomlConfig;
-use crate::config::deployment::WasmtimeAllocatorConfig;
+use crate::config::server::SQLITE_FILE_NAME;
+use crate::config::server::ServerConfigToml;
+use crate::config::server::TimersWatcherTomlConfig;
+use crate::config::server::WasmtimeAllocatorConfig;
 use crate::config::deployment::WebhookJsComponentConfigResolvedExt as _;
 use crate::config::deployment::WebhookJsConfigVerified;
 use crate::config::deployment::WebhookRoute;
@@ -5422,10 +5422,10 @@ mod tests {
         config::{
             config_holder::ConfigHolder,
             deployment::{
-                AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
-                ScriptLocationResolved, ServerConfigToml,
+                AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn, ScriptLocationResolved,
             },
             secret_registry::SecretRegistry,
+            server::{AllowExecActivities, ServerConfigToml},
         },
     };
     use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
@@ -6145,7 +6145,7 @@ mod tests {
             SuppliedFile, compute_content_digest, validate_submit_package,
         };
         use crate::config::deployment::{DeploymentFileRef, ManifestFieldRef};
-        use crate::config::deployment::MAX_DEPLOYMENT_FILE_BYTES;
+        use crate::config::server::MAX_DEPLOYMENT_FILE_BYTES;
         use concepts::ContentDigest;
         use hashbrown::HashSet;
 

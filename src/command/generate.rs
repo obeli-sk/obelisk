@@ -10,7 +10,8 @@ use crate::config::config_holder::{
 };
 use crate::config::deployment::{prepare_deployment_manifest, resolve_manifest};
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::deployment::{OCI_SCHEMA_PREFIX, ServerConfigToml};
+use crate::config::deployment::OCI_SCHEMA_PREFIX;
+use crate::config::server::ServerConfigToml;
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::{Context, ensure};
@@ -262,7 +263,7 @@ fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), 
 
 #[cfg(test)]
 fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    write_schema::<crate::config::deployment::ServerConfigToml>(output)
+    write_schema::<crate::config::server::ServerConfigToml>(output)
 }
 
 #[cfg(test)]

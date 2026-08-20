@@ -6,6 +6,7 @@ pub(crate) mod deployment;
 pub(crate) mod env_var;
 pub(crate) mod file_provider;
 pub(crate) mod secret_registry;
+pub(crate) mod server;
 
 pub(crate) fn content_digest_to_wasm_file(
     wasm_cache_dir: &Path,

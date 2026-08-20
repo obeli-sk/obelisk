@@ -2,11 +2,11 @@
 //! globals, watchers, allocator, and telemetry. Orthogonal to the deployment manifest.
 
 use self::log::{LoggingConfig, LoggingStyle};
-use super::{
+use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX, PathPrefixes};
+use crate::config::deployment::{
     AllowedHostToml, ConfigName, DurationConfig, DurationConfigOptional, InflightSemaphore,
     ValueOrUnlimited,
 };
-use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX, PathPrefixes};
 use crate::config::env_var::{interpolate_env_vars_plaintext, interpolate_env_vars_secret};
 use crate::config::secret_registry::{SecretRegistry, SecretsToml};
 use concepts::ContentDigest;

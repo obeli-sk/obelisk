@@ -11,19 +11,17 @@
 //!    digests verified, ready for the runtime.
 //!
 //! The runtime materialization (`DeploymentRunnable`) lives in the server command. Server
-//! runtime config (`obelisk.toml`) is orthogonal and lives in [`server`]. [`common`] holds
-//! the serde data-shape primitives shared across the stages.
+//! runtime config (`obelisk.toml`) is orthogonal and lives in [`super::server`]. [`common`]
+//! holds the serde data-shape primitives shared across the stages.
 
 mod authored;
 mod common;
 mod prepared;
 mod resolved;
-mod server;
 pub(crate) use authored::*;
 pub(crate) use common::*;
 pub(crate) use prepared::*;
 pub(crate) use resolved::*;
-pub(crate) use server::*;
 
 #[cfg(test)]
 mod tests;
