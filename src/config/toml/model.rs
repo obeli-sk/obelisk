@@ -4,7 +4,7 @@
 //! `*ConfigToml` structs live here too since they double as their own resolved form.
 //!
 //! Authored-side validation lives in [`super::authored`]; fetching/verifying lives in
-//! [`super::processed`]. Behavior needing the server runtime (OCI fetching, executor
+//! [`super::resolve`]. Behavior needing the server runtime (OCI fetching, executor
 //! configuration, env var resolution) is expressed as extension traits there.
 
 use crate::config::env_var::EnvVarConfig;

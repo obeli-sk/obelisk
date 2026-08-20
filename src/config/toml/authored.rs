@@ -1,6 +1,6 @@
 //! User-authored deployment manifest: the `deployment.toml` shapes as written by hand,
 //! plus name/path validation into `DeploymentTomlValidated`. Content digests and
-//! `component_files` are optional here; the processing pass ([`super::processed`]) fills
+//! `component_files` are optional here; the processing pass ([`super::resolve`]) fills
 //! and verifies them.
 
 use super::*;
@@ -701,43 +701,11 @@ pub(crate) struct ComponentBacktraceConfig {
     /// resolved to `ComponentBacktraceConfigResolved` before hash
     /// computation. A relative path is deployment-dir-relative (a leading
     /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.
+    /// The source's content digest lives in the component's `component_files`, so
+    /// this is a plain path map in both authored and processed manifests.
     #[serde(rename = "sources")]
     #[schemars(with = "std::collections::HashMap<String, String>")]
-    pub(crate) frame_files_to_sources: HashMap<String, BacktraceSourceToml>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(untagged)]
-pub(crate) enum BacktraceSourceToml {
-    Path(String),
-    // backcompat: Remove in 0.42
-    Detailed {
-        path: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(with = "Option<String>")]
-        content_digest: Option<ContentDigest>,
-    },
-}
-
-impl BacktraceSourceToml {
-    pub(crate) fn path(&self) -> &str {
-        match self {
-            Self::Path(path) | Self::Detailed { path, .. } => path,
-        }
-    }
-
-    pub(crate) fn content_digest(&self) -> Option<&ContentDigest> {
-        match self {
-            Self::Path(_) => None,
-            Self::Detailed { content_digest, .. } => content_digest.as_ref(),
-        }
-    }
-}
-
-impl From<String> for BacktraceSourceToml {
-    fn from(value: String) -> Self {
-        Self::Path(value)
-    }
+    pub(crate) frame_files_to_sources: HashMap<String, String>,
 }
 
 // Authored webhook component configs

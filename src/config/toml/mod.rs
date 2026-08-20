@@ -97,10 +97,10 @@ pub(crate) use crate::config::toml::model::webhook::{
 };
 
 mod authored;
-mod processed;
+mod resolve;
 mod server;
 pub(crate) use authored::*;
-pub(crate) use processed::*;
+pub(crate) use resolve::*;
 pub(crate) use server::*;
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
@@ -1530,7 +1530,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string().into(),
+                "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
             );
             let resolved = resolve_backtrace(&bt, &component_files).unwrap();
             let src = resolved
@@ -1552,7 +1552,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 ".../src/lib.rs".to_string(),
-                "crates/foo/src/lib.rs".to_string().into(),
+                "crates/foo/src/lib.rs".to_string(),
             );
             let resolved = resolve_backtrace(&bt, &component_files).unwrap();
             let src = resolved
@@ -1568,7 +1568,7 @@ name = "my_stub"
             let mut bt = ComponentBacktraceConfig::default();
             bt.frame_files_to_sources.insert(
                 "frame".to_string(),
-                "${DEPLOYMENT_DIR}/../escape.rs".to_string().into(),
+                "${DEPLOYMENT_DIR}/../escape.rs".to_string(),
             );
             let err = format!(
                 "{:#}",
@@ -1580,10 +1580,8 @@ name = "my_stub"
         #[test]
         fn absolute_source_is_rejected() {
             let mut bt = ComponentBacktraceConfig::default();
-            bt.frame_files_to_sources.insert(
-                ".../src/lib.rs".to_string(),
-                "/nested/lib.rs".to_string().into(),
-            );
+            bt.frame_files_to_sources
+                .insert(".../src/lib.rs".to_string(), "/nested/lib.rs".to_string());
             let err = resolve_backtrace(&bt, &BTreeMap::new())
                 .unwrap_err()
                 .to_string();

@@ -1682,8 +1682,7 @@ pub(crate) fn resolve_backtrace(
     component_files: &BTreeMap<String, ContentDigest>,
 ) -> anyhow::Result<ComponentBacktraceConfigResolved> {
     let mut frame_files_to_sources = HashMap::new();
-    for (key, source) in &backtrace.frame_files_to_sources {
-        let path = source.path();
+    for (key, path) in &backtrace.frame_files_to_sources {
         // Classify the source path like a script: a relative path (bare or
         // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on export.
         let file_name = if let Some(rest) = strip_deployment_dir_prefix(path) {
@@ -1695,11 +1694,8 @@ pub(crate) fn resolve_backtrace(
         };
         // The processed manifest carries every deployment-owned backtrace source's digest in
         // `component_files`; the bytes are in the CAS, so the digest is a complete reference.
-        // backcompat: 0.41 processed manifests stored the digest beside each source path
-        // (`source.content_digest()`); remove that fallback in 0.42.
         let content_digest = component_files
             .get(&file_name)
-            .or_else(|| source.content_digest())
             .with_context(|| {
                 format!("backtrace source `{file_name}` has no digest in `component_files`")
             })?

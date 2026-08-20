@@ -816,11 +816,7 @@ fn collect_backtrace_section(
                 .get("component_files")
                 .and_then(Item::as_table_like)
                 .and_then(|files| files.get(&path));
-            // backcompat: 0.41 processed manifests stored the digest beside the source path.
-            let legacy_digest = source
-                .as_table_like()
-                .and_then(|source| source.get("content_digest"));
-            let digest = required_content_digest(generated_digest.or(legacy_digest), &path)
+            let digest = required_content_digest(generated_digest, &path)
                 .with_context(|| {
                     format!(
                         "{section}[name={name}].backtrace.sources[{key}]: component_files must contain `{path}`"
@@ -1123,13 +1119,7 @@ async fn collect_backtrace_refs(
 }
 
 fn backtrace_source_path(source: &Item) -> Option<String> {
-    source.as_str().map(str::to_string).or_else(|| {
-        source
-            .as_table_like()
-            .and_then(|table| table.get("path"))
-            .and_then(Item::as_str)
-            .map(str::to_string)
-    })
+    source.as_str().map(str::to_string)
 }
 
 fn deployment_owned_path(raw: &str) -> anyhow::Result<Option<String>> {
@@ -1278,25 +1268,31 @@ async fn reconcile_backtrace_section(
 
     for table in components.iter_mut() {
         let name = component_name(table);
+        // Collect deployment-owned backtrace source paths before touching `component_files`,
+        // which now holds every source's digest (the source map is a plain path map).
         let Some(sources) = table
-            .get_mut("backtrace")
-            .and_then(Item::as_table_like_mut)
-            .and_then(|backtrace| backtrace.get_mut("sources"))
-            .and_then(Item::as_table_like_mut)
+            .get("backtrace")
+            .and_then(Item::as_table_like)
+            .and_then(|backtrace| backtrace.get("sources"))
+            .and_then(Item::as_table_like)
         else {
             continue;
         };
-
-        for (key, source) in sources.iter_mut() {
+        let mut owned_paths = Vec::new();
+        for (_, source) in sources.iter() {
             let Some(raw_path) = backtrace_source_path(source) else {
                 continue;
             };
-            let Some(path) = deployment_owned_path(&raw_path)? else {
-                continue;
-            };
-            let Some(stored) = source
-                .as_table_like()
-                .and_then(|table| table.get("content_digest"))
+            if let Some(path) = deployment_owned_path(&raw_path)? {
+                owned_paths.push(path);
+            }
+        }
+
+        for path in owned_paths {
+            let Some(stored) = table
+                .get("component_files")
+                .and_then(Item::as_table_like)
+                .and_then(|files| files.get(&path))
                 .and_then(Item::as_str)
                 .map(str::to_string)
             else {
@@ -1304,14 +1300,17 @@ async fn reconcile_backtrace_section(
             };
             let (actual, _) = read_deployment_file(deployment_dir, &path).await?;
             if stored != actual.to_string() {
-                if fix && let Some(table) = source.as_table_like_mut() {
-                    table.insert("content_digest", value(actual.to_string()));
+                if fix
+                    && let Some(files) = table
+                        .get_mut("component_files")
+                        .and_then(Item::as_table_like_mut)
+                {
+                    files.insert(&path, value(actual.to_string()));
                 }
                 broken.push(BrokenDigest {
                     field_path: format!(
-                        "{section}[name={}].backtrace.sources[{}].content_digest",
-                        name.as_deref().unwrap_or(""),
-                        key.get()
+                        "{section}[name={}].component_files[{path}]",
+                        name.as_deref().unwrap_or("")
                     ),
                     path,
                     stored,
@@ -1716,53 +1715,6 @@ location = "components/w.wasm"
     }
 
     #[tokio::test]
-    async fn prepare_normalizes_detailed_backtrace_source_shape() {
-        let dir = tempfile::tempdir().unwrap();
-        tokio::fs::create_dir_all(dir.path().join("components"))
-            .await
-            .unwrap();
-        tokio::fs::create_dir_all(dir.path().join("src"))
-            .await
-            .unwrap();
-        tokio::fs::write(dir.path().join("components/w.wasm"), b"\0asm")
-            .await
-            .unwrap();
-        tokio::fs::write(dir.path().join("src/lib.rs"), "fn workflow() {}")
-            .await
-            .unwrap();
-        let manifest = r#"
-[[workflow_wasm]]
-name = "w"
-location = "components/w.wasm"
-
-[workflow_wasm.backtrace.sources]
-".../src/lib.rs" = { path = "src/lib.rs" }
-"#;
-
-        let prepared = prepare_deployment_manifest(manifest, dir.path())
-            .await
-            .unwrap();
-
-        assert!(prepared.files.iter().any(|file| file.path == "src/lib.rs"));
-        let doc = prepared.deployment_toml.parse::<DocumentMut>().unwrap();
-        let workflow = doc["workflow_wasm"]
-            .as_array_of_tables()
-            .unwrap()
-            .get(0)
-            .unwrap();
-        assert_eq!(
-            workflow["backtrace"]["sources"][".../src/lib.rs"].as_str(),
-            Some("src/lib.rs")
-        );
-        assert!(
-            workflow["component_files"]["src/lib.rs"]
-                .as_str()
-                .unwrap()
-                .starts_with("sha256:")
-        );
-    }
-
-    #[tokio::test]
     async fn export_strips_local_backtrace_digest_but_keeps_oci_digest() {
         let dir = tempfile::tempdir().unwrap();
         tokio::fs::create_dir_all(dir.path().join("components"))
@@ -1785,7 +1737,7 @@ name = "local"
 location = "components/w.wasm"
 
 [workflow_wasm.backtrace.sources]
-".../src/lib.rs" = {{ path = "src/lib.rs" }}
+".../src/lib.rs" = "src/lib.rs"
 
 [[workflow_js]]
 name = "oci"
@@ -1874,9 +1826,10 @@ content_digest = "sha256:1111111111111111111111111111111111111111111111111111111
 name = "wf"
 location = "components/w.wasm"
 content_digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+component_files = { "src/lib.rs" = "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
 
 [workflow_wasm.backtrace.sources]
-".../src/lib.rs" = { path = "src/lib.rs", content_digest = "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
+".../src/lib.rs" = "src/lib.rs"
 "#;
 
         let deployment_dir = Path::new("/does-not-matter");
@@ -1965,9 +1918,10 @@ ffqn = "ns:pkg/ifc.fn"
 name = "wf"
 location = "components/w.wasm"
 content_digest = "{wrong}"
+component_files = {{ "src/lib.rs" = "{wrong}" }}
 
 [workflow_wasm.backtrace.sources]
-".../src/lib.rs" = {{ path = "src/lib.rs", content_digest = "{wrong}" }}
+".../src/lib.rs" = "src/lib.rs"
 
 [[activity_js]]
 name = "file"
@@ -1995,7 +1949,7 @@ content_digest = "{wrong}"
                 "workflow_wasm[name=wf].content_digest",
                 "activity_js[name=file].content_digest",
                 "activity_exec[name=inline].content_digest",
-                "workflow_wasm[name=wf].backtrace.sources[.../src/lib.rs].content_digest",
+                "workflow_wasm[name=wf].component_files[src/lib.rs]",
             ]
         );
         assert_eq!(
