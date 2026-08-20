@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::secret_registry::SecretRegistry;
@@ -55,7 +54,7 @@ mod outbound_http {
 
 mod blocking_strategy {
     use super::*;
-    use crate::config::toml::common::{
+    use crate::config::deployment::common::{
         BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
         BlockingStrategyConfigSimple, default_non_blocking_event_batching,
     };
@@ -353,7 +352,7 @@ mod component_location {
 }
 
 mod activity_stub {
-    use crate::config::toml::tests::digest_of;
+    use crate::config::deployment::tests::digest_of;
 
     use super::*;
 
@@ -426,7 +425,7 @@ name = "my_stub"
 mod activity_exec {
     use secrecy::{ExposeSecret as _, SecretString};
 
-    use crate::config::toml::tests::digest_of;
+    use crate::config::deployment::tests::digest_of;
 
     use super::*;
 
@@ -604,7 +603,7 @@ mod activity_exec {
 }
 
 mod script_location {
-    use crate::config::toml::tests::digest_of;
+    use crate::config::deployment::tests::digest_of;
 
     use super::*;
     use concepts::cas::InMemoryCas;
@@ -897,7 +896,7 @@ mod export {
 }
 
 mod backtrace {
-    use crate::config::toml::tests::digest_of;
+    use crate::config::deployment::tests::digest_of;
 
     use super::*;
 

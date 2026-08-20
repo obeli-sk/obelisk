@@ -1,9 +1,16 @@
 //! User-authored deployment manifest: the `deployment.toml` shapes as written by hand,
 //! plus name/path validation into `DeploymentTomlValidated`. Content digests and
-//! `component_files` are optional here; the processing pass ([`super::resolve`]) fills
+//! `component_files` are optional here; the processing pass ([`super::resolved`]) fills
 //! and verifies them.
 
-use super::*;
+use super::{
+    AllowedHostToml, BlockingStrategyConfigToml, ComponentCommon, ComponentLocationToml,
+    ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig, ExecConfigToml,
+    JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, WebhookRoute, default_external_server_name,
+    default_lock_extension, default_lock_extension_leeway, default_max_output_bytes,
+    default_max_retries, default_retry_exp_backoff, resolve_local_refs,
+    sanitize_deployment_relative_path, strip_deployment_dir_prefix,
+};
 use crate::args::TomlComponentType;
 use crate::config::env_var::EnvVarConfig;
 use anyhow::{Context, anyhow, bail};

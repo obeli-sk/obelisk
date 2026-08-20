@@ -1,6 +1,6 @@
 use crate::command::server::cas_deployment_dir;
 use crate::config::file_provider::parse_wit_dir;
-use crate::config::toml::{
+use crate::config::deployment::{
     DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
     strip_deployment_dir_prefix,
 };
@@ -440,7 +440,7 @@ impl DeploymentManifest {
 }
 
 fn resolved_component_names(
-    deployment: &crate::config::toml::DeploymentTomlValidated,
+    deployment: &crate::config::deployment::DeploymentTomlValidated,
 ) -> HashMap<&'static str, Vec<String>> {
     HashMap::from([
         (
@@ -555,7 +555,7 @@ fn deduplicate_component_files(files: &mut Vec<DeploymentComponentFileRef>) -> a
 fn parse_manifest(
     deployment_toml: &str,
     deployment_dir: &Path,
-) -> anyhow::Result<crate::config::toml::DeploymentTomlValidated> {
+) -> anyhow::Result<crate::config::deployment::DeploymentTomlValidated> {
     let deployment: DeploymentToml =
         toml::from_str(deployment_toml).context("cannot parse deployment manifest")?;
     deployment
@@ -1582,7 +1582,7 @@ ffqn = "ns:pkg/ifc.fn"
         let resolved = resolve_prepared(&prepared).await;
         assert_matches::assert_matches!(
             &resolved.activities_js[0].location,
-            crate::config::toml::ScriptLocationResolved::Graph { entry_path, files }
+            crate::config::deployment::ScriptLocationResolved::Graph { entry_path, files }
                 if entry_path == "src/index.js" && files.len() == 2
         );
     }

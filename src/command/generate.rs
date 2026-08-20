@@ -8,9 +8,9 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{
     ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, server_config_template,
 };
-use crate::config::manifest::{prepare_deployment_manifest, resolve_manifest};
+use crate::config::deployment::{prepare_deployment_manifest, resolve_manifest};
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::toml::{OCI_SCHEMA_PREFIX, ServerConfigToml};
+use crate::config::deployment::{OCI_SCHEMA_PREFIX, ServerConfigToml};
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::{Context, ensure};
@@ -262,12 +262,12 @@ fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), 
 
 #[cfg(test)]
 fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    write_schema::<crate::config::toml::ServerConfigToml>(output)
+    write_schema::<crate::config::deployment::ServerConfigToml>(output)
 }
 
 #[cfg(test)]
 fn generate_authored_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    write_schema::<crate::config::toml::DeploymentToml>(output)
+    write_schema::<crate::config::deployment::DeploymentToml>(output)
 }
 
 #[cfg(test)]

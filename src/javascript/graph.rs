@@ -7,7 +7,7 @@
 //! same containment the CAS deployment-file model enforces elsewhere, so the
 //! graph round-trips as ordinary deployment files.
 
-use crate::config::toml::sanitize_deployment_relative_path;
+use crate::config::deployment::sanitize_deployment_relative_path;
 use anyhow::{Context, bail};
 use boa_engine::Source;
 use std::collections::{BTreeMap, VecDeque};

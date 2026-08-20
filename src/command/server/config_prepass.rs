@@ -5,7 +5,7 @@
 
 use super::RuntimeConfigAvailability;
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::toml::{
+use crate::config::deployment::{
     AllowedHostToml, ConfigName, DeploymentResolved, MethodsInput, ReplaceIn,
     allowed_host_fingerprint, resolve_allowed_hosts,
 };

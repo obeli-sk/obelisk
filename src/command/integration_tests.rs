@@ -807,7 +807,7 @@ impl TestServer {
         }
 
         let webhook_base_url = format!("http://{ip}:{WEBHOOK_PORT}");
-        let sqlite_file = tmp_dir.path().join(crate::config::toml::SQLITE_FILE_NAME);
+        let sqlite_file = tmp_dir.path().join(crate::config::deployment::SQLITE_FILE_NAME);
         TestServer {
             ip,
             base_url,
@@ -1145,7 +1145,7 @@ impl TestServer {
         use prost::Message as _;
 
         let prepared =
-            crate::config::manifest::prepare_deployment_manifest_from_disk(deployment_toml_path)
+            crate::config::deployment::prepare_deployment_manifest_from_disk(deployment_toml_path)
                 .await
                 .expect("cannot prepare deployment manifest");
         let grpc_client =
@@ -2296,7 +2296,7 @@ ffqn = "testing:integration/deferred.run"
     .await
     .unwrap();
     let prepared =
-        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+        crate::config::deployment::prepare_deployment_manifest_from_disk(&deployment_toml_path)
             .await
             .unwrap();
     let expected_digest = prepared.files[0].digest.to_string();
@@ -2548,7 +2548,7 @@ routes = [{ methods = ["GET"], route = "/" }]
     .await
     .unwrap();
     let prepared =
-        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+        crate::config::deployment::prepare_deployment_manifest_from_disk(&deployment_toml_path)
             .await
             .unwrap();
 
@@ -2665,7 +2665,7 @@ routes = [{ methods = ["GET"], route = "/" }]
     .await
     .unwrap();
     let prepared =
-        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+        crate::config::deployment::prepare_deployment_manifest_from_disk(&deployment_toml_path)
             .await
             .unwrap();
 
@@ -2774,7 +2774,7 @@ routes = [{ methods = ["GET"], route = "/" }]
     .await
     .unwrap();
     let prepared =
-        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+        crate::config::deployment::prepare_deployment_manifest_from_disk(&deployment_toml_path)
             .await
             .unwrap();
     assert_eq!(prepared.files.len(), 1, "webhook must contribute one blob");
@@ -2948,7 +2948,7 @@ ffqn = "testing:integration/pkg.run"
     .await
     .unwrap();
     let prepared =
-        crate::config::manifest::prepare_deployment_manifest_from_disk(&deployment_toml_path)
+        crate::config::deployment::prepare_deployment_manifest_from_disk(&deployment_toml_path)
             .await
             .unwrap();
     let toml = prepared.deployment_toml.clone();
@@ -3092,7 +3092,7 @@ ffqn = "testing:integration/a.run"
     )
     .await
     .unwrap();
-    let good = crate::config::manifest::prepare_deployment_manifest_from_disk(&toml_path)
+    let good = crate::config::deployment::prepare_deployment_manifest_from_disk(&toml_path)
         .await
         .unwrap();
     let good_digest = good.files[0].digest.to_string();

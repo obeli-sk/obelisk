@@ -5,7 +5,7 @@ use crate::command::server::ServerVerified;
 use crate::command::server::SubmitError;
 use crate::command::server::SwitchDeploymentAction;
 use crate::command::server::{DeploymentContextHandle, DeploymentSwitchManagerHandle};
-use crate::config::manifest::strip_generated_deployment_metadata;
+use crate::config::deployment::strip_generated_deployment_metadata;
 use crate::server::deployment_summary;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;

@@ -1,64 +1,65 @@
 mod config_prepass;
 
 use crate::ServerStartup;
+use crate::args::shadow;
 use crate::args::shadow::PKG_VERSION;
 use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::content_digest_to_wasm_file;
 use crate::config::env_var::EnvVarConfig;
-use crate::config::manifest::DeploymentManifest;
-use crate::config::manifest::DeploymentManifestFile;
-use crate::config::manifest::prepare_deployment_manifest_from_disk;
-use crate::config::manifest::reconcile_deployment_digests;
-use crate::config::manifest::resolve_manifest;
+use crate::config::deployment::DeploymentManifest;
+use crate::config::deployment::DeploymentManifestFile;
+use crate::config::deployment::prepare_deployment_manifest_from_disk;
+use crate::config::deployment::reconcile_deployment_digests;
+use crate::config::deployment::resolve_manifest;
 use crate::config::secret_registry::EnvVarCleanupStrategy;
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::toml::ActivityExecComponentConfigResolvedExt as _;
-use crate::config::toml::ActivityExecConfigVerified;
-use crate::config::toml::ActivityExternalComponentConfigResolved;
-use crate::config::toml::ActivityExternalComponentConfigResolvedExt as _;
-use crate::config::toml::ActivityExternalConfigVerified;
-use crate::config::toml::ActivityJsComponentConfigResolvedExt as _;
-use crate::config::toml::ActivityJsConfigVerified;
-use crate::config::toml::ActivityStubComponentConfigResolved;
-use crate::config::toml::ActivityStubComponentConfigResolvedExt as _;
-use crate::config::toml::ActivityStubConfigVerified;
-use crate::config::toml::ActivityStubExtConfigVerified;
-use crate::config::toml::ActivityStubExtInlineConfigVerified;
-use crate::config::toml::ActivityWasmComponentConfigTomlExt as _;
-use crate::config::toml::ActivityWasmConfigVerified;
-use crate::config::toml::AllowExecActivities;
-use crate::config::toml::CancelWatcherTomlConfig;
-use crate::config::toml::ComponentCommon;
+use crate::config::deployment::ActivityExecComponentConfigResolvedExt as _;
+use crate::config::deployment::ActivityExecConfigVerified;
+use crate::config::deployment::ActivityExternalComponentConfigResolved;
+use crate::config::deployment::ActivityExternalComponentConfigResolvedExt as _;
+use crate::config::deployment::ActivityExternalConfigVerified;
+use crate::config::deployment::ActivityJsComponentConfigResolvedExt as _;
+use crate::config::deployment::ActivityJsConfigVerified;
+use crate::config::deployment::ActivityStubComponentConfigResolved;
+use crate::config::deployment::ActivityStubComponentConfigResolvedExt as _;
+use crate::config::deployment::ActivityStubConfigVerified;
+use crate::config::deployment::ActivityStubExtConfigVerified;
+use crate::config::deployment::ActivityStubExtInlineConfigVerified;
+use crate::config::deployment::ActivityWasmComponentConfigTomlExt as _;
+use crate::config::deployment::ActivityWasmConfigVerified;
+use crate::config::deployment::AllowExecActivities;
+use crate::config::deployment::CancelWatcherTomlConfig;
+use crate::config::deployment::ComponentCommon;
 #[cfg(not(feature = "embed-assets"))] // Only the OCI fetch arms below use `.fetch()`.
-use crate::config::toml::ComponentLocationFetchExt as _;
-use crate::config::toml::ComponentLocationToml;
-use crate::config::toml::ComponentStdOutputToml;
-use crate::config::toml::ConfigName;
-use crate::config::toml::CronComponentConfigTomlExt as _;
-use crate::config::toml::CronConfigVerified;
-use crate::config::toml::DatabaseConfigToml;
-use crate::config::toml::DeploymentResolved;
-use crate::config::toml::HttpServer;
-use crate::config::toml::InflightSemaphoreExt as _;
-use crate::config::toml::LogLevelToml;
-use crate::config::toml::SQLITE_FILE_NAME;
-use crate::config::toml::ServerConfigToml;
-use crate::config::toml::TimersWatcherTomlConfig;
-use crate::config::toml::WasmtimeAllocatorConfig;
-use crate::config::toml::WebhookJsComponentConfigResolvedExt as _;
-use crate::config::toml::WebhookJsConfigVerified;
-use crate::config::toml::WebhookRoute;
-use crate::config::toml::WebhookRouteVerified;
-use crate::config::toml::WebhookWasmComponentConfigResolvedExt as _;
-use crate::config::toml::WebhookWasmComponentConfigVerified;
-use crate::config::toml::WorkflowConfigVerified;
-use crate::config::toml::WorkflowJsComponentConfigResolvedExt as _;
-use crate::config::toml::WorkflowJsConfigVerified;
-use crate::config::toml::WorkflowWasmComponentConfigResolvedExt as _;
-use crate::config::toml::resolve_allowed_hosts;
-use crate::config::toml::{AllowedHostToml, MethodsInput, MethodsInputStar};
+use crate::config::deployment::ComponentLocationFetchExt as _;
+use crate::config::deployment::ComponentLocationToml;
+use crate::config::deployment::ComponentStdOutputToml;
+use crate::config::deployment::ConfigName;
+use crate::config::deployment::CronComponentConfigTomlExt as _;
+use crate::config::deployment::CronConfigVerified;
+use crate::config::deployment::DatabaseConfigToml;
+use crate::config::deployment::DeploymentResolved;
+use crate::config::deployment::HttpServer;
+use crate::config::deployment::InflightSemaphoreExt as _;
+use crate::config::deployment::LogLevelToml;
+use crate::config::deployment::SQLITE_FILE_NAME;
+use crate::config::deployment::ServerConfigToml;
+use crate::config::deployment::TimersWatcherTomlConfig;
+use crate::config::deployment::WasmtimeAllocatorConfig;
+use crate::config::deployment::WebhookJsComponentConfigResolvedExt as _;
+use crate::config::deployment::WebhookJsConfigVerified;
+use crate::config::deployment::WebhookRoute;
+use crate::config::deployment::WebhookRouteVerified;
+use crate::config::deployment::WebhookWasmComponentConfigResolvedExt as _;
+use crate::config::deployment::WebhookWasmComponentConfigVerified;
+use crate::config::deployment::WorkflowConfigVerified;
+use crate::config::deployment::WorkflowJsComponentConfigResolvedExt as _;
+use crate::config::deployment::WorkflowJsConfigVerified;
+use crate::config::deployment::WorkflowWasmComponentConfigResolvedExt as _;
+use crate::config::deployment::resolve_allowed_hosts;
+use crate::config::deployment::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
@@ -1144,7 +1145,7 @@ pub(crate) async fn deployment_verify_config(
 /// For each exec activity, the digest of the exact script text that runs plus a
 /// server.toml-pasteable allowlist line: `name = "sha256:..." # ffqn`.
 async fn exec_content_digest_lines(
-    activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
+    activities_exec: &[crate::config::deployment::ActivityExecComponentConfigResolved],
     wasm_cache_dir: &Path,
 ) -> anyhow::Result<Vec<(ConfigName, ContentDigest, String)>> {
     let mut digests_with_lines = Vec::with_capacity(activities_exec.len());
@@ -1163,7 +1164,7 @@ async fn exec_content_digest_lines(
 
 async fn fix_server_exec_digests(
     server_config_path: &Path,
-    activities_exec: &[crate::config::toml::ActivityExecComponentConfigResolved],
+    activities_exec: &[crate::config::deployment::ActivityExecComponentConfigResolved],
     wasm_cache_dir: &Path,
 ) -> anyhow::Result<BTreeMap<String, ContentDigest>> {
     if activities_exec.is_empty() {
@@ -1928,7 +1929,7 @@ pub(crate) async fn run_internal(
         axum::serve(listener, app_svc)
             .with_graceful_shutdown(async move {
                 info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
-                info!("Obelisk is ready");
+                obelisk_is_ready();
                 let _: Result<_, _> = termination_watcher.changed().await;
                 server_init.close().await; // must be closed here, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
             })
@@ -1937,11 +1938,15 @@ pub(crate) async fn run_internal(
         // Normally Axum blocks before this point until all clients are disconnected.
         debug!("Server {api_listening_addr} has been closed");
     } else {
-        info!("Obelisk is ready");
+        obelisk_is_ready();
         let _: Result<_, _> = termination_watcher.changed().await;
         server_init.close().await;
     }
     Ok(())
+}
+
+fn obelisk_is_ready() {
+    info!("Obelisk {} is ready", shadow::PKG_VERSION);
 }
 
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
@@ -2444,7 +2449,7 @@ impl From<anyhow::Error> for SubmitDeploymentError {
 }
 
 fn issue_from_ref(
-    file: &crate::config::manifest::DeploymentFileRef,
+    file: &crate::config::deployment::DeploymentFileRef,
     message: &str,
 ) -> SubmitFileIssue {
     SubmitFileIssue {
@@ -2472,7 +2477,7 @@ fn supplied_issue(path: &str, digest: &ContentDigest, message: &str) -> SubmitFi
 /// blobs that must be written to the CAS (referenced, not already present, attached),
 /// or a structured error pointing at each offending reference. Pure: no I/O.
 fn validate_submit_package(
-    expected: &[crate::config::manifest::DeploymentFileRef],
+    expected: &[crate::config::deployment::DeploymentFileRef],
     supplied: Vec<SuppliedFile>,
     cas_present: &hashbrown::HashSet<ContentDigest>,
     max_bytes: u32,
@@ -3593,7 +3598,7 @@ impl DeploymentVerified {
         if let Some(api_listening_addr) = api_addr_if_webui_enabled {
             let target_url = format!("http://{api_listening_addr}");
             deployment.webhooks_wasm.push(
-                crate::config::toml::WebhookWasmComponentConfigResolved {
+                crate::config::deployment::WebhookWasmComponentConfigResolved {
                     common: ComponentCommon {
                         name: ConfigName::new(StrVariant::Static(COMPONENT_NAME_WEBUI)).unwrap(),
                         location: webui_location(&wasm_cache_dir).await?,
@@ -3607,7 +3612,7 @@ impl DeploymentVerified {
                         key: "TARGET_URL".to_string(),
                         value: target_url.clone(),
                     }],
-                    backtrace: crate::config::toml::ComponentBacktraceConfigResolved::default(),
+                    backtrace: crate::config::deployment::ComponentBacktraceConfigResolved::default(),
                     backtrace_persist: false,
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
@@ -4741,7 +4746,7 @@ async fn fetch_activity_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<PathBuf, anyhow::Error> {
-    let location: crate::config::toml::ComponentLocationToml = ACTIVITY_JS_LOCATION
+    let location: crate::config::deployment::ComponentLocationToml = ACTIVITY_JS_LOCATION
         .parse()
         .context("cannot parse built-in activity-js runtime location")?;
     let (_content_digest, wasm_path) = location
@@ -4779,7 +4784,7 @@ async fn fetch_workflow_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<PathBuf, anyhow::Error> {
-    let location: crate::config::toml::ComponentLocationToml = WORKFLOW_JS_LOCATION
+    let location: crate::config::deployment::ComponentLocationToml = WORKFLOW_JS_LOCATION
         .parse()
         .context("cannot parse built-in workflow-js runtime location")?;
     let (_content_digest, wasm_path) = location
@@ -4818,7 +4823,7 @@ async fn fetch_webhook_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<PathBuf, anyhow::Error> {
-    let location: crate::config::toml::ComponentLocationToml = WEBHOOK_JS_LOCATION
+    let location: crate::config::deployment::ComponentLocationToml = WEBHOOK_JS_LOCATION
         .parse()
         .context("cannot parse built-in webhook-js runtime location")?;
     let (_content_digest, wasm_path) = location
@@ -5416,11 +5421,11 @@ mod tests {
         },
         config::{
             config_holder::ConfigHolder,
-            secret_registry::SecretRegistry,
-            toml::{
+            deployment::{
                 AllowExecActivities, AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn,
                 ScriptLocationResolved, ServerConfigToml,
             },
+            secret_registry::SecretRegistry,
         },
     };
     use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
@@ -5458,7 +5463,7 @@ mod tests {
             secrets: vec!["API_KEY".to_string()],
             replace_in: vec![ReplaceIn::Headers],
         };
-        let component_name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
+        let component_name = crate::config::deployment::ConfigName::new("caller".into()).unwrap();
         let secret_registry = SecretRegistry::from_test_values([(
             "API_KEY".to_string(),
             secrecy::SecretString::from("value"),
@@ -5574,8 +5579,8 @@ mod tests {
             secrets: vec![secret.to_string()],
             replace_in: vec![ReplaceIn::Headers],
         };
-        let activity_name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
-        let webhook_name = crate::config::toml::ConfigName::new("hook".into()).unwrap();
+        let activity_name = crate::config::deployment::ConfigName::new("caller".into()).unwrap();
+        let webhook_name = crate::config::deployment::ConfigName::new("hook".into()).unwrap();
         let secret_registry = SecretRegistry::from_test_values([
             (
                 "API_KEY".to_string(),
@@ -5639,11 +5644,11 @@ mod tests {
         let registry =
             SecretRegistry::from_test_values(Vec::<(String, secrecy::SecretString)>::new());
         let global = GlobalHttpConfig::from(
-            crate::config::toml::resolve_allowed_hosts(vec![host("obeli.sk")], false, &registry)
+            crate::config::deployment::resolve_allowed_hosts(vec![host("obeli.sk")], false, &registry)
                 .unwrap()
                 .0,
         );
-        let name = crate::config::toml::ConfigName::new("caller".into()).unwrap();
+        let name = crate::config::deployment::ConfigName::new("caller".into()).unwrap();
 
         let mut uncovered = Vec::new();
         collect_uncovered_outbound_http_hosts(
@@ -6139,8 +6144,8 @@ mod tests {
         use crate::command::server::{
             SuppliedFile, compute_content_digest, validate_submit_package,
         };
-        use crate::config::manifest::{DeploymentFileRef, ManifestFieldRef};
-        use crate::config::toml::MAX_DEPLOYMENT_FILE_BYTES;
+        use crate::config::deployment::{DeploymentFileRef, ManifestFieldRef};
+        use crate::config::deployment::MAX_DEPLOYMENT_FILE_BYTES;
         use concepts::ContentDigest;
         use hashbrown::HashSet;
 

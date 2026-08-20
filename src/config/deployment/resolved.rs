@@ -3,7 +3,16 @@
 //! content digests and `component_files` are mandatory. Data shapes shared with the
 //! authored side live in [`super::common`].
 
-use super::*;
+use super::{
+    ActivityExternalComponentConfigToml, ActivityExternalFileConfigToml,
+    ActivityStubComponentConfigToml, ActivityStubFileConfigToml, ActivityWasmComponentConfigToml,
+    AllowedHostToml, AuthoredFunctionInterfaceToml, BlockingStrategyConfigToml,
+    ComponentBacktraceConfig, ComponentCommon, ComponentLocationToml, ComponentStdOutputToml,
+    ConfigName, CronComponentConfigToml, DeploymentTomlValidated, DurationConfig, ExecConfigToml,
+    FunctionInterfaceToml, InflightSemaphore, InlineFunctionInterfaceToml, JsParamToml,
+    LockingStrategy, LogLevelToml, MethodsInput, ReplaceIn, ScriptLocationPathOrOci, WebhookRoute,
+    WebhookRouteDetail, sanitize_deployment_relative_path, strip_deployment_dir_prefix,
+};
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
     EnvVarConfig, EnvVarError, EnvVarsMissing, interpolate_env_vars_plaintext,
@@ -2147,7 +2156,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
         self,
         subscription_interruption: Option<Duration>,
     ) -> JoinNextBlockingStrategy {
-        use crate::config::toml::common::{
+        use crate::config::deployment::common::{
             BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
             BlockingStrategyConfigSimple,
         };
