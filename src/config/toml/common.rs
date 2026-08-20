@@ -348,7 +348,6 @@ impl<'de> Deserialize<'de> for JsParamToml {
     }
 }
 
-
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, PartialEq)]
 #[serde(untagged)] // Try variants without needing a specific outer tag
 pub enum BlockingStrategyConfigToml {
@@ -382,7 +381,6 @@ pub enum BlockingStrategyConfigSimple {
     #[default]
     Await,
 }
-
 
 // Serde defaults shared by the resolved config types and the TOML types in the obelisk binary.
 
