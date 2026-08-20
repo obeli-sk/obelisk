@@ -1,6 +1,6 @@
+use super::deployment::DeploymentToml;
 use super::env_var::interpolate_path_template;
 use super::secret_registry::SecretRegistry;
-use super::deployment::DeploymentToml;
 use super::server::ServerConfigToml;
 use crate::config::deployment::DeploymentTomlValidated;
 use anyhow::{Context as _, bail};

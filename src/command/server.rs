@@ -7,14 +7,6 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::config_holder::PathPrefixes;
 use crate::config::content_digest_to_wasm_file;
-use crate::config::env_var::EnvVarConfig;
-use crate::config::deployment::DeploymentManifest;
-use crate::config::deployment::DeploymentManifestFile;
-use crate::config::deployment::prepare_deployment_manifest_from_disk;
-use crate::config::deployment::reconcile_deployment_digests;
-use crate::config::deployment::resolve_manifest;
-use crate::config::secret_registry::EnvVarCleanupStrategy;
-use crate::config::secret_registry::SecretRegistry;
 use crate::config::deployment::ActivityExecComponentConfigResolvedExt as _;
 use crate::config::deployment::ActivityExecConfigVerified;
 use crate::config::deployment::ActivityExternalComponentConfigResolved;
@@ -29,8 +21,6 @@ use crate::config::deployment::ActivityStubExtConfigVerified;
 use crate::config::deployment::ActivityStubExtInlineConfigVerified;
 use crate::config::deployment::ActivityWasmComponentConfigTomlExt as _;
 use crate::config::deployment::ActivityWasmConfigVerified;
-use crate::config::server::AllowExecActivities;
-use crate::config::server::CancelWatcherTomlConfig;
 use crate::config::deployment::ComponentCommon;
 #[cfg(not(feature = "embed-assets"))] // Only the OCI fetch arms below use `.fetch()`.
 use crate::config::deployment::ComponentLocationFetchExt as _;
@@ -39,15 +29,11 @@ use crate::config::deployment::ComponentStdOutputToml;
 use crate::config::deployment::ConfigName;
 use crate::config::deployment::CronComponentConfigTomlExt as _;
 use crate::config::deployment::CronConfigVerified;
-use crate::config::server::DatabaseConfigToml;
+use crate::config::deployment::DeploymentManifest;
+use crate::config::deployment::DeploymentManifestFile;
 use crate::config::deployment::DeploymentResolved;
-use crate::config::server::HttpServer;
 use crate::config::deployment::InflightSemaphoreExt as _;
 use crate::config::deployment::LogLevelToml;
-use crate::config::server::SQLITE_FILE_NAME;
-use crate::config::server::ServerConfigToml;
-use crate::config::server::TimersWatcherTomlConfig;
-use crate::config::server::WasmtimeAllocatorConfig;
 use crate::config::deployment::WebhookJsComponentConfigResolvedExt as _;
 use crate::config::deployment::WebhookJsConfigVerified;
 use crate::config::deployment::WebhookRoute;
@@ -58,8 +44,22 @@ use crate::config::deployment::WorkflowConfigVerified;
 use crate::config::deployment::WorkflowJsComponentConfigResolvedExt as _;
 use crate::config::deployment::WorkflowJsConfigVerified;
 use crate::config::deployment::WorkflowWasmComponentConfigResolvedExt as _;
+use crate::config::deployment::prepare_deployment_manifest_from_disk;
+use crate::config::deployment::reconcile_deployment_digests;
 use crate::config::deployment::resolve_allowed_hosts;
+use crate::config::deployment::resolve_manifest;
 use crate::config::deployment::{AllowedHostToml, MethodsInput, MethodsInputStar};
+use crate::config::env_var::EnvVarConfig;
+use crate::config::secret_registry::EnvVarCleanupStrategy;
+use crate::config::secret_registry::SecretRegistry;
+use crate::config::server::AllowExecActivities;
+use crate::config::server::CancelWatcherTomlConfig;
+use crate::config::server::DatabaseConfigToml;
+use crate::config::server::HttpServer;
+use crate::config::server::SQLITE_FILE_NAME;
+use crate::config::server::ServerConfigToml;
+use crate::config::server::TimersWatcherTomlConfig;
+use crate::config::server::WasmtimeAllocatorConfig;
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
@@ -3612,7 +3612,8 @@ impl DeploymentVerified {
                         key: "TARGET_URL".to_string(),
                         value: target_url.clone(),
                     }],
-                    backtrace: crate::config::deployment::ComponentBacktraceConfigResolved::default(),
+                    backtrace: crate::config::deployment::ComponentBacktraceConfigResolved::default(
+                    ),
                     backtrace_persist: false,
                     logs_store_min_level: LogLevelToml::Off,
                     allowed_hosts: vec![AllowedHostToml {
@@ -4746,9 +4747,10 @@ async fn fetch_activity_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<PathBuf, anyhow::Error> {
-    let location: crate::config::deployment::ComponentLocationToml = ACTIVITY_JS_LOCATION
-        .parse()
-        .context("cannot parse built-in activity-js runtime location")?;
+    let location: crate::config::deployment::ComponentLocationToml =
+        ACTIVITY_JS_LOCATION
+            .parse()
+            .context("cannot parse built-in activity-js runtime location")?;
     let (_content_digest, wasm_path) = location
         .fetch(&wasm_cache_dir, &metadata_dir)
         .await
@@ -4784,9 +4786,10 @@ async fn fetch_workflow_js_runtime(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<PathBuf, anyhow::Error> {
-    let location: crate::config::deployment::ComponentLocationToml = WORKFLOW_JS_LOCATION
-        .parse()
-        .context("cannot parse built-in workflow-js runtime location")?;
+    let location: crate::config::deployment::ComponentLocationToml =
+        WORKFLOW_JS_LOCATION
+            .parse()
+            .context("cannot parse built-in workflow-js runtime location")?;
     let (_content_digest, wasm_path) = location
         .fetch(&wasm_cache_dir, &metadata_dir)
         .await
@@ -5644,9 +5647,13 @@ mod tests {
         let registry =
             SecretRegistry::from_test_values(Vec::<(String, secrecy::SecretString)>::new());
         let global = GlobalHttpConfig::from(
-            crate::config::deployment::resolve_allowed_hosts(vec![host("obeli.sk")], false, &registry)
-                .unwrap()
-                .0,
+            crate::config::deployment::resolve_allowed_hosts(
+                vec![host("obeli.sk")],
+                false,
+                &registry,
+            )
+            .unwrap()
+            .0,
         );
         let name = crate::config::deployment::ConfigName::new("caller".into()).unwrap();
 

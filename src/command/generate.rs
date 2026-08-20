@@ -8,9 +8,9 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{
     ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, server_config_template,
 };
+use crate::config::deployment::OCI_SCHEMA_PREFIX;
 use crate::config::deployment::{prepare_deployment_manifest, resolve_manifest};
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::deployment::OCI_SCHEMA_PREFIX;
 use crate::config::server::ServerConfigToml;
 use crate::init::{self};
 use crate::project_dirs;

@@ -1,9 +1,9 @@
 use crate::command::server::cas_deployment_dir;
-use crate::config::file_provider::parse_wit_dir;
 use crate::config::deployment::{
     DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
     strip_deployment_dir_prefix,
 };
+use crate::config::file_provider::parse_wit_dir;
 use anyhow::{Context, bail, ensure};
 use concepts::ContentDigest;
 use concepts::cas::Cas;
