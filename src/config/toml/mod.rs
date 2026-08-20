@@ -1,13 +1,11 @@
 //! TOML configuration for the obelisk binary, split by concern:
 //! - [`authored`]: the user-authored deployment manifest and its validation.
-//! - [`processed`]: resolving + fetching/verifying a manifest into runtime-ready configs.
+//! - [`resolve`]: resolving + fetching/verifying a manifest into runtime-ready configs.
 //! - [`server`]: server/runtime config (`obelisk.toml`), orthogonal to the manifest.
-//! - [`model`]: serde data shapes shared between the authored and processed sides.
+//! - [`common`]: serde data-shape primitives shared across the stages.
 //!
-//! This module keeps only cross-cutting helpers (env/secret/host resolution, digest
-//! verification, path sanitizing, shared extension traits) and re-exports the submodules
-//! so `crate::config::toml::<Type>` paths stay stable. The `webhook` and `cron`
-//! submodules keep their own authored/processed types together.
+//! This module is only module wiring: it declares the submodules and re-exports them so
+//! `crate::config::toml::<Type>` paths stay stable.
 
 use super::{config_holder::PathPrefixes, env_var::EnvVarConfig};
 use crate::args::TomlComponentType;
@@ -73,35 +71,20 @@ use wasm_workers::{
     },
 };
 
-pub(crate) mod model;
-
-pub(crate) use crate::config::toml::model::{
-    ActivityExecComponentConfigResolved, ActivityExternalComponentConfigResolved,
-    ActivityExternalFileConfigToml, ActivityJsComponentConfigResolved,
-    ActivityStubComponentConfigResolved, ActivityStubExtInlineConfigResolved,
-    ActivityStubFileConfigToml, ActivityWasmComponentConfigToml, AllowedHostToml,
-    BacktraceSourceResolved, BlockingStrategyConfigToml, ComponentBacktraceConfigResolved,
-    ComponentCommon, ComponentLocationToml, ComponentStdOutputToml, ConfigName, DeploymentResolved,
-    DurationConfig, DurationConfigOptional, ExecConfigToml, FunctionInterfaceResolved,
-    InflightSemaphore, InlineFunctionInterfaceResolved, JsParamToml, LockingStrategy, LogLevelToml,
-    MethodsInput, MethodsInputStar, OCI_SCHEMA_PREFIX, ReplaceIn, ScriptLocationResolved,
-    Unlimited, WitSourceResolved, WorkflowJsComponentConfigResolved,
-    WorkflowWasmComponentConfigResolved, default_lock_extension, default_lock_extension_leeway,
-    default_max_output_bytes, default_max_retries, default_retry_exp_backoff,
-};
-
-pub(crate) use crate::config::toml::model::cron::CronComponentConfigToml;
-pub(crate) use crate::config::toml::model::webhook::{
-    WebhookJsComponentConfigResolved, WebhookRoute, WebhookRouteDetail,
-    WebhookWasmComponentConfigResolved, default_external_server_name,
-};
-
 mod authored;
+mod common;
 mod resolve;
 mod server;
 pub(crate) use authored::*;
+pub(crate) use common::*;
 pub(crate) use resolve::*;
 pub(crate) use server::*;
+
+pub(crate) use crate::config::toml::common::cron::CronComponentConfigToml;
+pub(crate) use crate::config::toml::common::webhook::{
+    WebhookJsComponentConfigResolved, WebhookRoute, WebhookRouteDetail,
+    WebhookWasmComponentConfigResolved, default_external_server_name,
+};
 
 const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
@@ -210,7 +193,7 @@ impl BlockingStrategyConfigTomlExt for BlockingStrategyConfigToml {
         self,
         subscription_interruption: Option<Duration>,
     ) -> JoinNextBlockingStrategy {
-        use crate::config::toml::model::{
+        use crate::config::toml::common::{
             BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
             BlockingStrategyConfigSimple,
         };
@@ -628,7 +611,7 @@ mod tests {
 
     mod blocking_strategy {
         use super::super::*;
-        use crate::config::toml::model::{
+        use crate::config::toml::common::{
             BlockingStrategyAwaitConfig, BlockingStrategyConfigCustomized,
             BlockingStrategyConfigSimple, default_non_blocking_event_batching,
         };

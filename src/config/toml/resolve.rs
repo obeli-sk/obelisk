@@ -1,7 +1,7 @@
 //! Processed deployment manifest: resolving a validated manifest against the CAS and
 //! fetching/verifying each component into its runtime-ready `*ConfigVerified` form. Here
 //! content digests and `component_files` are mandatory. Data shapes shared with the
-//! authored side live in [`super::model`].
+//! authored side live in [`super::common`].
 
 use super::*;
 
