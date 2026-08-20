@@ -740,6 +740,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn url_and_search_params() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "url-params");
+        // Exercises the URL and URLSearchParams globals exposed by the boa
+        // `url` feature: standalone construction plus the live link between a
+        // URL and its searchParams.
+        let js_source = r#"
+            export default function url_params() {
+                const url = new URL("https://example.com/p?foo=bar&baz=qux");
+                const sp = url.searchParams;
+                sp.set("foo", "updated");
+                sp.append("extra", "1");
+                const standalone = new URLSearchParams("a=1&a=2&b=3");
+                standalone.sort();
+                return [
+                    sp.get("foo"),
+                    sp.has("baz") ? "y" : "n",
+                    standalone.getAll("a").join(","),
+                    String(standalone.size),
+                    standalone.toString(),
+                    url.searchParams.get("extra"),
+                ].join("|");
+            }
+        "#;
+
+        let worker = new_js_activity_worker(js_source, ffqn.clone()).await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(
+            extract_string(&ok_val.value),
+            "updated|y|1,2|3|a=1&a=2&b=3|1"
+        );
+    }
+
+    #[tokio::test]
     async fn with_throw_string() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "fail");
