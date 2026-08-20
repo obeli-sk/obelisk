@@ -2005,6 +2005,251 @@ impl CronComponentConfigTomlExt for CronComponentConfigToml {
     }
 }
 
+// Resolved component shapes: the intermediate form produced by resolving a validated manifest
+// against the CAS (deployment-owned scripts/backtrace sources inlined as content), before the
+// runtime `*ConfigVerified` fetch/verify step above. `DeploymentResolved` is the aggregate.
+
+#[derive(Debug, Clone)]
+pub struct ActivityStubExtInlineConfigResolved {
+    pub name: ConfigName,
+    pub ffqn: FunctionFqn,
+    pub interface: FunctionInterfaceResolved,
+}
+
+/// Parsed authored WIT belonging to a deployment component.
+#[derive(Debug, Clone)]
+pub struct WitSourceResolved {
+    pub root: String,
+    pub resolve: wit_parser::Resolve,
+    pub main_pkg_id: wit_parser::PackageId,
+}
+
+#[derive(Debug, Clone)]
+pub struct InlineFunctionInterfaceResolved {
+    pub params: Option<Vec<JsParamToml>>,
+    pub return_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FunctionInterfaceResolved {
+    Authored { wit: Box<WitSourceResolved> },
+    Inline(InlineFunctionInterfaceResolved),
+}
+
+#[derive(Debug, Clone)]
+pub enum ActivityStubComponentConfigResolved {
+    File(ActivityStubFileConfigToml),
+    Inline(ActivityStubExtInlineConfigResolved),
+}
+
+impl ActivityStubComponentConfigResolved {
+    #[must_use]
+    pub fn name_str(&self) -> &str {
+        match self {
+            Self::File(f) => f.common.name.as_str(),
+            Self::Inline(i) => i.name.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ActivityExternalComponentConfigResolved {
+    File(ActivityExternalFileConfigToml),
+    Inline(ActivityStubExtInlineConfigResolved),
+}
+
+impl ActivityExternalComponentConfigResolved {
+    #[must_use]
+    pub fn name_str(&self) -> &str {
+        match self {
+            Self::File(f) => f.common.name.as_str(),
+            Self::Inline(i) => i.name.as_str(),
+        }
+    }
+}
+
+/// Resolved location of a script source (JS or exec) after file-provider resolution.
+///
+/// - `Content` is owned by the deployment (inline content, or a file that lived under
+///   the deployment directory and was read from disk/CAS); `file_name` is the
+///   deployment-relative path (which may include subfolders), used for source names and
+///   backtraces.
+/// - `Oci` is an external registry reference.
+#[derive(Debug, Clone, Hash)]
+pub enum ScriptLocationResolved {
+    Content {
+        content: String,
+        file_name: String,
+    },
+    Graph {
+        entry_path: String,
+        files: Vec<(String, String)>,
+    },
+    /// OCI-sourced script. No `oci://` prefix.
+    Oci {
+        image: oci_client::Reference,
+    },
+}
+
+/// Resolved backtrace source: a CAS reference (`content_digest`) to the source bytes,
+/// which are uploaded to the CAS with the deployment files, plus the deployment-relative
+/// `file_name` it was read from (used to detect owned-source name collisions).
+#[derive(Debug, Clone)]
+pub struct BacktraceSourceResolved {
+    pub content_digest: ContentDigest,
+    pub file_name: String,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ComponentBacktraceConfigResolved {
+    pub frame_files_to_sources: HashMap<String, BacktraceSourceResolved>,
+}
+
+impl ComponentBacktraceConfigResolved {
+    /// Map each frame-symbol key to the CAS digest of its source (dropping the recreate
+    /// path), as needed to persist the runtime backtrace-source lookup.
+    #[must_use]
+    pub fn into_frame_files(self) -> HashMap<String, ContentDigest> {
+        self.frame_files_to_sources
+            .into_iter()
+            .map(|(k, v)| (k, v.content_digest))
+            .collect()
+    }
+}
+
+/// Resolved form of `ActivityJsComponentConfigToml`.
+#[derive(Debug, Clone)]
+pub struct ActivityJsComponentConfigResolved {
+    pub name: ConfigName,
+    pub location: ScriptLocationResolved,
+    pub content_digest: Option<ContentDigest>,
+    pub component_digest: Option<ComponentDigest>,
+    pub ffqn: FunctionFqn,
+    pub interface: FunctionInterfaceResolved,
+    pub exec: ExecConfigToml,
+    pub max_retries: u32,
+    pub retry_exp_backoff: DurationConfig,
+    pub forward_stdout: ComponentStdOutputToml,
+    pub forward_stderr: ComponentStdOutputToml,
+    pub logs_store_min_level: LogLevelToml,
+    pub env_vars: Vec<EnvVarConfig>,
+    pub allowed_hosts: Vec<AllowedHostToml>,
+}
+
+/// Resolved form of `ActivityExecComponentConfigToml`.
+#[derive(Debug, Clone)]
+pub struct ActivityExecComponentConfigResolved {
+    pub name: ConfigName,
+    pub location: ScriptLocationResolved,
+    pub content_digest: Option<ContentDigest>,
+    pub ffqn: FunctionFqn,
+    pub interface: FunctionInterfaceResolved,
+    pub component_digest: Option<ComponentDigest>,
+    pub exec: ExecConfigToml,
+    pub max_retries: u32,
+    pub retry_exp_backoff: DurationConfig,
+    pub forward_stdout: ComponentStdOutputToml,
+    pub forward_stderr: ComponentStdOutputToml,
+    pub logs_store_min_level: LogLevelToml,
+    pub env_vars: Vec<EnvVarConfig>,
+    pub max_output_bytes: u64,
+    /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
+    /// table) to expose to the script in the stdin JSON `secrets` object.
+    pub secrets: Vec<String>,
+    pub params_via_stdin: bool,
+}
+
+/// Resolved form of `WorkflowWasmComponentConfigToml`.
+#[derive(Debug, Clone)]
+pub struct WorkflowWasmComponentConfigResolved {
+    pub common: ComponentCommon,
+    pub content_digest: Option<ContentDigest>,
+    pub component_digest: Option<ComponentDigest>,
+    pub exec: ExecConfigToml,
+    pub retry_exp_backoff: DurationConfig,
+    pub blocking_strategy: BlockingStrategyConfigToml,
+    pub backtrace: ComponentBacktraceConfigResolved,
+    pub stub_wasi: bool,
+    pub lock_extension: bool,
+    pub lock_extension_leeway: DurationConfig,
+    pub logs_store_min_level: LogLevelToml,
+}
+
+/// Resolved form of `WorkflowJsComponentConfigToml`.
+#[derive(Debug, Clone)]
+pub struct WorkflowJsComponentConfigResolved {
+    pub name: ConfigName,
+    pub location: ScriptLocationResolved,
+    pub content_digest: Option<ContentDigest>,
+    pub component_digest: Option<ComponentDigest>,
+    pub ffqn: FunctionFqn,
+    pub interface: FunctionInterfaceResolved,
+    pub exec: ExecConfigToml,
+    pub retry_exp_backoff: DurationConfig,
+    pub blocking_strategy: BlockingStrategyConfigToml,
+    pub logs_store_min_level: LogLevelToml,
+    pub lock_extension: bool,
+    pub lock_extension_leeway: DurationConfig,
+}
+
+/// Resolved form of `WebhookWasmComponentConfigToml`.
+#[derive(Debug, Clone)]
+pub struct WebhookWasmComponentConfigResolved {
+    pub common: ComponentCommon,
+    pub content_digest: Option<ContentDigest>,
+    pub http_server: ConfigName,
+    pub routes: Vec<WebhookRoute>,
+    pub forward_stdout: ComponentStdOutputToml,
+    pub forward_stderr: ComponentStdOutputToml,
+    pub env_vars: Vec<EnvVarConfig>,
+    pub backtrace: ComponentBacktraceConfigResolved,
+    pub backtrace_persist: bool,
+    pub logs_store_min_level: LogLevelToml,
+    pub allowed_hosts: Vec<AllowedHostToml>,
+    pub is_webui: bool,
+}
+
+/// Resolved form of `WebhookJsComponentConfigToml`.
+#[derive(Debug, Clone)]
+pub struct WebhookJsComponentConfigResolved {
+    pub name: ConfigName,
+    pub location: ScriptLocationResolved,
+    pub content_digest: Option<ContentDigest>,
+    pub http_server: ConfigName,
+    pub routes: Vec<WebhookRoute>,
+    pub forward_stdout: ComponentStdOutputToml,
+    pub forward_stderr: ComponentStdOutputToml,
+    pub logs_store_min_level: LogLevelToml,
+    pub env_vars: Vec<EnvVarConfig>,
+    pub backtrace_persist: bool,
+    pub allowed_hosts: Vec<AllowedHostToml>,
+}
+
+/// Resolved deployment configuration after resolving deployment-owned text sources.
+///
+/// This is a transient runtime/verification shape used by the local server and
+/// `obelisk deployment verify`. It is derived from the stored manifest plus a file provider,
+/// never serialized, and rebuilt on each server from the stored manifest and the CAS.
+/// Deployment-owned scripts and backtrace sources are inlined as content;
+/// deployment-owned WASM locations remain relative path + content digest until
+/// `DeploymentRunnable` materializes them from the CAS into a runnable cache path. OCI
+/// references remain external references.
+#[derive(Debug, Default, Clone)]
+pub struct DeploymentResolved {
+    /// Path of the deployment manifest this configuration was loaded from, when available.
+    pub source_path: Option<std::path::PathBuf>,
+    pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,
+    pub activities_stub: Vec<ActivityStubComponentConfigResolved>,
+    pub activities_external: Vec<ActivityExternalComponentConfigResolved>,
+    pub activities_js: Vec<ActivityJsComponentConfigResolved>,
+    pub activities_exec: Vec<ActivityExecComponentConfigResolved>,
+    pub workflows_wasm: Vec<WorkflowWasmComponentConfigResolved>,
+    pub workflows_js: Vec<WorkflowJsComponentConfigResolved>,
+    pub webhooks_wasm: Vec<WebhookWasmComponentConfigResolved>,
+    pub webhooks_js: Vec<WebhookJsComponentConfigResolved>,
+    pub crons: Vec<CronComponentConfigToml>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -784,3 +784,90 @@ pub(crate) struct WebhookJsComponentConfigToml {
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }
+
+// Authored WASM component configs. These double as their own resolved form (a WASM file is
+// fetched, not text-inlined), so `DeploymentResolved` reuses them directly.
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityWasmComponentConfigToml {
+    #[serde(flatten)]
+    pub common: ComponentCommon,
+    /// Optional content digest of the WASM file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub content_digest: Option<ContentDigest>,
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub component_digest: Option<ComponentDigest>,
+    #[serde(default)]
+    pub exec: ExecConfigToml,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub forward_stdout: ComponentStdOutputToml,
+    #[serde(default)]
+    pub forward_stderr: ComponentStdOutputToml,
+    #[serde(default)]
+    pub env_vars: Vec<EnvVarConfig>,
+    #[serde(default)]
+    pub logs_store_min_level: LogLevelToml,
+    /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
+    #[serde(default, rename = "allowed_host")]
+    pub allowed_hosts: Vec<AllowedHostToml>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityStubFileConfigToml {
+    #[serde(flatten)]
+    pub common: ComponentCommon,
+    /// Optional content digest of the WASM file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub content_digest: Option<ContentDigest>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityExternalFileConfigToml {
+    #[serde(flatten)]
+    pub common: ComponentCommon,
+    /// Optional content digest of the WASM file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub content_digest: Option<ContentDigest>,
+    /// Deprecated override of the auto-computed component digest used for locking.
+    /// This option will be removed in 0.42.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub component_digest: Option<ComponentDigest>,
+}
+
+// Authored cron config. There is no separate resolved form; `DeploymentResolved` uses this
+// struct directly.
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CronComponentConfigToml {
+    pub name: ConfigName,
+    /// Fully qualified function name of the target to invoke on each schedule tick.
+    #[schemars(with = "String")]
+    pub ffqn: FunctionFqn,
+    /// JSON-encoded parameters to pass to the target function.
+    #[serde(default = "default_schedule_params")]
+    pub params: String,
+    /// Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.
+    pub schedule: String,
+    #[serde(default)]
+    pub exec: ExecConfigToml,
+}
+
+#[must_use]
+pub fn default_schedule_params() -> String {
+    "[]".to_string()
+}

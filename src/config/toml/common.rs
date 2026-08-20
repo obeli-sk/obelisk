@@ -1,16 +1,10 @@
-//! Serde data shapes shared by the authored and processed manifests: the primitive
-//! config enums (durations, locations, exec, log levels, hosts) plus the resolved forms
-//! ([`DeploymentResolved`] and the `*Resolved` component types). The authored WASM
-//! `*ConfigToml` structs live here too since they double as their own resolved form.
-//!
-//! Authored-side validation lives in [`super::authored`]; fetching/verifying lives in
-//! [`super::resolve`]. Behavior needing the server runtime (OCI fetching, executor
-//! configuration, env var resolution) is expressed as extension traits there.
+//! Serde data-shape primitives shared across the manifest stages: the config enums
+//! (durations, locations, exec, log levels, hosts), `ConfigName`, webhook route shapes,
+//! and the serde defaults. Authored component structs live in [`super::authored`], the
+//! resolved forms in [`super::resolve`], and server config in [`super::server`].
 
-use crate::config::env_var::EnvVarConfig;
-use concepts::component_id::{ComponentDigest, ContentDigest, InvalidNameError, check_name};
+use concepts::component_id::{InvalidNameError, check_name};
 use concepts::{FunctionFqn, StrVariant};
-use hashbrown::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::Display;
@@ -354,215 +348,6 @@ impl<'de> Deserialize<'de> for JsParamToml {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct ActivityWasmComponentConfigToml {
-    #[serde(flatten)]
-    pub common: ComponentCommon,
-    /// Optional content digest of the WASM file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
-    pub content_digest: Option<ContentDigest>,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub component_digest: Option<ComponentDigest>,
-    #[serde(default)]
-    pub exec: ExecConfigToml,
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-    #[serde(default = "default_retry_exp_backoff")]
-    pub retry_exp_backoff: DurationConfig,
-    #[serde(default)]
-    pub forward_stdout: ComponentStdOutputToml,
-    #[serde(default)]
-    pub forward_stderr: ComponentStdOutputToml,
-    #[serde(default)]
-    pub env_vars: Vec<EnvVarConfig>,
-    #[serde(default)]
-    pub logs_store_min_level: LogLevelToml,
-    /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
-    #[serde(default, rename = "allowed_host")]
-    pub allowed_hosts: Vec<AllowedHostToml>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct ActivityStubFileConfigToml {
-    #[serde(flatten)]
-    pub common: ComponentCommon,
-    /// Optional content digest of the WASM file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
-    pub content_digest: Option<ContentDigest>,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct ActivityExternalFileConfigToml {
-    #[serde(flatten)]
-    pub common: ComponentCommon,
-    /// Optional content digest of the WASM file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<String>")]
-    pub content_digest: Option<ContentDigest>,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub component_digest: Option<ComponentDigest>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ActivityStubExtInlineConfigResolved {
-    pub name: ConfigName,
-    pub ffqn: FunctionFqn,
-    pub interface: FunctionInterfaceResolved,
-}
-
-/// Parsed authored WIT belonging to a deployment component.
-#[derive(Debug, Clone)]
-pub struct WitSourceResolved {
-    pub root: String,
-    pub resolve: wit_parser::Resolve,
-    pub main_pkg_id: wit_parser::PackageId,
-}
-
-#[derive(Debug, Clone)]
-pub struct InlineFunctionInterfaceResolved {
-    pub params: Option<Vec<JsParamToml>>,
-    pub return_type: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub enum FunctionInterfaceResolved {
-    Authored { wit: Box<WitSourceResolved> },
-    Inline(InlineFunctionInterfaceResolved),
-}
-
-#[derive(Debug, Clone)]
-pub enum ActivityStubComponentConfigResolved {
-    File(ActivityStubFileConfigToml),
-    Inline(ActivityStubExtInlineConfigResolved),
-}
-
-impl ActivityStubComponentConfigResolved {
-    #[must_use]
-    pub fn name_str(&self) -> &str {
-        match self {
-            Self::File(f) => f.common.name.as_str(),
-            Self::Inline(i) => i.name.as_str(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ActivityExternalComponentConfigResolved {
-    File(ActivityExternalFileConfigToml),
-    Inline(ActivityStubExtInlineConfigResolved),
-}
-
-impl ActivityExternalComponentConfigResolved {
-    #[must_use]
-    pub fn name_str(&self) -> &str {
-        match self {
-            Self::File(f) => f.common.name.as_str(),
-            Self::Inline(i) => i.name.as_str(),
-        }
-    }
-}
-
-/// Resolved location of a script source (JS or exec) after file-provider resolution.
-///
-/// - `Content` is owned by the deployment (inline content, or a file that lived under
-///   the deployment directory and was read from disk/CAS); `file_name` is the
-///   deployment-relative path (which may include subfolders), used for source names and
-///   backtraces.
-/// - `Oci` is an external registry reference.
-#[derive(Debug, Clone, Hash)]
-pub enum ScriptLocationResolved {
-    Content {
-        content: String,
-        file_name: String,
-    },
-    Graph {
-        entry_path: String,
-        files: Vec<(String, String)>,
-    },
-    /// OCI-sourced script. No `oci://` prefix.
-    Oci {
-        image: oci_client::Reference,
-    },
-}
-
-/// Resolved backtrace source: a CAS reference (`content_digest`) to the source bytes,
-/// which are uploaded to the CAS with the deployment files, plus the deployment-relative
-/// `file_name` it was read from (used to detect owned-source name collisions).
-#[derive(Debug, Clone)]
-pub struct BacktraceSourceResolved {
-    pub content_digest: ContentDigest,
-    pub file_name: String,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct ComponentBacktraceConfigResolved {
-    pub frame_files_to_sources: HashMap<String, BacktraceSourceResolved>,
-}
-
-impl ComponentBacktraceConfigResolved {
-    /// Map each frame-symbol key to the CAS digest of its source (dropping the recreate
-    /// path), as needed to persist the runtime backtrace-source lookup.
-    #[must_use]
-    pub fn into_frame_files(self) -> HashMap<String, ContentDigest> {
-        self.frame_files_to_sources
-            .into_iter()
-            .map(|(k, v)| (k, v.content_digest))
-            .collect()
-    }
-}
-
-/// Resolved form of `ActivityJsComponentConfigToml`.
-#[derive(Debug, Clone)]
-pub struct ActivityJsComponentConfigResolved {
-    pub name: ConfigName,
-    pub location: ScriptLocationResolved,
-    pub content_digest: Option<ContentDigest>,
-    pub component_digest: Option<ComponentDigest>,
-    pub ffqn: FunctionFqn,
-    pub interface: FunctionInterfaceResolved,
-    pub exec: ExecConfigToml,
-    pub max_retries: u32,
-    pub retry_exp_backoff: DurationConfig,
-    pub forward_stdout: ComponentStdOutputToml,
-    pub forward_stderr: ComponentStdOutputToml,
-    pub logs_store_min_level: LogLevelToml,
-    pub env_vars: Vec<EnvVarConfig>,
-    pub allowed_hosts: Vec<AllowedHostToml>,
-}
-
-/// Resolved form of `ActivityExecComponentConfigToml`.
-#[derive(Debug, Clone)]
-pub struct ActivityExecComponentConfigResolved {
-    pub name: ConfigName,
-    pub location: ScriptLocationResolved,
-    pub content_digest: Option<ContentDigest>,
-    pub ffqn: FunctionFqn,
-    pub interface: FunctionInterfaceResolved,
-    pub component_digest: Option<ComponentDigest>,
-    pub exec: ExecConfigToml,
-    pub max_retries: u32,
-    pub retry_exp_backoff: DurationConfig,
-    pub forward_stdout: ComponentStdOutputToml,
-    pub forward_stderr: ComponentStdOutputToml,
-    pub logs_store_min_level: LogLevelToml,
-    pub env_vars: Vec<EnvVarConfig>,
-    pub max_output_bytes: u64,
-    /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
-    /// table) to expose to the script in the stdin JSON `secrets` object.
-    pub secrets: Vec<String>,
-    pub params_via_stdin: bool,
-}
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, JsonSchema, PartialEq)]
 #[serde(untagged)] // Try variants without needing a specific outer tag
@@ -598,163 +383,6 @@ pub enum BlockingStrategyConfigSimple {
     Await,
 }
 
-/// Resolved form of `WorkflowWasmComponentConfigToml`.
-#[derive(Debug, Clone)]
-pub struct WorkflowWasmComponentConfigResolved {
-    pub common: ComponentCommon,
-    pub content_digest: Option<ContentDigest>,
-    pub component_digest: Option<ComponentDigest>,
-    pub exec: ExecConfigToml,
-    pub retry_exp_backoff: DurationConfig,
-    pub blocking_strategy: BlockingStrategyConfigToml,
-    pub backtrace: ComponentBacktraceConfigResolved,
-    pub stub_wasi: bool,
-    pub lock_extension: bool,
-    pub lock_extension_leeway: DurationConfig,
-    pub logs_store_min_level: LogLevelToml,
-}
-
-/// Resolved form of `WorkflowJsComponentConfigToml`.
-#[derive(Debug, Clone)]
-pub struct WorkflowJsComponentConfigResolved {
-    pub name: ConfigName,
-    pub location: ScriptLocationResolved,
-    pub content_digest: Option<ContentDigest>,
-    pub component_digest: Option<ComponentDigest>,
-    pub ffqn: FunctionFqn,
-    pub interface: FunctionInterfaceResolved,
-    pub exec: ExecConfigToml,
-    pub retry_exp_backoff: DurationConfig,
-    pub blocking_strategy: BlockingStrategyConfigToml,
-    pub logs_store_min_level: LogLevelToml,
-    pub lock_extension: bool,
-    pub lock_extension_leeway: DurationConfig,
-}
-
-pub mod webhook {
-    use super::{
-        AllowedHostToml, ComponentBacktraceConfigResolved, ComponentCommon, ComponentStdOutputToml,
-        ConfigName, LogLevelToml, ScriptLocationResolved,
-    };
-    use crate::config::env_var::EnvVarConfig;
-    use concepts::StrVariant;
-    use concepts::component_id::ContentDigest;
-    use schemars::JsonSchema;
-    use serde::{Deserialize, Serialize};
-
-    #[must_use]
-    pub fn default_external_server_name() -> ConfigName {
-        ConfigName::new(StrVariant::Static("external")).expect("valid name")
-    }
-
-    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-    #[serde(untagged)]
-    pub enum WebhookRoute {
-        String(String),
-        WebhookRouteDetail(WebhookRouteDetail),
-    }
-
-    impl Default for WebhookRoute {
-        fn default() -> Self {
-            WebhookRoute::String(String::new())
-        }
-    }
-
-    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-    #[serde(deny_unknown_fields)]
-    pub struct WebhookRouteDetail {
-        // Empty means all methods.
-        #[serde(default)]
-        pub methods: Vec<String>,
-        pub route: String,
-    }
-
-    /// Resolved form of `WebhookWasmComponentConfigToml`.
-    #[derive(Debug, Clone)]
-    pub struct WebhookWasmComponentConfigResolved {
-        pub common: ComponentCommon,
-        pub content_digest: Option<ContentDigest>,
-        pub http_server: ConfigName,
-        pub routes: Vec<WebhookRoute>,
-        pub forward_stdout: ComponentStdOutputToml,
-        pub forward_stderr: ComponentStdOutputToml,
-        pub env_vars: Vec<EnvVarConfig>,
-        pub backtrace: ComponentBacktraceConfigResolved,
-        pub backtrace_persist: bool,
-        pub logs_store_min_level: LogLevelToml,
-        pub allowed_hosts: Vec<AllowedHostToml>,
-        pub is_webui: bool,
-    }
-
-    /// Resolved form of `WebhookJsComponentConfigToml`.
-    #[derive(Debug, Clone)]
-    pub struct WebhookJsComponentConfigResolved {
-        pub name: ConfigName,
-        pub location: ScriptLocationResolved,
-        pub content_digest: Option<ContentDigest>,
-        pub http_server: ConfigName,
-        pub routes: Vec<WebhookRoute>,
-        pub forward_stdout: ComponentStdOutputToml,
-        pub forward_stderr: ComponentStdOutputToml,
-        pub logs_store_min_level: LogLevelToml,
-        pub env_vars: Vec<EnvVarConfig>,
-        pub backtrace_persist: bool,
-        pub allowed_hosts: Vec<AllowedHostToml>,
-    }
-}
-
-pub mod cron {
-    use super::{ConfigName, ExecConfigToml};
-    use concepts::FunctionFqn;
-    use schemars::JsonSchema;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-    #[serde(deny_unknown_fields)]
-    pub struct CronComponentConfigToml {
-        pub name: ConfigName,
-        /// Fully qualified function name of the target to invoke on each schedule tick.
-        #[schemars(with = "String")]
-        pub ffqn: FunctionFqn,
-        /// JSON-encoded parameters to pass to the target function.
-        #[serde(default = "default_schedule_params")]
-        pub params: String,
-        /// Cron expression or `@once`, `@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`.
-        pub schedule: String,
-        #[serde(default)]
-        pub exec: ExecConfigToml,
-    }
-
-    #[must_use]
-    pub fn default_schedule_params() -> String {
-        "[]".to_string()
-    }
-}
-
-/// Resolved deployment configuration after resolving deployment-owned text sources.
-///
-/// This is a transient runtime/verification shape used by the local server and
-/// `obelisk deployment verify`. It is derived from the stored manifest plus a file provider,
-/// never serialized, and rebuilt on each server from the stored manifest and the CAS.
-/// Deployment-owned scripts and backtrace sources are inlined as content;
-/// deployment-owned WASM locations remain relative path + content digest until
-/// `DeploymentRunnable` materializes them from the CAS into a runnable cache path. OCI
-/// references remain external references.
-#[derive(Debug, Default, Clone)]
-pub struct DeploymentResolved {
-    /// Path of the deployment manifest this configuration was loaded from, when available.
-    pub source_path: Option<std::path::PathBuf>,
-    pub activities_wasm: Vec<ActivityWasmComponentConfigToml>,
-    pub activities_stub: Vec<ActivityStubComponentConfigResolved>,
-    pub activities_external: Vec<ActivityExternalComponentConfigResolved>,
-    pub activities_js: Vec<ActivityJsComponentConfigResolved>,
-    pub activities_exec: Vec<ActivityExecComponentConfigResolved>,
-    pub workflows_wasm: Vec<WorkflowWasmComponentConfigResolved>,
-    pub workflows_js: Vec<WorkflowJsComponentConfigResolved>,
-    pub webhooks_wasm: Vec<webhook::WebhookWasmComponentConfigResolved>,
-    pub webhooks_js: Vec<webhook::WebhookJsComponentConfigResolved>,
-    pub crons: Vec<cron::CronComponentConfigToml>,
-}
 
 // Serde defaults shared by the resolved config types and the TOML types in the obelisk binary.
 
@@ -801,4 +429,33 @@ pub const fn default_lock_extension_leeway() -> DurationConfig {
 #[must_use]
 pub const fn default_max_output_bytes() -> u64 {
     4096
+}
+
+// Webhook route serde shapes, shared by the authored webhook configs and their resolved forms.
+
+#[must_use]
+pub fn default_external_server_name() -> ConfigName {
+    ConfigName::new(StrVariant::Static("external")).expect("valid name")
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub enum WebhookRoute {
+    String(String),
+    WebhookRouteDetail(WebhookRouteDetail),
+}
+
+impl Default for WebhookRoute {
+    fn default() -> Self {
+        WebhookRoute::String(String::new())
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WebhookRouteDetail {
+    // Empty means all methods.
+    #[serde(default)]
+    pub methods: Vec<String>,
+    pub route: String,
 }
