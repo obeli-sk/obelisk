@@ -957,10 +957,9 @@ fn has_obelisk_wit_header(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        OBELISK_WIT_HEADER, add_token_hash, generate_cli_schema,
-        generate_authored_schema, generate_component_metadata_annotation_schema,
-        generate_db_schema, generate_openapi_schema, generate_server_config_schema,
-        write_wit_deps,
+        OBELISK_WIT_HEADER, add_token_hash, generate_authored_schema, generate_cli_schema,
+        generate_component_metadata_annotation_schema, generate_db_schema, generate_openapi_schema,
+        generate_server_config_schema, write_wit_deps,
     };
     use concepts::PkgFqn;
     use hashbrown::HashMap;
@@ -1023,8 +1022,7 @@ mod tests {
     fn update_toml_schemas() {
         generate_server_config_schema(Some(PathBuf::from("assets/schemas/toml/server.json")))
             .unwrap();
-        generate_authored_schema(Some(PathBuf::from("assets/schemas/toml/authored.json")))
-            .unwrap();
+        generate_authored_schema(Some(PathBuf::from("assets/schemas/toml/authored.json"))).unwrap();
     }
 
     #[test]

@@ -1699,7 +1699,9 @@ pub(crate) fn resolve_backtrace(
         let content_digest = component_files
             .get(&file_name)
             .unwrap_or_else(|| {
-                unreachable!("backtrace source `{file_name}` must have a digest in `component_files`")
+                unreachable!(
+                    "backtrace source `{file_name}` must have a digest in `component_files`"
+                )
             })
             .clone();
         frame_files_to_sources.insert(
