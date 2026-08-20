@@ -3215,7 +3215,7 @@ mod functions {
 mod deployment {
     use crate::{
         command::server::{self, RuntimeConfigAvailability, SwitchDeploymentAction},
-        config::manifest::strip_generated_deployment_metadata,
+        config::deployment::strip_generated_deployment_metadata,
         server::{
             deployment_summary,
             web_api_server::{

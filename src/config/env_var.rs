@@ -1,7 +1,7 @@
 use crate::config::secret_registry::{SecretRegistry, SecretViolation};
 use secrecy::SecretString;
 
-pub use deployment_config::env_var::EnvVarConfig;
+pub use concepts::env_var::EnvVarConfig;
 
 /// Error from `${VAR}` interpolation of an operator/deployment config value.
 #[derive(Debug, thiserror::Error)]

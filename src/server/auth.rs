@@ -4,7 +4,7 @@
 //! so all three surfaces are authenticated uniformly; gRPC streams are checked
 //! once at stream open. See `meta/designs/server-security-guard.md` (v1).
 
-use crate::config::toml::ApiConfig;
+use crate::config::server::ApiConfig;
 use axum::{
     body::Body,
     extract::{Request, State},

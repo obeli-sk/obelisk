@@ -1,5 +1,5 @@
 use crate::args::TomlComponentType;
-use crate::config::toml::{AllowedHostToml, DurationConfig, JsParamToml, OCI_SCHEMA_PREFIX};
+use crate::config::deployment::{AllowedHostToml, DurationConfig, JsParamToml, OCI_SCHEMA_PREFIX};
 use crate::config::{content_digest_to_js_file, content_digest_to_wasm_file};
 use anyhow::{Context, bail, ensure};
 use concepts::{ContentDigest, FunctionFqn, component_id::Digest};

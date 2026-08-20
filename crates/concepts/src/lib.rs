@@ -1,8 +1,10 @@
 #[cfg(any(feature = "rusqlite", feature = "postgres"))]
 pub mod backtrace;
 pub mod cas;
-pub use deployment_config::component_id;
+pub mod component_id;
+pub mod env_var;
 mod error_conversions;
+pub mod naming;
 #[cfg(feature = "postgres")]
 mod postgres_ext;
 #[cfg(feature = "rusqlite")]
@@ -11,9 +13,7 @@ pub mod storage;
 pub mod time;
 
 use ::serde::{Deserialize, Serialize};
-pub use deployment_config::component_id::{
-    ComponentId, ComponentType, ContentDigest, InvalidNameError, check_name,
-};
+pub use component_id::{ComponentId, ComponentType, ContentDigest, InvalidNameError, check_name};
 use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
@@ -36,7 +36,7 @@ use val_json::{
 };
 use wasmtime::component::{Type, Val};
 
-pub use deployment_config::naming::{
+pub use naming::{
     FnMarker, FnName, FunctionFqn, FunctionFqnParseError, IfcFqnMarker, IfcFqnName,
     IfcFqnParseError, NAMESPACE_OBELISK, Name, PackageExtension, PkgFqn, SUFFIX_FN_CANCELLABLE,
     SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,

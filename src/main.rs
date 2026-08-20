@@ -24,7 +24,7 @@ use clap::Parser;
 use client::ClientStartup;
 use config::config_holder::ConfigHolder;
 use config::secret_registry::{SecretRegistry, SecretsToml};
-use config::toml::ServerConfigToml;
+use config::server::ServerConfigToml;
 use directories::{BaseDirs, ProjectDirs};
 use std::future::Future;
 use std::path::PathBuf;

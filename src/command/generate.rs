@@ -8,9 +8,10 @@ use crate::command::termination_notifier::termination_notifier;
 use crate::config::config_holder::{
     ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML, server_config_template,
 };
-use crate::config::manifest::{prepare_deployment_manifest, resolve_manifest};
+use crate::config::deployment::OCI_SCHEMA_PREFIX;
+use crate::config::deployment::{prepare_deployment_manifest, resolve_manifest};
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::toml::{OCI_SCHEMA_PREFIX, ServerConfigToml};
+use crate::config::server::ServerConfigToml;
 use crate::init::{self};
 use crate::project_dirs;
 use anyhow::{Context, ensure};
@@ -262,12 +263,12 @@ fn write_schema<T: schemars::JsonSchema>(output: Option<PathBuf>) -> Result<(), 
 
 #[cfg(test)]
 fn generate_server_config_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    write_schema::<crate::config::toml::ServerConfigToml>(output)
+    write_schema::<crate::config::server::ServerConfigToml>(output)
 }
 
 #[cfg(test)]
-fn generate_deployment_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
-    write_schema::<crate::config::toml::DeploymentToml>(output)
+fn generate_authored_schema(output: Option<PathBuf>) -> Result<(), anyhow::Error> {
+    write_schema::<crate::config::deployment::DeploymentToml>(output)
 }
 
 #[cfg(test)]
@@ -957,10 +958,9 @@ fn has_obelisk_wit_header(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        OBELISK_WIT_HEADER, add_token_hash, generate_cli_schema,
-        generate_component_metadata_annotation_schema, generate_db_schema,
-        generate_deployment_schema, generate_openapi_schema, generate_server_config_schema,
-        write_wit_deps,
+        OBELISK_WIT_HEADER, add_token_hash, generate_authored_schema, generate_cli_schema,
+        generate_component_metadata_annotation_schema, generate_db_schema, generate_openapi_schema,
+        generate_server_config_schema, write_wit_deps,
     };
     use concepts::PkgFqn;
     use hashbrown::HashMap;
@@ -1023,8 +1023,7 @@ mod tests {
     fn update_toml_schemas() {
         generate_server_config_schema(Some(PathBuf::from("assets/schemas/toml/server.json")))
             .unwrap();
-        generate_deployment_schema(Some(PathBuf::from("assets/schemas/toml/deployment.json")))
-            .unwrap();
+        generate_authored_schema(Some(PathBuf::from("assets/schemas/toml/authored.json"))).unwrap();
     }
 
     #[test]

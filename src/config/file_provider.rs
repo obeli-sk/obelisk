@@ -76,7 +76,7 @@ pub(crate) async fn parse_wit_files_from_cas(
     root: &str,
     known_files: &BTreeMap<String, ContentDigest>,
 ) -> anyhow::Result<ParsedWitFiles> {
-    let root = crate::config::toml::sanitize_deployment_relative_path(root)?;
+    let root = crate::config::deployment::sanitize_deployment_relative_path(root)?;
     let prefix = format!("{root}/");
     let declared: Vec<(String, &ContentDigest)> = known_files
         .iter()
@@ -89,7 +89,7 @@ pub(crate) async fn parse_wit_files_from_cas(
     );
     let temp_dir = tempfile::tempdir().context("cannot create temp dir to parse WIT")?;
     for (path, digest) in &declared {
-        let path = crate::config::toml::sanitize_deployment_relative_path(path)?;
+        let path = crate::config::deployment::sanitize_deployment_relative_path(path)?;
         ensure!(
             Path::new(&path).extension().and_then(|ext| ext.to_str()) == Some("wit"),
             "declared WIT source is not a .wit file: `{path}`"
@@ -132,7 +132,7 @@ pub(crate) async fn parse_wit_dir(
     deployment_dir: &Path,
     root: &str,
 ) -> anyhow::Result<ParsedWitFiles> {
-    let root = crate::config::toml::sanitize_deployment_relative_path(root)?;
+    let root = crate::config::deployment::sanitize_deployment_relative_path(root)?;
     let deployment_dir = deployment_dir
         .canonicalize()
         .with_context(|| format!("cannot canonicalize deployment directory {deployment_dir:?}"))?;

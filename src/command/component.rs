@@ -4,15 +4,15 @@ use crate::args::TomlComponentType;
 use crate::client::ClientStartup;
 use crate::client::FunctionRepositoryClient;
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
+use crate::config::deployment::ComponentLocationToml;
+use crate::config::deployment::ConfigName;
+use crate::config::deployment::DeploymentTomlValidated;
+use crate::config::deployment::DurationConfig;
+use crate::config::deployment::FunctionInterfaceToml;
+use crate::config::deployment::OCI_SCHEMA_PREFIX;
+use crate::config::deployment::ScriptLocationPathOrOci;
 use crate::config::env_var::EnvVarConfig;
 use crate::config::secret_registry::SecretRegistry;
-use crate::config::toml::ComponentLocationToml;
-use crate::config::toml::ConfigName;
-use crate::config::toml::DeploymentTomlValidated;
-use crate::config::toml::DurationConfig;
-use crate::config::toml::FunctionInterfaceToml;
-use crate::config::toml::OCI_SCHEMA_PREFIX;
-use crate::config::toml::ScriptLocationPathOrOci;
 use crate::config::wasm_cache_metadata_dir;
 use crate::oci;
 use crate::oci::ComponentMetadataAnnotation;
@@ -289,7 +289,7 @@ fn find_component_for_push(
 
 fn synthesized_interface(
     interface: &FunctionInterfaceToml,
-) -> anyhow::Result<(Vec<crate::config::toml::JsParamToml>, Option<String>)> {
+) -> anyhow::Result<(Vec<crate::config::deployment::JsParamToml>, Option<String>)> {
     match interface {
         FunctionInterfaceToml::Inline(inline) => Ok((
             inline.params.clone().unwrap_or_default(),
@@ -655,9 +655,9 @@ fn build_component_table(
                 let mut replace_array = toml_edit::Array::new();
                 for r in &host.replace_in {
                     let name = match r {
-                        crate::config::toml::ReplaceIn::Headers => "headers",
-                        crate::config::toml::ReplaceIn::Body => "body",
-                        crate::config::toml::ReplaceIn::Params => "params",
+                        crate::config::deployment::ReplaceIn::Headers => "headers",
+                        crate::config::deployment::ReplaceIn::Body => "body",
+                        crate::config::deployment::ReplaceIn::Params => "params",
                     };
                     replace_array.push(name);
                 }
@@ -681,7 +681,7 @@ fn build_component_table(
     t
 }
 
-fn write_params(t: &mut toml_edit::Table, params: &[crate::config::toml::JsParamToml]) {
+fn write_params(t: &mut toml_edit::Table, params: &[crate::config::deployment::JsParamToml]) {
     use toml_edit::Item;
     if !params.is_empty() {
         let mut arr = toml_edit::Array::new();
@@ -716,8 +716,8 @@ fn write_lock_expiry(t: &mut toml_edit::Table, duration: DurationConfig) {
     t.insert("exec", Item::Table(exec_tbl));
 }
 
-fn serialize_methods_input(methods: &crate::config::toml::MethodsInput) -> toml_edit::Item {
-    use crate::config::toml::MethodsInput;
+fn serialize_methods_input(methods: &crate::config::deployment::MethodsInput) -> toml_edit::Item {
+    use crate::config::deployment::MethodsInput;
     match methods {
         MethodsInput::Star(_) => toml_edit::Item::Value("*".into()),
         MethodsInput::List(list) => {
@@ -805,7 +805,7 @@ fn print_wit_type(wit_type: &grpc_gen::WitType) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::toml::{AllowedHostToml, MethodsInput, ReplaceIn};
+    use crate::config::deployment::{AllowedHostToml, MethodsInput, ReplaceIn};
     use crate::oci::ComponentMetadataAnnotation;
 
     fn make_metadata_activity() -> ComponentMetadataAnnotation {
@@ -846,7 +846,7 @@ mod tests {
             toml_str.contains("exec.lock_expiry.seconds = 5"),
             "unexpected exec format:\n{toml_str}"
         );
-        let parsed: crate::config::toml::DeploymentToml =
+        let parsed: crate::config::deployment::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
         assert_eq!(parsed.activities_wasm.len(), 1);
@@ -879,7 +879,7 @@ mod tests {
         doc.insert("webhook_endpoint_wasm", toml_edit::Item::ArrayOfTables(aot));
 
         let toml_str = doc.to_string();
-        let parsed: crate::config::toml::DeploymentToml =
+        let parsed: crate::config::deployment::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
         assert_eq!(parsed.webhooks_wasm.len(), 1);
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn build_and_parse_activity_js_toml() {
-        use crate::config::toml::JsParamToml;
+        use crate::config::deployment::JsParamToml;
         use concepts::FunctionFqn;
 
         let metadata = ComponentMetadataAnnotation::ActivityJs {
@@ -928,7 +928,7 @@ mod tests {
             toml_str.contains("exec.lock_expiry.seconds = 10"),
             "unexpected exec format:\n{toml_str}"
         );
-        let parsed: crate::config::toml::DeploymentToml =
+        let parsed: crate::config::deployment::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
         assert_eq!(parsed.activities_js.len(), 1);
@@ -952,7 +952,7 @@ mod tests {
 
     #[test]
     fn build_and_parse_activity_exec_toml() {
-        use crate::config::toml::JsParamToml;
+        use crate::config::deployment::JsParamToml;
         use concepts::{ContentDigest, FunctionFqn};
 
         let metadata = ComponentMetadataAnnotation::ActivityExec {
@@ -989,7 +989,7 @@ mod tests {
             toml_str.contains("content_digest = \"sha256:1111111111111111111111111111111111111111111111111111111111111111\""),
             "unexpected content digest format:\n{toml_str}"
         );
-        let parsed: crate::config::toml::DeploymentToml =
+        let parsed: crate::config::deployment::DeploymentToml =
             toml::from_str(&toml_str).expect("generated TOML must parse");
 
         assert_eq!(parsed.activities_exec.len(), 1);
