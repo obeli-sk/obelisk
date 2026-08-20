@@ -335,6 +335,9 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
             Type::Stream(_) => Err(TypeConversionError::UnsupportedType("stream")),
             Type::ErrorContext => Err(TypeConversionError::UnsupportedType("error-context")),
             Type::Map(_) => Err(TypeConversionError::UnsupportedType("map")),
+            Type::FixedLengthList(_) => {
+                Err(TypeConversionError::UnsupportedType("fixed-length-list"))
+            }
         }
     }
 }

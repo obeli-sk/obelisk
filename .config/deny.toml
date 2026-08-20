@@ -77,6 +77,10 @@ skip = [
     { name = "wasm-metadata", version = "0.244" },
     { name = "wit-component", version = "0.244" },
     { name = "wit-parser", version = "0.244" },
+    # wasm-compose 0.254 (wasmtime dep) uses wasm-tools 0.254, but its `wat` dep
+    # pulls in wasm-tools 0.257 — canonical is 0.254, 0.257 is skipped
+    { name = "wasm-encoder", version = "0.257" },
+    { name = "wast", version = "257" },
     # oci-spec (via oci-client) requires strum 0.27 and darling 0.20
     { name = "strum", version = "0.27" },
     { name = "strum_macros", version = "0.27" },

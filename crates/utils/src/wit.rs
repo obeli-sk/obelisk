@@ -85,7 +85,8 @@ pub(crate) fn rebuild_resolve(
 
     let (mut resolve, main_pkg_id) = {
         let wit = replace_obelisk_types(&wit);
-        let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit)?;
+        let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit)
+            .map_err(|(map, err)| anyhow::Error::msg(err.render(&map)))?;
         let mut resolve = Resolve::new();
         let main_pkg_id = resolve.push_group(group)?;
         (resolve, main_pkg_id)
@@ -107,6 +108,7 @@ pub(crate) fn rebuild_resolve(
                     docs: wit_parser::Docs::default(),
                     stability: Stability::Unknown,
                     span: Span::default(),
+                    external_id: None,
                 },
             )
         }));
@@ -186,6 +188,7 @@ fn add_extended_interfaces(
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
             span: Span::default(),
+            external_id: None,
         })
     };
     // obelisk:types/execution@VERSION.{join-set}
@@ -202,6 +205,7 @@ fn add_extended_interfaces(
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
             span: Span::default(),
+            external_id: None,
         });
         // Create a Handle::Borrow to the reference.
         let type_id_join_set_id_borrow_handle = resolve.types.alloc(TypeDef {
@@ -211,6 +215,7 @@ fn add_extended_interfaces(
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
             span: Span::default(),
+            external_id: None,
         });
         (type_id_join_set_id, type_id_join_set_id_borrow_handle)
     };
@@ -228,6 +233,7 @@ fn add_extended_interfaces(
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
             span: Span::default(),
+            external_id: None,
         })
     };
     // obelisk:types/execution.{get-extension-error}
@@ -244,6 +250,7 @@ fn add_extended_interfaces(
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
             span: Span::default(),
+            external_id: None,
         })
     };
     // obelisk:types/execution.{stub-error}
@@ -260,6 +267,7 @@ fn add_extended_interfaces(
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
             span: Span::default(),
+            external_id: None,
         })
     };
     let type_id_await_next_err_part = type_id_await_next_extension_error;
@@ -277,6 +285,7 @@ fn add_extended_interfaces(
             docs: wit_parser::Docs::default(),
             stability: wit_parser::Stability::default(),
             span: Span::default(),
+            external_id: None,
         })
     };
 
@@ -383,6 +392,7 @@ fn add_extended_interfaces(
                                 docs: wit_parser::Docs::default(),
                                 stability: wit_parser::Stability::default(),
                                 span: Span::default(),
+                                external_id: None,
                             });
                             Some(Type::Id(type_id_result))
                         };
@@ -422,6 +432,7 @@ fn add_extended_interfaces(
                             docs: wit_parser::Docs::default(),
                             stability: wit_parser::Stability::default(),
                             span: Span::default(),
+                            external_id: None,
                         }));
                         params.push(Param {
                             name: "execution-result".to_string(),
@@ -440,6 +451,7 @@ fn add_extended_interfaces(
                                 docs: wit_parser::Docs::default(),
                                 stability: wit_parser::Stability::default(),
                                 span: Span::default(),
+                                external_id: None,
                             });
                             Some(Type::Id(type_id_result))
                         };
@@ -463,6 +475,7 @@ fn add_extended_interfaces(
                             docs: wit_parser::Docs::default(),
                             stability: wit_parser::Stability::default(),
                             span: Span::default(),
+                            external_id: None,
                         })));
                         (params, result)
                     }
@@ -475,6 +488,7 @@ fn add_extended_interfaces(
                     docs: wit_parser::Docs::default(),
                     stability: Stability::default(),
                     span: Span::default(),
+                    external_id: None,
                 };
                 ifc.functions.insert(fn_name.to_string(), wit_fun);
             }
@@ -567,6 +581,7 @@ fn copy_or_refer_original_types(
                     docs: wit_parser::Docs::default(),
                     stability: wit_parser::Stability::default(),
                     span: Span::default(),
+                    external_id: None,
                 })
             }
         };
@@ -759,7 +774,8 @@ pub fn build_wit_deps_map(
             // Roundtrip through WIT text so that obelisk:types is available in the resolve
             // (required by add_extended_interfaces to build borrow<join-set> handles etc.).
             let wit_with_types = replace_obelisk_types(&primary_wit);
-            let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit_with_types)?;
+            let group = UnresolvedPackageGroup::parse(PathBuf::new(), &wit_with_types)
+                .map_err(|(map, err)| anyhow::Error::msg(err.render(&map)))?;
             let mut resolve_with_types = Resolve::new();
             resolve_with_types.push_group(group)?;
 
@@ -877,6 +893,7 @@ pub(crate) fn build_primary_resolve(
                 docs: wit_parser::Docs::default(),
                 stability: Stability::default(),
                 span: Span::default(),
+                external_id: None,
             };
             resolve
                 .interfaces
@@ -910,6 +927,7 @@ pub(crate) fn build_primary_resolve(
                         docs: wit_parser::Docs::default(),
                         stability: Stability::Unknown,
                         span: Span::default(),
+                        external_id: None,
                     },
                 )
             })

@@ -22,7 +22,8 @@ pub fn print_interface_with_single_fn(
     wit: &str,
     ffqn: &FunctionFqn,
 ) -> Result<String, anyhow::Error> {
-    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
+    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)
+        .map_err(|(map, err)| anyhow::Error::msg(err.render(&map)))?;
     let mut resolve = Resolve::new();
     let _main_id = resolve.push_group(group)?;
     let mut printer = WitPrinter::new(OutputToString::new(Some(ffqn.function_name.to_string())));
@@ -233,7 +234,8 @@ pub fn process_pkg_with_deps(
     requested_pkgs: &[PkgFqn],
     acc: &mut HashMap<PkgFqn, String>,
 ) -> Result<(), anyhow::Error> {
-    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)?;
+    let group = UnresolvedPackageGroup::parse(PathBuf::new(), wit)
+        .map_err(|(map, err)| anyhow::Error::msg(err.render(&map)))?;
     let mut resolve = Resolve::new();
     resolve.push_group(group)?;
 

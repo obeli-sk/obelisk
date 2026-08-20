@@ -3,11 +3,12 @@ use crate::http_request_policy::{HttpRequestPolicy, PolicyError};
 use concepts::storage::LogLevel;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
+use http_body_util::BodyExt;
+use std::future::Future;
 use tokio::sync::oneshot;
 use tracing::Instrument;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
-use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
-use wasmtime_wasi_http::p2::{HttpResult, WasiHttpHooks, default_send_request_handler};
+use wasmtime_wasi_http::{Error, RequestOptions, WasiHttpHooks, default_send_request};
 
 pub type HttpClientTracesContainer = Vec<(RequestTrace, oneshot::Receiver<ResponseTrace>)>;
 
@@ -90,12 +91,25 @@ fn toml_basic_string_escape(input: &str) -> String {
     input.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+type SendRequestFuture = Box<
+    dyn Future<
+            Output = Result<
+                (
+                    hyper::Response<HyperOutgoingBody>,
+                    Box<dyn Future<Output = Result<(), Error>> + Send>,
+                ),
+                Error,
+            >,
+        > + Send,
+>;
+
 impl WasiHttpHooks for HttpHooks {
     fn send_request(
         &mut self,
         mut request: hyper::Request<HyperOutgoingBody>,
-        config: OutgoingRequestConfig,
-    ) -> HttpResult<HostFutureIncomingResponse> {
+        options: Option<RequestOptions>,
+        _fut: Box<dyn Future<Output = Result<(), Error>> + Send>,
+    ) -> SendRequestFuture {
         // Prepare request trace & channel
         let req = RequestTrace {
             sent_at: self.clock_fn.now(),
@@ -116,8 +130,12 @@ impl WasiHttpHooks for HttpHooks {
                 finished_at: self.clock_fn.now(),
                 status: Err(err.to_string()),
             });
-            let err = wasmtime_wasi_http::p2::bindings::http::types::ErrorCode::from(err);
-            return Err(err.into());
+            // Drain the outgoing body so the guest's request stream closes cleanly and
+            // observes the denial on the response future instead of a connection reset.
+            return Box::new(async move {
+                let _ = request.into_body().collect().await;
+                Err(Error::HttpRequestDenied)
+            });
         }
 
         let span = tracing::info_span!(parent: &self.component_logger.span, "send_request",
@@ -128,26 +146,29 @@ impl WasiHttpHooks for HttpHooks {
         let clock_fn = self.clock_fn.clone_box();
         let http_policy = self.http_policy.clone();
         span.in_scope(|| tracing::debug!("Sending {request:?}"));
-        let handle = wasmtime_wasi::runtime::spawn(
+        Box::new(
             async move {
                 http_policy.apply_body_replacement(&mut request).await;
-                let resp_result: Result<
-                    wasmtime_wasi_http::p2::types::IncomingResponse,
-                    wasmtime_wasi_http::p2::bindings::http::types::ErrorCode,
-                > = default_send_request_handler(request, config).await;
-                tracing::debug!("Got response {resp_result:?}");
+                let resp_result = default_send_request(request, options).await;
+                tracing::debug!(
+                    "Got response {:?}",
+                    resp_result.as_ref().map(|(resp, _io)| resp.status())
+                );
                 let _ = resp_trace_tx.send(ResponseTrace {
                     finished_at: clock_fn.now(),
                     status: resp_result
                         .as_ref()
-                        .map(|resp| resp.resp.status().as_u16())
+                        .map(|(resp, _io)| resp.status().as_u16())
                         .map_err(std::string::ToString::to_string),
                 });
-                Ok(resp_result)
+                let (resp, io) = resp_result?;
+                Ok((
+                    resp.map(BodyExt::boxed_unsync),
+                    Box::new(io) as Box<dyn Future<Output = Result<(), Error>> + Send>,
+                ))
             }
             .instrument(span),
-        );
-        Ok(HostFutureIncomingResponse::pending(handle))
+        )
     }
 }
 

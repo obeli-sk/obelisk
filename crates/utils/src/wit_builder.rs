@@ -47,6 +47,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             });
             dedup.insert(key, type_def);
             Type::Id(type_def)
@@ -78,6 +79,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             });
             dedup.insert(key, type_def);
             Type::Id(type_def)
@@ -103,6 +105,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             });
             dedup.insert(key, type_def);
             Type::Id(type_def)
@@ -128,6 +131,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             });
             dedup.insert(key, type_def);
             Type::Id(type_def)
@@ -142,6 +146,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             }))
         }
         TypeWrapper::Option(inner) => {
@@ -153,6 +158,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             }))
         }
         TypeWrapper::Tuple(items) => {
@@ -167,6 +173,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             }))
         }
         TypeWrapper::Result { ok, err } => {
@@ -183,6 +190,7 @@ pub fn allocate_type(
                 docs: wit_parser::Docs::default(),
                 stability: wit_parser::Stability::default(),
                 span: wit_parser::Span::default(),
+                external_id: None,
             }))
         }
         // Primitives.
