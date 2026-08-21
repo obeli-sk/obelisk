@@ -291,71 +291,74 @@ impl ExecTask {
         let (worker_count_tx, worker_count_rx) = tokio::sync::watch::channel(0);
         let (execution_interrupt_sender, execution_interrupt_watcher) =
             tokio::sync::watch::channel(false);
-        let join_handle = tokio::spawn(async move {
-            debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
-            let lock_strategy_holder = config.locking_strategy.holder(ffqns);
-            let task = ExecTask {
-                worker,
-                config,
-                db_pool,
-                locking_strategy_holder: lock_strategy_holder,
-                clock_fn: clock_fn.clone_box(),
-                worker_count_tx,
-                execution_interrupt_watcher,
-            };
-            let mut old_err = None;
-            while !is_closing_inner.load(Ordering::Relaxed) {
-                let res = task.db_pool.db_exec_conn().await;
-                let res = log_err_if_new(res, &mut old_err);
-                if let Ok(db_exec) = res {
-                    let _ = task
-                        .tick(
-                            db_exec.as_ref(),
-                            clock_fn.now(),
-                            RunId::generate(),
-                            deployment_id,
-                        )
-                        .await;
-                    let timeout_fut = {
-                        let sleep = sleep.clone();
-                        Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })
-                    };
-                    match &task.locking_strategy_holder {
-                        LockingStrategyHolder::ByFfqns(ffqns) => {
-                            db_exec
-                                .wait_for_pending_by_ffqn(
-                                    clock_fn.now(),
-                                    ffqns.clone(),
-                                    None,
-                                    timeout_fut,
-                                )
-                                .await;
+        let join_handle = utils::spawn::spawn_named(
+            &format!("executor {component_id} {executor_id}"),
+            async move {
+                debug!(executor_id = %config.executor_id, component_id = %config.component_id, "Spawned executor");
+                let lock_strategy_holder = config.locking_strategy.holder(ffqns);
+                let task = ExecTask {
+                    worker,
+                    config,
+                    db_pool,
+                    locking_strategy_holder: lock_strategy_holder,
+                    clock_fn: clock_fn.clone_box(),
+                    worker_count_tx,
+                    execution_interrupt_watcher,
+                };
+                let mut old_err = None;
+                while !is_closing_inner.load(Ordering::Relaxed) {
+                    let res = task.db_pool.db_exec_conn().await;
+                    let res = log_err_if_new(res, &mut old_err);
+                    if let Ok(db_exec) = res {
+                        let _ = task
+                            .tick(
+                                db_exec.as_ref(),
+                                clock_fn.now(),
+                                RunId::generate(),
+                                deployment_id,
+                            )
+                            .await;
+                        let timeout_fut = {
+                            let sleep = sleep.clone();
+                            Box::pin(async move { sleep.sleep(task.config.tick_sleep).await })
+                        };
+                        match &task.locking_strategy_holder {
+                            LockingStrategyHolder::ByFfqns(ffqns) => {
+                                db_exec
+                                    .wait_for_pending_by_ffqn(
+                                        clock_fn.now(),
+                                        ffqns.clone(),
+                                        None,
+                                        timeout_fut,
+                                    )
+                                    .await;
+                            }
+                            LockingStrategyHolder::ByComponentDigest => {
+                                db_exec
+                                    .wait_for_pending_by_component_digest(
+                                        clock_fn.now(),
+                                        &task.config.component_id.component_digest,
+                                        timeout_fut,
+                                    )
+                                    .await;
+                            }
+                            LockingStrategyHolder::Auto { ffqns } => {
+                                db_exec
+                                    .wait_for_pending_by_ffqn(
+                                        clock_fn.now(),
+                                        ffqns.clone(),
+                                        Some(task.config.component_id.component_digest.clone()),
+                                        timeout_fut,
+                                    )
+                                    .await;
+                            }
                         }
-                        LockingStrategyHolder::ByComponentDigest => {
-                            db_exec
-                                .wait_for_pending_by_component_digest(
-                                    clock_fn.now(),
-                                    &task.config.component_id.component_digest,
-                                    timeout_fut,
-                                )
-                                .await;
-                        }
-                        LockingStrategyHolder::Auto { ffqns } => {
-                            db_exec
-                                .wait_for_pending_by_ffqn(
-                                    clock_fn.now(),
-                                    ffqns.clone(),
-                                    Some(task.config.component_id.component_digest.clone()),
-                                    timeout_fut,
-                                )
-                                .await;
-                        }
+                    } else {
+                        sleep.sleep(task.config.tick_sleep).await;
                     }
-                } else {
-                    sleep.sleep(task.config.tick_sleep).await;
                 }
-            }
-        });
+            },
+        );
         ExecutorTaskHandle {
             is_closing,
             join_handle,
@@ -517,6 +520,7 @@ impl ExecTask {
         let mut executions = Vec::with_capacity(locked_executions.len());
         for (locked_execution, permit) in locked_executions {
             let execution_id = locked_execution.execution_id.clone();
+            let task_name = format!("worker {run_id}");
             let join_handle = {
                 let worker = self.worker.clone();
                 let db_pool = self.db_pool.clone();
@@ -534,7 +538,7 @@ impl ExecTask {
                 let worker_count_tx = self.worker_count_tx.clone();
                 worker_count_tx.send_modify(|n| *n += 1);
                 let execution_interrupt_watcher = self.execution_interrupt_watcher.clone();
-                tokio::spawn({
+                utils::spawn::spawn_named(&task_name, {
                     let worker_span2 = worker_span.clone();
                     let retry_config = self.config.retry_config;
                     async move {

@@ -46,7 +46,8 @@ pub struct TickProgress {
 pub fn spawn_new(db_pool: Arc<dyn DbPool>, config: TimersWatcherConfig) -> AbortOnDropHandle {
     let tick_sleep = config.tick_sleep;
     AbortOnDropHandle::new(
-        tokio::spawn(
+        utils::spawn::spawn_named(
+            "expired_timers_watcher",
             async move {
                 debug!("Spawned expired timers watcher");
                 let mut old_err = None;

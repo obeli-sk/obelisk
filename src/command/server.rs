@@ -331,7 +331,7 @@ impl DeploymentSwitchManagerHandle {
         // commits (cron seeds + activate) as well as the non-cancel-safe critical swap, so a
         // cancellation can never leave the DB activated while the old workers keep running.
         // The permit is held until the task finishes, which is what `close()` drains on.
-        tokio::spawn(async move {
+        utils::spawn::spawn_named("deployment_switch", async move {
             let _switch_permit = switch_permit;
             let deployment_id = prepared.deployment_id;
             let result = async {
@@ -596,7 +596,9 @@ pub(crate) async fn run(
     }
 
     let (termination_sender, termination_watcher) = watch::channel(());
-    tokio::spawn(async move { termination_notifier(termination_sender).await });
+    utils::spawn::spawn_named("termination_notifier", async move {
+        termination_notifier(termination_sender).await;
+    });
 
     let prepared_dirs = prepare_dirs(
         &config,
@@ -787,7 +789,9 @@ pub(crate) async fn verify(
         config
     };
     let engines = create_engines(&config, &prepared_dirs)?;
-    tokio::spawn(async move { termination_notifier(termination_sender).await });
+    utils::spawn::spawn_named("termination_notifier", async move {
+        termination_notifier(termination_sender).await;
+    });
     let mut db_pool = if !skip_db {
         verify_db_schema(
             &config.database,
@@ -3409,18 +3413,21 @@ async fn start_http_servers(
             http_server.name,
         );
         let server = AbortOnDropHandle::new(
-            tokio::spawn(webhook_trigger::server(
-                http_server.name.to_string(),
-                tcp_listener,
-                engine.clone(),
-                state_watcher,
-                log_forwarder_sender.clone(),
-                db_pool.clone(),
-                Now.clone_box(),
-                Arc::new(TokioSleep),
-                global_webhook_instance_limiter.clone(),
-                termination_watcher.clone(),
-            ))
+            utils::spawn::spawn_named(
+                &format!("http_server {}", http_server.name),
+                webhook_trigger::server(
+                    http_server.name.to_string(),
+                    tcp_listener,
+                    engine.clone(),
+                    state_watcher,
+                    log_forwarder_sender.clone(),
+                    db_pool.clone(),
+                    Now.clone_box(),
+                    Arc::new(TokioSleep),
+                    global_webhook_instance_limiter.clone(),
+                    termination_watcher.clone(),
+                ),
+            )
             .abort_handle(),
         );
         abort_handles.push(server);

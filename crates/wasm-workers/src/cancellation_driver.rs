@@ -53,7 +53,8 @@ impl CancellationDriver {
         batch_size: u32,
     ) -> AbortOnDropHandle {
         AbortOnDropHandle::new(
-            tokio::spawn(
+            utils::spawn::spawn_named(
+                "cancellation_driver",
                 async move {
                     debug!("Spawned the cancellation driver");
                     // Child executions and delays whose cancellation was already
