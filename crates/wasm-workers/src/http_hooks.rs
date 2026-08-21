@@ -149,6 +149,13 @@ impl WasiHttpHooks for HttpHooks {
         Box::new(
             async move {
                 http_policy.apply_body_replacement(&mut request).await;
+                // workaround for https://github.com/bytecodealliance/wasmtime/issues/14190
+                if !request.headers().contains_key(hyper::header::HOST)
+                    && let Some(authority) = request.uri().authority()
+                    && let Ok(value) = hyper::header::HeaderValue::from_str(authority.as_str())
+                {
+                    request.headers_mut().insert(hyper::header::HOST, value);
+                }
                 let resp_result = default_send_request(request, options).await;
                 tracing::debug!(
                     "Got response {:?}",

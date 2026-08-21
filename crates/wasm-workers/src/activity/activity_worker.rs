@@ -1352,7 +1352,7 @@ pub(crate) mod tests {
         use std::ops::Deref;
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
-            matchers::{method, path},
+            matchers::{header, method, path},
         };
         const BODY: &str = "ok";
         test_utils::set_up();
@@ -1425,6 +1425,7 @@ pub(crate) mod tests {
         let server = MockServer::builder().listener(listener).start().await;
         Mock::given(method("GET"))
             .and(path("/"))
+            .and(header("host", server_address.to_string()))
             .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
             .expect(1)
             .mount(&server)
