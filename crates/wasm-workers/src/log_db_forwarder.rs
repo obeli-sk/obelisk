@@ -15,7 +15,7 @@ pub fn spawn_new(
     mut receiver: mpsc::Receiver<LogInfoAppendRow>,
 ) -> AbortOnDropHandle {
     AbortOnDropHandle::new(
-        tokio::spawn({
+        utils::spawn::spawn_named("log_db_forwarder", {
             async move {
                 debug!("Spawned log db forwarder");
                 let mut old_err = None;

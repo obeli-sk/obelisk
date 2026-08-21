@@ -2227,7 +2227,8 @@ fn stream_execution_response(
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let trace_id = server::gen_trace_id();
     let span = info_span!("stream_execution_response", trace_id, %execution_id);
-    tokio::spawn(
+    utils::spawn::spawn_named(
+        "stream_execution_response",
         stream_execution_response_task(
             execution_id,
             state.db_pool.clone(),

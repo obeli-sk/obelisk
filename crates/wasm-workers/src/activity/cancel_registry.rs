@@ -48,7 +48,7 @@ impl CancelRegistry {
     pub fn spawn_cancel_watcher(&self, sleep_duration: Duration) -> AbortOnDropHandle {
         let clone = self.clone();
         AbortOnDropHandle::new(
-            tokio::spawn({
+            utils::spawn::spawn_named("cancel_watcher", {
                 async move {
                     debug!("Spawned the cancel watcher");
                     loop {

@@ -417,7 +417,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             let termination_watcher = self.termination_watcher.clone();
             let trace_id = server::gen_trace_id();
             let span = info_span!("poll_status", trace_id);
-            tokio::spawn(
+            utils::spawn::spawn_named(
+                "poll_status",
                 async move {
                     debug!("poll_status started");
                     poll_status(

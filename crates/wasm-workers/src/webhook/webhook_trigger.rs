@@ -529,7 +529,8 @@ pub async fn server(
         let deployment_id = state.deployment_id;
         debug!(%deployment_id, %stream_id, "Initializing connection");
         // Spawn a tokio task for each TCP connection.
-        tokio::task::spawn(
+        utils::spawn::spawn_named(
+            &format!("webhook_connection {http_server}"),
             {
                 let engine = engine.clone();
                 let clock_fn = clock_fn.clone_box();
@@ -2184,7 +2185,7 @@ impl RequestHandler {
                 .await
                 .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
 
-            let task = tokio::task::spawn({
+            let task = utils::spawn::spawn_named("webhook_request", {
                 let assigned_fuel = found_instance.config.fuel;
                 async move {
                     let _http_request_guard = http_request_guard;

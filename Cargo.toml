@@ -452,7 +452,7 @@ clippy.map_unwrap_or = "allow" # More readable than .map_or_else with reverse pa
 clippy.items_after_statements = "allow" # keep nested types near to their usage
 
 [workspace.lints.rust]
-unexpected_cfgs = "deny"
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(tokio_unstable)'] }
 unknown_lints = "deny"
 
 [profile.release]
