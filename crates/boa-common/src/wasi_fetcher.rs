@@ -21,9 +21,9 @@ impl Fetcher for WasiFetcher {
         self: Rc<Self>,
         request: JsRequest,
         _signal: Option<JsObject>,
-        _context: &RefCell<&mut Context>,
+        context: &RefCell<&mut Context>,
     ) -> JsResult<JsResponse> {
-        let http_req = request.into_inner(); // http::Request<Vec<u8>>
+        let http_req = request.into_inner(context).await?;
         let uri = http_req.uri().to_string();
 
         // Build wstd request, preserving method, headers, and body

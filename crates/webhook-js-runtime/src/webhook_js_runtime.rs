@@ -128,6 +128,8 @@ use boa_runtime::fetch::request::JsRequest;
 use boa_runtime::fetch::response::JsResponse;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 use wstd::http::body::Body;
 use wstd::http::{Request, Response, StatusCode};
@@ -186,16 +188,17 @@ async fn main(request: Request<Body>) -> Result<Response<Body>, wstd::http::Erro
     };
 
     // Wrap the body as a lazy future: bytes are only read when JS calls text()/json()/formData().
-    let body_future = async move {
+    let body_future = Box::pin(async move {
         match incoming_body.contents().await {
             Ok(bytes) => bytes.to_vec(),
             Err(_) => Vec::new(),
         }
-    };
-    let js_request = JsRequest::with_lazy_body(http_request_head, body_future);
+    });
 
-    run_js_handler_async(&entry_path, &files, js_request).await
+    run_js_handler_async(&entry_path, &files, http_request_head, body_future).await
 }
+
+type RequestBodyFuture = Pin<Box<dyn Future<Output = Vec<u8>>>>;
 
 /// Read the JS module graph from environment variables.
 ///
@@ -220,9 +223,10 @@ fn read_js_graph_env() -> Result<(String, BTreeMap<String, String>), String> {
 async fn run_js_handler_async(
     entry_path: &str,
     files: &BTreeMap<String, String>,
-    js_request: JsRequest,
+    request_head: http::Request<Vec<u8>>,
+    body_future: RequestBodyFuture,
 ) -> Result<Response<Body>, wstd::http::Error> {
-    match run_js_handler_inner(entry_path, files, js_request).await {
+    match run_js_handler_inner(entry_path, files, request_head, body_future).await {
         Ok(response) => Ok(response),
         Err(msg) => {
             log::error(&msg);
@@ -359,7 +363,8 @@ fn read_resolved_imports() -> HashMap<String, Vec<(String, String)>> {
 async fn run_js_handler_inner(
     entry_path: &str,
     files: &BTreeMap<String, String>,
-    js_request: JsRequest,
+    request_head: http::Request<Vec<u8>>,
+    body_future: RequestBodyFuture,
 ) -> Result<Response<Body>, String> {
     let executor = Rc::new(WasiJobExecutor::default());
     let loader = Rc::new(MapModuleLoader::new());
@@ -405,6 +410,7 @@ async fn run_js_handler_inner(
 
     // Wrap the incoming request as a JS Request object so the handler receives a proper
     // Request object with text(), json(), formData(), method, url, and headers.
+    let js_request = JsRequest::with_lazy_body(request_head, body_future, &mut context);
     let request_obj = JsRequest::from_data(js_request, &mut context)
         .map_err(|e| format!("Failed to create JS Request object: {e}"))?;
     let request_value = JsValue::from(request_obj);
