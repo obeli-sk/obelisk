@@ -29,8 +29,11 @@ jobs:
       matrix:
         include:
           - image_tag: ubuntu
+          - image_tag: ubuntu-embedded
           - image_tag: alpine
+          - image_tag: alpine-embedded
           - image_tag: ubuntu-litestream
+          - image_tag: ubuntu-litestream-embedded
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

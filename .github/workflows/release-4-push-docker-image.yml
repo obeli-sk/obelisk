@@ -44,13 +44,25 @@ jobs:
             dockerfile: ubuntu-24.04.Dockerfile
             image_tag: ubuntu
 
+          - tarfile: obelisk-x86_64-unknown-linux-gnu-embedded.tar.gz
+            dockerfile: ubuntu-24.04.Dockerfile
+            image_tag: ubuntu-embedded
+
           - tarfile: obelisk-x86_64-unknown-linux-gnu.tar.gz
             dockerfile: ubuntu-24.04-litestream.Dockerfile
             image_tag: ubuntu-litestream
 
+          - tarfile: obelisk-x86_64-unknown-linux-gnu-embedded.tar.gz
+            dockerfile: ubuntu-24.04-litestream.Dockerfile
+            image_tag: ubuntu-litestream-embedded
+
           - tarfile: obelisk-x86_64-unknown-linux-musl.tar.gz
             dockerfile: alpine.Dockerfile
             image_tag: alpine
+
+          - tarfile: obelisk-x86_64-unknown-linux-musl-embedded.tar.gz
+            dockerfile: alpine.Dockerfile
+            image_tag: alpine-embedded
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
