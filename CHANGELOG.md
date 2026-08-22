@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.4](https://github.com/obeli-sk/obelisk/compare/v0.41.3...v0.41.4)
+
+This patch release fixes a Wasmtime 48.0.0 bug which causes not sending `Host` header in outgoing requests.
+
+### Fixed
+- *http)* Work around Wasmtime 48.0.0 not sending `Host` header in outgoing
+  requests - ([#894](https://github.com/obeli-sk/obelisk/pull/894)).
+
 ## [0.41.3](https://github.com/obeli-sk/obelisk/compare/v0.41.2...v0.41.3)
 
 This patch release hardens deployment submission and activation, reduces SQLite startup time, and
