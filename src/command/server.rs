@@ -570,8 +570,9 @@ pub(crate) struct RunParams {
     pub(crate) dir_params: PrepareDirsParams,
     pub(crate) clean_sqlite_directory: bool,
     pub(crate) suppress_type_checking_errors: bool,
-    /// Accept unauthenticated API requests (`--allow-unauthenticated-api`).
-    pub(crate) allow_unauthenticated_api: bool,
+    /// Accept unauthenticated API requests (`--no-auth`).
+    pub(crate) no_auth: bool,
+    pub(crate) legacy_api_token: Option<secrecy::SecretString>,
 }
 
 pub(crate) async fn run(
@@ -749,6 +750,7 @@ pub(crate) async fn verify(
             let ServerStartup {
                 config_holder,
                 config,
+                legacy_api_token: _,
                 secret_registry,
             } = prepare_server_startup(
                 config_holder.config_source,
@@ -1909,13 +1911,14 @@ pub(crate) async fn run_internal(
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router.fallback_service(grpc_service);
-        let app_svc = if params.allow_unauthenticated_api {
-            warn!(
-                "API authentication is disabled by --allow-unauthenticated-api: accepting all API requests"
-            );
+        let app_svc = if params.no_auth {
+            warn!("API authentication is disabled by --no-auth: accepting all API requests");
             app.into_make_service()
         } else {
-            let api_auth = Arc::new(crate::server::auth::ApiAuth::new(&api_config));
+            let api_auth = Arc::new(crate::server::auth::ApiAuth::new(
+                &api_config,
+                params.legacy_api_token.clone(),
+            ));
             info!(
                 "API startup token: {}",
                 api_auth.startup_token().expose_secret()

@@ -1,8 +1,7 @@
 use crate::FunctionMetadataVerbosity;
 use crate::args;
 use crate::args::TomlComponentType;
-use crate::client::ClientStartup;
-use crate::client::FunctionRepositoryClient;
+use crate::client::{ClientStartup, send_json};
 use crate::config::config_holder::{ConfigHolder, OBELISK_HELP_DEPLOYMENT_TOML};
 use crate::config::deployment::ComponentLocationToml;
 use crate::config::deployment::ConfigName;
@@ -17,13 +16,11 @@ use crate::config::wasm_cache_metadata_dir;
 use crate::oci;
 use crate::oci::ComponentMetadataAnnotation;
 use crate::project_dirs;
+use crate::server::web_api_server::components::{ComponentConfig, FunctionMetadataLite};
 use anyhow::Context;
 use anyhow::bail;
-use concepts::ComponentType;
-use concepts::FunctionFqn;
 use directories::BaseDirs;
-use grpc::grpc_gen;
-use grpc::to_channel;
+use http::header::ACCEPT;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::OpenOptions;
@@ -42,10 +39,9 @@ impl args::Component {
                 imports,
                 extensions,
             } => {
-                let channel = to_channel(&api_url).await?;
-                let client = client_startup.fn_repository_client(channel)?;
                 list_components(
-                    client,
+                    &client_startup,
+                    &api_url,
                     if imports {
                         FunctionMetadataVerbosity::ExportsAndImports
                     } else {
@@ -731,75 +727,53 @@ fn serialize_methods_input(methods: &crate::config::deployment::MethodsInput) ->
 }
 
 pub(crate) async fn list_components(
-    mut client: FunctionRepositoryClient,
+    client_startup: &ClientStartup,
+    api_url: &str,
     verbosity: FunctionMetadataVerbosity,
     extensions: bool,
 ) -> anyhow::Result<()> {
-    let components = client
-        .list_components(tonic::Request::new(grpc_gen::ListComponentsRequest {
-            function_name: None,
-            component_digest: None,
-            extensions,
-            deployment_id: None,
-        }))
-        .await?
-        .into_inner()
-        .components;
+    let client = client_startup.web_api_client()?;
+    let components: Vec<ComponentConfig> = send_json(
+        client
+            .get(format!("{api_url}/v1/components"))
+            .header(ACCEPT, "application/json")
+            .query(&[
+                ("exports", "true"),
+                (
+                    "imports",
+                    if verbosity > FunctionMetadataVerbosity::ExportsOnly {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                ),
+                ("extensions", if extensions { "true" } else { "false" }),
+            ]),
+    )
+    .await?;
     for component in components {
-        let component_id = component.component_id.expect("`component_id` is sent");
+        let component_id = component.component_id;
         println!(
             "{name}\t{ty}\t{sha}",
             name = component_id.name,
-            ty = grpc_gen::ComponentType::try_from(component_id.component_type)
-                .map_err(|_| ())
-                .and_then(|ty| ComponentType::try_from(ty).map_err(|_| ()))
-                .map(|ct| ct.to_string())
-                .unwrap_or_else(|()| "unknown type".to_string()),
-            sha = component_id.digest.map(|d| d.digest).unwrap_or_default()
+            ty = component_id.component_type,
+            sha = component_id.component_digest,
         );
         println!("Exports:");
-        print_fn_details(component.exports)?;
+        print_fn_details(component.exports.unwrap_or_default());
         if verbosity > FunctionMetadataVerbosity::ExportsOnly {
             println!("Imports:");
-            print_fn_details(component.imports)?;
+            print_fn_details(component.imports.unwrap_or_default());
         }
         println!();
     }
     Ok(())
 }
 
-fn print_fn_details(vec: Vec<grpc_gen::FunctionDetail>) -> Result<(), anyhow::Error> {
-    for fn_detail in vec {
-        let func = fn_detail.function_name.context("function must exist")?;
-        let func = if let Ok(func) = FunctionFqn::try_from(func.clone())
-            .with_context(|| format!("ffqn sent by the server must be valid - {func:?}"))
-        {
-            func.to_string()
-        } else {
-            // FIXME: here because of functions like: interface_name: "wasi:io/poll@0.2.3", function_name: "[method]pollable.block"
-            format!("{} . {}", func.interface_name, func.function_name)
-        };
-        print!("\t{func} : func(");
-        let mut params = fn_detail.params.into_iter().peekable();
-        while let Some(param) = params.next() {
-            print!("{}: ", param.name);
-            print_wit_type(&param.r#type.context("field `params.type` must exist")?);
-            if params.peek().is_some() {
-                print!(", ");
-            }
-        }
-        print!(")");
-        if let Some(return_type) = fn_detail.return_type {
-            print!(" -> ");
-            print_wit_type(&return_type);
-        }
-        println!();
+fn print_fn_details(functions: Vec<FunctionMetadataLite>) {
+    for function in functions {
+        println!("\t{function}");
     }
-    Ok(())
-}
-
-fn print_wit_type(wit_type: &grpc_gen::WitType) {
-    print!("{}", wit_type.wit_type);
 }
 
 #[cfg(test)]

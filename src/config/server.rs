@@ -14,7 +14,6 @@ use concepts::component_id::Digest;
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use schemars::JsonSchema;
-use secrecy::SecretString;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -192,11 +191,6 @@ pub(crate) struct ApiConfig {
     /// Generate an entry with `obelisk generate token`.
     #[serde(default)]
     pub(crate) token_hashes: Vec<Digest>,
-    /// Plaintext accepted token, intended for env injection only
-    /// (`OBELISK__API__TOKEN`); do not write it into the config file.
-    #[serde(default, deserialize_with = "deserialize_opt_secret_string")]
-    #[schemars(with = "Option<String>")]
-    pub(crate) token: Option<SecretString>,
 }
 
 impl Default for ApiConfig {
@@ -205,15 +199,8 @@ impl Default for ApiConfig {
             enabled: true,
             listening_addr: default_api_listening_addr(),
             token_hashes: Vec::new(),
-            token: None,
         }
     }
-}
-
-fn deserialize_opt_secret_string<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<SecretString>, D::Error> {
-    Ok(Option::<String>::deserialize(deserializer)?.map(SecretString::from))
 }
 
 fn default_api_listening_addr() -> SocketAddr {

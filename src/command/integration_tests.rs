@@ -698,22 +698,42 @@ impl TestServer {
     async fn start(ip: String) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true).await
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
 
     /// Start a server with an empty deployment (no components, no CAS blobs), so a later
     /// `deployment apply` exercises the upload-then-submit path from a clean store.
     async fn start_empty(ip: String) -> Self {
         let (tmp_dir, server_path, _deployment_path) = write_test_configs(&ip, "");
-        Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty(), true).await
+        Self::launch(
+            ip,
+            tmp_dir,
+            server_path,
+            LocalDeployment::empty(),
+            true,
+            None,
+        )
+        .await
     }
 
-    /// Start an empty server with API auth enabled (no `allow_unauthenticated_api`), accepting the
-    /// given extra top-level `server.toml` lines (e.g. `api.token = "..."`).
-    async fn start_empty_with_auth(ip: String, server_toml_api_lines: &str) -> Self {
+    /// Start an empty server with API auth enabled (`no_auth = false`), accepting the
+    /// given extra top-level `server.toml` lines (e.g. `api.token_hashes = [...]`).
+    async fn start_empty_with_auth(
+        ip: String,
+        server_toml_api_lines: &str,
+        legacy_api_token: Option<&str>,
+    ) -> Self {
         let (tmp_dir, server_path, _deployment_path) =
             write_test_configs(&ip, server_toml_api_lines);
-        Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty(), false).await
+        Self::launch(
+            ip,
+            tmp_dir,
+            server_path,
+            LocalDeployment::empty(),
+            false,
+            legacy_api_token.map(secrecy::SecretString::from),
+        )
+        .await
     }
 
     async fn launch(
@@ -721,7 +741,8 @@ impl TestServer {
         tmp_dir: tempfile::TempDir,
         server_path: PathBuf,
         deployment: LocalDeployment,
-        allow_unauthenticated_api: bool,
+        no_auth: bool,
+        legacy_api_token: Option<secrecy::SecretString>,
     ) -> Self {
         test_utils::set_up();
 
@@ -739,7 +760,8 @@ impl TestServer {
             },
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
-            allow_unauthenticated_api,
+            no_auth,
+            legacy_api_token,
         };
 
         let prepared_dirs = prepare_dirs(
@@ -1251,7 +1273,6 @@ impl TestServer {
     }
 }
 
-/// api.token is not tested as it interferes with `OBELISK__API__TOKEN` that might be set.
 #[tokio::test]
 async fn api_auth_should_deny_unauthenticated_requests() {
     fn list_components_request() -> ListComponentsRequest {
@@ -1264,12 +1285,14 @@ async fn api_auth_should_deny_unauthenticated_requests() {
     }
 
     let hashed_token = "hashed-secret-token";
+    let legacy_token = "legacy-secret-token";
     let server = TestServer::start_empty_with_auth(
         test_addr!(89),
         &format!(
             "api.token_hashes = [\"{hash}\"]",
             hash = crate::api::token_hash(hashed_token)
         ),
+        Some(legacy_token),
     )
     .await;
 
@@ -1288,6 +1311,15 @@ async fn api_auth_should_deny_unauthenticated_requests() {
         .client
         .get(&url)
         .bearer_auth(hashed_token)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "status: {}", resp.status());
+
+    let resp = server
+        .client
+        .get(&url)
+        .bearer_auth(legacy_token)
         .send()
         .await
         .unwrap();
@@ -3185,6 +3217,55 @@ ffqn = "testing:integration/a.run"
         .into_inner()
         .deleted_count;
     assert_eq!(deleted, 0, "second gc must delete nothing");
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn gc_orphan_files_webapi() {
+    let server = TestServer::start(test_addr!(123)).await;
+    let orphan_digest = {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let digest = pool
+            .cas_conn()
+            .await
+            .unwrap()
+            .write_blob(b"orphan blob for REST GC")
+            .await
+            .unwrap();
+        pool.close().await;
+        digest.to_string()
+    };
+
+    let response = server
+        .client
+        .delete(format!("{}/v1/files/orphans", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted_count"], 1);
+
+    let response = server
+        .client
+        .get(format!("{}/v1/files/{orphan_digest}", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let response = server
+        .client
+        .delete(format!("{}/v1/files/orphans", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted_count"], 0);
 
     server.shutdown().await;
 }

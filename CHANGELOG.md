@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(api)* `OBELISK_API_TOKEN` is now the canonical CLI token environment variable. The legacy
+  `OBELISK__API__TOKEN` remains supported with a deprecation warning, and plaintext `api.token`
+  has been removed from server configuration. Configure persistent server tokens with
+  `api.token_hashes`.
+
 ## [0.41.4](https://github.com/obeli-sk/obelisk/compare/v0.41.3...v0.41.4)
 
 This patch release fixes a Wasmtime 48.0.0 bug which causes not sending `Host` header in outgoing requests.

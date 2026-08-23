@@ -4,7 +4,7 @@ use crate::{
         backtrace::{execution_backtrace, execution_backtrace_source},
         components::{component_wit, components_list},
         deployment::{
-            get_current_deployment_id, get_deployment, get_file, list_deployments,
+            gc_orphan_files, get_current_deployment_id, get_deployment, get_file, list_deployments,
             submit_deployment, switch_deployment,
         },
         functions::{function_wit, functions_list},
@@ -114,6 +114,7 @@ pub(crate) struct WebApiState {
         deployment::submit_deployment,
         deployment::switch_deployment,
         deployment::get_file,
+        deployment::gc_orphan_files,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -141,6 +142,7 @@ pub(crate) struct WebApiState {
         functions::FunctionOutput,
         deployment::DeploymentStateSer,
         deployment::DeploymentSubmitResponse,
+        deployment::GcOrphanFilesResponseSer,
         deployment::SubmitPackageErrorBody,
         deployment::FileIssue,
         deployment::DigestMismatch,
@@ -249,6 +251,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
         .route("/deployments", routing::get(list_deployments))
         .route("/deployments", routing::post(submit_deployment))
         .route("/deployments/{deployment-id}", routing::get(get_deployment))
+        .route("/files/orphans", routing::delete(gc_orphan_files))
         .route("/files/{digest}", routing::get(get_file))
         .route(
             "/deployments/{deployment-id}/switch",
@@ -449,7 +452,7 @@ enum ExecutionListCursorDeser {
     ExecutionId(ExecutionId),
 }
 /// Execution with current state information
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct ExecutionWithStateSer {
     /// Unique execution identifier
     #[schema(value_type = String, example = "E_01JKXYZ123456789ABCDEFGHIJ")]
@@ -783,14 +786,14 @@ struct ExecutionEventsParams {
 }
 
 /// Response containing execution events
-#[derive(Serialize, ToSchema)]
-struct ExecutionEventsResponse {
+#[derive(Serialize, Deserialize, ToSchema)]
+pub(crate) struct ExecutionEventsResponse {
     /// List of execution events
     #[schema(value_type = Vec<Object>)]
-    events: Vec<ExecutionEvent>,
+    pub(crate) events: Vec<ExecutionEvent>,
     /// Maximum version in the response
     #[schema(value_type = u32)]
-    max_version: Version,
+    pub(crate) max_version: Version,
 }
 /// Get execution events (history)
 #[utoipa::path(
@@ -860,7 +863,7 @@ async fn execution_events(
     })
 }
 
-mod logs {
+pub(crate) mod logs {
     use super::*;
     use base64::{Engine as _, prelude::BASE64_STANDARD};
     use chrono::{DateTime, Utc};
@@ -953,7 +956,7 @@ mod logs {
     }
 
     /// Log entry row with cursor
-    #[derive(Serialize, ToSchema)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     pub(crate) struct LogEntryRowSer {
         /// Opaque cursor position
         pub cursor: String,
@@ -968,7 +971,7 @@ mod logs {
     }
 
     /// Log entry content
-    #[derive(Serialize, ToSchema)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub(crate) enum LogEntrySer {
         /// Structured log message
@@ -1017,7 +1020,7 @@ mod logs {
         }
     }
 
-    #[derive(serde::Serialize, ToSchema)]
+    #[derive(serde::Serialize, serde::Deserialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogLevelSer {
         Trace,
@@ -1051,7 +1054,7 @@ mod logs {
         }
     }
 
-    #[derive(serde::Serialize, ToSchema)]
+    #[derive(serde::Serialize, serde::Deserialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub(crate) enum LogStreamTypeSer {
         Stdout,
@@ -1248,17 +1251,17 @@ struct ExecutionResponsesParams {
 }
 
 /// Response containing execution responses
-#[derive(Serialize, ToSchema)]
-struct ExecutionResponsesResponse {
+#[derive(Serialize, Deserialize, ToSchema)]
+pub(crate) struct ExecutionResponsesResponse {
     /// List of responses with cursors
     #[schema(value_type = Vec<Object>)]
-    responses: Vec<ResponseWithCursor>,
+    pub(crate) responses: Vec<ResponseWithCursor>,
     /// Maximum cursor in the response
     #[schema(value_type = u32)]
-    max_cursor: ResponseCursor,
+    pub(crate) max_cursor: ResponseCursor,
     /// Execution-wide cursor reached in the requested direction
     #[schema(value_type = u32)]
-    scan_cursor: ResponseCursor,
+    pub(crate) scan_cursor: ResponseCursor,
 }
 /// Get execution responses (join set responses)
 #[utoipa::path(
@@ -1373,7 +1376,7 @@ async fn execution_status_get(
     })
 }
 
-fn format_execution_status_text(pending_state: &PendingState) -> String {
+pub(crate) fn format_execution_status_text(pending_state: &PendingState) -> String {
     match pending_state {
         PendingState::Locked(_) => "Locked".to_string(),
         PendingState::PendingAt(pending) => format!("Pending at {}", pending.scheduled_at),
@@ -2045,7 +2048,7 @@ enum AdvanceErrorSer {
     Transient(String),
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub(crate) struct PersistBacktracesResponseSer {
     /// Number of newly persisted backtraces (already-persisted ones are skipped).
     pub(crate) persisted_backtrace_count: u32,
@@ -2622,17 +2625,17 @@ async fn replay_execution_internal(
 }
 
 /// Payload for upgrading an execution to a new component version
-#[derive(Deserialize, ToSchema)]
-struct ExecutionUpgradePayload {
+#[derive(Serialize, Deserialize, ToSchema)]
+pub(crate) struct ExecutionUpgradePayload {
     /// Old component digest to upgrade from
     #[schema(value_type = String)]
-    pub old: ComponentDigest,
+    pub(crate) old: ComponentDigest,
     /// New component digest to upgrade to
     #[schema(value_type = String)]
-    pub new: ComponentDigest,
+    pub(crate) new: ComponentDigest,
     /// Skip determinism check during upgrade
     #[serde(default)]
-    pub skip_determinism_check: bool,
+    pub(crate) skip_determinism_check: bool,
 }
 
 /// Upgrade an execution to a new component version
@@ -2951,33 +2954,33 @@ pub(crate) mod components {
     }
 
     /// Component configuration with optional imports/exports
-    #[derive(Serialize, ToSchema)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     pub(crate) struct ComponentConfig {
         /// Component identifier
         #[schema(value_type = Object)]
-        component_id: ComponentId,
+        pub(crate) component_id: ComponentId,
         /// Deployment-owned files used by this component.
-        files: Vec<ComponentFileRef>,
+        pub(crate) files: Vec<ComponentFileRef>,
         /// Imported functions
         #[serde(skip_serializing_if = "Option::is_none")]
-        imports: Option<Vec<FunctionMetadataLite>>,
+        pub(crate) imports: Option<Vec<FunctionMetadataLite>>,
         /// Exported functions
         #[serde(skip_serializing_if = "Option::is_none")]
-        exports: Option<Vec<FunctionMetadataLite>>,
+        pub(crate) exports: Option<Vec<FunctionMetadataLite>>,
     }
 
-    #[derive(Serialize, ToSchema)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     pub(crate) struct ComponentFileRef {
-        file: ComponentFile,
+        pub(crate) file: ComponentFile,
         #[schema(value_type = String)]
-        role: ComponentFileRole,
+        pub(crate) role: ComponentFileRole,
     }
 
-    #[derive(Serialize, ToSchema)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     pub(crate) struct ComponentFile {
-        path: String,
-        digest: String,
-        size: u64,
+        pub(crate) path: String,
+        pub(crate) digest: String,
+        pub(crate) size: u64,
     }
 
     impl From<DeploymentComponentFileDetail> for ComponentFileRef {
@@ -2994,22 +2997,22 @@ pub(crate) mod components {
     }
 
     /// Lightweight function metadata
-    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
+    #[derive(serde::Serialize, serde::Deserialize, derive_more::Display, ToSchema)]
     #[display("{ffqn}: func({}) -> {return_type}", parameter_types.iter().join(", "))]
     pub(crate) struct FunctionMetadataLite {
         /// Fully qualified function name
         #[schema(value_type = String)]
-        ffqn: FunctionFqn,
+        pub(crate) ffqn: FunctionFqn,
         /// Parameter types
-        parameter_types: Vec<ParameterTypeLite>,
+        pub(crate) parameter_types: Vec<ParameterTypeLite>,
         /// Return type as WIT string
-        return_type: String,
+        pub(crate) return_type: String,
         /// Function extension type if any
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schema(value_type = Option<String>)]
-        extension: Option<FunctionExtension>,
+        pub(crate) extension: Option<FunctionExtension>,
         /// Externally submittable: primary functions + `-schedule` extended, but no activity stubs
-        submittable: bool,
+        pub(crate) submittable: bool,
     }
     impl From<FunctionMetadata> for FunctionMetadataLite {
         fn from(value: FunctionMetadata) -> Self {
@@ -3044,13 +3047,13 @@ pub(crate) mod components {
     }
 
     /// Parameter type information
-    #[derive(serde::Serialize, derive_more::Display, ToSchema)]
+    #[derive(serde::Serialize, serde::Deserialize, derive_more::Display, ToSchema)]
     #[display("{name}: {wit_type}")]
     pub(crate) struct ParameterTypeLite {
         /// Parameter name
-        name: String,
+        pub(crate) name: String,
         /// WIT type representation
-        wit_type: String,
+        pub(crate) wit_type: String,
     }
 
     impl From<ParameterType> for ParameterTypeLite {
@@ -3213,7 +3216,7 @@ mod functions {
     }
 }
 
-mod deployment {
+pub(crate) mod deployment {
     use crate::{
         command::server::{self, RuntimeConfigAvailability, SwitchDeploymentAction},
         config::deployment::strip_generated_deployment_metadata,
@@ -3254,7 +3257,7 @@ mod deployment {
     use tracing::{info, instrument};
     use utoipa::{IntoParams, ToSchema};
 
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     #[serde(rename_all = "snake_case")]
     pub enum DeploymentStatusSer {
         Inactive,
@@ -3272,7 +3275,7 @@ mod deployment {
         }
     }
     /// Deployment state with execution counts
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct DeploymentStateSer {
         /// Deployment identifier
         #[schema(value_type = String, example = "Dep_01JKXYZ123456789ABCDEFGHIJ")]
@@ -3453,7 +3456,7 @@ mod deployment {
     }
 
     /// A deployment-owned file the manifest references.
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct FileRefSer {
         /// Deployment-relative path.
         pub path: String,
@@ -3474,7 +3477,7 @@ mod deployment {
     }
 
     /// Deployment details with config
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct DeploymentRecordSer {
         #[schema(value_type = String)]
         pub deployment_id: DeploymentId,
@@ -3488,6 +3491,11 @@ mod deployment {
         pub deployment_toml: String,
         /// Files the manifest references.
         pub files: Vec<FileRefSer>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct GcOrphanFilesResponseSer {
+        pub(crate) deleted_count: u64,
     }
 
     impl From<&DeploymentRecord> for DeploymentRecordSer {
@@ -3589,7 +3597,7 @@ mod deployment {
     }
 
     /// Request payload for submitting a new deployment
-    #[derive(Deserialize, ToSchema)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     pub struct DeploymentSubmitPayload {
         /// Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must
         /// be uploaded separately after the server returns `missing_digests`.
@@ -3606,13 +3614,13 @@ mod deployment {
         pub deployment_id: Option<String>,
     }
 
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct DeploymentSubmitResponse {
         pub deployment_id: String,
     }
 
     /// A single file-set problem found while validating a submit package.
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct FileIssue {
         pub section: String,
         pub component_name: Option<String>,
@@ -3622,7 +3630,7 @@ mod deployment {
         pub message: String,
     }
 
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct DigestMismatch {
         pub file: FileIssue,
         pub supplied_digest: String,
@@ -3632,7 +3640,7 @@ mod deployment {
     /// Structured `409` body describing why a submit package was rejected. No
     /// deployment is stored when this is returned. A client retries the same submit
     /// with the `missing_files` blobs attached.
-    #[derive(Debug, Serialize, ToSchema)]
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub struct SubmitPackageErrorBody {
         pub missing_digest_fields: Vec<FileIssue>,
         pub missing_files: Vec<FileIssue>,
@@ -3935,8 +3943,35 @@ mod deployment {
         Ok(content.into_response())
     }
 
+    /// Delete file blobs that are not referenced by a deployment.
+    #[utoipa::path(
+        delete,
+        path = "/v1/files/orphans",
+        tag = "deployments",
+        responses(
+            (status = 200, description = "Orphan files deleted", body = GcOrphanFilesResponseSer)
+        )
+    )]
+    pub(crate) async fn gc_orphan_files(
+        state: State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let accept = AcceptHeader::Json;
+        let deleted_count = state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .gc_orphan_files()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &GcOrphanFilesResponseSer { deleted_count },
+        ))
+    }
+
     /// Request payload for switching deployment
-    #[derive(Deserialize, ToSchema)]
+    #[derive(Serialize, Deserialize, ToSchema)]
     pub struct DeploymentSwitchPayload {
         /// Tolerate runtime requirements unavailable on this server while verifying.
         /// Rejected when applying the deployment without restart.

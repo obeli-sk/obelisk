@@ -1,3 +1,4 @@
+use crate::config::secret_registry::API_TOKEN_CLIENT;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
@@ -83,10 +84,12 @@ pub(crate) struct Args {
 #[derive(Debug, clap::Args)]
 pub(crate) struct ClientToken {
     /// API token presented to the server as `Authorization: Bearer <token>`.
-    /// Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`.
+    /// Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
     #[arg(
         long,
         global = true,
+        env = API_TOKEN_CLIENT,
+        hide_env_values = true,
         value_name = "TOKEN",
         value_parser = parse_secret_string
     )]
@@ -162,7 +165,12 @@ pub(crate) enum Deployment {
         #[arg(long)]
         deployment_id: Option<DeploymentId>,
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
     /// Submit (if a file is given) and enqueue for next server restart.
@@ -192,7 +200,12 @@ pub(crate) enum Deployment {
         #[arg(long)]
         deployment_id: Option<DeploymentId>,
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
     /// Submit (if a file is given) and apply immediately. Fails if not possible.
@@ -218,13 +231,23 @@ pub(crate) enum Deployment {
         #[arg(long)]
         deployment_id: Option<DeploymentId>,
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
     /// List recent deployments.
     List {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
     /// Delete content-addressed file blobs not referenced by any stored deployment.
@@ -233,7 +256,12 @@ pub(crate) enum Deployment {
     /// fails verification before persisting the deployment.
     Gc {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
     /// Print the ID of the currently active deployment.
@@ -242,7 +270,12 @@ pub(crate) enum Deployment {
         #[arg(long)]
         json: bool,
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
 
@@ -262,7 +295,12 @@ pub(crate) enum Deployment {
         #[arg(long)]
         json: bool,
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
     /// Retrieve a deployment as editable TOML without generated metadata, plus its source files.
@@ -281,7 +319,12 @@ pub(crate) enum Deployment {
         #[arg(long)]
         include_generated_metadata: bool,
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
     },
     /// Verify a local deployment without accessing the server database.
@@ -381,8 +424,8 @@ pub(crate) enum Generate {
     },
     /// Generate a random API token and print it to stdout.
     ///
-    /// Stdout carries only the token, so it composes with env injection:
-    /// `OBELISK__API__TOKEN=$(obelisk generate token)`. When run interactively,
+    /// Stdout carries only the token, so it composes with client env injection:
+    /// `OBELISK_API_TOKEN=$(obelisk generate token)`. When run interactively,
     /// the token's `api.token_hashes` entry is also printed to stderr.
     /// The plaintext token is printed once and never stored; revoke it by
     /// deleting its `api.token_hashes` entry and restarting the server.
@@ -439,8 +482,9 @@ pub(crate) enum Server {
         #[arg(long)]
         suppress_type_checking_errors: bool,
         /// Accept unauthenticated requests on the API port. Dev/recovery override.
-        #[arg(long)]
-        allow_unauthenticated_api: bool,
+        // backcompat: remove the `allow-unauthenticated-api` alias after 0.43.
+        #[arg(long, visible_alias = "allow-unauthenticated-api")]
+        no_auth: bool,
     },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify(VerifyArgs),
@@ -508,7 +552,12 @@ pub(crate) enum Component {
     /// List components.
     List {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Show component imports
         #[arg(short, long)]
@@ -610,7 +659,12 @@ pub(crate) enum Execution {
     /// List recent executions.
     List {
         /// Address of the obelisk server.
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Filter by function FFQN prefix.
         /// Accepts any prefix of a fully-qualified function name, e.g.: `namespace:`.
@@ -638,7 +692,12 @@ pub(crate) enum Execution {
     /// Fetch structured logs for an execution.
     Logs {
         /// Address of the obelisk server.
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID to fetch logs for.
         #[arg(value_name = "EXECUTION_ID")]
@@ -674,7 +733,12 @@ pub(crate) enum Execution {
     /// Show the execution event log (history).
     Events {
         /// Address of the obelisk server.
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID.
         #[arg(value_name = "EXECUTION_ID")]
@@ -692,7 +756,12 @@ pub(crate) enum Execution {
     /// Show join-set responses for an execution (child results, delay completions).
     Responses {
         /// Address of the obelisk server.
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID.
         #[arg(value_name = "EXECUTION_ID")]
@@ -710,7 +779,12 @@ pub(crate) enum Execution {
     /// Submit a new execution and optionally follow its status stream until it finishes.
     Submit {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Use this explicit execution ID instead of having the server assign one. Useful for idempotency. See `obelisk generate execution-id`.
         #[arg(short, long)]
@@ -750,7 +824,12 @@ pub(crate) enum Execution {
     #[command(alias = "get")]
     Status {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Follow the status stream until the execution finishes.
         #[arg(short, long)]
@@ -767,7 +846,12 @@ pub(crate) enum Execution {
     /// Get the final result of an execution.
     Result {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Follow until the execution finishes and the final result is available.
         #[arg(short, long)]
@@ -786,7 +870,12 @@ pub(crate) enum Execution {
     /// Pause a workflow execution or a pending delay.
     Pause {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID (`E_01`...) or delay ID (`Delay_01`...) to pause.
         #[arg(value_name = "ID")]
@@ -795,7 +884,12 @@ pub(crate) enum Execution {
     /// Resume a previously paused workflow execution or delay.
     Unpause {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID (`E_01`...) or delay ID (`Delay_01`...) to unpause.
         #[arg(value_name = "ID")]
@@ -804,7 +898,12 @@ pub(crate) enum Execution {
     /// Replay a workflow execution from its execution log, checking for non-determinism.
     Replay {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID to replay.
         execution_id: ExecutionId,
@@ -815,7 +914,12 @@ pub(crate) enum Execution {
     /// Replay a workflow and persist its call-site backtraces.
     PersistBacktraces {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID whose backtraces should be persisted.
         execution_id: ExecutionId,
@@ -823,7 +927,12 @@ pub(crate) enum Execution {
     /// Advance a paused workflow execution by replaying it and applying the next captured writes.
     Advance {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID to advance.
         execution_id: ExecutionId,
@@ -852,7 +961,12 @@ pub(crate) enum Execution {
     /// deployment, and upgrades the execution from its current component digest to the new one.
     Upgrade {
         /// Address of the obelisk server
-        #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
         api_url: String,
         /// Execution ID to upgrade.
         execution_id: ExecutionId,
@@ -944,7 +1058,12 @@ pub(crate) mod params {
 #[command()]
 pub(crate) struct Stub {
     /// Address of the obelisk server
-    #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+    #[arg(
+        short,
+        long,
+        env = "OBELISK_API_URL",
+        default_value = "http://127.0.0.1:5005"
+    )]
     pub(crate) api_url: String,
     /// Execution ID of the stub execution waiting for its return value.
     #[arg(value_name = "EXECUTION_ID")]
@@ -983,7 +1102,12 @@ impl std::str::FromStr for ExecutionIdOrDelayId {
 #[expect(clippy::doc_markdown)]
 pub(crate) struct CancelCommand {
     /// Address of the obelisk server
-    #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+    #[arg(
+        short,
+        long,
+        env = "OBELISK_API_URL",
+        default_value = "http://127.0.0.1:5005"
+    )]
     pub(crate) api_url: String,
     /// Execution id of an activity (E_01...) or a delay request (Delay_01...)
     #[arg(value_name = "ID")]

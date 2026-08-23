@@ -18,9 +18,6 @@
 #   "sha256:...",   # agent
 #   "sha256:...",   # laptop
 # ]
-## Plaintext accepted token, intended for env injection only (`OBELISK__API__TOKEN`);
-## do not write it into this file.
-# api.token = "..."
 
 ## Semver version requirement for the Obelisk binary.
 ## If set, the server will fail to start if the binary version doesn't match.
