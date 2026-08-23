@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Obelisk REST API",
-    "description": "REST API for the Obelisk deterministic workflow engine",
+    "description": "REST API for the Obelisk deterministic workflow engine. JSON is the stable representation for structured resources and actions. Text responses are stable only for WIT documents, backtrace source files, and the execution and deployment ID endpoints; all other text/plain representations are deprecated.",
     "contact": {
       "name": "Project Developers"
     },
