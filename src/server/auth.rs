@@ -25,7 +25,7 @@ pub(crate) struct ApiAuth {
 }
 
 impl ApiAuth {
-    pub(crate) fn new(config: &ApiConfig) -> Self {
+    pub(crate) fn new(config: &ApiConfig, legacy_token: Option<SecretString>) -> Self {
         let startup_token = SecretString::from(crate::api::generate_token());
         let mut accepted = vec![(
             crate::api::token_digest(startup_token.expose_secret()),
@@ -34,7 +34,7 @@ impl ApiAuth {
         for digest in &config.token_hashes {
             accepted.push((digest.0, hash_prefix_label(digest)));
         }
-        if let Some(token) = &config.token {
+        if let Some(token) = legacy_token {
             let digest = crate::api::token_digest(token.expose_secret());
             accepted.push((
                 digest,

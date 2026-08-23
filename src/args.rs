@@ -1,3 +1,4 @@
+use crate::config::secret_registry::API_TOKEN_CLIENT;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
@@ -83,10 +84,12 @@ pub(crate) struct Args {
 #[derive(Debug, clap::Args)]
 pub(crate) struct ClientToken {
     /// API token presented to the server as `Authorization: Bearer <token>`.
-    /// Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`.
+    /// Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
     #[arg(
         long,
         global = true,
+        env = API_TOKEN_CLIENT,
+        hide_env_values = true,
         value_name = "TOKEN",
         value_parser = parse_secret_string
     )]
@@ -421,8 +424,8 @@ pub(crate) enum Generate {
     },
     /// Generate a random API token and print it to stdout.
     ///
-    /// Stdout carries only the token, so it composes with env injection:
-    /// `OBELISK__API__TOKEN=$(obelisk generate token)`. When run interactively,
+    /// Stdout carries only the token, so it composes with client env injection:
+    /// `OBELISK_API_TOKEN=$(obelisk generate token)`. When run interactively,
     /// the token's `api.token_hashes` entry is also printed to stderr.
     /// The plaintext token is printed once and never stored; revoke it by
     /// deleting its `api.token_hashes` entry and restarting the server.

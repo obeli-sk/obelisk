@@ -572,6 +572,7 @@ pub(crate) struct RunParams {
     pub(crate) suppress_type_checking_errors: bool,
     /// Accept unauthenticated API requests (`--no-auth`).
     pub(crate) no_auth: bool,
+    pub(crate) legacy_api_token: Option<secrecy::SecretString>,
 }
 
 pub(crate) async fn run(
@@ -749,6 +750,7 @@ pub(crate) async fn verify(
             let ServerStartup {
                 config_holder,
                 config,
+                legacy_api_token: _,
                 secret_registry,
             } = prepare_server_startup(
                 config_holder.config_source,
@@ -1913,7 +1915,10 @@ pub(crate) async fn run_internal(
             warn!("API authentication is disabled by --no-auth: accepting all API requests");
             app.into_make_service()
         } else {
-            let api_auth = Arc::new(crate::server::auth::ApiAuth::new(&api_config));
+            let api_auth = Arc::new(crate::server::auth::ApiAuth::new(
+                &api_config,
+                params.legacy_api_token.clone(),
+            ));
             info!(
                 "API startup token: {}",
                 api_auth.startup_token().expose_secret()

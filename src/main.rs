@@ -15,7 +15,7 @@ mod wit_printer;
 use crate::command::server::{
     PrepareDirsParams, RunParams, RuntimeConfigAvailability, VerifyParams, run, verify,
 };
-use crate::config::secret_registry::EnvVarCleanupStrategy;
+use crate::config::secret_registry::{API_TOKEN_LEGACY, EnvVarCleanupStrategy};
 use args::{
     Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
     Subcommand, VerifyArgs,
@@ -57,6 +57,7 @@ fn main() -> Result<(), anyhow::Error> {
             let ServerStartup {
                 config_holder,
                 config,
+                legacy_api_token,
                 secret_registry,
             } = prepare_server_startup(
                 server_config.clone(),
@@ -77,6 +78,7 @@ fn main() -> Result<(), anyhow::Error> {
                     clean_sqlite_directory,
                     suppress_type_checking_errors,
                     no_auth,
+                    legacy_api_token,
                 },
                 secret_registry,
             ))
@@ -100,6 +102,7 @@ fn main() -> Result<(), anyhow::Error> {
             let ServerStartup {
                 config_holder,
                 config,
+                legacy_api_token: _,
                 secret_registry,
             } = prepare_server_startup(
                 server_config.clone(),
@@ -148,6 +151,7 @@ fn main() -> Result<(), anyhow::Error> {
             let ServerStartup {
                 config_holder,
                 config,
+                legacy_api_token: _,
                 secret_registry,
             } = prepare_server_startup(
                 server_config.clone(),
@@ -211,6 +215,7 @@ fn main() -> Result<(), anyhow::Error> {
 struct ServerStartup {
     config_holder: ConfigHolder,
     config: ServerConfigToml,
+    legacy_api_token: Option<secrecy::SecretString>,
     secret_registry: Arc<SecretRegistry>,
 }
 
@@ -228,7 +233,19 @@ fn prepare_server_startup(
         );
     }
     let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
+    // backcompat: 0.41 exposed OBELISK__API__TOKEN as api.token; remove after 0.43.
+    let legacy_env = std::env::var(API_TOKEN_LEGACY).ok();
+    if legacy_env.is_some() {
+        // SAFETY: server configuration is loaded before the runtime and its threads start.
+        unsafe { std::env::remove_var(API_TOKEN_LEGACY) };
+    }
     let config = config_holder.load_config()?;
+    let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
+        eprintln!(
+            "warning: {API_TOKEN_LEGACY} is deprecated; use api.token_hashes for server authentication"
+        );
+        secrecy::SecretString::from(token)
+    });
     let secret_registry = Arc::new(SecretRegistry::resolve(
         config.secrets.clone(),
         env_var_cleanup,
@@ -237,6 +254,7 @@ fn prepare_server_startup(
     Ok(ServerStartup {
         config_holder,
         config,
+        legacy_api_token,
         secret_registry,
     })
 }

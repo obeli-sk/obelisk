@@ -58,7 +58,7 @@
               "help": "Do not fail startup when a component's imports/exports fail type checking against the current deployment"
             },
             {
-              "name": "--allow-unauthenticated-api",
+              "name": "--no-auth",
               "help": "Accept unauthenticated requests on the API port. Dev/recovery override"
             }
           ]
@@ -117,7 +117,7 @@
       "options": [
         {
           "name": "--api-token",
-          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
         }
       ],
       "subcommands": [
@@ -576,7 +576,7 @@
       "options": [
         {
           "name": "--api-token",
-          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
         }
       ],
       "subcommands": [
@@ -667,7 +667,7 @@
       "options": [
         {
           "name": "--api-token",
-          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`, then `$OBELISK__API__TOKEN`"
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
         }
       ],
       "subcommands": [
