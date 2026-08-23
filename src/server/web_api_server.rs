@@ -71,7 +71,7 @@ pub(crate) struct WebApiState {
 #[openapi(
     info(
         title = "Obelisk REST API",
-        description = "REST API for the Obelisk deterministic workflow engine",
+        description = "REST API for the Obelisk deterministic workflow engine. JSON is the stable representation for structured resources and actions. Text responses are stable only for WIT documents, backtrace source files, and the execution and deployment ID endpoints; all other text/plain representations are deprecated.",
         version = "1.0.0"
     ),
     tags(
@@ -169,6 +169,19 @@ fn pretty_json_response<T: Serialize>(status: StatusCode, value: &T) -> Response
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         header::HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
+fn deprecated_text_response(response: impl IntoResponse) -> Response {
+    let mut response = response.into_response();
+    response.headers_mut().insert(
+        header::HeaderName::from_static("deprecation"),
+        header::HeaderValue::from_static("@1787443200"),
+    );
+    response.headers_mut().append(
+        header::LINK,
+        header::HeaderValue::from_static("</openapi.json>; rel=\"deprecation\""),
     );
     response
 }
@@ -615,7 +628,7 @@ async fn executions_list(
                 )
                 .expect("writing to string");
             }
-            output.into_response()
+            deprecated_text_response(output)
         }
         AcceptHeader::Json => {
             let executions: Vec<_> = executions
@@ -858,7 +871,7 @@ async fn execution_events(
                 )
                 .expect("writing to string");
             }
-            output.into_response()
+            deprecated_text_response(output)
         }
     })
 }
@@ -1227,7 +1240,7 @@ pub(crate) mod logs {
                         }
                     }
                 }
-                output.into_response()
+                deprecated_text_response(output)
             }
         })
     }
@@ -1334,7 +1347,7 @@ async fn execution_responses(
                 )
                 .expect("writing to string");
             }
-            output.into_response()
+            deprecated_text_response(output)
         }
     })
 }
@@ -1370,9 +1383,9 @@ async fn execution_status_get(
             StatusCode::OK,
             &ExecutionWithStateSer::from(execution_with_state),
         ),
-        AcceptHeader::Text => {
-            format_execution_status_text(&execution_with_state.pending_state).into_response()
-        }
+        AcceptHeader::Text => deprecated_text_response(format_execution_status_text(
+            &execution_with_state.pending_state,
+        )),
     })
 }
 
@@ -2364,7 +2377,7 @@ async fn execution_replay(
                     )
                 }
             };
-            (status, body).into_response()
+            deprecated_text_response((status, body))
         }
     })
 }
@@ -2453,7 +2466,7 @@ async fn execution_advance(
                         AdvanceErrorSer::ReplayMismatch => "error: replay_mismatch".to_string(),
                         AdvanceErrorSer::Transient(err) => format!("transient error: {err}"),
                     };
-                    (StatusCode::UNPROCESSABLE_ENTITY, text).into_response()
+                    deprecated_text_response((StatusCode::UNPROCESSABLE_ENTITY, text))
                 }
             };
             return Ok(response);
@@ -2481,16 +2494,15 @@ async fn execution_advance(
     match &response {
         AdvanceResponseSer::Finished { value } => Ok(match accept {
             AcceptHeader::Json => pretty_json_response(StatusCode::OK, &response),
-            AcceptHeader::Text => format!(
+            AcceptHeader::Text => deprecated_text_response(format!(
                 "success:\n{}",
                 serde_json::to_string_pretty(&value).expect("retval must be JSON serializable")
-            )
-            .into_response(),
+            )),
         }),
         AdvanceResponseSer::InProgress { pending_state } => Ok(match accept {
             AcceptHeader::Json => pretty_json_response(StatusCode::OK, &response),
             AcceptHeader::Text => {
-                format!("success, current state: {pending_state}").into_response()
+                deprecated_text_response(format!("success, current state: {pending_state}"))
             }
         }),
     }
@@ -2537,7 +2549,7 @@ async fn execution_persist_backtraces(
     Ok(match accept {
         AcceptHeader::Json => pretty_json_response(StatusCode::OK, &ser),
         AcceptHeader::Text => {
-            format!("persisted {persisted_backtrace_count} backtraces").into_response()
+            deprecated_text_response(format!("persisted {persisted_backtrace_count} backtraces"))
         }
     })
 }
@@ -2705,7 +2717,9 @@ async fn execution_upgrade(
 }
 
 pub(crate) mod components {
-    use crate::server::web_api_server::{HttpResponse, pretty_json_response};
+    use crate::server::web_api_server::{
+        HttpResponse, deprecated_text_response, pretty_json_response,
+    };
 
     use super::{
         AcceptHeader, Arc, Deserialize, FunctionFqn, IntoParams, IntoResponse, Query, Response,
@@ -2948,7 +2962,7 @@ pub(crate) mod components {
                         }
                     }
                 }
-                output.into_response()
+                deprecated_text_response(output)
             }
         }
     }
@@ -3088,7 +3102,7 @@ pub(crate) mod components {
 mod functions {
     use super::{
         AcceptHeader, Arc, Deserialize, IntoParams, IntoResponse, Query, Response, State,
-        StatusCode, ToSchema, WebApiState, pretty_json_response,
+        StatusCode, ToSchema, WebApiState, deprecated_text_response, pretty_json_response,
     };
     use concepts::{FunctionExtension, FunctionFqn, FunctionRegistry};
     use std::fmt::Write as _;
@@ -3141,7 +3155,7 @@ mod functions {
                 for func in functions {
                     writeln!(output, "{}", func.ffqn).expect("writing to string");
                 }
-                output.into_response()
+                deprecated_text_response(output)
             }
         }
     }
@@ -3224,7 +3238,7 @@ pub(crate) mod deployment {
             deployment_summary,
             web_api_server::{
                 AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
-                pretty_json_response,
+                deprecated_text_response, pretty_json_response,
             },
         },
     };
@@ -3429,7 +3443,7 @@ pub(crate) mod deployment {
                     )
                     .expect("writing to string");
                 }
-                output.into_response()
+                deprecated_text_response(output)
             }
         })
     }
@@ -3591,7 +3605,7 @@ pub(crate) mod deployment {
                     )
                     .expect("writing to string");
                 }
-                output.into_response()
+                deprecated_text_response(output)
             }
         })
     }
@@ -4224,7 +4238,7 @@ mod backtrace {
                         }
                     }
                 }
-                output.into_response()
+                deprecated_text_response(output)
             }
         })
     }
@@ -4317,6 +4331,8 @@ pub(crate) enum AcceptHeader {
     #[accept(mediatype = "text/plain")]
     Text,
 }
+
+// backcompat: 0.41 exposed structured text; after 0.43 remove it for resources and actions but retain WIT, backtrace sources, and generated IDs.
 
 #[derive(AcceptExtractor, Clone, Copy, Default)]
 pub(crate) enum TextDefaultAcceptHeader {
@@ -4411,7 +4427,7 @@ impl IntoResponse for HttpResponse {
                     json!({ "err": self.message })
                 },
             ),
-            AcceptHeader::Text => (self.status, self.message).into_response(),
+            AcceptHeader::Text => deprecated_text_response((self.status, self.message)),
         }
     }
 }

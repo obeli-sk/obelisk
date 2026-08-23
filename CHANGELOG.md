@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has been removed from server configuration. Configure persistent server tokens with
   `api.token_hashes`.
 
+### Deprecated
+
+- *(api)* Structured Web API `text/plain` representations are deprecated and will be removed after
+  0.43. JSON is the stable representation for resources and actions. Plaintext remains supported
+  for WIT documents, backtrace source files, and the execution and deployment ID endpoints.
+
 ## [0.41.4](https://github.com/obeli-sk/obelisk/compare/v0.41.3...v0.41.4)
 
 This patch release fixes a Wasmtime 48.0.0 bug which causes not sending `Host` header in outgoing requests.
