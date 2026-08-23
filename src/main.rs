@@ -52,7 +52,7 @@ fn main() -> Result<(), anyhow::Error> {
             empty: deployment_empty,
             description,
             suppress_type_checking_errors,
-            allow_unauthenticated_api,
+            no_auth,
         }) => {
             let ServerStartup {
                 config_holder,
@@ -76,7 +76,7 @@ fn main() -> Result<(), anyhow::Error> {
                     },
                     clean_sqlite_directory,
                     suppress_type_checking_errors,
-                    allow_unauthenticated_api,
+                    no_auth,
                 },
                 secret_registry,
             ))

@@ -708,7 +708,7 @@ impl TestServer {
         Self::launch(ip, tmp_dir, server_path, LocalDeployment::empty(), true).await
     }
 
-    /// Start an empty server with API auth enabled (no `allow_unauthenticated_api`), accepting the
+    /// Start an empty server with API auth enabled (`no_auth = false`), accepting the
     /// given extra top-level `server.toml` lines (e.g. `api.token = "..."`).
     async fn start_empty_with_auth(ip: String, server_toml_api_lines: &str) -> Self {
         let (tmp_dir, server_path, _deployment_path) =
@@ -721,7 +721,7 @@ impl TestServer {
         tmp_dir: tempfile::TempDir,
         server_path: PathBuf,
         deployment: LocalDeployment,
-        allow_unauthenticated_api: bool,
+        no_auth: bool,
     ) -> Self {
         test_utils::set_up();
 
@@ -739,7 +739,7 @@ impl TestServer {
             },
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
-            allow_unauthenticated_api,
+            no_auth,
         };
 
         let prepared_dirs = prepare_dirs(

@@ -479,8 +479,9 @@ pub(crate) enum Server {
         #[arg(long)]
         suppress_type_checking_errors: bool,
         /// Accept unauthenticated requests on the API port. Dev/recovery override.
-        #[arg(long)]
-        allow_unauthenticated_api: bool,
+        // backcompat: remove the `allow-unauthenticated-api` alias after 0.43.
+        #[arg(long, visible_alias = "allow-unauthenticated-api")]
+        no_auth: bool,
     },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify(VerifyArgs),
