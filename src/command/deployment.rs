@@ -1,26 +1,19 @@
 use crate::args::{self, DeploymentSource};
-use crate::client::ClientStartup;
+use crate::client::{ClientStartup, send_bytes, send_json};
 use crate::config::deployment::sanitize_deployment_relative_path;
 use crate::config::deployment::{
     PreparedDeploymentManifest, prepare_deployment_manifest_from_disk,
 };
+use crate::server::web_api_server::deployment::{
+    DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
+    DeploymentSubmitResponse, DeploymentSwitchPayload, GcOrphanFilesResponseSer,
+    SubmitPackageErrorBody,
+};
 use anyhow::{Context as _, bail};
-use chrono::DateTime;
 use concepts::prefixed_ulid::DeploymentId;
-use grpc::grpc_gen;
-use grpc::grpc_gen::switch_deployment_response::Outcome;
-use grpc::to_channel;
+use http::header::ACCEPT;
+use serde::Deserialize;
 use std::path::PathBuf;
-use tonic::transport::Channel;
-
-/// Map the CLI `--allow-unavailable-runtime-config` flag to the wire enum.
-fn runtime_config_check_from_bool(allow_unavailable: bool) -> grpc_gen::RuntimeConfigCheck {
-    if allow_unavailable {
-        grpc_gen::RuntimeConfigCheck::AllowUnavailable
-    } else {
-        grpc_gen::RuntimeConfigCheck::Strict
-    }
-}
 
 impl args::Deployment {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> Result<(), anyhow::Error> {
@@ -34,12 +27,11 @@ impl args::Deployment {
                 api_url,
             } => {
                 let prepared = prepare_manifest_from_file_or_empty(file, empty).await?;
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
                 let id = upload_and_submit_manifest(
-                    &mut client,
+                    &client_startup,
+                    &api_url,
                     prepared,
-                    runtime_config_check_from_bool(allow_unavailable_runtime_config),
+                    allow_unavailable_runtime_config,
                     description,
                     deployment_id,
                 )
@@ -56,23 +48,21 @@ impl args::Deployment {
                 deployment_id,
                 api_url,
             } => {
-                let runtime_config_check =
-                    runtime_config_check_from_bool(allow_unavailable_runtime_config);
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
                 let id = submit_deployment(
-                    &mut client,
+                    &client_startup,
+                    &api_url,
                     source,
                     empty,
-                    runtime_config_check,
+                    allow_unavailable_runtime_config,
                     description,
                     deployment_id,
                 )
                 .await?;
                 switch_deployment(
-                    &mut client,
+                    &client_startup,
+                    &api_url,
                     id,
-                    runtime_config_check,
+                    allow_unavailable_runtime_config,
                     SwitchCommand::Enqueue,
                 )
                 .await
@@ -85,37 +75,29 @@ impl args::Deployment {
                 deployment_id,
                 api_url,
             } => {
-                // A hot redeploy always requires runtime config to be available.
-                let runtime_config_check = grpc_gen::RuntimeConfigCheck::Strict;
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
                 let id = submit_deployment(
-                    &mut client,
+                    &client_startup,
+                    &api_url,
                     source,
                     empty,
-                    runtime_config_check,
+                    false,
                     description,
                     deployment_id,
                 )
                 .await?;
-                switch_deployment(&mut client, id, runtime_config_check, SwitchCommand::Apply).await
+                switch_deployment(&client_startup, &api_url, id, false, SwitchCommand::Apply).await
             }
 
             args::Deployment::List { api_url } => {
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
-                let resp = client
-                    .list_deployments(grpc_gen::ListDeploymentsRequest {
-                        pagination: None,
-                        include_deployment_toml: false,
-                        include_execution_counts: false,
-                        include_component_summary: false,
-                        include_derived: false,
-                    })
-                    .await?
-                    .into_inner();
+                let client = client_startup.web_api_client()?;
+                let deployments: Vec<DeploymentStateSer> = send_json(
+                    client
+                        .get(format!("{api_url}/v1/deployments"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
 
-                if resp.deployments.is_empty() {
+                if deployments.is_empty() {
                     println!("No deployments found.");
                     return Ok(());
                 }
@@ -124,23 +106,13 @@ impl args::Deployment {
                     "{:<32}  {:<12}  {:<19}  {:<19}  DESCRIPTION",
                     "ID", "STATUS", "CREATED_AT", "LAST_ACTIVE_AT"
                 );
-                for summary in resp.deployments {
-                    let dep = summary.deployment.context("missing deployment")?;
-                    let id = dep
-                        .deployment_id
-                        .as_ref()
-                        .map(|d| d.id.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    let status = format_status(dep.status());
-                    let created: DateTime<_> = dep.created_at.expect("created_at is sent").into();
-                    let created = created.format("%Y-%m-%d %H:%M:%S");
+                for dep in deployments {
+                    let id = dep.deployment_id;
+                    let status = format_status(&dep.status);
+                    let created = dep.created_at.format("%Y-%m-%d %H:%M:%S");
                     let last_active = dep
                         .last_active_at
-                        .map(|t| {
-                            let dt: DateTime<_> = t.into();
-                            dt.format("%Y-%m-%d %H:%M:%S").to_string()
-                        })
+                        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_default();
                     println!(
                         "{id:<32}  {status:<12}  {created:<19}  {last_active:<19}  {}",
@@ -151,24 +123,25 @@ impl args::Deployment {
             }
 
             args::Deployment::Gc { api_url } => {
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
-                let resp = client
-                    .gc_orphan_files(grpc_gen::GcOrphanFilesRequest {})
-                    .await?
-                    .into_inner();
+                let client = client_startup.web_api_client()?;
+                let resp: GcOrphanFilesResponseSer = send_json(
+                    client
+                        .delete(format!("{api_url}/v1/files/orphans"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
                 println!("Deleted {} orphan file blob(s).", resp.deleted_count);
                 Ok(())
             }
 
             args::Deployment::Active { api_url, json } => {
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
-                let resp = client
-                    .get_current_deployment_id(grpc_gen::GetCurrentDeploymentIdRequest {})
-                    .await?
-                    .into_inner();
-                let id = resp.deployment_id.context("missing deployment_id")?.id;
+                let client = client_startup.web_api_client()?;
+                let id: DeploymentId = send_json(
+                    client
+                        .get(format!("{api_url}/v1/deployment-id"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
                 if json {
                     println!("\"{id}\"");
                 } else {
@@ -183,19 +156,15 @@ impl args::Deployment {
                 json,
                 api_url,
             } => {
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
-                let resp = client
-                    .get_deployment(grpc_gen::GetDeploymentRequest {
-                        deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),
-                        include_generated_metadata: Some(true),
-                    })
-                    .await?
-                    .into_inner();
-                let dep = resp.deployment.context("deployment not found")?;
-                let deployment_toml = dep
-                    .deployment_toml
-                    .context("deployment_toml not available")?;
+                let client = client_startup.web_api_client()?;
+                let dep: DeploymentRecordSer = send_json(
+                    client
+                        .get(format!("{api_url}/v1/deployments/{id}"))
+                        .header(ACCEPT, "application/json")
+                        .query(&[("include_generated_metadata", "true")]),
+                )
+                .await?;
+                let deployment_toml = dep.deployment_toml;
 
                 if let Some(file) = file {
                     // Normalize the requested path the same way `get` writes it, so a
@@ -205,7 +174,7 @@ impl args::Deployment {
                     let file_ref = dep.files.iter().find(|f| f.path == rel).with_context(|| {
                         format!("deployment {id} has no deployment-owned source file `{rel}`")
                     })?;
-                    let bytes = fetch_file(&mut client, &file_ref.digest).await?;
+                    let bytes = fetch_file(&client, &api_url, &file_ref.digest).await?;
                     print!("{}", String::from_utf8_lossy(&bytes));
                     return Ok(());
                 }
@@ -229,19 +198,18 @@ impl args::Deployment {
                 include_generated_metadata,
                 api_url,
             } => {
-                let channel = to_channel(&api_url).await?;
-                let mut client = client_startup.deployment_repository_client(channel)?;
-                let resp = client
-                    .get_deployment(grpc_gen::GetDeploymentRequest {
-                        deployment_id: Some(grpc_gen::DeploymentId { id: id.to_string() }),
-                        include_generated_metadata: Some(include_generated_metadata),
-                    })
-                    .await?
-                    .into_inner();
-                let dep = resp.deployment.context("deployment not found")?;
-                let deployment_toml = dep
-                    .deployment_toml
-                    .context("deployment_toml not available")?;
+                let client = client_startup.web_api_client()?;
+                let dep: DeploymentRecordSer = send_json(
+                    client
+                        .get(format!("{api_url}/v1/deployments/{id}"))
+                        .header(ACCEPT, "application/json")
+                        .query(&[(
+                            "include_generated_metadata",
+                            include_generated_metadata.to_string(),
+                        )]),
+                )
+                .await?;
+                let deployment_toml = dep.deployment_toml;
 
                 let output_dir = output.unwrap_or_else(|| PathBuf::from("."));
                 tokio::fs::create_dir_all(&output_dir)
@@ -264,7 +232,7 @@ impl args::Deployment {
                             format!("cannot create source directory {parent:?}")
                         })?;
                     }
-                    let bytes = fetch_file(&mut client, &file_ref.digest).await?;
+                    let bytes = fetch_file(&client, &api_url, &file_ref.digest).await?;
                     write_new_file(&path, &bytes, force).await?;
                 }
                 println!(
@@ -275,8 +243,7 @@ impl args::Deployment {
                 Ok(())
             }
 
-            // `deployment verify` is dispatched through the local verification path in `main`,
-            // so it never reaches the gRPC client here.
+            // `deployment verify` is dispatched through the local verification path in `main`.
             args::Deployment::Verify(_) => unreachable!("handled in main before ClientStartup"),
         }
     }
@@ -308,17 +275,14 @@ async fn write_new_file(
     Ok(())
 }
 
-type DeploymentClient = grpc::grpc_gen::deployment_repository_client::DeploymentRepositoryClient<
-    tonic::service::interceptor::InterceptedService<Channel, crate::client::ClientInterceptor>,
->;
-
 /// If the source is a file, submit it and return the new ID. If it's an ID, return it directly.
 /// If `empty`, submit an empty deployment and return the new ID.
 async fn submit_deployment(
-    client: &mut DeploymentClient,
+    client_startup: &ClientStartup,
+    api_url: &str,
     source: Option<DeploymentSource>,
     empty: bool,
-    runtime_config_check: grpc_gen::RuntimeConfigCheck,
+    allow_unavailable_runtime_config: bool,
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
@@ -337,9 +301,10 @@ async fn submit_deployment(
         None => prepare_manifest_from_file_or_empty(None, empty).await?,
     };
     let id = upload_and_submit_manifest(
-        client,
+        client_startup,
+        api_url,
         prepared,
-        runtime_config_check,
+        allow_unavailable_runtime_config,
         description,
         deployment_id,
     )
@@ -352,20 +317,23 @@ async fn submit_deployment(
 /// blobs, and if the server reports missing files, retry the same submit with only
 /// those blobs attached. The requested TOML is identical on both attempts.
 async fn upload_and_submit_manifest(
-    client: &mut DeploymentClient,
+    client_startup: &ClientStartup,
+    api_url: &str,
     prepared: PreparedDeploymentManifest,
-    runtime_config_check: grpc_gen::RuntimeConfigCheck,
+    allow_unavailable_runtime_config: bool,
     description: Option<String>,
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
+    let client = client_startup.web_api_client()?;
     // Preflight: no blobs, so digests already in the CAS are not re-uploaded.
     let missing = match submit_attempt(
-        client,
+        &client,
+        api_url,
         &prepared,
-        runtime_config_check,
+        allow_unavailable_runtime_config,
         description.as_deref(),
         deployment_id,
-        Vec::new(),
+        &[],
     )
     .await?
     {
@@ -374,23 +342,19 @@ async fn upload_and_submit_manifest(
     };
 
     // Retry with only the blobs the server is missing.
-    let files = prepared
+    let files: Vec<_> = prepared
         .files
         .iter()
         .filter(|file| missing.contains(&file.digest.to_string()))
-        .map(|file| grpc_gen::DeploymentFileContent {
-            path: file.path.clone(),
-            digest: Some(file.digest.to_string()),
-            content: file.bytes.clone(),
-        })
         .collect();
     match submit_attempt(
-        client,
+        &client,
+        api_url,
         &prepared,
-        runtime_config_check,
+        allow_unavailable_runtime_config,
         description.as_deref(),
         deployment_id,
-        files,
+        &files,
     )
     .await?
     {
@@ -409,71 +373,83 @@ enum SubmitAttempt {
     Missing(Vec<String>),
 }
 
-/// One submit request. A `FAILED_PRECONDITION` carrying only `missing_files`
-/// becomes `Missing`; any other structured issue or status is a hard error.
+/// One submit request. A conflict carrying only `missing_files` becomes `Missing`.
 async fn submit_attempt(
-    client: &mut DeploymentClient,
+    client: &reqwest::Client,
+    api_url: &str,
     prepared: &PreparedDeploymentManifest,
-    runtime_config_check: grpc_gen::RuntimeConfigCheck,
+    allow_unavailable_runtime_config: bool,
     description: Option<&str>,
     deployment_id: Option<DeploymentId>,
-    files: Vec<grpc_gen::DeploymentFileContent>,
+    files: &[&crate::config::deployment::DeploymentManifestFile],
 ) -> anyhow::Result<SubmitAttempt> {
-    let resp = client
-        .submit_deployment(grpc_gen::SubmitDeploymentRequest {
-            deployment_toml: prepared.deployment_toml.clone(),
-            created_by: Some("cli".to_string()),
-            runtime_config_check: runtime_config_check.into(),
-            description: description.map(str::to_string),
-            deployment_id: deployment_id.map(grpc_gen::DeploymentId::from),
-            files,
-        })
-        .await;
-    match resp {
-        Ok(resp) => {
-            let resp = resp.into_inner();
-            Ok(SubmitAttempt::Stored(DeploymentId::try_from(
-                resp.deployment_id.context("missing deployment_id")?,
-            )?))
+    let url = format!("{api_url}/v1/deployments");
+    let request = if files.is_empty() {
+        client
+            .post(url)
+            .header(ACCEPT, "application/json")
+            .json(&DeploymentSubmitPayload {
+                deployment_toml: prepared.deployment_toml.clone(),
+                description: description.map(str::to_string),
+                allow_unavailable_runtime_config,
+                deployment_id: deployment_id.map(|id| id.to_string()),
+            })
+    } else {
+        let mut form = reqwest::multipart::Form::new()
+            .text("deployment_toml", prepared.deployment_toml.clone())
+            .text(
+                "allow_unavailable_runtime_config",
+                allow_unavailable_runtime_config.to_string(),
+            );
+        if let Some(description) = description {
+            form = form.text("description", description.to_string());
         }
-        Err(status) => {
-            if let Some(detail) = decode_submit_error_detail(&status) {
-                let only_missing = detail.unexpected_files.is_empty()
-                    && detail.digest_mismatches.is_empty()
-                    && detail.oversized_files.is_empty()
-                    && detail.missing_digest_fields.is_empty()
-                    && !detail.missing_files.is_empty();
-                if only_missing {
-                    let digests = detail
-                        .missing_files
-                        .iter()
-                        .filter_map(|issue| issue.digest.clone())
-                        .collect();
-                    return Ok(SubmitAttempt::Missing(digests));
-                }
-                bail!(
-                    "deployment submit rejected: {}",
-                    format_submit_detail(&detail)
-                );
-            }
-            Err(status.into())
+        if let Some(deployment_id) = deployment_id {
+            form = form.text("deployment_id", deployment_id.to_string());
         }
+        for file in files {
+            form = form.part(
+                file.digest.to_string(),
+                reqwest::multipart::Part::bytes(file.bytes.clone()).file_name(file.path.clone()),
+            );
+        }
+        client
+            .post(url)
+            .header(ACCEPT, "application/json")
+            .multipart(form)
+    };
+    let response = request.send().await?;
+    let status = response.status();
+    if status.is_success() {
+        let response: DeploymentSubmitResponse = response.json().await?;
+        return Ok(SubmitAttempt::Stored(response.deployment_id.parse()?));
     }
+    if status == reqwest::StatusCode::CONFLICT {
+        let detail: SubmitPackageErrorBody = response.json().await?;
+        let only_missing = detail.unexpected_files.is_empty()
+            && detail.digest_mismatches.is_empty()
+            && detail.oversized_files.is_empty()
+            && detail.missing_digest_fields.is_empty()
+            && !detail.missing_files.is_empty();
+        if only_missing {
+            return Ok(SubmitAttempt::Missing(
+                detail
+                    .missing_files
+                    .iter()
+                    .filter_map(|issue| issue.digest.clone())
+                    .collect(),
+            ));
+        }
+        bail!(
+            "deployment submit rejected: {}",
+            format_submit_detail(&detail)
+        );
+    }
+    let body = response.text().await.unwrap_or_default();
+    bail!("server returned {status}: {body}")
 }
 
-/// Decode the `SubmitDeploymentErrorDetail` attached to a submit status, if present.
-fn decode_submit_error_detail(
-    status: &tonic::Status,
-) -> Option<grpc_gen::SubmitDeploymentErrorDetail> {
-    use prost::Message as _;
-    let details = status.details();
-    if details.is_empty() {
-        return None;
-    }
-    grpc_gen::SubmitDeploymentErrorDetail::decode(details).ok()
-}
-
-fn format_submit_detail(detail: &grpc_gen::SubmitDeploymentErrorDetail) -> String {
+fn format_submit_detail(detail: &SubmitPackageErrorBody) -> String {
     let mut lines = Vec::new();
     for issue in &detail.missing_digest_fields {
         lines.push(format!("missing content_digest at {}", issue.field_path));
@@ -490,9 +466,7 @@ fn format_submit_detail(detail: &grpc_gen::SubmitDeploymentErrorDetail) -> Strin
     for mismatch in &detail.digest_mismatches {
         lines.push(format!(
             "digest mismatch for {}: supplied {}, actual {}",
-            mismatch.file.as_ref().map_or("", |file| &file.field_path),
-            mismatch.supplied_digest,
-            mismatch.actual_digest
+            mismatch.file.field_path, mismatch.supplied_digest, mismatch.actual_digest
         ));
     }
     for issue in &detail.oversized_files {
@@ -502,48 +476,53 @@ fn format_submit_detail(detail: &grpc_gen::SubmitDeploymentErrorDetail) -> Strin
 }
 
 /// Fetch a deployment file blob from the server's content-addressed store.
-async fn fetch_file(client: &mut DeploymentClient, digest: &str) -> anyhow::Result<Vec<u8>> {
-    let resp = client
-        .get_file(grpc_gen::GetFileRequest {
-            digest: digest.to_string(),
-        })
+async fn fetch_file(
+    client: &reqwest::Client,
+    api_url: &str,
+    digest: &str,
+) -> anyhow::Result<bytes::Bytes> {
+    send_bytes(client.get(format!("{api_url}/v1/files/{digest}")))
         .await
-        .with_context(|| format!("cannot fetch deployment file `{digest}`"))?
-        .into_inner();
-    Ok(resp.content)
+        .with_context(|| format!("cannot fetch deployment file `{digest}`"))
 }
 
 async fn switch_deployment(
-    client: &mut DeploymentClient,
+    client_startup: &ClientStartup,
+    api_url: &str,
     id: DeploymentId,
-    runtime_config_check: grpc_gen::RuntimeConfigCheck,
+    allow_unavailable_runtime_config: bool,
     command: SwitchCommand,
 ) -> anyhow::Result<()> {
-    let resp = client
-        .switch_deployment(grpc_gen::SwitchDeploymentRequest {
-            deployment_id: Some(grpc_gen::DeploymentId::from(id)),
-            runtime_config_check: runtime_config_check.into(),
-            apply: command == SwitchCommand::Apply,
-        })
-        .await?
-        .into_inner();
+    #[derive(Deserialize)]
+    struct SwitchResponse {
+        ok: String,
+    }
+    let client = client_startup.web_api_client()?;
+    let response: SwitchResponse = send_json(
+        client
+            .put(format!("{api_url}/v1/deployments/{id}/switch"))
+            .header(ACCEPT, "application/json")
+            .json(&DeploymentSwitchPayload {
+                allow_unavailable_runtime_config,
+                apply: command == SwitchCommand::Apply,
+            }),
+    )
+    .await?;
 
-    match (command, resp.outcome()) {
-        (SwitchCommand::Apply, Outcome::SwitchOutcomeSwitched) => {
+    match (command, response.ok.as_str()) {
+        (SwitchCommand::Apply, "switched") => {
             println!("Applied successfully.");
         }
-        (SwitchCommand::Apply, Outcome::SwitchOutcomeRestartRequired) => {
+        (SwitchCommand::Apply, "restart_required") => {
             bail!("Could not apply immediately; deployment enqueued. Restart the server to apply.");
         }
-        (SwitchCommand::Enqueue, Outcome::SwitchOutcomeSwitched) => {
+        (SwitchCommand::Enqueue, "switched") => {
             println!("Deployment already active; it will remain active after restart.");
         }
-        (SwitchCommand::Enqueue, Outcome::SwitchOutcomeRestartRequired) => {
+        (SwitchCommand::Enqueue, "restart_required") => {
             println!("Deployment enqueued. Restart the server to apply.");
         }
-        (_, Outcome::SwitchOutcomeUnspecified) => {
-            bail!("Unexpected outcome from server.");
-        }
+        (_, outcome) => bail!("unexpected outcome from server: {outcome}"),
     }
     Ok(())
 }
@@ -566,11 +545,10 @@ async fn prepare_manifest_from_file_or_empty(
     }
 }
 
-fn format_status(status: grpc_gen::DeploymentStatus) -> &'static str {
+fn format_status(status: &DeploymentStatusSer) -> &'static str {
     match status {
-        grpc_gen::DeploymentStatus::Inactive => "Inactive",
-        grpc_gen::DeploymentStatus::Enqueued => "Enqueued",
-        grpc_gen::DeploymentStatus::Active => "Active",
-        grpc_gen::DeploymentStatus::Unspecified => "Unknown",
+        DeploymentStatusSer::Inactive => "Inactive",
+        DeploymentStatusSer::Enqueued => "Enqueued",
+        DeploymentStatusSer::Active => "Active",
     }
 }

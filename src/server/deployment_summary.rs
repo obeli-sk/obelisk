@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DeploymentComponentType {
     WorkflowWasm,
@@ -13,13 +15,13 @@ pub(crate) enum DeploymentComponentType {
     Cron,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub(crate) struct DeploymentComponentCount {
     pub(crate) component_type: DeploymentComponentType,
     pub(crate) count: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub(crate) struct DeploymentComponentSummary {
     pub(crate) components: Vec<DeploymentComponentCount>,
 }

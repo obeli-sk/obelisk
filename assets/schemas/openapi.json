@@ -1488,6 +1488,27 @@
         }
       }
     },
+    "/v1/files/orphans": {
+      "delete": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Delete file blobs that are not referenced by a deployment.",
+        "operationId": "gc_orphan_files",
+        "responses": {
+          "200": {
+            "description": "Orphan files deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GcOrphanFilesResponseSer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/files/{digest}": {
       "get": {
         "tags": [
@@ -2703,6 +2724,19 @@
           "ffqn": {
             "type": "string",
             "description": "Fully qualified function name"
+          }
+        }
+      },
+      "GcOrphanFilesResponseSer": {
+        "type": "object",
+        "required": [
+          "deleted_count"
+        ],
+        "properties": {
+          "deleted_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

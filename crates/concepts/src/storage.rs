@@ -290,12 +290,15 @@ pub struct ExecutionEvent {
     Eq,
     derive_more::Display,
     derive_more::Into,
-    Serialize, /* webapi */
+    Serialize,
+    /* webapi */ Deserialize,
     schemars::JsonSchema,
 )]
 pub struct ResponseCursor(pub u32);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize /* webapi */, Deserialize, schemars::JsonSchema,
+)]
 pub struct ResponseWithCursor {
     pub event: JoinSetResponseEventOuter,
     pub cursor: ResponseCursor,
@@ -314,7 +317,9 @@ pub struct ListResponsesResponse {
     pub scan_cursor: ResponseCursor,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize /* webapi */, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize /* webapi */, Deserialize, schemars::JsonSchema,
+)]
 pub struct JoinSetResponseEventOuter {
     pub created_at: DateTime<Utc>,
     pub event: JoinSetResponseEvent,
@@ -2590,7 +2595,9 @@ pub struct ExpiredDelay {
     pub delay_id: DelayId,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PendingState {
     /// Caused by [`ExecutionRequest::Locked`].
@@ -2690,14 +2697,18 @@ impl From<PendingState> for PendingStateMerged {
     }
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[display("Locked(`{lock_expires_at}`, {}, {})", locked_by.executor_id, locked_by.run_id)]
 pub struct PendingStateLocked {
     pub locked_by: LockedBy,
     pub lock_expires_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[display("`{scheduled_at}`, last_lock={last_lock:?}")]
 pub struct PendingStatePendingAt {
     pub scheduled_at: DateTime<Utc>,
@@ -2705,7 +2716,9 @@ pub struct PendingStatePendingAt {
     pub last_lock: Option<LockedBy>,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[display("{join_set_id}, `{lock_expires_at}`, closing={closing}")]
 pub struct PendingStateBlockedByJoinSet {
     pub join_set_id: JoinSetId,
@@ -2719,7 +2732,9 @@ pub struct PendingStateBlockedByJoinSet {
 ///
 /// A paused activity is always `PendingAt`. Pausing a locked workflow must first
 /// append `Unlocked`, so `Locked` is never wrapped here.
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum PendingStatePaused {
     #[display("PendingAt({_0})")]
     PendingAt(PendingStatePendingAt),
@@ -2733,7 +2748,9 @@ pub enum PendingStatePaused {
 /// teardown is pronounced finished once the `Locked` lease expires. The other
 /// variants are a frozen snapshot from when cancellation was requested (incoming
 /// responses do not unblock a cancelling execution), kept for observability.
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, derive_more::Display, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum PendingStateCancelling {
     #[display("Locked({_0})")]
     Locked(PendingStateLocked),
@@ -2757,8 +2774,7 @@ impl From<&Locked> for LockedBy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-#[cfg_attr(any(test, feature = "test"), derive(Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PendingStateFinished {
     pub version: VersionType, // not Version since it must be Copy
     pub finished_at: DateTime<Utc>,

@@ -3189,6 +3189,55 @@ ffqn = "testing:integration/a.run"
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn gc_orphan_files_webapi() {
+    let server = TestServer::start(test_addr!(123)).await;
+    let orphan_digest = {
+        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
+            .await
+            .unwrap();
+        let digest = pool
+            .cas_conn()
+            .await
+            .unwrap()
+            .write_blob(b"orphan blob for REST GC")
+            .await
+            .unwrap();
+        pool.close().await;
+        digest.to_string()
+    };
+
+    let response = server
+        .client
+        .delete(format!("{}/v1/files/orphans", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted_count"], 1);
+
+    let response = server
+        .client
+        .get(format!("{}/v1/files/{orphan_digest}", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let response = server
+        .client
+        .delete(format!("{}/v1/files/orphans", server.base_url))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted_count"], 0);
+
+    server.shutdown().await;
+}
+
 // ---- Activity: submit + result ----
 
 #[tokio::test]
