@@ -33,15 +33,7 @@ fn parse_oci_reference(s: &str) -> Result<oci_client::Reference, String> {
     oci_client::Reference::from_str(s).map_err(|e| e.to_string())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "clap function value parsers must return Result"
-)]
-fn parse_secret_string(value: &str) -> Result<SecretString, std::convert::Infallible> {
-    Ok(SecretString::from(value.to_owned()))
-}
-
-fn parse_non_empty_secret_string(value: &str) -> Result<SecretString, &'static str> {
+fn parse_secret_string(value: &str) -> Result<SecretString, &'static str> {
     if value.is_empty() {
         Err("API token must not be empty")
     } else {
@@ -504,7 +496,7 @@ pub(crate) enum Server {
             env = API_TOKEN,
             hide_env_values = true,
             value_name = "TOKEN",
-            value_parser = parse_non_empty_secret_string,
+            value_parser = parse_secret_string,
             conflicts_with = "no_auth",
         )]
         api_token: Option<SecretString>,
