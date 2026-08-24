@@ -11,8 +11,11 @@
 
 ## API authentication. The API port denies requests without a valid `Authorization: Bearer <token>` header.
 ## An ephemeral startup token is always generated and printed to the console.
-## Persistent tokens are configured as sha256 hashes of the token text; hashes are not secrets,
-## so this file stays safe to commit. Add an entry with
+## Persistent tokens are configured as sha256 hashes of the token text. Only hashes of high-entropy
+## random tokens are safe to commit: SHA-256 is fast and unsalted, so passwords and other guessable
+## tokens are vulnerable to offline guessing. Tokens should contain at least 32 characters; shorter
+## tokens currently produce a compatibility warning and will be rejected in a future release.
+## Always create tokens with
 ## `obelisk generate token --server-config <this file>`, which prints the token to stdout.
 # api.token_hashes = [
 #   "sha256:...",   # agent

@@ -221,7 +221,7 @@
           "default": "127.0.0.1:5005"
         },
         "token_hashes": {
-          "description": "Accepted API bearer tokens as `sha256:<hex>` digests of the token text.\nHashes are not secrets, so this file stays safe to commit.\nGenerate an entry with `obelisk generate token`.",
+          "description": "Accepted API bearer tokens as `sha256:<hex>` digests of the token text.\nOnly hashes of high-entropy random tokens are safe to commit: SHA-256 is fast and unsalted,\nso hashes of passwords or other guessable tokens are vulnerable to offline guessing.\nTokens should contain at least 32 characters. Always generate an entry with\n`obelisk generate token`.",
           "type": "array",
           "items": {
             "type": "string"
