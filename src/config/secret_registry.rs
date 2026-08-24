@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use wasm_workers::http_request_policy::SecretResolver;
 
-pub(crate) const API_TOKEN_CLIENT: &str = "OBELISK_API_TOKEN";
+pub(crate) const API_TOKEN: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_LEGACY: &str = "OBELISK__API__TOKEN";
 
 /// Source of a secret in the `[secrets]` table.
@@ -91,8 +91,7 @@ impl SecretRegistry {
         let mut values = HashMap::new();
 
         // Always sensitive, even when the operator did not register them as secrets.
-        let mut sensitive =
-            HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN_CLIENT.to_string()]);
+        let mut sensitive = HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN.to_string()]);
 
         let mut missing_env_vars = BTreeSet::new();
         for (logical_name, source) in secrets {

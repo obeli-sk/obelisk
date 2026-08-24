@@ -1,4 +1,4 @@
-use crate::config::secret_registry::API_TOKEN_CLIENT;
+use crate::config::secret_registry::API_TOKEN;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
@@ -88,7 +88,7 @@ pub(crate) struct ClientToken {
     #[arg(
         long,
         global = true,
-        env = API_TOKEN_CLIENT,
+        env = API_TOKEN,
         hide_env_values = true,
         value_name = "TOKEN",
         value_parser = parse_secret_string
