@@ -62,7 +62,8 @@
               "help": "Accept unauthenticated requests on the API port. Dev/recovery override"
             },
             {
-              "name": "--api-token"
+              "name": "--api-token",
+              "help": "API token required to access the API server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
             }
           ]
         },

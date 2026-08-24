@@ -41,6 +41,14 @@ fn parse_secret_string(value: &str) -> Result<SecretString, std::convert::Infall
     Ok(SecretString::from(value.to_owned()))
 }
 
+fn parse_non_empty_secret_string(value: &str) -> Result<SecretString, &'static str> {
+    if value.is_empty() {
+        Err("API token must not be empty")
+    } else {
+        Ok(SecretString::from(value.to_owned()))
+    }
+}
+
 /// A deployment source: either a path to a TOML file or an existing deployment ID.
 #[derive(Debug, Clone)]
 pub(crate) enum DeploymentSource {
@@ -490,13 +498,13 @@ pub(crate) enum Server {
         )]
         no_auth: bool,
 
-        // API token required to access the API server as `Authorization: Bearer <token>`.
-        // Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
+        /// API token required to access the API server as `Authorization: Bearer <token>`.
+        /// Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
         #[arg(long,
             env = API_TOKEN,
             hide_env_values = true,
             value_name = "TOKEN",
-            value_parser = parse_secret_string,
+            value_parser = parse_non_empty_secret_string,
             conflicts_with = "no_auth",
         )]
         api_token: Option<SecretString>,
@@ -1127,4 +1135,18 @@ pub(crate) struct CancelCommand {
     /// Execution id of an activity (E_01...) or a delay request (Delay_01...)
     #[arg(value_name = "ID")]
     pub(crate) id: ExecutionIdOrDelayId,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_api_token_must_not_be_empty() {
+        let err =
+            Args::try_parse_from(["obelisk", "server", "run", "--api-token", ""]).unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        assert!(err.to_string().contains("API token must not be empty"));
+    }
 }
