@@ -186,6 +186,7 @@ fn main() -> Result<(), anyhow::Error> {
                 SecretsToml::new(),
                 EnvVarCleanupStrategy::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
+                None,
             )?);
             Box::pin(generate.run(secret_registry))
         }
@@ -196,6 +197,7 @@ fn main() -> Result<(), anyhow::Error> {
                 SecretsToml::new(),
                 EnvVarCleanupStrategy::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
+                None,
             )?);
             Box::pin(command.run(client_startup, secret_registry))
         }
@@ -237,9 +239,11 @@ fn prepare_server_startup(
     let legacy_env = std::env::var(API_TOKEN_LEGACY).ok();
     if legacy_env.is_some() {
         // SAFETY: server configuration is loaded before the runtime and its threads start.
+        // Wipe it so that server config can be loaded.
         unsafe { std::env::remove_var(API_TOKEN_LEGACY) };
     }
     let config = config_holder.load_config()?;
+
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
         eprintln!(
             "warning: {API_TOKEN_LEGACY} is deprecated; use api.token_hashes for server authentication"
@@ -250,6 +254,7 @@ fn prepare_server_startup(
         config.secrets.clone(),
         env_var_cleanup,
         runtime_config_availability,
+        legacy_api_token.as_ref(),
     )?);
     Ok(ServerStartup {
         config_holder,
