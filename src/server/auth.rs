@@ -13,32 +13,41 @@ use axum::{
     response::Response,
 };
 use secrecy::{ExposeSecret as _, SecretString};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use subtle::ConstantTimeEq as _;
 use tracing::{debug, warn};
 
 pub(crate) struct ApiAuth {
     /// Accepted token digests with the identity label used in audit logs.
-    accepted: Vec<([u8; 32], String)>,
+    accepted: Vec<(
+        [u8; 32],
+        String,
+        AtomicBool, // true means do not emit low length warnings (anymore).
+    )>,
     /// Recovery token, printed to the console, valid until shutdown.
     startup_token: SecretString,
 }
 
 impl ApiAuth {
-    pub(crate) fn new(config: &ApiConfig, legacy_token: Option<SecretString>) -> Self {
+    pub(crate) fn new(config: &ApiConfig, api_token: Option<SecretString>) -> Self {
         let startup_token = SecretString::from(crate::api::generate_token());
         let mut accepted = vec![(
             crate::api::token_digest(startup_token.expose_secret()),
             "startup-token".to_string(),
+            AtomicBool::default(),
         )];
         for digest in &config.token_hashes {
-            accepted.push((digest.0, hash_prefix_label(digest)));
+            accepted.push((digest.0, hash_prefix_label(digest), AtomicBool::default()));
         }
-        if let Some(token) = legacy_token {
+        if let Some(token) = api_token {
             let digest = crate::api::token_digest(token.expose_secret());
             accepted.push((
                 digest,
                 hash_prefix_label(&concepts::component_id::Digest(digest)),
+                AtomicBool::default(), // Short explicit tokens will remain accepted.
             ));
         }
         Self {
@@ -65,12 +74,25 @@ impl ApiAuth {
         }
         // Hash-then-compare: digests of the secret are matched, so the comparison
         // cannot leak anything useful about accepted tokens.
-        let digest = crate::api::token_digest(token.trim());
-        self.accepted
+        let token = token.trim();
+        let digest = crate::api::token_digest(token);
+        let (_, identity, warned_short) = self
+            .accepted
             .iter()
-            .find(|(accepted, _)| accepted.ct_eq(&digest).into())
-            .map(|(_, identity)| identity.as_str())
-            .ok_or("unknown token")
+            .find(|(accepted, _, _)| accepted.ct_eq(&digest).into())
+            .ok_or("unknown token")?;
+        // backcompat: 0.41 accepts tokens shorter than 32 characters; reject after 0.43.
+        if token.len() < crate::api::MIN_API_TOKEN_CHAR_LENGTH
+            && !warned_short.swap(true, Ordering::Relaxed)
+        {
+            warn!(
+                identity,
+                length = token.len(),
+                minimum = crate::api::MIN_API_TOKEN_CHAR_LENGTH,
+                "Accepted a short API token for compatibility; replace it with `obelisk generate token`"
+            );
+        }
+        Ok(identity)
     }
 }
 

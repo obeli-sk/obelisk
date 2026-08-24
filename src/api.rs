@@ -5,6 +5,8 @@ use std::fmt::Write as _;
 
 /// Maximum encoded gRPC message size for deployment repository requests and responses.
 pub(crate) const MAX_GRPC_MESSAGE_SIZE: usize = 512 * 1024 * 1024;
+pub(crate) const MIN_API_TOKEN_CHAR_LENGTH: usize = 32;
+const GENERATED_API_TOKEN_BYTES: usize = 32;
 
 pub(crate) fn token_digest(token: &str) -> [u8; 32] {
     Sha256::digest(token.as_bytes()).into()
@@ -17,10 +19,13 @@ pub(crate) fn token_hash(token: &str) -> Digest {
 
 /// Generate a high-entropy random token (64 hex chars).
 pub(crate) fn generate_token() -> String {
-    let bytes = rand::rng().random::<[u8; 32]>();
+    let bytes = rand::rng().random::<[u8; GENERATED_API_TOKEN_BYTES]>();
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         write!(&mut out, "{b:02x}").expect("writing to string");
+    }
+    const {
+        assert!(GENERATED_API_TOKEN_BYTES * 2 >= MIN_API_TOKEN_CHAR_LENGTH);
     }
     out
 }

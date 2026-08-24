@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use wasm_workers::http_request_policy::SecretResolver;
 
-pub(crate) const API_TOKEN_CLIENT: &str = "OBELISK_API_TOKEN";
+pub(crate) const API_TOKEN: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_LEGACY: &str = "OBELISK__API__TOKEN";
 
 /// Source of a secret in the `[secrets]` table.
@@ -86,24 +86,29 @@ impl SecretRegistry {
         secrets: SecretsToml,
         env_var_cleanup: EnvVarCleanupStrategy,
         runtime_config_availability: RuntimeConfigAvailability,
+        was_legacy_token_wiped: Option<&SecretString>,
     ) -> anyhow::Result<Self> {
         let mut values = HashMap::new();
 
         // Always sensitive, even when the operator did not register them as secrets.
-        let mut sensitive =
-            HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN_CLIENT.to_string()]);
+        let mut sensitive = HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN.to_string()]);
 
         let mut missing_env_vars = BTreeSet::new();
         for (logical_name, source) in secrets {
             match source {
                 SecretSourceToml::Env { env } => {
                     let value = if let Ok(value) = std::env::var(&env) {
-                        value
+                        SecretString::from(value)
+                    } else if let Some(value) = was_legacy_token_wiped
+                        && env == API_TOKEN_LEGACY
+                    {
+                        // backcompat: avoid failing here if [[secrets]] contains the token and it was wiped already.
+                        value.clone()
                     } else {
                         missing_env_vars.insert(env.clone());
-                        String::new()
+                        SecretString::from(String::new())
                     };
-                    values.insert(logical_name.clone(), SecretString::from(value));
+                    values.insert(logical_name.clone(), value);
                     sensitive.insert(env);
                     sensitive.insert(logical_name);
                 }
@@ -186,6 +191,7 @@ mod tests {
             secrets,
             EnvVarCleanupStrategy::Wipe,
             RuntimeConfigAvailability::Strict,
+            None,
         )
         .unwrap();
 
@@ -224,6 +230,7 @@ mod tests {
             secrets,
             EnvVarCleanupStrategy::Noop,
             RuntimeConfigAvailability::Strict,
+            None,
         )
         .unwrap_err()
         .to_string();

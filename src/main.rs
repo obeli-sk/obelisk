@@ -13,9 +13,10 @@ mod server;
 mod wit_printer;
 
 use crate::command::server::{
-    PrepareDirsParams, RunParams, RuntimeConfigAvailability, VerifyParams, run, verify,
+    PrepareDirsParams, RunParams, RuntimeConfigAvailability, ServerAuth, VerifyParams, run, verify,
 };
-use crate::config::secret_registry::{API_TOKEN_LEGACY, EnvVarCleanupStrategy};
+use crate::config::secret_registry::{API_TOKEN, API_TOKEN_LEGACY, EnvVarCleanupStrategy};
+use anyhow::ensure;
 use args::{
     Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
     Subcommand, VerifyArgs,
@@ -53,6 +54,7 @@ fn main() -> Result<(), anyhow::Error> {
             description,
             suppress_type_checking_errors,
             no_auth,
+            api_token,
         }) => {
             let ServerStartup {
                 config_holder,
@@ -64,6 +66,19 @@ fn main() -> Result<(), anyhow::Error> {
                 EnvVarCleanupStrategy::Wipe,
                 RuntimeConfigAvailability::Strict,
             )?;
+            let auth = if no_auth {
+                assert!(api_token.is_none(), "{API_TOKEN} conflicts with --no-auth");
+                // Remove ambiguity
+                ensure!(
+                    legacy_api_token.is_none(),
+                    "unset {API_TOKEN_LEGACY} when using --no-auth"
+                );
+                ServerAuth::NoAuth
+            } else {
+                ensure!(!no_auth, "guarded by conflicts_with");
+                let api_token = api_token.or(legacy_api_token);
+                ServerAuth::Auth { api_token }
+            };
             Box::pin(run(
                 config_holder,
                 config,
@@ -77,8 +92,7 @@ fn main() -> Result<(), anyhow::Error> {
                     },
                     clean_sqlite_directory,
                     suppress_type_checking_errors,
-                    no_auth,
-                    legacy_api_token,
+                    auth,
                 },
                 secret_registry,
             ))
@@ -186,6 +200,7 @@ fn main() -> Result<(), anyhow::Error> {
                 SecretsToml::new(),
                 EnvVarCleanupStrategy::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
+                None,
             )?);
             Box::pin(generate.run(secret_registry))
         }
@@ -196,6 +211,7 @@ fn main() -> Result<(), anyhow::Error> {
                 SecretsToml::new(),
                 EnvVarCleanupStrategy::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
+                None,
             )?);
             Box::pin(command.run(client_startup, secret_registry))
         }
@@ -237,9 +253,11 @@ fn prepare_server_startup(
     let legacy_env = std::env::var(API_TOKEN_LEGACY).ok();
     if legacy_env.is_some() {
         // SAFETY: server configuration is loaded before the runtime and its threads start.
+        // Wipe it so that server config can be loaded.
         unsafe { std::env::remove_var(API_TOKEN_LEGACY) };
     }
     let config = config_holder.load_config()?;
+
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
         eprintln!(
             "warning: {API_TOKEN_LEGACY} is deprecated; use api.token_hashes for server authentication"
@@ -250,6 +268,7 @@ fn prepare_server_startup(
         config.secrets.clone(),
         env_var_cleanup,
         runtime_config_availability,
+        legacy_api_token.as_ref(),
     )?);
     Ok(ServerStartup {
         config_holder,

@@ -7,6 +7,7 @@
 //! fixed ports, allowing parallel test execution without conflicts.
 //! The `test_addr!` macro ensures unique addresses at link time.
 
+use crate::command::server::ServerAuth;
 use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
     command::server::{LocalDeployment, PrepareDirsParams, RunParams, prepare_dirs, run_internal},
@@ -742,7 +743,7 @@ impl TestServer {
         server_path: PathBuf,
         deployment: LocalDeployment,
         no_auth: bool,
-        legacy_api_token: Option<secrecy::SecretString>,
+        api_token: Option<secrecy::SecretString>,
     ) -> Self {
         test_utils::set_up();
 
@@ -760,8 +761,11 @@ impl TestServer {
             },
             clean_sqlite_directory: false,
             suppress_type_checking_errors: false,
-            no_auth,
-            legacy_api_token,
+            auth: if no_auth {
+                ServerAuth::NoAuth
+            } else {
+                ServerAuth::Auth { api_token }
+            },
         };
 
         let prepared_dirs = prepare_dirs(

@@ -187,8 +187,10 @@ pub(crate) struct ApiConfig {
     #[serde(default = "default_api_listening_addr")]
     pub(crate) listening_addr: SocketAddr,
     /// Accepted API bearer tokens as `sha256:<hex>` digests of the token text.
-    /// Hashes are not secrets, so this file stays safe to commit.
-    /// Generate an entry with `obelisk generate token`.
+    /// Only hashes of high-entropy random tokens are safe to commit: SHA-256 is fast and unsalted,
+    /// so hashes of passwords or other guessable tokens are vulnerable to offline guessing.
+    /// Tokens should contain at least 32 characters. Always generate an entry with
+    /// `obelisk generate token`.
     #[serde(default)]
     pub(crate) token_hashes: Vec<Digest>,
 }

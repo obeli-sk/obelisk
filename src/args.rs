@@ -1,4 +1,4 @@
-use crate::config::secret_registry::API_TOKEN_CLIENT;
+use crate::config::secret_registry::API_TOKEN;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
@@ -33,12 +33,12 @@ fn parse_oci_reference(s: &str) -> Result<oci_client::Reference, String> {
     oci_client::Reference::from_str(s).map_err(|e| e.to_string())
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "clap function value parsers must return Result"
-)]
-fn parse_secret_string(value: &str) -> Result<SecretString, std::convert::Infallible> {
-    Ok(SecretString::from(value.to_owned()))
+fn parse_secret_string(value: &str) -> Result<SecretString, &'static str> {
+    if value.is_empty() {
+        Err("API token must not be empty")
+    } else {
+        Ok(SecretString::from(value.to_owned()))
+    }
 }
 
 /// A deployment source: either a path to a TOML file or an existing deployment ID.
@@ -88,7 +88,7 @@ pub(crate) struct ClientToken {
     #[arg(
         long,
         global = true,
-        env = API_TOKEN_CLIENT,
+        env = API_TOKEN,
         hide_env_values = true,
         value_name = "TOKEN",
         value_parser = parse_secret_string
@@ -483,8 +483,23 @@ pub(crate) enum Server {
         suppress_type_checking_errors: bool,
         /// Accept unauthenticated requests on the API port. Dev/recovery override.
         // backcompat: remove the `allow-unauthenticated-api` alias after 0.43.
-        #[arg(long, visible_alias = "allow-unauthenticated-api")]
+        #[arg(
+            long,
+            visible_alias = "allow-unauthenticated-api",
+            conflicts_with = "api_token"
+        )]
         no_auth: bool,
+
+        /// API token required to access the API server as `Authorization: Bearer <token>`.
+        /// Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
+        #[arg(long,
+            env = API_TOKEN,
+            hide_env_values = true,
+            value_name = "TOKEN",
+            value_parser = parse_secret_string,
+            conflicts_with = "no_auth",
+        )]
+        api_token: Option<SecretString>,
     },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify(VerifyArgs),
@@ -1112,4 +1127,18 @@ pub(crate) struct CancelCommand {
     /// Execution id of an activity (E_01...) or a delay request (Delay_01...)
     #[arg(value_name = "ID")]
     pub(crate) id: ExecutionIdOrDelayId,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_api_token_must_not_be_empty() {
+        let err =
+            Args::try_parse_from(["obelisk", "server", "run", "--api-token", ""]).unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        assert!(err.to_string().contains("API token must not be empty"));
+    }
 }
