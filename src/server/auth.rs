@@ -37,7 +37,7 @@ impl ApiAuth {
         let mut accepted = vec![(
             crate::api::token_digest(startup_token.expose_secret()),
             "startup-token".to_string(),
-            AtomicBool::default(), // startup token will never warn, generate_token uses `MIN_API_TOKEN_LENGTH`.
+            AtomicBool::default(),
         )];
         for digest in &config.token_hashes {
             accepted.push((digest.0, hash_prefix_label(digest), AtomicBool::default()));
@@ -82,13 +82,13 @@ impl ApiAuth {
             .find(|(accepted, _, _)| accepted.ct_eq(&digest).into())
             .ok_or("unknown token")?;
         // backcompat: 0.41 accepts tokens shorter than 32 characters; reject after 0.43.
-        if token.len() < crate::api::MIN_API_TOKEN_LENGTH
+        if token.len() < crate::api::MIN_API_TOKEN_CHAR_LENGTH
             && !warned_short.swap(true, Ordering::Relaxed)
         {
             warn!(
                 identity,
                 length = token.len(),
-                minimum = crate::api::MIN_API_TOKEN_LENGTH,
+                minimum = crate::api::MIN_API_TOKEN_CHAR_LENGTH,
                 "Accepted a short API token for compatibility; replace it with `obelisk generate token`"
             );
         }
