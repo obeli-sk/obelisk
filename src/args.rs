@@ -483,8 +483,23 @@ pub(crate) enum Server {
         suppress_type_checking_errors: bool,
         /// Accept unauthenticated requests on the API port. Dev/recovery override.
         // backcompat: remove the `allow-unauthenticated-api` alias after 0.43.
-        #[arg(long, visible_alias = "allow-unauthenticated-api")]
+        #[arg(
+            long,
+            visible_alias = "allow-unauthenticated-api",
+            conflicts_with = "api_token"
+        )]
         no_auth: bool,
+
+        // API token required to access the API server as `Authorization: Bearer <token>`.
+        // Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated.
+        #[arg(long,
+            env = API_TOKEN,
+            hide_env_values = true,
+            value_name = "TOKEN",
+            value_parser = parse_secret_string,
+            conflicts_with = "no_auth",
+        )]
+        api_token: Option<SecretString>,
     },
     /// Read the configuration, compile the components, verify their imports and exit without starting the server.
     Verify(VerifyArgs),

@@ -13,9 +13,10 @@ mod server;
 mod wit_printer;
 
 use crate::command::server::{
-    PrepareDirsParams, RunParams, RuntimeConfigAvailability, VerifyParams, run, verify,
+    PrepareDirsParams, RunParams, RuntimeConfigAvailability, ServerAuth, VerifyParams, run, verify,
 };
-use crate::config::secret_registry::{API_TOKEN_LEGACY, EnvVarCleanupStrategy};
+use crate::config::secret_registry::{API_TOKEN, API_TOKEN_LEGACY, EnvVarCleanupStrategy};
+use anyhow::ensure;
 use args::{
     Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
     Subcommand, VerifyArgs,
@@ -53,6 +54,7 @@ fn main() -> Result<(), anyhow::Error> {
             description,
             suppress_type_checking_errors,
             no_auth,
+            api_token,
         }) => {
             let ServerStartup {
                 config_holder,
@@ -64,6 +66,19 @@ fn main() -> Result<(), anyhow::Error> {
                 EnvVarCleanupStrategy::Wipe,
                 RuntimeConfigAvailability::Strict,
             )?;
+            let auth = if no_auth {
+                assert!(api_token.is_none(), "{API_TOKEN} conflicts with --no-auth");
+                // Remove ambiguity
+                ensure!(
+                    legacy_api_token.is_none(),
+                    "unset {API_TOKEN_LEGACY} when using --no-auth"
+                );
+                ServerAuth::NoAuth
+            } else {
+                ensure!(!no_auth, "guarded by conflicts_with");
+                let api_token = api_token.or(legacy_api_token);
+                ServerAuth::Auth { api_token }
+            };
             Box::pin(run(
                 config_holder,
                 config,
@@ -77,8 +92,7 @@ fn main() -> Result<(), anyhow::Error> {
                     },
                     clean_sqlite_directory,
                     suppress_type_checking_errors,
-                    no_auth,
-                    legacy_api_token,
+                    auth,
                 },
                 secret_registry,
             ))

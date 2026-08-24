@@ -121,6 +121,7 @@ use grpc::grpc_gen;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use secrecy::ExposeSecret as _;
+use secrecy::SecretString;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -570,9 +571,12 @@ pub(crate) struct RunParams {
     pub(crate) dir_params: PrepareDirsParams,
     pub(crate) clean_sqlite_directory: bool,
     pub(crate) suppress_type_checking_errors: bool,
-    /// Accept unauthenticated API requests (`--no-auth`).
-    pub(crate) no_auth: bool,
-    pub(crate) legacy_api_token: Option<secrecy::SecretString>,
+    pub(crate) auth: ServerAuth,
+}
+
+pub(crate) enum ServerAuth {
+    NoAuth,
+    Auth { api_token: Option<SecretString> },
 }
 
 pub(crate) async fn run(
@@ -1911,23 +1915,23 @@ pub(crate) async fn run_internal(
     });
     if let Some(api_listening_addr) = api_listening_addr {
         let app = app_router.fallback_service(grpc_service);
-        let app_svc = if params.no_auth {
-            warn!("API authentication is disabled by --no-auth: accepting all API requests");
-            app.into_make_service()
-        } else {
-            let api_auth = Arc::new(crate::server::auth::ApiAuth::new(
-                &api_config,
-                params.legacy_api_token.clone(),
-            ));
-            info!(
-                "API startup token: {}",
-                api_auth.startup_token().expose_secret()
-            );
-            app.layer(axum::middleware::from_fn_with_state(
-                api_auth,
-                crate::server::auth::auth_middleware,
-            ))
-            .into_make_service()
+        let app_svc = match params.auth {
+            ServerAuth::NoAuth => {
+                warn!("API authentication is disabled by --no-auth: accepting all API requests");
+                app.into_make_service()
+            }
+            ServerAuth::Auth { api_token } => {
+                let api_auth = Arc::new(crate::server::auth::ApiAuth::new(&api_config, api_token));
+                info!(
+                    "API startup token: {}",
+                    api_auth.startup_token().expose_secret()
+                );
+                app.layer(axum::middleware::from_fn_with_state(
+                    api_auth,
+                    crate::server::auth::auth_middleware,
+                ))
+                .into_make_service()
+            }
         };
         let listener = TcpListener::bind(api_listening_addr)
             .await

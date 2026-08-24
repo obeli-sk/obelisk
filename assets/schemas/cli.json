@@ -60,6 +60,9 @@
             {
               "name": "--no-auth",
               "help": "Accept unauthenticated requests on the API port. Dev/recovery override"
+            },
+            {
+              "name": "--api-token"
             }
           ]
         },
