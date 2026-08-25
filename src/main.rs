@@ -260,7 +260,7 @@ fn prepare_server_startup(
 
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
         eprintln!(
-            "warning: {API_TOKEN_LEGACY} is deprecated; use api.token_hashes for server authentication"
+            "warning: {API_TOKEN_LEGACY} is deprecated; use {API_TOKEN} or configure api.token_hashes in server.toml for server authentication"
         );
         secrecy::SecretString::from(token)
     });
