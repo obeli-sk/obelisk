@@ -1249,11 +1249,11 @@ pub(crate) mod logs {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ExecutionResponsesParams {
-    /// Filter by an exact named join-set name
+    /// Filter by an exact join-set ID (bare names select named join sets)
     join_set: Option<String>,
     /// Cursor for pagination
     cursor: Option<u32>,
-    /// Maximum number of execution-wide responses to scan
+    /// Maximum number of responses to return
     length: Option<u16>,
     /// Include the cursor item in results
     #[serde(default)]
@@ -1261,6 +1261,18 @@ struct ExecutionResponsesParams {
     /// Pagination direction
     #[serde(default)]
     direction: PaginationDirectionSortedFromOldest,
+}
+
+fn parse_join_set_filter(join_set: String) -> Result<JoinSetId, String> {
+    if join_set.contains(':') {
+        join_set
+            .parse()
+            .map_err(|err: concepts::JoinSetIdParseError| err.to_string())
+    } else {
+        // backcompat: 0.41.4 accepted bare names as named join-set IDs.
+        JoinSetId::new(JoinSetKind::Named, StrVariant::from(join_set))
+            .map_err(|err| err.to_string())
+    }
 }
 
 /// Response containing execution responses
@@ -1272,7 +1284,7 @@ pub(crate) struct ExecutionResponsesResponse {
     /// Maximum cursor in the response
     #[schema(value_type = u32)]
     pub(crate) max_cursor: ResponseCursor,
-    /// Execution-wide cursor reached in the requested direction
+    /// Cursor reached in the requested direction
     #[schema(value_type = u32)]
     pub(crate) scan_cursor: ResponseCursor,
 }
@@ -1305,9 +1317,9 @@ async fn execution_responses(
     let length = params.length.unwrap_or(DEFAULT_LENGTH);
     let join_set = params
         .join_set
-        .map(|name| JoinSetId::new(JoinSetKind::Named, StrVariant::from(name)))
+        .map(parse_join_set_filter)
         .transpose()
-        .map_err(|err| HttpResponse::bad_request(accept, err.to_string()))?;
+        .map_err(|err| HttpResponse::bad_request(accept, err))?;
     let pagination = match params.direction {
         PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
             length,
@@ -4523,7 +4535,7 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{RetVal, format_execution_status_text};
+    use super::{RetVal, format_execution_status_text, parse_join_set_filter};
     use chrono::{DateTime, Utc};
     use concepts::{
         ExecutionFailureKind, SupportedFunctionReturnValue,
@@ -4611,6 +4623,14 @@ mod tests {
             }
             .to_string(),
             "Finished: Execution failure (Uncategorized)"
+        );
+    }
+
+    #[test]
+    fn response_join_set_filter_accepts_canonical_id_and_bare_named_id() {
+        assert_eq!(
+            parse_join_set_filter("n:session-name".to_string()).unwrap(),
+            parse_join_set_filter("session-name".to_string()).unwrap(),
         );
     }
 

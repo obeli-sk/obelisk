@@ -1291,7 +1291,7 @@
           {
             "name": "join_set",
             "in": "query",
-            "description": "Filter by an exact named join-set name",
+            "description": "Filter by an exact join-set ID (bare names select named join sets)",
             "required": false,
             "schema": {
               "type": "string"
@@ -1311,7 +1311,7 @@
           {
             "name": "length",
             "in": "query",
-            "description": "Maximum number of execution-wide responses to scan",
+            "description": "Maximum number of responses to return",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2499,7 +2499,7 @@
           "scan_cursor": {
             "type": "integer",
             "format": "int32",
-            "description": "Execution-wide cursor reached in the requested direction",
+            "description": "Cursor reached in the requested direction",
             "minimum": 0
           }
         }

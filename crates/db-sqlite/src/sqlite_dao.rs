@@ -1830,6 +1830,10 @@ impl SqlitePool {
             }
             None => None,
         };
+        if let Some(join_set) = join_set {
+            sql.push_str(" AND r.join_set_id = :join_set_id");
+            params.push((":join_set_id", Box::new(join_set.to_string())));
+        }
         sql.push_str(" ORDER BY seq");
         let is_desc = pagination.as_ref().is_some_and(Pagination::is_desc);
         if is_desc {
@@ -1841,10 +1845,6 @@ impl SqlitePool {
         // Re-order to ascending for consistent oldest-to-newest results
         if is_desc {
             sql = format!("SELECT * FROM ({sql}) ORDER BY seq ASC");
-        }
-        if let Some(join_set) = join_set {
-            sql = format!("SELECT * FROM ({sql}) WHERE join_set_id = :join_set_id ORDER BY seq");
-            params.push((":join_set_id", Box::new(join_set.to_string())));
         }
         params.push((":execution_id", Box::new(execution_id.to_string())));
         tx.prepare(&sql)?
@@ -1865,31 +1865,40 @@ impl SqlitePool {
         execution_id: &ExecutionId,
         pagination: Pagination<u32>,
         max_cursor: ResponseCursor,
+        join_set: Option<&JoinSetId>,
     ) -> Result<ResponseCursor, DbErrorRead> {
         if pagination.length() == 0 {
             return Ok(ResponseCursor(*pagination.cursor()));
         }
         let aggregate = if pagination.is_desc() { "MIN" } else { "MAX" };
         let order = if pagination.is_desc() { "DESC" } else { "ASC" };
+        let join_set_clause = join_set
+            .map(|_| " AND r.join_set_id = :join_set_id")
+            .unwrap_or_default();
         let sql = format!(
             "SELECT {aggregate}(seq) FROM (\
                 SELECT r.seq FROM t_join_set_response r \
                 LEFT OUTER JOIN t_execution_log l ON r.child_execution_id = l.execution_id \
                 WHERE r.execution_id = :execution_id \
                 AND (r.finished_version = l.version OR r.child_execution_id IS NULL) \
+                {join_set_clause} \
                 AND r.seq {rel} :cursor ORDER BY r.seq {order} LIMIT :length\
             )",
             rel = pagination.rel(),
         );
-        let scanned: Option<u32> = tx.query_row(
-            &sql,
-            rusqlite::named_params! {
-                ":execution_id": execution_id.to_string(),
-                ":cursor": pagination.cursor(),
-                ":length": pagination.length(),
-            },
-            |row| row.get(0),
-        )?;
+        let mut params: Vec<(&str, Box<dyn ToSql>)> = vec![
+            (":execution_id", Box::new(execution_id.to_string())),
+            (":cursor", Box::new(*pagination.cursor())),
+            (":length", Box::new(pagination.length())),
+        ];
+        if let Some(join_set) = join_set {
+            params.push((":join_set_id", Box::new(join_set.to_string())));
+        }
+        let params = params
+            .iter()
+            .map(|(key, value)| (*key, value.as_ref()))
+            .collect::<Vec<_>>();
+        let scanned: Option<u32> = tx.query_row(&sql, params.as_slice(), |row| row.get(0))?;
         Ok(ResponseCursor(scanned.unwrap_or_else(
             || match pagination {
                 Pagination::NewerThan { cursor, .. } => cursor.max(max_cursor.0),
@@ -4974,8 +4983,13 @@ impl DbExternalApi for SqlitePool {
         self.transaction(
             move |tx| {
                 let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
-                let scan_cursor =
-                    Self::get_response_scan_cursor(tx, &execution_id, pagination, max_cursor)?;
+                let scan_cursor = Self::get_response_scan_cursor(
+                    tx,
+                    &execution_id,
+                    pagination,
+                    max_cursor,
+                    join_set.as_ref(),
+                )?;
                 let responses =
                     Self::list_responses(tx, &execution_id, Some(pagination), join_set.as_ref())?;
                 Ok(ListResponsesResponse {
