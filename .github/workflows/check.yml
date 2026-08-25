@@ -57,6 +57,29 @@ jobs:
               exit 1
           fi
 
+  check-cargo-lock:
+    name: Check Cargo.lock
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Populate the nix store
+        run: nix develop --command echo
+
+      - name: Verify Cargo.lock is up to date
+        run: |
+          nix develop --command cargo metadata --format-version 1 > /dev/null
+          if git diff --quiet -- Cargo.lock; then
+              echo "No changes"
+          else
+              echo "::error::cargo metadata updated Cargo.lock, please commit the updated lockfile"
+              git diff -- Cargo.lock
+              exit 1
+          fi
+
   check-js-runtime-freshness:
     name: JS runtime pins up to date
     runs-on: ubuntu-24.04
