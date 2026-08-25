@@ -394,8 +394,8 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.11", de
 
 # testing components
 wasip2 = "1.0.4"
-wit-bindgen = "0.57.1"
-wit-bindgen-rust = "0.57.1"
+wit-bindgen = "0.61.0"
+wit-bindgen-rust = "0.61.0"
 wstd = "0.6.8"
 
 # otlp
