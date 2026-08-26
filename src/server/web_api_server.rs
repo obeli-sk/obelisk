@@ -38,6 +38,7 @@ use concepts::{
 use http::{StatusCode, header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::{fmt::Write as _, time::Duration};
 use tokio::{
@@ -429,6 +430,7 @@ struct ExecutionsListParams {
     #[param(value_type = Option<String>)]
     cursor: Option<ExecutionListCursorDeser>,
     /// Number of items to return
+    #[param(minimum = 1)]
     length: Option<u16>,
     /// Include the cursor item in results
     #[serde(default)]
@@ -456,6 +458,12 @@ enum PaginationDirectionSortedFromOldest {
     /// Fetch items newer than cursor
     #[default] // Default = start from 0
     Newer,
+}
+
+fn nonzero_page_length(length: u16, accept: AcceptHeader) -> Result<NonZeroU16, HttpResponse> {
+    NonZeroU16::new(length).ok_or_else(|| {
+        HttpResponse::bad_request(accept, "`length` must be greater than zero".to_string())
+    })
 }
 
 #[derive(Deserialize, Debug)]
@@ -540,7 +548,7 @@ async fn executions_list(
             direction,
             ..
         } = params;
-        let length = length.unwrap_or(default_pagination.length());
+        let length = nonzero_page_length(length.unwrap_or(default_pagination.length()), accept)?;
         match cursor {
             Some(ExecutionListCursorDeser::CreatedBy(cursor)) => {
                 ExecutionListPagination::CreatedBy(match direction {
@@ -786,6 +794,7 @@ struct ExecutionEventsParams {
     /// Version cursor for pagination
     version: Option<VersionType>,
     /// Number of events to return
+    #[param(minimum = 1)]
     length: Option<u16>,
     /// Include the cursor item in results
     #[serde(default)]
@@ -829,12 +838,12 @@ async fn execution_events(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u16 = 20;
+    let length = nonzero_page_length(params.length.unwrap_or(DEFAULT_LENGTH), accept)?;
     let conn = state
         .db_pool
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    let length = params.length.unwrap_or(DEFAULT_LENGTH);
     let pagination = match params.direction {
         PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
             length,
@@ -917,6 +926,7 @@ pub(crate) mod logs {
         /// Only include entries created after this timestamp.
         after: Option<DateTime<Utc>>,
         /// Number of entries to return
+        #[param(minimum = 1)]
         length: Option<u16>,
         /// Include the cursor item in results
         #[serde(default)]
@@ -1161,7 +1171,10 @@ pub(crate) mod logs {
         }
         .with_created_bounds(params.after.or(legacy_after), legacy_before);
 
-        let length = MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH));
+        let length = nonzero_page_length(
+            MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH)),
+            accept,
+        )?;
 
         let pagination = match params.direction {
             PaginationDirectionSortedFromOldest::Older => Pagination::OlderThan {
@@ -1310,13 +1323,7 @@ async fn execution_responses(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u16 = 20;
-    let length = params.length.unwrap_or(DEFAULT_LENGTH);
-    if length == 0 {
-        return Err(HttpResponse::bad_request(
-            accept,
-            "`length` must be greater than zero".to_string(),
-        ));
-    }
+    let length = nonzero_page_length(params.length.unwrap_or(DEFAULT_LENGTH), accept)?;
     let conn = state
         .db_pool
         .external_api_conn()
@@ -3257,7 +3264,7 @@ pub(crate) mod deployment {
             deployment_summary,
             web_api_server::{
                 AcceptHeader, ErrorWrapper, HttpResponse, TextDefaultAcceptHeader, WebApiState,
-                deprecated_text_response, pretty_json_response,
+                deprecated_text_response, nonzero_page_length, pretty_json_response,
             },
         },
     };
@@ -3383,6 +3390,7 @@ pub(crate) mod deployment {
         #[param(value_type = Option<String>)]
         cursor_from: Option<DeploymentId>,
         /// Number of items to return
+        #[param(minimum = 1)]
         length: Option<u16>,
         /// Include the cursor item in results
         #[serde(default)]
@@ -3411,15 +3419,19 @@ pub(crate) mod deployment {
         Query(params): Query<ListDeploymentsParams>,
         accept: AcceptHeader,
     ) -> Result<Response, HttpResponse> {
+        let length = nonzero_page_length(
+            params
+                .length
+                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            accept,
+        )?;
         let conn = state
             .db_pool
             .external_api_conn()
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
         let pagination = Pagination::OlderThan {
-            length: params
-                .length
-                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            length,
             cursor: params.cursor_from,
             including_cursor: params.including_cursor,
         };
@@ -4542,7 +4554,10 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{RetVal, format_execution_status_text, parse_join_set_filter};
+    use super::{
+        AcceptHeader, RetVal, format_execution_status_text, nonzero_page_length,
+        parse_join_set_filter,
+    };
     use chrono::{DateTime, Utc};
     use concepts::{
         ExecutionFailureKind, SupportedFunctionReturnValue,
@@ -4551,6 +4566,20 @@ mod tests {
             PendingStateFinishedResultKind,
         },
     };
+
+    #[test]
+    fn pagination_length_must_be_nonzero() {
+        let Ok(length) = nonzero_page_length(1, AcceptHeader::Json) else {
+            panic!("positive page length must be accepted");
+        };
+        assert_eq!(1, length.get());
+        assert_eq!(
+            http::StatusCode::BAD_REQUEST,
+            nonzero_page_length(0, AcceptHeader::Json)
+                .unwrap_err()
+                .status
+        );
+    }
 
     #[test]
     fn text_status_for_finished_ok_and_error_is_explicit() {

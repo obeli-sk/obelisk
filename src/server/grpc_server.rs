@@ -33,7 +33,6 @@ use concepts::storage::DeploymentState;
 use concepts::storage::DeploymentStatus;
 use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionRequest;
-use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH;
 use concepts::storage::LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION;
 use concepts::storage::LogCursor;
 use concepts::storage::LogFilter;
@@ -44,7 +43,6 @@ use concepts::storage::PendingState;
 use concepts::storage::PersistedFunctionMetadata;
 use concepts::storage::PersistedParameterType;
 use concepts::storage::Version;
-use concepts::storage::VersionType;
 use concepts::storage::{ExecutionStateFilter, FunctionNameFilter, ListExecutionsFilter};
 use concepts::time::ClockFn;
 use concepts::time::Now;
@@ -157,9 +155,7 @@ fn convert_deployment_pagination(
 
     match request.pagination.as_ref() {
         Some(list_deployments_request::Pagination::NewerThan(p)) => Ok(Pagination::NewerThan {
-            length: u16::try_from(p.length)
-                .ok()
-                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            length: convert_length(p.length)?,
             cursor: p
                 .cursor
                 .as_ref()
@@ -168,9 +164,7 @@ fn convert_deployment_pagination(
             including_cursor: p.including_cursor,
         }),
         Some(list_deployments_request::Pagination::OlderThan(p)) => Ok(Pagination::OlderThan {
-            length: u16::try_from(p.length)
-                .ok()
-                .unwrap_or(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH),
+            length: convert_length(p.length)?,
             cursor: p
                 .cursor
                 .as_ref()
@@ -179,17 +173,6 @@ fn convert_deployment_pagination(
             including_cursor: p.including_cursor,
         }),
         None => Ok(LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION),
-    }
-}
-
-fn convert_response_length(length: u32) -> Result<u16, tonic::Status> {
-    let length = convert_length(length)?;
-    if length == 0 {
-        Err(tonic::Status::invalid_argument(
-            "`length` must be greater than zero",
-        ))
-    } else {
-        Ok(length)
     }
 }
 
@@ -569,9 +552,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .list_execution_events(
                 &execution_id,
                 Pagination::NewerThan {
-                    length: u16::try_from(request.length).map_err(|_| {
-                        tonic::Status::invalid_argument("`length` must be u16".to_string())
-                    })?,
+                    length: convert_length(request.length)?,
                     cursor: request.version_from,
                     including_cursor: true,
                 },
@@ -604,7 +585,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
-        let length = convert_response_length(request.length)?;
+        let length = convert_length(request.length)?;
         let conn = self
             .db_pool
             .external_api_conn()
@@ -643,7 +624,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         tonic::Status,
     > {
         let request = request.into_inner();
-        let responses_length = convert_response_length(request.responses_length)?;
+        let events_length = convert_length(request.events_length)?;
+        let responses_length = convert_length(request.responses_length)?;
         let execution_id: ExecutionId = request
             .execution_id
             .argument_must_exist("execution_id")?
@@ -660,9 +642,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .list_execution_events_responses(
                 &execution_id,
                 &Version::new(request.version_from),
-                VersionType::try_from(request.events_length).map_err(|_| {
-                    tonic::Status::invalid_argument("`events_length` must be u16".to_string())
-                })?,
+                events_length,
                 request.include_backtrace_id,
                 concepts::storage::Pagination::NewerThan {
                     length: responses_length,
@@ -1222,9 +1202,9 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             && page_size > 0
             && page_size <= 200
         {
-            page_size
+            std::num::NonZeroU16::new(page_size).expect("page_size is positive")
         } else {
-            20
+            std::num::NonZeroU16::new(20).unwrap()
         };
         let show_derived = request.show_derived;
         let pagination = if let Ok(decoded) = BASE64_STANDARD.decode(&request.page_token)
@@ -2198,17 +2178,15 @@ mod tests {
     use grpc_gen::list_deployments_request::{NewerThan, OlderThan};
 
     #[test]
-    fn response_length_must_be_nonzero_u16() {
-        assert_eq!(1, convert_response_length(1).unwrap());
+    fn pagination_length_must_be_nonzero_u16() {
+        assert_eq!(1, convert_length(1).unwrap().get());
         assert_eq!(
             tonic::Code::InvalidArgument,
-            convert_response_length(0).unwrap_err().code()
+            convert_length(0).unwrap_err().code()
         );
         assert_eq!(
             tonic::Code::InvalidArgument,
-            convert_response_length(u32::from(u16::MAX) + 1)
-                .unwrap_err()
-                .code()
+            convert_length(u32::from(u16::MAX) + 1).unwrap_err().code()
         );
     }
 
@@ -2239,7 +2217,7 @@ mod tests {
                 cursor,
                 including_cursor,
             } => {
-                assert_eq!(length, 20);
+                assert_eq!(length.get(), 20);
                 assert_eq!(cursor, Some(deployment_id));
                 assert!(including_cursor);
             }
@@ -2274,7 +2252,7 @@ mod tests {
                 cursor,
                 including_cursor,
             } => {
-                assert_eq!(length, 15);
+                assert_eq!(length.get(), 15);
                 assert_eq!(cursor, Some(deployment_id));
                 assert!(!including_cursor);
             }
@@ -2334,7 +2312,7 @@ mod tests {
                 cursor,
                 including_cursor,
             } => {
-                assert_eq!(length, 10);
+                assert_eq!(length.get(), 10);
                 assert_eq!(cursor, None);
                 assert!(!including_cursor);
             }

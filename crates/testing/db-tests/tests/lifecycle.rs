@@ -27,6 +27,7 @@ use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use obeli_db_tests::{CANCELLABLE_FFQN, SOME_FFQN};
 use obeli_db_tests::{Database, initialize_fresh_postgres_db};
 use rstest::rstest;
+use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::NamedTempFile;
@@ -34,6 +35,10 @@ use test_db_macro::expand_enum_database;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
+
+fn nz(value: u16) -> NonZeroU16 {
+    NonZeroU16::new(value).expect("test page length must be nonzero")
+}
 
 #[tokio::test]
 async fn initialize_sqlite_twice() {
@@ -4173,7 +4178,7 @@ async fn list_responses_empty_should_return_empty_list(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::NewerThan {
-                length: 10,
+                length: nz(10),
                 cursor: 0,
                 including_cursor: true,
             },
@@ -4202,7 +4207,7 @@ async fn list_responses_wrong_id_returns_empty_list(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::NewerThan {
-                length: 10,
+                length: nz(10),
                 cursor: 0,
                 including_cursor: true,
             },
@@ -4311,7 +4316,7 @@ async fn test_list_responses(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::NewerThan {
-                length: 10,
+                length: nz(10),
                 cursor: 0,
                 including_cursor: true,
             },
@@ -4456,7 +4461,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .list_responses_filtered(
             &execution_id,
             Pagination::NewerThan {
-                length: 1,
+                length: nz(1),
                 cursor: 0,
                 including_cursor: false,
             },
@@ -4473,7 +4478,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .list_responses_filtered(
             &execution_id,
             Pagination::NewerThan {
-                length: 2,
+                length: nz(2),
                 cursor: 0,
                 including_cursor: false,
             },
@@ -4490,7 +4495,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .list_responses_filtered(
             &execution_id,
             Pagination::NewerThan {
-                length: 2,
+                length: nz(2),
                 cursor: first_page.scan_cursor.0,
                 including_cursor: false,
             },
@@ -4505,7 +4510,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .list_responses_filtered(
             &execution_id,
             Pagination::OlderThan {
-                length: 1,
+                length: nz(1),
                 cursor: u32::MAX,
                 including_cursor: false,
             },
@@ -4521,7 +4526,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .list_responses_filtered(
             &execution_id,
             Pagination::NewerThan {
-                length: 2,
+                length: nz(2),
                 cursor: second_page.scan_cursor.0,
                 including_cursor: false,
             },
@@ -4613,7 +4618,7 @@ async fn test_list_responses_per_execution_cursor(database: Database) {
             .list_responses(
                 execution_id,
                 Pagination::NewerThan {
-                    length: 10,
+                    length: nz(10),
                     cursor: 0,
                     including_cursor: true,
                 },
@@ -4730,7 +4735,7 @@ async fn test_list_responses_pagination_direction(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::NewerThan {
-                length: 2,
+                length: nz(2),
                 cursor: 0,
                 including_cursor: true,
             },
@@ -4747,7 +4752,7 @@ async fn test_list_responses_pagination_direction(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::NewerThan {
-                length: 2,
+                length: nz(2),
                 cursor: 2,
                 including_cursor: false,
             },
@@ -4763,7 +4768,7 @@ async fn test_list_responses_pagination_direction(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::OlderThan {
-                length: 2,
+                length: nz(2),
                 cursor: u32::MAX,
                 including_cursor: true,
             },
@@ -4780,7 +4785,7 @@ async fn test_list_responses_pagination_direction(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::OlderThan {
-                length: 2,
+                length: nz(2),
                 cursor: 4,
                 including_cursor: false,
             },
@@ -4797,7 +4802,7 @@ async fn test_list_responses_pagination_direction(database: Database) {
         .list_responses(
             &execution_id,
             Pagination::OlderThan {
-                length: 2,
+                length: nz(2),
                 cursor: 4,
                 including_cursor: true,
             },
@@ -4896,7 +4901,7 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
         .list_execution_events(
             &execution_id,
             Pagination::NewerThan {
-                length: 100,
+                length: nz(100),
                 cursor: 0,
                 including_cursor: true,
             },
@@ -4913,7 +4918,7 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
         .list_execution_events(
             &execution_id,
             Pagination::NewerThan {
-                length: 3,
+                length: nz(3),
                 cursor: 0,
                 including_cursor: true,
             },
@@ -4931,7 +4936,7 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
         .list_execution_events(
             &execution_id,
             Pagination::NewerThan {
-                length: 2,
+                length: nz(2),
                 cursor: 2,
                 including_cursor: false,
             },
@@ -4948,7 +4953,7 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
         .list_execution_events(
             &execution_id,
             Pagination::OlderThan {
-                length: 3,
+                length: nz(3),
                 cursor: VersionType::MAX,
                 including_cursor: true,
             },
@@ -4968,7 +4973,7 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
         .list_execution_events(
             &execution_id,
             Pagination::OlderThan {
-                length: 2,
+                length: nz(2),
                 cursor: 4,
                 including_cursor: false,
             },
@@ -4986,7 +4991,7 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
         .list_execution_events(
             &execution_id,
             Pagination::OlderThan {
-                length: 2,
+                length: nz(2),
                 cursor: 4,
                 including_cursor: true,
             },
@@ -5372,7 +5377,7 @@ async fn deployment_list(database: Database) {
 
     let all = api_conn
         .list_deployments(Pagination::NewerThan {
-            length: 10,
+            length: nz(10),
             cursor: None,
             including_cursor: false,
         })
@@ -5500,7 +5505,7 @@ async fn list_logs_with_show_derived(database: Database) {
             false,
             LogFilter::show_logs(Vec::new()),
             Pagination::OlderThan {
-                length: 10,
+                length: nz(10),
                 cursor: LogCursor(i64::MAX),
                 including_cursor: false,
             },
@@ -5521,7 +5526,7 @@ async fn list_logs_with_show_derived(database: Database) {
             true,
             LogFilter::show_logs(Vec::new()),
             Pagination::OlderThan {
-                length: 10,
+                length: nz(10),
                 cursor: LogCursor(i64::MAX),
                 including_cursor: false,
             },
@@ -5558,7 +5563,7 @@ async fn list_logs_with_show_derived(database: Database) {
             true,
             LogFilter::show_logs(Vec::new()),
             Pagination::OlderThan {
-                length: 1,
+                length: nz(1),
                 cursor: LogCursor(i64::MAX),
                 including_cursor: false,
             },
@@ -5575,7 +5580,7 @@ async fn list_logs_with_show_derived(database: Database) {
             true,
             LogFilter::show_logs(Vec::new()),
             Pagination::OlderThan {
-                length: 1,
+                length: nz(1),
                 cursor: first_cursor,
                 including_cursor: false,
             },
@@ -5639,7 +5644,7 @@ async fn list_logs_paginates_equal_timestamps(database: Database) {
     }
 
     let mut pagination = Pagination::NewerThan {
-        length: 1,
+        length: nz(1),
         cursor: LogCursor(i64::MIN),
         including_cursor: false,
     };
@@ -5664,7 +5669,7 @@ async fn list_logs_paginates_equal_timestamps(database: Database) {
     assert_eq!(messages, ["first", "second", "third"]);
 
     let mut pagination = Pagination::OlderThan {
-        length: 1,
+        length: nz(1),
         cursor: LogCursor(i64::MAX),
         including_cursor: false,
     };

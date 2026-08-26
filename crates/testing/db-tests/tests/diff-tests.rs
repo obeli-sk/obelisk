@@ -22,6 +22,7 @@ use concepts::time::ClockFn as _;
 use obeli_db_tests::Database;
 use obeli_db_tests::SOME_FFQN;
 use rstest::rstest;
+use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::time::Duration;
 use test_db_macro::expand_enum_database;
@@ -31,6 +32,10 @@ use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::warn;
 use val_json::wast_val::WastValWithType;
+
+fn nz(value: u16) -> NonZeroU16 {
+    NonZeroU16::new(value).expect("test page length must be nonzero")
+}
 
 #[tokio::test]
 async fn diff_proptest() {
@@ -439,7 +444,7 @@ async fn list_execution_events_should_not_break_json_order(database: Database) {
         .list_execution_events(
             &execution_id,
             Pagination::NewerThan {
-                length: 1,
+                length: nz(1),
                 cursor: finished_version.0,
                 including_cursor: true,
             },
