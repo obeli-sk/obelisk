@@ -4452,6 +4452,23 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .await;
     }
 
+    let full_page = api_conn
+        .list_responses_filtered(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 1,
+                cursor: 0,
+                including_cursor: false,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+    assert_eq!(1, full_page.responses.len());
+    assert_eq!(ResponseCursor(3), full_page.responses[0].cursor);
+    assert_eq!(ResponseCursor(3), full_page.scan_cursor);
+    assert_eq!(ResponseCursor(4), full_page.max_cursor);
+
     let first_page = api_conn
         .list_responses_filtered(
             &execution_id,
@@ -4466,7 +4483,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .unwrap();
     assert_eq!(1, first_page.responses.len());
     assert_eq!(ResponseCursor(3), first_page.responses[0].cursor);
-    assert_eq!(ResponseCursor(3), first_page.scan_cursor);
+    assert_eq!(ResponseCursor(4), first_page.scan_cursor);
     assert_eq!(ResponseCursor(4), first_page.max_cursor);
 
     let second_page = api_conn

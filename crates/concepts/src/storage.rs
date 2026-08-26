@@ -328,10 +328,10 @@ impl ListResponsesResponse {
             ResponseCursor(*pagination.cursor())
         } else {
             match pagination {
-                Pagination::NewerThan { cursor, .. } => responses
-                    .last()
-                    .map(|response| response.cursor)
-                    .unwrap_or(ResponseCursor(cursor.max(max_cursor.0))),
+                Pagination::NewerThan { length, .. } => match responses.last() {
+                    Some(response) if responses.len() >= usize::from(length) => response.cursor,
+                    _ => max_cursor,
+                },
                 Pagination::OlderThan { .. } => responses
                     .first()
                     .map(|response| response.cursor)
