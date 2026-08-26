@@ -4432,9 +4432,14 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         )
         .await;
     }
-    for (index, join_set_id) in [same_name_one_off, unrelated, target.clone()]
-        .iter()
-        .enumerate()
+    for (index, join_set_id) in [
+        same_name_one_off,
+        unrelated.clone(),
+        target.clone(),
+        unrelated,
+    ]
+    .iter()
+    .enumerate()
     {
         append_delay_response(
             db_connection.as_ref(),
@@ -4446,6 +4451,23 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         )
         .await;
     }
+
+    let full_page = api_conn
+        .list_responses_filtered(
+            &execution_id,
+            Pagination::NewerThan {
+                length: 1,
+                cursor: 0,
+                including_cursor: false,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+    assert_eq!(1, full_page.responses.len());
+    assert_eq!(ResponseCursor(3), full_page.responses[0].cursor);
+    assert_eq!(ResponseCursor(3), full_page.scan_cursor);
+    assert_eq!(ResponseCursor(4), full_page.max_cursor);
 
     let first_page = api_conn
         .list_responses_filtered(
@@ -4459,9 +4481,10 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         )
         .await
         .unwrap();
-    assert!(first_page.responses.is_empty());
-    assert_eq!(ResponseCursor(2), first_page.scan_cursor);
-    assert_eq!(ResponseCursor(3), first_page.max_cursor);
+    assert_eq!(1, first_page.responses.len());
+    assert_eq!(ResponseCursor(3), first_page.responses[0].cursor);
+    assert_eq!(ResponseCursor(4), first_page.scan_cursor);
+    assert_eq!(ResponseCursor(4), first_page.max_cursor);
 
     let second_page = api_conn
         .list_responses_filtered(
@@ -4475,9 +4498,24 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         )
         .await
         .unwrap();
-    assert_eq!(1, second_page.responses.len());
-    assert_eq!(ResponseCursor(3), second_page.responses[0].cursor);
-    assert_eq!(ResponseCursor(3), second_page.scan_cursor);
+    assert!(second_page.responses.is_empty());
+    assert_eq!(ResponseCursor(4), second_page.scan_cursor);
+
+    let latest = api_conn
+        .list_responses_filtered(
+            &execution_id,
+            Pagination::OlderThan {
+                length: 1,
+                cursor: u32::MAX,
+                including_cursor: false,
+            },
+            Some(&target),
+        )
+        .await
+        .unwrap();
+    assert_eq!(1, latest.responses.len());
+    assert_eq!(ResponseCursor(3), latest.responses[0].cursor);
+    assert_eq!(ResponseCursor(3), latest.scan_cursor);
 
     let exhausted = api_conn
         .list_responses_filtered(
@@ -4492,7 +4530,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
         .await
         .unwrap();
     assert!(exhausted.responses.is_empty());
-    assert_eq!(ResponseCursor(3), exhausted.scan_cursor);
+    assert_eq!(ResponseCursor(4), exhausted.scan_cursor);
 
     drop(api_conn);
     drop(db_connection);
