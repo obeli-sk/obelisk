@@ -520,8 +520,11 @@ impl TryFrom<grpc_gen::ExecutionFailureKind> for ExecutionFailureKind {
     }
 }
 
-pub fn convert_length(l: u32) -> Result<u16, tonic::Status> {
-    u16::try_from(l).map_err(|_| tonic::Status::invalid_argument("`length` must be an u8"))
+pub fn convert_length(l: u32) -> Result<std::num::NonZeroU16, tonic::Status> {
+    u16::try_from(l)
+        .ok()
+        .and_then(std::num::NonZeroU16::new)
+        .ok_or_else(|| tonic::Status::invalid_argument("`length` must be a non-zero u16"))
 }
 
 impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPagination {

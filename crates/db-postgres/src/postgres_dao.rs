@@ -1891,7 +1891,7 @@ async fn list_logs_tx(
         next_page: items
             .last()
             .map(|item| Pagination::NewerThan {
-                length: pagination.length(),
+                length: pagination.length_nonzero(),
                 cursor: item.cursor,
                 including_cursor: false,
             })
@@ -1900,14 +1900,14 @@ async fn list_logs_tx(
             } else {
                 // no prev results, let's start from beginning
                 Pagination::NewerThan {
-                    length: pagination.length(),
+                    length: pagination.length_nonzero(),
                     cursor: LogCursor(i64::MIN),
                     including_cursor: false,
                 }
             }),
         prev_page: match items.first() {
             Some(item) => Some(Pagination::OlderThan {
-                length: pagination.length(),
+                length: pagination.length_nonzero(),
                 cursor: item.cursor,
                 including_cursor: false,
             }),
@@ -3151,7 +3151,7 @@ async fn list_execution_events(
         ),
     };
     let p_cursor = add_param(Box::new(i64::from(cursor)));
-    let p_limit = add_param(Box::new(i64::from(length)));
+    let p_limit = add_param(Box::new(i64::from(length.get())));
 
     let base_select = if include_backtrace_id {
         format!(
@@ -5079,7 +5079,7 @@ impl DbExternalApi for PostgresConnection {
         &self,
         execution_id: &ExecutionId,
         req_since: &Version,
-        req_max_length: VersionType,
+        req_max_length: std::num::NonZeroU16,
         req_include_backtrace_id: bool,
         resp_pagination: Pagination<u32>,
     ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead> {
@@ -5092,9 +5092,7 @@ impl DbExternalApi for PostgresConnection {
             &tx,
             execution_id,
             Pagination::NewerThan {
-                length: req_max_length
-                    .try_into()
-                    .expect("req_max_length fits in u16"),
+                length: req_max_length,
                 cursor: req_since.0,
                 including_cursor: true,
             },

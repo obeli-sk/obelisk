@@ -15,6 +15,7 @@ use concepts::{
 };
 use obeli_db_tests::{Database, SOME_FFQN};
 use rstest::rstest;
+use std::num::NonZeroU16;
 use std::time::Duration;
 use test_db_macro::expand_enum_database;
 use test_utils::set_up;
@@ -22,6 +23,10 @@ use test_utils::sim_clock::SimClock;
 use tracing::debug;
 
 const DEPLOYMENT_COUNT: usize = 10;
+
+fn nz(value: u16) -> NonZeroU16 {
+    NonZeroU16::new(value).expect("test page length must be nonzero")
+}
 
 /// Helper to create a deployment with an execution.
 async fn create_deployment_with_execution(
@@ -161,7 +166,7 @@ async fn list_deployment_states_basic(database: Database) {
 
     // List all deployments (OlderThan with no cursor = from newest to oldest)
     let pagination: Pagination<Option<DeploymentId>> = Pagination::OlderThan {
-        length: 20,
+        length: nz(20),
         cursor: None,
         including_cursor: false,
     };
@@ -223,7 +228,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 3,
+                length: nz(3),
                 cursor: None,
                 including_cursor: false,
             },
@@ -246,7 +251,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 3,
+                length: nz(3),
                 cursor,
                 including_cursor: false,
             },
@@ -269,7 +274,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 3,
+                length: nz(3),
                 cursor,
                 including_cursor: false,
             },
@@ -292,7 +297,7 @@ async fn list_deployment_states_pagination_older_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 3,
+                length: nz(3),
                 cursor,
                 including_cursor: false,
             },
@@ -359,7 +364,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 20,
+                length: nz(20),
                 cursor: None,
                 including_cursor: false,
             },
@@ -378,7 +383,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::NewerThan {
-                length: 3,
+                length: nz(3),
                 cursor: Some(oldest),
                 including_cursor: true,
             },
@@ -403,7 +408,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::NewerThan {
-                length: 3,
+                length: nz(3),
                 cursor,
                 including_cursor: false,
             },
@@ -426,7 +431,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::NewerThan {
-                length: 3,
+                length: nz(3),
                 cursor,
                 including_cursor: false,
             },
@@ -449,7 +454,7 @@ async fn list_deployment_states_pagination_newer_than(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::NewerThan {
-                length: 3,
+                length: nz(3),
                 cursor,
                 including_cursor: false,
             },
@@ -585,7 +590,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 20,
+                length: nz(20),
                 cursor: None,
                 including_cursor: false,
             },
@@ -647,7 +652,7 @@ async fn list_deployment_states_with_different_execution_states(database: Databa
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 20,
+                length: nz(20),
                 cursor: None,
                 including_cursor: false,
             },
@@ -706,7 +711,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 10,
+                length: nz(10),
                 cursor: None,
                 including_cursor: false,
             },
@@ -724,7 +729,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 10,
+                length: nz(10),
                 cursor: Some(middle),
                 including_cursor: true,
             },
@@ -745,7 +750,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 10,
+                length: nz(10),
                 cursor: Some(middle),
                 including_cursor: false,
             },
@@ -766,7 +771,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::NewerThan {
-                length: 10,
+                length: nz(10),
                 cursor: Some(middle),
                 including_cursor: true,
             },
@@ -787,7 +792,7 @@ async fn list_deployment_states_including_cursor(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::NewerThan {
-                length: 10,
+                length: nz(10),
                 cursor: Some(middle),
                 including_cursor: false,
             },
@@ -834,7 +839,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 20,
+                length: nz(20),
                 cursor: None,
                 including_cursor: false,
             },
@@ -870,7 +875,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 20,
+                length: nz(20),
                 cursor: Some(oldest),
                 including_cursor: false,
             },
@@ -893,7 +898,7 @@ async fn list_deployment_states_older_then_newer_returns_all(database: Database)
         .list_deployment_states(
             sim_clock.now(),
             Pagination::NewerThan {
-                length: 20,
+                length: nz(20),
                 cursor: Some(oldest),
                 including_cursor: true,
             },
@@ -957,7 +962,7 @@ async fn list_deployment_states_empty(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 10,
+                length: nz(10),
                 cursor: None,
                 including_cursor: false,
             },
@@ -1000,7 +1005,7 @@ async fn list_deployment_states_cursor_not_found(database: Database) {
         .list_deployment_states(
             sim_clock.now(),
             Pagination::OlderThan {
-                length: 10,
+                length: nz(10),
                 cursor: Some(fake_cursor),
                 including_cursor: false,
             },

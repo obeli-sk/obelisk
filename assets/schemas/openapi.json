@@ -297,7 +297,7 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 0
+              "minimum": 1
             }
           },
           {
@@ -580,7 +580,7 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 0
+              "minimum": 1
             }
           },
           {
@@ -1013,7 +1013,7 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 0
+              "minimum": 1
             }
           },
           {
@@ -1162,7 +1162,7 @@
             "schema": {
               "type": "integer",
               "format": "int32",
-              "minimum": 0
+              "minimum": 1
             }
           },
           {

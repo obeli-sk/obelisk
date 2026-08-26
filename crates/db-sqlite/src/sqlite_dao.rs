@@ -3402,7 +3402,7 @@ impl SqlitePool {
             next_page: items
                 .last()
                 .map(|item| Pagination::NewerThan {
-                    length: pagination.length(),
+                    length: pagination.length_nonzero(),
                     cursor: item.cursor,
                     including_cursor: false,
                 })
@@ -3412,7 +3412,7 @@ impl SqlitePool {
                     } else {
                         // no prev results, let's start from beginning
                         Pagination::NewerThan {
-                            length: pagination.length(),
+                            length: pagination.length_nonzero(),
                             cursor: LogCursor(i64::MIN),
                             including_cursor: false,
                         }
@@ -3420,7 +3420,7 @@ impl SqlitePool {
                 }),
             prev_page: match items.first() {
                 Some(item) => Some(Pagination::OlderThan {
-                    length: pagination.length(),
+                    length: pagination.length_nonzero(),
                     cursor: item.cursor,
                     including_cursor: false,
                 }),
@@ -4953,7 +4953,7 @@ impl DbExternalApi for SqlitePool {
         &self,
         execution_id: &ExecutionId,
         req_since: &Version,
-        req_max_length: VersionType,
+        req_max_length: std::num::NonZeroU16,
         req_include_backtrace_id: bool,
         resp_pagination: Pagination<u32>,
     ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead> {
@@ -4966,9 +4966,7 @@ impl DbExternalApi for SqlitePool {
                     tx,
                     &execution_id,
                     Pagination::NewerThan {
-                        length: req_max_length
-                            .try_into()
-                            .expect("req_max_length fits in u16"),
+                        length: req_max_length,
                         cursor: req_since,
                         including_cursor: true,
                     },

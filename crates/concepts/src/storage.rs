@@ -27,6 +27,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::num::NonZeroU16;
 use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -326,7 +327,7 @@ impl ListResponsesResponse {
     ) -> Self {
         let scan_cursor = match pagination {
             Pagination::NewerThan { length, .. } => match responses.last() {
-                Some(response) if responses.len() >= usize::from(length) => response.cursor,
+                Some(response) if responses.len() >= usize::from(length.get()) => response.cursor,
                 _ => max_cursor,
             },
             Pagination::OlderThan { .. } => responses
@@ -1564,7 +1565,7 @@ pub trait DbExternalApi: DbConnection {
         &self,
         execution_id: &ExecutionId,
         req_since: &Version,
-        req_max_length: VersionType,
+        req_max_length: NonZeroU16,
         req_include_backtrace_id: bool,
         resp_pagination: Pagination<VersionType>,
     ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead>;
@@ -1690,7 +1691,7 @@ pub trait DbExternalApi: DbConnection {
 pub const LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH: u16 = 20;
 pub const LIST_DEPLOYMENT_STATES_DEFAULT_PAGINATION: Pagination<Option<DeploymentId>> =
     Pagination::OlderThan {
-        length: LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH,
+        length: NonZeroU16::new(LIST_DEPLOYMENT_STATES_DEFAULT_LENGTH).unwrap(),
         cursor: None,
         including_cursor: false,
     };
@@ -2465,7 +2466,7 @@ pub enum ExecutionListPagination {
 impl Default for ExecutionListPagination {
     fn default() -> ExecutionListPagination {
         ExecutionListPagination::CreatedBy(Pagination::OlderThan {
-            length: 20,
+            length: NonZeroU16::new(20).unwrap(),
             cursor: None,
             including_cursor: false, // does not matter when `cursor` is not specified
         })
@@ -2484,18 +2485,26 @@ impl ExecutionListPagination {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pagination<T> {
     NewerThan {
-        length: u16,
+        length: NonZeroU16,
         cursor: T,
         including_cursor: bool,
     },
     OlderThan {
-        length: u16,
+        length: NonZeroU16,
         cursor: T,
         including_cursor: bool,
     },
 }
 impl<T: Clone> Pagination<T> {
     pub fn length(&self) -> u16 {
+        match self {
+            Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => {
+                length.get()
+            }
+        }
+    }
+
+    pub fn length_nonzero(&self) -> NonZeroU16 {
         match self {
             Pagination::NewerThan { length, .. } | Pagination::OlderThan { length, .. } => *length,
         }
