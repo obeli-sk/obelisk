@@ -1254,6 +1254,7 @@ struct ExecutionResponsesParams {
     /// Cursor for pagination
     cursor: Option<u32>,
     /// Maximum number of responses to return
+    #[param(minimum = 1)]
     length: Option<u16>,
     /// Include the cursor item in results
     #[serde(default)]
@@ -1309,12 +1310,18 @@ async fn execution_responses(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     const DEFAULT_LENGTH: u16 = 20;
+    let length = params.length.unwrap_or(DEFAULT_LENGTH);
+    if length == 0 {
+        return Err(HttpResponse::bad_request(
+            accept,
+            "`length` must be greater than zero".to_string(),
+        ));
+    }
     let conn = state
         .db_pool
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    let length = params.length.unwrap_or(DEFAULT_LENGTH);
     let join_set = params
         .join_set
         .map(parse_join_set_filter)

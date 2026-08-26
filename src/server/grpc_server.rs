@@ -182,6 +182,17 @@ fn convert_deployment_pagination(
     }
 }
 
+fn convert_response_length(length: u32) -> Result<u16, tonic::Status> {
+    let length = convert_length(length)?;
+    if length == 0 {
+        Err(tonic::Status::invalid_argument(
+            "`length` must be greater than zero",
+        ))
+    } else {
+        Ok(length)
+    }
+}
+
 #[tonic::async_trait]
 impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
     async fn generate_execution_id(
@@ -593,6 +604,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let length = convert_response_length(request.length)?;
         let conn = self
             .db_pool
             .external_api_conn()
@@ -602,7 +614,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .list_responses(
                 &execution_id,
                 concepts::storage::Pagination::NewerThan {
-                    length: convert_length(request.length)?,
+                    length,
                     cursor: request.cursor_from,
                     including_cursor: request.including_cursor,
                 },
@@ -631,6 +643,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         tonic::Status,
     > {
         let request = request.into_inner();
+        let responses_length = convert_response_length(request.responses_length)?;
         let execution_id: ExecutionId = request
             .execution_id
             .argument_must_exist("execution_id")?
@@ -652,7 +665,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 })?,
                 request.include_backtrace_id,
                 concepts::storage::Pagination::NewerThan {
-                    length: convert_length(request.responses_length)?,
+                    length: responses_length,
                     cursor: request.responses_cursor_from,
                     including_cursor: request.responses_including_cursor,
                 },
@@ -2183,6 +2196,21 @@ fn deployment_summary_to_grpc(
 mod tests {
     use super::*;
     use grpc_gen::list_deployments_request::{NewerThan, OlderThan};
+
+    #[test]
+    fn response_length_must_be_nonzero_u16() {
+        assert_eq!(1, convert_response_length(1).unwrap());
+        assert_eq!(
+            tonic::Code::InvalidArgument,
+            convert_response_length(0).unwrap_err().code()
+        );
+        assert_eq!(
+            tonic::Code::InvalidArgument,
+            convert_response_length(u32::from(u16::MAX) + 1)
+                .unwrap_err()
+                .code()
+        );
+    }
 
     #[test]
     fn test_convert_deployment_pagination_newer_than() {

@@ -324,19 +324,15 @@ impl ListResponsesResponse {
         max_cursor: ResponseCursor,
         pagination: Pagination<u32>,
     ) -> Self {
-        let scan_cursor = if pagination.length() == 0 {
-            ResponseCursor(*pagination.cursor())
-        } else {
-            match pagination {
-                Pagination::NewerThan { length, .. } => match responses.last() {
-                    Some(response) if responses.len() >= usize::from(length) => response.cursor,
-                    _ => max_cursor,
-                },
-                Pagination::OlderThan { .. } => responses
-                    .first()
-                    .map(|response| response.cursor)
-                    .unwrap_or(ResponseCursor(0)),
-            }
+        let scan_cursor = match pagination {
+            Pagination::NewerThan { length, .. } => match responses.last() {
+                Some(response) if responses.len() >= usize::from(length) => response.cursor,
+                _ => max_cursor,
+            },
+            Pagination::OlderThan { .. } => responses
+                .first()
+                .map(|response| response.cursor)
+                .unwrap_or(ResponseCursor(0)),
         };
         Self {
             responses,
