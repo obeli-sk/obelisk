@@ -10,11 +10,11 @@ on:
         required: false
         type: string
         default: "latest"
-      skip_latest:
-        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
+      update_latest:
+        description: "Update the Docker Hub latest tag"
         required: true
         type: boolean
-        default: false
+        default: true
   workflow_call:
     inputs:
       ref:
@@ -22,11 +22,10 @@ on:
         required: false
         type: string
         default: "latest"
-      skip_latest:
-        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
+      update_latest:
+        description: "Update the Docker Hub latest tag"
         required: true
         type: boolean
-        default: false
 
 defaults:
   run:
@@ -93,7 +92,7 @@ jobs:
             "${IMAGE_BASE}:${{ matrix.image_tag }}"
             "${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}"
           )
-          if [ "${{ inputs.skip_latest }}" != "true" ] && [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
+          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
             TAGS+=("${IMAGE_BASE}:latest")
           fi
           PUSH=true scripts/build-docker-image.sh \

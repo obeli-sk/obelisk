@@ -13,15 +13,26 @@ on:
         required: false
         type: string
         default: "latest"
-      extra-args:
-        description: "Extra args to be used with cargo publish e.g. `--dry-run` or `--no-verify`"
-        type: string
-        required: false
-        default: ""
-      skip_latest:
-        description: "skip_latest: Tag latest will be pushed to Docker Hub unless skip_latest=true"
+      validate_nix_dev_build:
+        description: "Validate the Nix dev build"
         required: true
         type: boolean
+        default: true
+      dry_run:
+        description: "Run cargo publish with --dry-run (requires stop_after_step_2)"
+        required: true
+        type: boolean
+        default: false
+      stop_after_step_2:
+        description: "Stop after cargo publish"
+        required: true
+        type: boolean
+        default: false
+      update_latest:
+        description: "Update the Docker Hub latest tag (ignored when stopping after step 2)"
+        required: true
+        type: boolean
+        default: true
 
 defaults:
   run:
@@ -31,6 +42,12 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     steps:
+      - name: Validate inputs
+        if: ${{ inputs.dry_run && !inputs.stop_after_step_2 }}
+        run: |
+          echo "::error::dry_run requires stop_after_step_2"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref }}
@@ -71,10 +88,11 @@ jobs:
             crates/embedded-assets/webhook-js-runtime-version.txt
 
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        if: ${{ inputs.validate_nix_dev_build }}
 
       - name: Validate Nix dev build
         run: nix build .#obeliskLibcNixDev
-        if: ${{ !contains(inputs.extra-args, '--no-verify') }}
+        if: ${{ inputs.validate_nix_dev_build }}
 
   call_child:
     needs: validate
@@ -82,5 +100,6 @@ jobs:
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
-      extra-args: ${{ inputs.extra-args }}
-      skip_latest: ${{ inputs.skip_latest }}
+      dry_run: ${{ inputs.dry_run }}
+      stop_after_step_2: ${{ inputs.stop_after_step_2 }}
+      update_latest: ${{ inputs.update_latest }}
