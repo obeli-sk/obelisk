@@ -6,18 +6,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.5](https://github.com/obeli-sk/obelisk/compare/v0.41.4...v0.41.5)
+
+This patch release standardizes remote CLI configuration around the REST API, strengthens API
+token handling, and corrects filtered response pagination. It also updates Wasmtime to 48.0.1 and
+improves Nix setup for contributors.
+
+### Added
+
+- *(cli)* Remote commands accept `OBELISK_API_URL` as an alternative to passing `--api-url` on
+  every invocation - ([#900](https://github.com/obeli-sk/obelisk/pull/900)).
+- *(server)* `obelisk server run` accepts an API token through `--api-token` or
+  `OBELISK_API_TOKEN`, and `--no-auth` provides an explicit development and recovery override -
+  ([#900](https://github.com/obeli-sk/obelisk/pull/900),
+  [#902](https://github.com/obeli-sk/obelisk/pull/902)).
+- *(nix)* Development shells advertise the Obelisk Cachix binary cache, avoiding unnecessary local
+  builds when cached artifacts are available -
+  ([#906](https://github.com/obeli-sk/obelisk/pull/906)).
+
 ### Changed
 
+- *(cli)* Remote commands now use the REST API instead of gRPC and consistently use `--api-url` for
+  connection configuration - ([#900](https://github.com/obeli-sk/obelisk/pull/900)).
 - *(api)* `OBELISK_API_TOKEN` is now the canonical CLI token environment variable. The legacy
   `OBELISK__API__TOKEN` remains supported with a deprecation warning, and plaintext `api.token`
   has been removed from server configuration. Configure persistent server tokens with
-  `api.token_hashes`.
+  `api.token_hashes` - ([#900](https://github.com/obeli-sk/obelisk/pull/900),
+  [#902](https://github.com/obeli-sk/obelisk/pull/902)).
+- *(runtime)* Updated Wasmtime to 48.0.1 and removed the 48.0.0 outgoing HTTP `Host` header
+  workaround - ([#903](https://github.com/obeli-sk/obelisk/pull/903),
+  [#904](https://github.com/obeli-sk/obelisk/pull/904)).
 
 ### Deprecated
 
 - *(api)* Structured Web API `text/plain` representations are deprecated and will be removed after
   0.43. JSON is the stable representation for resources and actions. Plaintext remains supported
-  for WIT documents, backtrace source files, and the execution and deployment ID endpoints.
+  for WIT documents, backtrace source files, and the execution and deployment ID endpoints -
+  ([#901](https://github.com/obeli-sk/obelisk/pull/901)).
+
+### Fixed
+
+- *(api)* Execution responses are paginated after applying a join-set filter, so `length` limits
+  returned responses rather than the number scanned. Filters accept canonical join-set IDs while
+  retaining bare names for named join sets -
+  ([#907](https://github.com/obeli-sk/obelisk/pull/907)).
+- *(api)* REST and gRPC pagination requests reject a zero page length instead of returning empty or
+  non-advancing pages - ([#908](https://github.com/obeli-sk/obelisk/pull/908)).
 
 ## [0.41.4](https://github.com/obeli-sk/obelisk/compare/v0.41.3...v0.41.4)
 
