@@ -317,6 +317,35 @@ pub struct ListResponsesResponse {
     pub scan_cursor: ResponseCursor,
 }
 
+impl ListResponsesResponse {
+    #[must_use]
+    pub fn from_page(
+        responses: Vec<ResponseWithCursor>,
+        max_cursor: ResponseCursor,
+        pagination: Pagination<u32>,
+    ) -> Self {
+        let scan_cursor = if pagination.length() == 0 {
+            ResponseCursor(*pagination.cursor())
+        } else {
+            match pagination {
+                Pagination::NewerThan { cursor, .. } => responses
+                    .last()
+                    .map(|response| response.cursor)
+                    .unwrap_or(ResponseCursor(cursor.max(max_cursor.0))),
+                Pagination::OlderThan { .. } => responses
+                    .first()
+                    .map(|response| response.cursor)
+                    .unwrap_or(ResponseCursor(0)),
+            }
+        };
+        Self {
+            responses,
+            max_cursor,
+            scan_cursor,
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize /* webapi */, Deserialize, schemars::JsonSchema,
 )]
