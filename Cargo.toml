@@ -262,7 +262,7 @@ const_format = "0.2.36"
 croner = "2"
 criterion = "0.8"
 crossterm = "0.29.0"
-deadpool-postgres = "0.14.1"
+deadpool-postgres = "0.14.2"
 derive_more = { version = "2.1.1", features = [
     "debug",
     "deref",
@@ -285,7 +285,7 @@ hashbrown = { version = "0.16.1", features = ["serde"] }
 hdrhistogram = { version = "7.6.0", default-features = false }
 http = "1.5.0"
 http-body-util = "0.1"
-hyper = "1.11.0"
+hyper = "1.11.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
 indexmap = { version = "2.14", features = ["serde"] }
@@ -394,8 +394,8 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.11", de
 
 # testing components
 wasip2 = "1.0.4"
-wit-bindgen = "0.61.0"
-wit-bindgen-rust = "0.61.0"
+wit-bindgen = "0.61.1"
+wit-bindgen-rust = "0.61.1"
 wstd = "0.6.8"
 
 # otlp
