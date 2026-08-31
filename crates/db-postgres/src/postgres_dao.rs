@@ -5457,38 +5457,74 @@ impl DbExternalApi for PostgresConnection {
         paused_at: DateTime<Utc>,
     ) -> Result<AppendResponse, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
-        let tx = client_guard.transaction().await?;
+        // A `Locked` execution can concurrently append its own event for the same
+        // version; retry the read+append on that lost race instead of surfacing it.
+        // Bounded so a pathologically fast-appending execution fails loudly rather
+        // than hanging the RPC forever.
+        const CONFLICT_RETRY_LIMIT: u32 = 10;
+        let mut last_conflict = None;
+        for _ in 0..CONFLICT_RETRY_LIMIT {
+            let tx = client_guard.transaction().await?;
 
-        let combined_state = get_combined_state(&tx, execution_id).await?;
-        let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
-        debug!("Pausing with {appending_version}");
-        if combined_state.reject_locked_activities()? {
-            (appending_version, _) = append(
+            let combined_state = get_combined_state(&tx, execution_id).await?;
+            let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
+            debug!("Pausing with {appending_version}");
+            if combined_state.reject_locked_activities()? {
+                match append(
+                    &tx,
+                    execution_id,
+                    AppendRequest {
+                        created_at: paused_at,
+                        event: ExecutionRequest::Unlocked(Unlocked {
+                            unlocked_at: paused_at, // does not matter, about to append `Paused` in same tx.
+                            reason: "paused".into(),
+                        }),
+                    },
+                    appending_version,
+                )
+                .await
+                {
+                    Ok((version, _)) => appending_version = version,
+                    Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)) => {
+                        tx.rollback().await?;
+                        last_conflict = Some(DbErrorWriteNonRetriable::Conflict);
+                        continue;
+                    }
+                    Err(err) => {
+                        let _ = tx.rollback().await;
+                        return Err(err);
+                    }
+                }
+            }
+            match append(
                 &tx,
                 execution_id,
                 AppendRequest {
                     created_at: paused_at,
-                    event: ExecutionRequest::Unlocked(Unlocked {
-                        unlocked_at: paused_at, // does not matter, about to append `Paused` in same tx.
-                        reason: "paused".into(),
-                    }),
+                    event: ExecutionRequest::Paused,
                 },
                 appending_version,
             )
-            .await?;
+            .await
+            {
+                Ok((next_version, _notifier)) => {
+                    tx.commit().await?;
+                    return Ok(next_version);
+                }
+                Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)) => {
+                    tx.rollback().await?;
+                    last_conflict = Some(DbErrorWriteNonRetriable::Conflict);
+                }
+                Err(err) => {
+                    let _ = tx.rollback().await;
+                    return Err(err);
+                }
+            }
         }
-        let (next_version, _notifier) = append(
-            &tx,
-            execution_id,
-            AppendRequest {
-                created_at: paused_at,
-                event: ExecutionRequest::Paused,
-            },
-            appending_version,
-        )
-        .await?;
-        tx.commit().await?;
-        Ok(next_version)
+        warn!("Exhausted retries pausing execution due to repeated version conflicts");
+        Err(DbErrorWrite::NonRetriable(
+            last_conflict.expect("loop always sets `last_conflict` before exiting"),
+        ))
     }
 
     #[instrument(skip(self))]
