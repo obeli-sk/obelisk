@@ -302,7 +302,7 @@ prost-wkt-types = "0.7"
 quote = "1"
 rand = "0.9"
 regex = "1.13"
-refinery = { version = "0.9.2", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
+refinery = { package = "obeli-sk-refinery", version = "0.9.2-obeli-sk.1", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "multipart",
@@ -316,7 +316,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 route-recognizer = "0.3.1"
 rstest = "0.26"
-rusqlite = { version = "0.39.0", features = [
+rusqlite = { version = "0.40.2", features = [
     "bundled",
     "chrono",
     "serde_json",
