@@ -13,6 +13,7 @@ use hashbrown::{HashMap, HashSet};
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, InlineTable, Item, Value, value};
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DeploymentManifestFile {
@@ -1105,21 +1106,31 @@ async fn collect_backtrace_refs(
         else {
             continue;
         };
-        for (_, source) in sources.iter_mut() {
-            let Some(raw_path) = backtrace_source_path(source) else {
-                continue;
-            };
-            let Some(path) = deployment_owned_path(&raw_path)? else {
-                continue;
-            };
-            let (digest, bytes) = read_deployment_file(deployment_dir, &path).await?;
-            refs.insert(&path, Value::from(digest.to_string()));
-            *source = value(raw_path);
-            files.push(DeploymentManifestFile {
-                path,
-                digest,
-                bytes,
-            });
+        let mut unreadable = Vec::new();
+        for (key, source) in sources.iter_mut() {
+            if let Some(raw_path) = backtrace_source_path(source)
+                && let Some(path) = deployment_owned_path(&raw_path)?
+            {
+                match read_deployment_file(deployment_dir, &path).await {
+                    Ok((digest, bytes)) => {
+                        refs.insert(&path, Value::from(digest.to_string()));
+                        *source = value(raw_path);
+                        files.push(DeploymentManifestFile {
+                            path,
+                            digest,
+                            bytes,
+                        });
+                    }
+                    Err(err) => {
+                        warn!("Cannot read backtrace source {path:?} - {err:?}");
+                        unreadable.push(key.get().to_string());
+                    }
+                }
+            }
+        }
+        // Removed after the loop: `iter_mut()` above borrows `sources`.
+        for key in unreadable {
+            sources.remove(&key);
         }
         if !refs.is_empty() {
             table["component_files"] = Item::Value(Value::InlineTable(refs));
