@@ -330,7 +330,8 @@ async fn signal_cancellable_child_workflow(
         return Ok(());
     }
     let child = ExecutionId::Derived(child_id.clone());
-    conn.cancel_workflow_with_retries(&child, now).await?;
+    conn.append_cancel_workflow_requested_with_retries(&child, now)
+        .await?;
     cancellation_requested.insert(response_id);
     Ok(())
 }
@@ -487,7 +488,9 @@ mod tests {
         )
         .await
         .unwrap();
-        conn.cancel_workflow(&parent_id, now).await.unwrap();
+        conn.append_cancel_workflow_requested(&parent_id, now)
+            .await
+            .unwrap();
 
         // A handful of ticks drives: parent signals child, child finishes and responds,
         // parent then finishes.
@@ -619,7 +622,9 @@ mod tests {
         )
         .await
         .unwrap();
-        conn.cancel_workflow(&parent_id, now).await.unwrap();
+        conn.append_cancel_workflow_requested(&parent_id, now)
+            .await
+            .unwrap();
 
         let mut cancellation_requested = HashSet::new();
         for _ in 0..10 {

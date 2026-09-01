@@ -687,7 +687,7 @@ async fn execution_cancel(
         }
         ComponentType::Workflow => {
             let outcome = conn
-                .cancel_workflow_with_retries(&execution_id, executed_at)
+                .append_cancel_workflow_requested_with_retries(&execution_id, executed_at)
                 .await;
             if outcome.is_ok() {
                 // Best-effort CPU saver: the write above already cancels it; a locally-running

@@ -457,7 +457,7 @@ impl WorkflowDbConnection for CachingDbConnection {
             // `Cancelled` response wakes our await.
             for child_id in cancellations.cancellable_child_workflow_ids() {
                 self.db_connection
-                    .cancel_workflow_with_retries(
+                    .append_cancel_workflow_requested_with_retries(
                         &ExecutionId::Derived(child_id.clone()),
                         cancellations.cancelled_at,
                     )

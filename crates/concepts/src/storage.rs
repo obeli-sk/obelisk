@@ -1343,11 +1343,11 @@ pub trait DbExecutor: Send + Sync {
         }
     }
 
-    /// Request cancellation of a cancellable workflow. In one version-guarded
-    /// transaction, appends [`ExecutionRequest::CancellationRequested`]; rejects a non-cancellable
-    /// target and returns `AlreadyFinished`/`AlreadyCancelling` without appending.
-    /// The `Finished(Cancelled)` outcome is driven later by the cancellation driver.
-    async fn cancel_workflow(
+    /// Request cancellation of a cancellable workflow.
+    /// Non-cancellable target is rejected with [`DbErrorWriteNonRetriable::IllegalState`].
+    /// Appends [`ExecutionRequest::CancellationRequested`]
+    /// or returns `AlreadyFinished`/`AlreadyCancelling` without appending.
+    async fn append_cancel_workflow_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -1355,14 +1355,17 @@ pub trait DbExecutor: Send + Sync {
 
     /// Request cancellation of a cancellable workflow, retrying the version-guarded
     /// transaction on the live-worker race.
-    async fn cancel_workflow_with_retries(
+    async fn append_cancel_workflow_requested_with_retries(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
-            match self.cancel_workflow(execution_id, cancelled_at).await {
+            match self
+                .append_cancel_workflow_requested(execution_id, cancelled_at)
+                .await
+            {
                 Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
                     ..
                 })) if retries > 0 => retries -= 1,
