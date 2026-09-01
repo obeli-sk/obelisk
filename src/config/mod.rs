@@ -26,7 +26,8 @@ pub(crate) fn content_digest_to_exec_file(
     exec_cache_dir: &Path,
     content_digest: &ContentDigest,
 ) -> PathBuf {
-    exec_cache_dir.join(format!("{}.sh", content_digest.with_infix("_")))
+    // Do not add .sh suffix as a nodeJS script would fail to start.
+    exec_cache_dir.join(content_digest.with_infix("_"))
 }
 
 pub(crate) fn wasm_cache_metadata_dir(wasm_cache_dir: &Path) -> PathBuf {
