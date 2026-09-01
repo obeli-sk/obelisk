@@ -33,6 +33,16 @@ on:
         required: true
         type: boolean
         default: true
+      packages:
+        description: "Space-separated cargo package names to publish (cargo publish -p); empty publishes the whole workspace"
+        required: false
+        type: string
+        default: ""
+      no_verify:
+        description: "Run cargo publish with --no-verify (skip building the crate before upload)"
+        required: true
+        type: boolean
+        default: false
 
 defaults:
   run:
@@ -103,3 +113,5 @@ jobs:
       dry_run: ${{ inputs.dry_run }}
       stop_after_step_2: ${{ inputs.stop_after_step_2 }}
       update_latest: ${{ inputs.update_latest }}
+      packages: ${{ inputs.packages }}
+      no_verify: ${{ inputs.no_verify }}

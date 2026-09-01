@@ -52,6 +52,8 @@ improves Nix setup for contributors.
   ([#907](https://github.com/obeli-sk/obelisk/pull/907)).
 - *(api)* REST and gRPC pagination requests reject a zero page length instead of returning empty or
   non-advancing pages - ([#908](https://github.com/obeli-sk/obelisk/pull/908)).
+- *(deployment)* Skip unreadable backtrace sources instead of failing -
+  ([#916](https://github.com/obeli-sk/obelisk/pull/916)).
 
 ## [0.41.4](https://github.com/obeli-sk/obelisk/compare/v0.41.3...v0.41.4)
 

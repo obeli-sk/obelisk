@@ -3,6 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Error: Uncommitted changes" >&2
+  exit 1
+fi
+
 JS_BUILDER_OPTIONAL_PATTERN='activity-js-runtime-builder.*optional\|webhook-js-runtime-builder.*optional\|workflow-js-runtime-builder.*optional'
 
 # Root Cargo.toml: remove optional builder dependencies from [dependencies].
@@ -18,3 +23,6 @@ sed -i '/- name: test-js-local.sh/,+2d' .github/workflows/check-test.yml
 
 # Resolve the full workspace to regenerate Cargo.lock after removing the local dependencies.
 cargo metadata --format-version 1 > /dev/null
+
+git add Cargo.lock Cargo.toml .github
+git commit -m "chore: Strip local features before release"

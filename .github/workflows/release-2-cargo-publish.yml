@@ -28,6 +28,16 @@ on:
         required: true
         type: boolean
         default: true
+      packages:
+        description: "Space-separated cargo package names to publish (cargo publish -p); empty publishes the whole workspace"
+        required: false
+        type: string
+        default: ""
+      no_verify:
+        description: "Run cargo publish with --no-verify (skip building the crate before upload)"
+        required: true
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       ref:
@@ -47,6 +57,15 @@ on:
         description: "Update the Docker Hub latest tag (ignored when stopping after step 2)"
         required: true
         type: boolean
+      packages:
+        description: "Space-separated cargo package names to publish (cargo publish -p); empty publishes the whole workspace"
+        required: false
+        type: string
+        default: ""
+      no_verify:
+        description: "Run cargo publish with --no-verify (skip building the crate before upload)"
+        required: true
+        type: boolean
 
 defaults:
   run:
@@ -64,7 +83,13 @@ jobs:
 
   cachix-push:
     needs: validate-inputs
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -105,12 +130,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+          PACKAGES_INPUT: ${{ inputs.packages }}
         run: |
           DRY_RUN_ARG=""
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             DRY_RUN_ARG="--dry-run"
           fi
-          nix develop .#publish --command cargo publish --workspace --locked $DRY_RUN_ARG
+          NO_VERIFY_ARG=""
+          if [ "${{ inputs.no_verify }}" = "true" ]; then
+            NO_VERIFY_ARG="--no-verify"
+          fi
+          PACKAGE_ARGS=()
+          if [ -n "$PACKAGES_INPUT" ]; then
+            for pkg in $PACKAGES_INPUT; do
+              PACKAGE_ARGS+=(-p "$pkg")
+            done
+          else
+            PACKAGE_ARGS+=(--workspace)
+          fi
+          nix develop .#publish --command cargo publish "${PACKAGE_ARGS[@]}" --locked $DRY_RUN_ARG $NO_VERIFY_ARG
 
   call_child:
     needs:
