@@ -3,7 +3,6 @@
 //! that the workflow would produce next.
 
 use super::caching_db_connection::{CacheableDbEvent, WorkflowDbConnection};
-use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use crate::{
     activity::cancel_registry::CancelRegistry,
     workflow::{event_history::UpsertStubOrReplayInterrupt, replay_advance::is_closing_join_next},
@@ -21,11 +20,11 @@ use concepts::{
         ResponseSubscriptionEnd, ResponseWithCursor, SubscribeToResponsesError, Version,
     },
 };
-use db_common::JoinSetResponseId;
+use db_common::{JoinSetCancellable, JoinSetCloseCancellations};
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tokio::sync::mpsc;
-use tracing::{debug, trace, warn};
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalCapturedWrite {
@@ -181,30 +180,39 @@ async fn apply_captured_write(
     cancel_registry: &CancelRegistry,
 ) -> Result<Option<Version>, DbErrorWrite> {
     if let Some(cancellations) = &write.cancellations {
-        for response_id in cancellations.iterate_in_cancellation_order() {
-            match response_id {
-                JoinSetResponseId::ChildExecutionId(execution_id) => {
-                    let res = cancel_registry
-                        .cancel_activity(
+        for cancellable in cancellations.iterate_in_cancellation_order() {
+            match cancellable {
+                JoinSetCancellable::Activity(execution_id) => {
+                    cancel_registry
+                        .request_activity_cancellation(
                             conn,
                             &ExecutionId::Derived(execution_id.clone()),
                             cancellations.cancelled_at,
                         )
-                        .await;
-                    if let Err(err) = res {
-                        debug!("Ignoring failure to cancel activity {execution_id} - {err:?}");
-                    }
+                        .await?;
                 }
-                JoinSetResponseId::DelayId(delay_id) => {
-                    let res =
-                        storage::cancel_delay(conn, delay_id.clone(), cancellations.cancelled_at)
-                            .await;
-                    if let Err(err) = res {
-                        // This means that the watcher expired the delay in the mean time.
-                        trace!("Ignoring failure to cancel {delay_id} - {err:?}");
-                    }
+                JoinSetCancellable::Stub(stub_execution_id) => {
+                    storage::cancel_stub_execution_ignoring_conflict(
+                        conn,
+                        stub_execution_id.clone(),
+                        cancellations.cancelled_at,
+                    )
+                    .await?;
+                }
+                JoinSetCancellable::Delay(delay_id) => {
+                    storage::cancel_delay(conn, delay_id.clone(), cancellations.cancelled_at)
+                        .await?;
                 }
             }
+        }
+        // Append lifecycle change requesting `cancelled` for cancellable child workflows.
+        // The `CancellationDriver` drives their close and their response wakes our JoinNext wait.
+        for child_id in cancellations.cancellable_child_workflow_ids() {
+            conn.append_cancel_workflow_requested_with_retries(
+                &ExecutionId::Derived(child_id.clone()),
+                cancellations.cancelled_at,
+            )
+            .await?;
         }
     }
 
@@ -803,7 +811,8 @@ mod tests {
     use super::*;
     use crate::workflow::caching_db_connection::{CachingBuffer, CachingDbConnection};
     use crate::workflow::workflow_worker::JoinNextBlockingStrategy;
-    use concepts::{FunctionFqn, Params};
+    use concepts::{ComponentType, FunctionFqn, Params};
+    use db_common::{JoinSetMember, JoinSetResponseId};
     use rstest::rstest;
 
     enum ConnectionMode {
@@ -902,5 +911,140 @@ mod tests {
             .unwrap();
 
         assert_eq!(found, create_request);
+    }
+
+    /// `append_join_set_close` must signal a cancellable child workflow the same way
+    /// whether the write lands directly (`CachingDbConnection`) or is captured during
+    /// replay and applied afterwards (`ReplayWorkflowDbConnection`). Regression test for
+    /// a bug where the replay path silently dropped the signal.
+    #[rstest]
+    #[case::caching(ConnectionMode::Caching)]
+    #[case::replay(ConnectionMode::Replay)]
+    #[tokio::test]
+    async fn join_set_close_signals_cancellable_child_workflow_in_both_modes(
+        #[case] mode: ConnectionMode,
+    ) {
+        let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
+        let query_conn = db_pool.connection().await.unwrap();
+        let created_at = DateTime::UNIX_EPOCH;
+        let cancel_registry = CancelRegistry::new();
+
+        let parent_execution_id = ExecutionId::from_parts(0, 0);
+        let join_set_id = concepts::JoinSetId::new(
+            concepts::JoinSetKind::Named,
+            concepts::StrVariant::from("js"),
+        )
+        .unwrap();
+        let child_execution_id = parent_execution_id.next_level(&join_set_id);
+        let cancellable_ffqn =
+            FunctionFqn::new_static("testing:integration/workflow", "child-cancellable");
+
+        let parent_version = query_conn
+            .create(CreateRequest {
+                created_at,
+                execution_id: parent_execution_id.clone(),
+                ffqn: FunctionFqn::new_static("testing:integration/workflow", "parent"),
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_workflow(),
+                deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
+                scheduled_by: None,
+                paused: true,
+            })
+            .await
+            .unwrap();
+        query_conn
+            .create(CreateRequest {
+                created_at,
+                execution_id: ExecutionId::Derived(child_execution_id.clone()),
+                ffqn: cancellable_ffqn.clone(),
+                params: Params::empty(),
+                parent: Some((parent_execution_id.clone(), join_set_id.clone())),
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_workflow(),
+                deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        let cancellations = JoinSetCloseCancellations::classify(
+            std::iter::once((
+                JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
+                JoinSetMember::Child {
+                    component_type: ComponentType::Workflow,
+                    target_ffqn: cancellable_ffqn,
+                },
+            )),
+            created_at,
+        )
+        .expect("one cancellable child makes this non-empty");
+        let closing_join_next = AppendRequest {
+            created_at,
+            event: ExecutionRequest::HistoryEvent {
+                event: concepts::storage::HistoryEvent::JoinNext {
+                    join_set_id: join_set_id.clone(),
+                    run_expires_at: created_at,
+                    requested_ffqn: None,
+                    closing: true,
+                },
+            },
+        };
+
+        let op_conn = db_pool.connection().await.unwrap();
+        let mut connection: Box<dyn WorkflowDbConnection> = match mode {
+            ConnectionMode::Caching => Box::new(CachingDbConnection::new(
+                op_conn,
+                parent_execution_id.clone(),
+                None,
+            )),
+            ConnectionMode::Replay => Box::new(ReplayWorkflowDbConnection::new(
+                parent_execution_id.clone(),
+                op_conn,
+                None,
+            )),
+        };
+        connection
+            .append_join_set_close(
+                parent_version.clone(),
+                &cancel_registry,
+                parent_execution_id.clone(),
+                closing_join_next,
+                Some(cancellations),
+                None,
+                &ComponentId::dummy_workflow(),
+            )
+            .await
+            .unwrap();
+        if matches!(mode, ConnectionMode::Replay) {
+            let connection = connection
+                .as_any()
+                .downcast::<ReplayWorkflowDbConnection>()
+                .unwrap();
+            let (writes, _backtraces, real_connection) = connection.into_parts();
+            apply_writes(
+                real_connection.as_ref(),
+                &cancel_registry,
+                None,
+                writes,
+                parent_version,
+            )
+            .await
+            .unwrap();
+        }
+
+        let child_log = query_conn
+            .get(&ExecutionId::Derived(child_execution_id))
+            .await
+            .unwrap();
+        assert_matches::assert_matches!(
+            child_log.events.last().unwrap().event,
+            ExecutionRequest::CancellationRequested,
+            "join-set close must signal the cancellable child the same way in both modes"
+        );
     }
 }

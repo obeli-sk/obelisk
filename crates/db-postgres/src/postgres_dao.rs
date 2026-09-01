@@ -4128,7 +4128,7 @@ impl DbExecutor for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    async fn cancel_workflow(
+    async fn append_cancel_workflow_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,

@@ -5,6 +5,7 @@ use crate::ContentDigest;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
+use crate::FinishedExecutionFailure;
 use crate::FunctionExtension;
 use crate::FunctionFqn;
 use crate::FunctionMetadata;
@@ -1323,7 +1324,7 @@ pub trait DbExecutor: Send + Sync {
     );
 
     /// See [`Self::append_activity_cancellation_requested`].
-    async fn cancel_activity_with_retries(
+    async fn append_activity_cancellation_requested_with_retries(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -1342,11 +1343,11 @@ pub trait DbExecutor: Send + Sync {
         }
     }
 
-    /// Request cancellation of a cancellable workflow. In one version-guarded
-    /// transaction, appends [`ExecutionRequest::CancellationRequested`]; rejects a non-cancellable
-    /// target and returns `AlreadyFinished`/`AlreadyCancelling` without appending.
-    /// The `Finished(Cancelled)` outcome is driven later by the cancellation driver.
-    async fn cancel_workflow(
+    /// Request cancellation of a cancellable workflow.
+    /// Non-cancellable target is rejected with [`DbErrorWriteNonRetriable::IllegalState`].
+    /// Appends [`ExecutionRequest::CancellationRequested`]
+    /// or returns `AlreadyFinished`/`AlreadyCancelling` without appending.
+    async fn append_cancel_workflow_requested(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -1354,14 +1355,17 @@ pub trait DbExecutor: Send + Sync {
 
     /// Request cancellation of a cancellable workflow, retrying the version-guarded
     /// transaction on the live-worker race.
-    async fn cancel_workflow_with_retries(
+    async fn append_cancel_workflow_requested_with_retries(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let mut retries = 5;
         loop {
-            match self.cancel_workflow(execution_id, cancelled_at).await {
+            match self
+                .append_cancel_workflow_requested(execution_id, cancelled_at)
+                .await
+            {
                 Err(DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::VersionConflict {
                     ..
                 })) if retries > 0 => retries -= 1,
@@ -2289,15 +2293,14 @@ pub enum DelayCancelOutcome {
     AlreadyFinished,
 }
 
-#[instrument(skip(db_connection))]
-pub async fn stub_execution(
+async fn upsert_stub_finished(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
     parent_execution_id: ExecutionId,
     join_set_id: JoinSetId,
     created_at: DateTime<Utc>,
     return_value: SupportedFunctionReturnValue,
-) -> Result<(), DbErrorWrite> {
+) -> Result<(), DbErrorStubResponse> {
     let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
     let finished_req = AppendRequest {
         created_at,
@@ -2322,12 +2325,58 @@ pub async fn stub_execution(
             created_at,
         )
         .await
-        .map_err(|err| match err {
-            DbErrorStubResponse::StubConflict => {
-                DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
-            }
-            DbErrorStubResponse::Write(db_err) => db_err,
-        })
+}
+
+#[instrument(skip(db_connection))]
+pub async fn stub_execution(
+    db_connection: &dyn DbConnection,
+    execution_id: ExecutionIdDerived,
+    parent_execution_id: ExecutionId,
+    join_set_id: JoinSetId,
+    created_at: DateTime<Utc>,
+    return_value: SupportedFunctionReturnValue,
+) -> Result<(), DbErrorWrite> {
+    upsert_stub_finished(
+        db_connection,
+        execution_id,
+        parent_execution_id,
+        join_set_id,
+        created_at,
+        return_value,
+    )
+    .await
+    .map_err(|err| match err {
+        DbErrorStubResponse::StubConflict => {
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
+        }
+        DbErrorStubResponse::Write(db_err) => db_err,
+    })
+}
+
+pub async fn cancel_stub_execution_ignoring_conflict(
+    db_connection: &dyn DbConnection,
+    execution_id: ExecutionIdDerived,
+    cancelled_at: DateTime<Utc>,
+) -> Result<(), DbErrorWrite> {
+    let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
+    let retval = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+        reason: None,
+        kind: ExecutionFailureKind::Cancelled,
+        detail: None,
+    });
+    match upsert_stub_finished(
+        db_connection,
+        execution_id,
+        parent_execution_id,
+        join_set_id,
+        cancelled_at,
+        retval,
+    )
+    .await
+    {
+        Ok(()) | Err(DbErrorStubResponse::StubConflict) => Ok(()),
+        Err(DbErrorStubResponse::Write(err)) => Err(err),
+    }
 }
 
 pub async fn cancel_delay(

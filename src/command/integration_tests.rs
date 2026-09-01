@@ -4214,7 +4214,7 @@ async fn webhook_js_get_status_cancelling() {
         conn.create(create(ExecutionId::Derived(child_id), CHILD_FFQN))
             .await
             .unwrap();
-        conn.cancel_workflow_with_retries(&parent_id, now)
+        conn.append_cancel_workflow_requested_with_retries(&parent_id, now)
             .await
             .unwrap();
         pool.close().await;

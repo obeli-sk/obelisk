@@ -2998,7 +2998,7 @@ async fn cancel_workflow_from_pending_at(database: Database) {
     .await;
 
     let outcome = db_connection
-        .cancel_workflow(&execution_id, sim_clock.now())
+        .append_cancel_workflow_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
     assert_eq!(CancelOutcome::CancelRequested, outcome);
@@ -3050,7 +3050,7 @@ async fn cancel_workflow_from_locked_should_keep_underlying_state(database: Data
         .unwrap();
 
     let outcome = db_connection
-        .cancel_workflow(&execution_id, sim_clock.now())
+        .append_cancel_workflow_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
     assert_eq!(CancelOutcome::CancelRequested, outcome);
@@ -3098,7 +3098,7 @@ async fn cancel_workflow_from_paused_should_keep_underlying_state(database: Data
         .unwrap();
 
     let outcome = db_connection
-        .cancel_workflow(&execution_id, sim_clock.now())
+        .append_cancel_workflow_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
     assert_eq!(CancelOutcome::CancelRequested, outcome);
@@ -3143,7 +3143,7 @@ async fn cancel_workflow_rejects_non_cancellable(database: Database) {
     .await;
 
     let err = db_connection
-        .cancel_workflow(&execution_id, sim_clock.now())
+        .append_cancel_workflow_requested(&execution_id, sim_clock.now())
         .await
         .unwrap_err();
     let reason = assert_matches!(err, DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::IllegalState { reason, .. }) => reason);
@@ -3175,12 +3175,12 @@ async fn cancel_workflow_second_call_is_already_cancelling(database: Database) {
     .await;
 
     let first = db_connection
-        .cancel_workflow(&execution_id, sim_clock.now())
+        .append_cancel_workflow_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
     assert_eq!(CancelOutcome::CancelRequested, first);
     let second = db_connection
-        .cancel_workflow(&execution_id, sim_clock.now())
+        .append_cancel_workflow_requested(&execution_id, sim_clock.now())
         .await
         .unwrap();
     assert_eq!(CancelOutcome::AlreadyCancelling, second);
@@ -3209,7 +3209,7 @@ async fn get_cancelling_returns_only_cancelling_rows(database: Database) {
     )
     .await;
     db_connection
-        .cancel_workflow(&cancelling, sim_clock.now())
+        .append_cancel_workflow_requested(&cancelling, sim_clock.now())
         .await
         .unwrap();
 
