@@ -60,11 +60,11 @@ impl CancellationDriver {
                 "cancellation_driver",
                 async move {
                     debug!("Spawned the cancellation driver");
-                    // Child executions and delays whose cancellation was already
-                    // requested/signalled this process. Pruned as responses land;
-                    // empty on restart (re-request is idempotent), so no durable state
-                    // is needed.
-                    let mut cancellation_requested: HashSet<JoinSetResponseId> = HashSet::new();
+                    // Child executions (activities/workflows) whose cancellation was
+                    // already requested by this process. Avoids needless DB interactions as further cancellation
+                    // requests are skipped.
+                    let mut cancellation_requested_inflight: HashSet<ExecutionIdDerived> =
+                        HashSet::new();
                     loop {
                         match db_pool.connection().await {
                             Ok(conn) => {
@@ -73,7 +73,7 @@ impl CancellationDriver {
                                     &cancel_registry,
                                     clock_fn.now(),
                                     batch_size,
-                                    &mut cancellation_requested,
+                                    &mut cancellation_requested_inflight,
                                 )
                                 .await;
                             }
@@ -94,7 +94,7 @@ async fn tick(
     cancel_registry: &CancelRegistry,
     now: DateTime<Utc>,
     batch_size: u32,
-    cancellation_requested: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) {
     let ids = match conn.get_cancelling(batch_size).await {
         Ok(ids) => ids,
@@ -109,7 +109,7 @@ async fn tick(
             cancel_registry,
             &execution_id,
             now,
-            cancellation_requested,
+            cancellation_requested_inflight,
         )
         .await
         {
@@ -134,13 +134,20 @@ async fn close_step(
     cancel_registry: &CancelRegistry,
     execution_id: &ExecutionId,
     now: DateTime<Utc>,
-    cancellation_requested: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), CloseStepError> {
     let log = conn.get(execution_id).await?;
     if log.component_type.is_activity() {
         activity_finish_if_expired(conn, &log, now).await
     } else {
-        close_workflow_step(conn, cancel_registry, &log, now, cancellation_requested).await
+        close_workflow_step(
+            conn,
+            cancel_registry,
+            &log,
+            now,
+            cancellation_requested_inflight,
+        )
+        .await
     }
 }
 
@@ -163,7 +170,7 @@ async fn close_workflow_step(
     cancel_registry: &CancelRegistry,
     log: &ExecutionLog,
     now: DateTime<Utc>,
-    cancellation_requested_inflight: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), CloseStepError> {
     // Responses in cursor order, plus the set of children/delays that have one.
     let mut responses = Vec::with_capacity(log.responses.len());
@@ -193,7 +200,9 @@ async fn close_workflow_step(
         for (response_id, member) in members {
             if responded.contains(response_id) {
                 // Response landed.
-                cancellation_requested_inflight.remove(response_id);
+                if let JoinSetResponseId::ChildExecutionId(child_id) = response_id {
+                    cancellation_requested_inflight.remove(child_id);
+                }
             } else {
                 unresponded.push((response_id.clone(), member.clone()));
             }
@@ -283,37 +292,34 @@ async fn resolve_child_component_types(
     Ok(types)
 }
 
-/// At most once per process; idempotent, so redoing it after a restart (empty
-/// `cancellation_requested_inflight`) is harmless. Any real error fails the whole
-/// close-step, retried next tick, rather than silently leaving this member uncancelled.
+/// Only `Activity` is asynchronous (the locked worker owns the finish), so only it
+/// is deduped via `cancellation_requested_inflight`; delay/stub cancellation
+/// resolves inline in this same call.
 async fn cancel_or_finish_delays_and_activities(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     cancellable: &JoinSetCancellable,
     now: DateTime<Utc>,
-    cancellation_requested_inflight: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested_inflight: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), DbErrorWrite> {
-    let response_id = cancellable.response_id();
-    if cancellation_requested_inflight.contains(&response_id) {
-        // Waiting for activity finish.
-        return Ok(());
-    }
     match cancellable {
         JoinSetCancellable::Delay(delay_id) => {
             storage::cancel_delay(conn, delay_id.clone(), now).await?;
         }
         JoinSetCancellable::Activity(child_id) => {
-            let child = ExecutionId::Derived(child_id.clone());
-            cancel_registry
-                .request_activity_cancellation(conn, &child, now)
-                .await?;
+            if !cancellation_requested_inflight.contains(child_id) {
+                let child = ExecutionId::Derived(child_id.clone());
+                cancel_registry
+                    .request_activity_cancellation(conn, &child, now)
+                    .await?;
+                cancellation_requested_inflight.insert(child_id.clone());
+            } // avoid needless db interaction if cancellation was already requested.
         }
         JoinSetCancellable::Stub(execution_id) => {
             storage::cancel_stub_execution_ignoring_conflict(conn, execution_id.clone(), now)
                 .await?;
         }
     }
-    cancellation_requested_inflight.insert(response_id);
     Ok(())
 }
 
@@ -323,16 +329,15 @@ async fn signal_cancellable_child_workflow(
     conn: &dyn DbConnection,
     child_id: &ExecutionIdDerived,
     now: DateTime<Utc>,
-    cancellation_requested: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested: &mut HashSet<ExecutionIdDerived>,
 ) -> Result<(), DbErrorWrite> {
-    let response_id = JoinSetResponseId::ChildExecutionId(child_id.clone());
-    if cancellation_requested.contains(&response_id) {
+    if cancellation_requested.contains(child_id) {
         return Ok(());
     }
     let child = ExecutionId::Derived(child_id.clone());
     conn.append_cancel_workflow_requested_with_retries(&child, now)
         .await?;
-    cancellation_requested.insert(response_id);
+    cancellation_requested.insert(child_id.clone());
     Ok(())
 }
 
