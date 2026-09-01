@@ -213,11 +213,11 @@ async fn close_workflow_step(
                 now,
                 cancellation_requested_inflight,
             )
-            .await;
+            .await?;
         }
         for child_id in cancellations.cancellable_child_workflow_ids() {
             signal_cancellable_child_workflow(conn, child_id, now, cancellation_requested_inflight)
-                .await;
+                .await?;
         }
         Ok(())
     } else {
@@ -283,43 +283,38 @@ async fn resolve_child_component_types(
     Ok(types)
 }
 
-/// Best-effort, at most once per process; idempotent, so redoing it after a restart (empty `cancellation_requested_inflight`) is harmless.
+/// At most once per process; idempotent, so redoing it after a restart (empty
+/// `cancellation_requested_inflight`) is harmless. Any real error fails the whole
+/// close-step, retried next tick, rather than silently leaving this member uncancelled.
 async fn cancel_or_finish_delays_and_activities(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
     cancellable: &JoinSetCancellable,
     now: DateTime<Utc>,
     cancellation_requested_inflight: &mut HashSet<JoinSetResponseId>,
-) {
+) -> Result<(), DbErrorWrite> {
     let response_id = cancellable.response_id();
     if cancellation_requested_inflight.contains(&response_id) {
         // Waiting for activity finish.
-        return;
+        return Ok(());
     }
-    let outcome = match cancellable {
-        JoinSetCancellable::Delay(delay_id) => storage::cancel_delay(conn, delay_id.clone(), now)
-            .await
-            .map(|_| ())
-            .map_err(|err| debug!("Ignoring failure to cancel delay {delay_id} - {err:?}")),
+    match cancellable {
+        JoinSetCancellable::Delay(delay_id) => {
+            storage::cancel_delay(conn, delay_id.clone(), now).await?;
+        }
         JoinSetCancellable::Activity(child_id) => {
             let child = ExecutionId::Derived(child_id.clone());
             cancel_registry
                 .request_activity_cancellation(conn, &child, now)
-                .await
-                .map(|_| ())
-                .map_err(|err| debug!("Ignoring failure to cancel activity {child_id} - {err:?}"))
+                .await?;
         }
         JoinSetCancellable::Stub(execution_id) => {
-            storage::cancel_stub_execution(conn, execution_id.clone(), now)
-                .await
-                .map_err(|err| {
-                    debug!("Ignoring failure to finish cancelled stub {execution_id} - {err:?}");
-                })
+            storage::cancel_stub_execution_ignoring_conflict(conn, execution_id.clone(), now)
+                .await?;
         }
-    };
-    if outcome.is_ok() {
-        cancellation_requested_inflight.insert(response_id);
     }
+    cancellation_requested_inflight.insert(response_id);
+    Ok(())
 }
 
 /// Signal one cancellable workflow child. It is not finished here; its own
@@ -329,18 +324,15 @@ async fn signal_cancellable_child_workflow(
     child_id: &ExecutionIdDerived,
     now: DateTime<Utc>,
     cancellation_requested: &mut HashSet<JoinSetResponseId>,
-) {
+) -> Result<(), DbErrorWrite> {
     let response_id = JoinSetResponseId::ChildExecutionId(child_id.clone());
     if cancellation_requested.contains(&response_id) {
-        return;
+        return Ok(());
     }
     let child = ExecutionId::Derived(child_id.clone());
-    match conn.cancel_workflow_with_retries(&child, now).await {
-        Ok(_) => {
-            cancellation_requested.insert(response_id);
-        }
-        Err(err) => debug!("Ignoring failure to signal cancellable child {child_id} - {err:?}"),
-    }
+    conn.cancel_workflow_with_retries(&child, now).await?;
+    cancellation_requested.insert(response_id);
+    Ok(())
 }
 
 /// Append the synthetic closing `JoinNext`s followed by `Finished(Cancelled)` in a

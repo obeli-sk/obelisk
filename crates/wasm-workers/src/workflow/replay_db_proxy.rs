@@ -24,7 +24,7 @@ use db_common::{JoinSetCancellable, JoinSetCloseCancellations};
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tokio::sync::mpsc;
-use tracing::{debug, trace, warn};
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub(crate) struct InternalCapturedWrite {
@@ -183,38 +183,25 @@ async fn apply_captured_write(
         for cancellable in cancellations.iterate_in_cancellation_order() {
             match cancellable {
                 JoinSetCancellable::Activity(execution_id) => {
-                    let res = cancel_registry
+                    cancel_registry
                         .request_activity_cancellation(
                             conn,
                             &ExecutionId::Derived(execution_id.clone()),
                             cancellations.cancelled_at,
                         )
-                        .await;
-                    if let Err(err) = res {
-                        debug!("Ignoring failure to cancel activity {execution_id} - {err:?}");
-                    }
+                        .await?;
                 }
                 JoinSetCancellable::Stub(stub_execution_id) => {
-                    let res = storage::cancel_stub_execution(
+                    storage::cancel_stub_execution_ignoring_conflict(
                         conn,
                         stub_execution_id.clone(),
                         cancellations.cancelled_at,
                     )
-                    .await;
-                    if let Err(err) = res {
-                        debug!(
-                            "Ignoring failure to finish cancelled stub {stub_execution_id} - {err:?}"
-                        );
-                    }
+                    .await?;
                 }
                 JoinSetCancellable::Delay(delay_id) => {
-                    let res =
-                        storage::cancel_delay(conn, delay_id.clone(), cancellations.cancelled_at)
-                            .await;
-                    if let Err(err) = res {
-                        // This means that the watcher expired the delay in the mean time.
-                        trace!("Ignoring failure to cancel {delay_id} - {err:?}");
-                    }
+                    storage::cancel_delay(conn, delay_id.clone(), cancellations.cancelled_at)
+                        .await?;
                 }
             }
         }

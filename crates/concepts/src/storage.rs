@@ -2290,15 +2290,14 @@ pub enum DelayCancelOutcome {
     AlreadyFinished,
 }
 
-#[instrument(skip(db_connection))]
-pub async fn stub_execution(
+async fn upsert_stub_finished(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
     parent_execution_id: ExecutionId,
     join_set_id: JoinSetId,
     created_at: DateTime<Utc>,
     return_value: SupportedFunctionReturnValue,
-) -> Result<(), DbErrorWrite> {
+) -> Result<(), DbErrorStubResponse> {
     let stub_finished_version = Version::new(1); // Stub activities have no execution log except Created event.
     let finished_req = AppendRequest {
         created_at,
@@ -2323,15 +2322,35 @@ pub async fn stub_execution(
             created_at,
         )
         .await
-        .map_err(|err| match err {
-            DbErrorStubResponse::StubConflict => {
-                DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
-            }
-            DbErrorStubResponse::Write(db_err) => db_err,
-        })
 }
 
-pub async fn cancel_stub_execution(
+#[instrument(skip(db_connection))]
+pub async fn stub_execution(
+    db_connection: &dyn DbConnection,
+    execution_id: ExecutionIdDerived,
+    parent_execution_id: ExecutionId,
+    join_set_id: JoinSetId,
+    created_at: DateTime<Utc>,
+    return_value: SupportedFunctionReturnValue,
+) -> Result<(), DbErrorWrite> {
+    upsert_stub_finished(
+        db_connection,
+        execution_id,
+        parent_execution_id,
+        join_set_id,
+        created_at,
+        return_value,
+    )
+    .await
+    .map_err(|err| match err {
+        DbErrorStubResponse::StubConflict => {
+            DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::Conflict)
+        }
+        DbErrorStubResponse::Write(db_err) => db_err,
+    })
+}
+
+pub async fn cancel_stub_execution_ignoring_conflict(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionIdDerived,
     cancelled_at: DateTime<Utc>,
@@ -2342,7 +2361,7 @@ pub async fn cancel_stub_execution(
         kind: ExecutionFailureKind::Cancelled,
         detail: None,
     });
-    stub_execution(
+    match upsert_stub_finished(
         db_connection,
         execution_id,
         parent_execution_id,
@@ -2351,6 +2370,10 @@ pub async fn cancel_stub_execution(
         retval,
     )
     .await
+    {
+        Ok(()) | Err(DbErrorStubResponse::StubConflict) => Ok(()),
+        Err(DbErrorStubResponse::Write(err)) => Err(err),
+    }
 }
 
 pub async fn cancel_delay(

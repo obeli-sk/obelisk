@@ -410,79 +410,69 @@ impl WorkflowDbConnection for CachingDbConnection {
         version: Version,
         cancel_registry: &CancelRegistry,
         execution_id: ExecutionId,
-        req: AppendRequest,
+        join_next_req: AppendRequest,
         cancellations: Option<JoinSetCloseCancellations>,
         wasm_backtrace: Option<storage::WasmBacktrace>,
         component_id: &ComponentId,
     ) -> Result<(), DbErrorWrite> {
         assert_eq!(self.execution_id, execution_id);
         assert!(
-            is_closing_join_next(&req),
+            is_closing_join_next(&join_next_req),
             "append_join_set_close must append JoinNext(closing=true)"
         );
-        self.flush_non_blocking_event_cache(req.created_at).await?;
+        self.flush_non_blocking_event_cache(join_next_req.created_at)
+            .await?;
 
         if let Some(cancellations) = cancellations {
             for cancellable in cancellations.iterate_in_cancellation_order() {
                 match cancellable {
                     JoinSetCancellable::Activity(child_execution_id_derived) => {
-                        let res = cancel_registry
+                        cancel_registry
                             .request_activity_cancellation(
                                 self.db_connection.as_ref(),
                                 &ExecutionId::Derived(child_execution_id_derived.clone()),
                                 cancellations.cancelled_at,
                             )
-                            .await;
-                        if let Err(err) = res {
-                            debug!(
-                                "Ignoring failure to cancel activity {child_execution_id_derived} - {err:?}"
-                            );
-                        }
+                            .await?;
                     }
                     JoinSetCancellable::Stub(stub_execution_id) => {
-                        let res = storage::cancel_stub_execution(
+                        storage::cancel_stub_execution_ignoring_conflict(
                             self.db_connection.as_ref(),
                             stub_execution_id.clone(),
                             cancellations.cancelled_at,
                         )
-                        .await;
-                        if let Err(err) = res {
-                            debug!(
-                                "Ignoring failure to finish cancelled stub {stub_execution_id} - {err:?}"
-                            );
-                        }
+                        .await?;
                     }
                     JoinSetCancellable::Delay(delay_id) => {
-                        let res = storage::cancel_delay(
+                        storage::cancel_delay(
                             self.db_connection.as_ref(),
                             delay_id.clone(),
                             cancellations.cancelled_at,
                         )
-                        .await;
-                        if let Err(err) = res {
-                            debug!("Ignoring failure to cancel delay {delay_id} - {err:?}");
-                        }
+                        .await?;
                     }
                 }
             }
             // Signal cancellable children; the driver drives their close and the
             // `Cancelled` response wakes our await.
             for child_id in cancellations.cancellable_child_workflow_ids() {
-                let res = self
-                    .db_connection
+                self.db_connection
                     .cancel_workflow_with_retries(
                         &ExecutionId::Derived(child_id.clone()),
                         cancellations.cancelled_at,
                     )
-                    .await;
-                if let Err(err) = res {
-                    debug!("Ignoring failure to signal cancellable child {child_id} - {err:?}");
-                }
+                    .await?;
             }
         }
 
-        self.append_blocking(version, execution_id, req, wasm_backtrace, component_id)
-            .await
+        self.append_blocking(
+            version,
+            execution_id,
+            join_next_req,
+            wasm_backtrace,
+            component_id,
+        )
+        .await
     }
 
     async fn append_batch_create_new_execution(
