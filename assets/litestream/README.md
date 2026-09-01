@@ -5,7 +5,7 @@ docker run -d --net=host --name minio minio/minio:RELEASE.2025-09-07T16-13-09Z-c
 Inside MinIO container, run:
 ```sh
 mc alias set myminio http://127.0.0.1:9000 minioadmin minioadmin
-mc mb myminio/{MINIO_BUCKET_NAME
+mc mb myminio/litestream-bucket
 ```
 
 Run Obelisk container set up with Litestream:
