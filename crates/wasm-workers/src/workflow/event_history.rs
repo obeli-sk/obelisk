@@ -13,7 +13,6 @@ use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
-use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::ComponentId;
@@ -45,7 +44,9 @@ use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest};
 use concepts::storage::{ResponseSubscriptionEnd, SubscribeToResponsesError};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params};
-use db_common::{JoinSetOpenTracker, JoinSetOpenTrackerError, JoinSetResponseId};
+use db_common::{
+    JoinSetCloseCancellations, JoinSetOpenTracker, JoinSetOpenTrackerError, JoinSetResponseId,
+};
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use indexmap::indexmap;
@@ -789,37 +790,13 @@ impl EventHistory {
         debug!("Closing `{join_set_id}` with unawaited {response_ids:?}");
 
         let join_next_count = response_ids.len();
-        // Activities+delays are cancelled, cancellable children are signalled, other
-        // children are merely awaited. Order retained (cancelled in reverse later).
-        let mut activity_and_delay_ids = Vec::new();
-        let mut cancellable_child_ids = Vec::new();
-        for (response_id, member) in response_ids {
-            match &response_id {
-                JoinSetResponseId::DelayId(_) => activity_and_delay_ids.push(response_id),
-                JoinSetResponseId::ChildExecutionId(child_id) => {
-                    if member.is_activity() {
-                        activity_and_delay_ids.push(response_id);
-                    } else if member.is_cancellable_workflow() {
-                        cancellable_child_ids.push(child_id.clone());
-                    }
-                }
-            }
-        }
         let mut cancellations =
-            if activity_and_delay_ids.is_empty() && cancellable_child_ids.is_empty() {
-                None
-            } else {
-                Some(JoinSetCloseCancellations::new(
-                    activity_and_delay_ids,
-                    cancellable_child_ids,
-                    called_at,
-                ))
-            };
+            JoinSetCloseCancellations::classify(response_ids.into_iter(), called_at);
         for _ in 0..join_next_count {
             let event_call =
                 EventCallKind::Blocking(EventCallBlocking::JoinSetClose(JoinSetClose {
                     join_set_id: join_set_id.clone(),
-                    cancellations: std::mem::take(&mut cancellations), // First iterations takes all cancellations, so that the activities get the signal ASAP.
+                    cancellations: std::mem::take(&mut cancellations), // First iteration takes all cancellations, so that the activities get the signal ASAP.
                     wasm_backtrace: wasm_backtrace.clone(),
                 }));
             self.apply_event_call(event_call, event_call_cursor, db_connection, called_at)
@@ -3104,6 +3081,7 @@ impl JoinNext {
 #[derive(derive_more::Debug, Clone)]
 pub(crate) struct JoinSetClose {
     pub(crate) join_set_id: JoinSetId,
+    // Only the first iteration contains `cancellations` so that the activities get the signal ASAP.
     pub(crate) cancellations: Option<JoinSetCloseCancellations>,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,

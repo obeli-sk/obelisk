@@ -5,6 +5,7 @@ use crate::ContentDigest;
 use crate::ExecutionFailureKind;
 use crate::ExecutionId;
 use crate::ExecutionMetadata;
+use crate::FinishedExecutionFailure;
 use crate::FunctionExtension;
 use crate::FunctionFqn;
 use crate::FunctionMetadata;
@@ -1323,7 +1324,7 @@ pub trait DbExecutor: Send + Sync {
     );
 
     /// See [`Self::append_activity_cancellation_requested`].
-    async fn cancel_activity_with_retries(
+    async fn append_activity_cancellation_requested_with_retries(
         &self,
         execution_id: &ExecutionId,
         cancelled_at: DateTime<Utc>,
@@ -2328,6 +2329,28 @@ pub async fn stub_execution(
             }
             DbErrorStubResponse::Write(db_err) => db_err,
         })
+}
+
+pub async fn cancel_stub_execution(
+    db_connection: &dyn DbConnection,
+    execution_id: ExecutionIdDerived,
+    cancelled_at: DateTime<Utc>,
+) -> Result<(), DbErrorWrite> {
+    let (parent_execution_id, join_set_id) = execution_id.split_to_parts();
+    let retval = SupportedFunctionReturnValue::ExecutionFailure(FinishedExecutionFailure {
+        reason: None,
+        kind: ExecutionFailureKind::Cancelled,
+        detail: None,
+    });
+    stub_execution(
+        db_connection,
+        execution_id,
+        parent_execution_id,
+        join_set_id,
+        cancelled_at,
+        retval,
+    )
+    .await
 }
 
 pub async fn cancel_delay(

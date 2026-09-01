@@ -127,7 +127,7 @@ impl GrpcServer {
         match create_req.component_id.component_type {
             component_type if component_type.is_activity() => self
                 .cancel_registry
-                .cancel_activity(conn.as_ref(), execution_id, executed_at)
+                .request_activity_cancellation(conn.as_ref(), execution_id, executed_at)
                 .await
                 .to_status(),
             ComponentType::Workflow => {

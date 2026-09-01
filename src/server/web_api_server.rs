@@ -682,7 +682,7 @@ async fn execution_cancel(
         component_type if component_type.is_activity() => {
             state
                 .cancel_registry
-                .cancel_activity(conn.as_ref(), &execution_id, executed_at)
+                .request_activity_cancellation(conn.as_ref(), &execution_id, executed_at)
                 .await
         }
         ComponentType::Workflow => {

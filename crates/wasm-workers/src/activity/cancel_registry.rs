@@ -112,8 +112,9 @@ impl CancelRegistry {
         }
     }
 
+    /// Move the activity to lifecycle state `cancelling`.
     /// It is the responsibility of the caller to check that the execution belongs to an activity!
-    pub async fn cancel_activity(
+    pub async fn request_activity_cancellation(
         &self,
         db_connection: &dyn DbConnection,
         execution_id: &ExecutionId,
@@ -121,7 +122,7 @@ impl CancelRegistry {
     ) -> Result<CancelOutcome, DbErrorWrite> {
         info!(%execution_id, "Cancelling activity");
         let outcome = db_connection
-            .cancel_activity_with_retries(execution_id, cancelled_at)
+            .append_activity_cancellation_requested_with_retries(execution_id, cancelled_at)
             .await?;
         if outcome == CancelOutcome::CancelRequested {
             // Sending the signal is best effort, the activity might not be registered yet.

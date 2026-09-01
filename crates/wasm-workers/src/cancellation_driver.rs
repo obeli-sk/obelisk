@@ -25,7 +25,10 @@ use concepts::{
     },
     time::{ClockFn, Sleep},
 };
-use db_common::{JoinSetOpenTracker, JoinSetOpenTrackerError, JoinSetResponseId};
+use db_common::{
+    JoinSetCancellable, JoinSetCloseCancellations, JoinSetOpenTracker, JoinSetOpenTrackerError,
+    JoinSetResponseId,
+};
 use executor::AbortOnDropHandle;
 use std::{collections::HashMap, collections::HashSet, sync::Arc, time::Duration};
 use tracing::{Instrument, debug, info_span, warn};
@@ -160,7 +163,7 @@ async fn close_workflow_step(
     cancel_registry: &CancelRegistry,
     log: &ExecutionLog,
     now: DateTime<Utc>,
-    cancellation_requested: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested_inflight: &mut HashSet<JoinSetResponseId>,
 ) -> Result<(), CloseStepError> {
     // Responses in cursor order, plus the set of children/delays that have one.
     let mut responses = Vec::with_capacity(log.responses.len());
@@ -173,9 +176,6 @@ async fn close_workflow_step(
     }
 
     // Resolve each child's component type (activity vs workflow) from its Created event.
-    // A resolution failure fails the whole step (retried next tick) rather than guessing
-    // a type: mis-classifying an activity as an uncancellable workflow would silently
-    // strand it as a permanent await barrier.
     let child_component_types = resolve_child_component_types(conn, log).await?;
 
     let tracker = JoinSetOpenTracker::reconstruct(
@@ -188,59 +188,45 @@ async fn close_workflow_step(
         },
     )?;
 
-    // Classify every still-running child or delay. Activities and delays are
-    // cancelled in reverse creation order below, matching normal join-set close;
-    // cancellable workflow children are signalled; uncancellable workflow children
-    // are only awaited.
-    let mut all_responded = true;
-    let mut activity_and_delay_ids = Vec::new();
-    let mut cancellable_child_ids = Vec::new();
+    let mut unresponded = Vec::new();
     for members in tracker.open_join_sets().values() {
         for (response_id, member) in members {
             if responded.contains(response_id) {
-                // Response landed: this child/delay is done, drop it from the
-                // process-local set to keep it bounded to in-flight children/delays.
-                cancellation_requested.remove(response_id);
-                continue;
-            }
-            all_responded = false;
-            match response_id {
-                JoinSetResponseId::DelayId(_) => activity_and_delay_ids.push(response_id.clone()),
-                JoinSetResponseId::ChildExecutionId(child_id) => {
-                    if member.is_activity() {
-                        activity_and_delay_ids.push(response_id.clone());
-                    } else if member.is_cancellable_workflow() {
-                        cancellable_child_ids.push(child_id.clone());
-                    }
-                }
+                // Response landed.
+                cancellation_requested_inflight.remove(response_id);
+            } else {
+                unresponded.push((response_id.clone(), member.clone()));
             }
         }
     }
 
-    for response_id in activity_and_delay_ids.iter().rev() {
-        cancel_activity_or_delay(
-            conn,
-            cancel_registry,
-            response_id,
-            now,
-            cancellation_requested,
-        )
-        .await;
-    }
-    for child_id in cancellable_child_ids {
-        signal_cancellable_child_workflow(conn, &child_id, now, cancellation_requested).await;
-    }
-
-    if all_responded {
-        // Pair each response driven during cancellation with a synthetic closing
-        // `JoinNext` (one per still-open member), mirroring a worker-run close so the
-        // UI/API can zip responses to `JoinNext`s positionally. `reconstruct` already
-        // consumed responses matched by pre-existing awaits, so the members left open
-        // are exactly the unpaired ones.
+    if !unresponded.is_empty() {
+        let cancellations = JoinSetCloseCancellations::classify(unresponded.into_iter(), now);
+        let Some(cancellations) = &cancellations else {
+            unreachable!("checked that unresponded is not empty")
+        };
+        for cancellable in cancellations.iterate_in_cancellation_order() {
+            cancel_or_finish_delays_and_activities(
+                conn,
+                cancel_registry,
+                cancellable,
+                now,
+                cancellation_requested_inflight,
+            )
+            .await;
+        }
+        for child_id in cancellations.cancellable_child_workflow_ids() {
+            signal_cancellable_child_workflow(conn, child_id, now, cancellation_requested_inflight)
+                .await;
+        }
+        Ok(())
+    } else {
+        // Done. Pair each response driven during cancellation with a synthetic closing `JoinNext`.
         let closing_join_nexts = build_closing_join_nexts(&tracker, now);
-        append_finish_cancelled(conn, log, closing_join_nexts, now).await?;
+        append_finish_cancelled(conn, log, closing_join_nexts, now)
+            .await
+            .map_err(CloseStepError::from)
     }
-    Ok(())
 }
 
 /// One closing `JoinNext` per still-open join-set member, matching the per-member
@@ -297,35 +283,42 @@ async fn resolve_child_component_types(
     Ok(types)
 }
 
-/// Best-effort teardown of one running activity or delay. Each child/delay has
-/// cancellation requested at most once per process; the action is idempotent, so
-/// re-doing it after a restart (empty set) is harmless.
-async fn cancel_activity_or_delay(
+/// Best-effort, at most once per process; idempotent, so redoing it after a restart (empty `cancellation_requested_inflight`) is harmless.
+async fn cancel_or_finish_delays_and_activities(
     conn: &dyn DbConnection,
     cancel_registry: &CancelRegistry,
-    response_id: &JoinSetResponseId,
+    cancellable: &JoinSetCancellable,
     now: DateTime<Utc>,
-    cancellation_requested: &mut HashSet<JoinSetResponseId>,
+    cancellation_requested_inflight: &mut HashSet<JoinSetResponseId>,
 ) {
-    if cancellation_requested.contains(response_id) {
+    let response_id = cancellable.response_id();
+    if cancellation_requested_inflight.contains(&response_id) {
+        // Waiting for activity finish.
         return;
     }
-    let outcome = match response_id {
-        JoinSetResponseId::DelayId(delay_id) => storage::cancel_delay(conn, delay_id.clone(), now)
+    let outcome = match cancellable {
+        JoinSetCancellable::Delay(delay_id) => storage::cancel_delay(conn, delay_id.clone(), now)
             .await
             .map(|_| ())
             .map_err(|err| debug!("Ignoring failure to cancel delay {delay_id} - {err:?}")),
-        JoinSetResponseId::ChildExecutionId(child_id) => {
+        JoinSetCancellable::Activity(child_id) => {
             let child = ExecutionId::Derived(child_id.clone());
             cancel_registry
-                .cancel_activity(conn, &child, now)
+                .request_activity_cancellation(conn, &child, now)
                 .await
                 .map(|_| ())
                 .map_err(|err| debug!("Ignoring failure to cancel activity {child_id} - {err:?}"))
         }
+        JoinSetCancellable::Stub(execution_id) => {
+            storage::cancel_stub_execution(conn, execution_id.clone(), now)
+                .await
+                .map_err(|err| {
+                    debug!("Ignoring failure to finish cancelled stub {execution_id} - {err:?}");
+                })
+        }
     };
     if outcome.is_ok() {
-        cancellation_requested.insert(response_id.clone());
+        cancellation_requested_inflight.insert(response_id);
     }
 }
 

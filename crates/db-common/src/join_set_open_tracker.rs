@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, ExecutionIdDerived};
 use concepts::storage::{HistoryEvent, JoinNextTryOutcome, JoinSetRequest, JoinSetResponse};
 use concepts::{ComponentType, FunctionFqn, JoinSetId};
@@ -43,6 +44,18 @@ impl JoinSetMember {
         )
     }
 
+    /// Check before `is_activity`, which a stub also satisfies.
+    #[must_use]
+    pub fn is_stub(&self) -> bool {
+        matches!(
+            self,
+            Self::Child {
+                component_type: ComponentType::ActivityStub,
+                target_ffqn: _
+            }
+        )
+    }
+
     #[must_use]
     pub fn is_cancellable_workflow(&self) -> bool {
         matches!(
@@ -52,6 +65,84 @@ impl JoinSetMember {
                 target_ffqn
             } if target_ffqn.is_cancellable()
         )
+    }
+}
+
+/// One still-open join-set member that needs a signal to stop, in creation order.
+#[derive(Debug, Clone)]
+pub enum JoinSetCancellable {
+    Delay(DelayId),
+    /// Something is running it, so cancelling it is asynchronous.
+    Activity(ExecutionIdDerived),
+    /// Nothing is running it, so the caller finishes it inline instead.
+    Stub(ExecutionIdDerived),
+}
+
+impl JoinSetCancellable {
+    #[must_use]
+    pub fn response_id(&self) -> JoinSetResponseId {
+        match self {
+            Self::Delay(delay_id) => JoinSetResponseId::DelayId(delay_id.clone()),
+            Self::Activity(execution_id) | Self::Stub(execution_id) => {
+                JoinSetResponseId::ChildExecutionId(execution_id.clone())
+            }
+        }
+    }
+}
+
+/// Shared by a workflow's own `join-set-close` and the cancellation driver's whole-workflow close.
+/// The struct is guaranteed not to be empty.
+#[derive(Debug, Clone)]
+pub struct JoinSetCloseCancellations {
+    /// In creation order, acted on in reverse by the caller.
+    cancellables: Vec<JoinSetCancellable>,
+    /// Signalled, not finished: the cancellation driver closes these.
+    cancellable_child_workflow_ids: Vec<ExecutionIdDerived>,
+    pub cancelled_at: DateTime<Utc>,
+}
+
+impl JoinSetCloseCancellations {
+    #[must_use]
+    pub fn classify(
+        members: impl Iterator<Item = (JoinSetResponseId, JoinSetMember)>,
+        cancelled_at: DateTime<Utc>,
+    ) -> Option<JoinSetCloseCancellations> {
+        let mut cancellables = Vec::new();
+        let mut cancellable_child_workflow_ids = Vec::new();
+        for (response_id, member) in members {
+            match response_id {
+                JoinSetResponseId::DelayId(delay_id) => {
+                    cancellables.push(JoinSetCancellable::Delay(delay_id));
+                }
+                JoinSetResponseId::ChildExecutionId(child_id) => {
+                    if member.is_stub() {
+                        cancellables.push(JoinSetCancellable::Stub(child_id));
+                    } else if member.is_activity() {
+                        cancellables.push(JoinSetCancellable::Activity(child_id));
+                    } else if member.is_cancellable_workflow() {
+                        cancellable_child_workflow_ids.push(child_id);
+                    }
+                }
+            }
+        }
+        if cancellables.is_empty() && cancellable_child_workflow_ids.is_empty() {
+            None
+        } else {
+            Some(JoinSetCloseCancellations {
+                cancellables,
+                cancellable_child_workflow_ids,
+                cancelled_at,
+            })
+        }
+    }
+
+    pub fn iterate_in_cancellation_order(&self) -> impl Iterator<Item = &JoinSetCancellable> {
+        self.cancellables.iter().rev()
+    }
+
+    #[must_use]
+    pub fn cancellable_child_workflow_ids(&self) -> &[ExecutionIdDerived] {
+        &self.cancellable_child_workflow_ids
     }
 }
 

@@ -1,10 +1,7 @@
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::{
     activity::cancel_registry::CancelRegistry,
-    workflow::{
-        event_history::UpsertStubOrReplayInterrupt,
-        replay_advance::{JoinSetCloseCancellations, is_closing_join_next},
-    },
+    workflow::{event_history::UpsertStubOrReplayInterrupt, replay_advance::is_closing_join_next},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -17,7 +14,7 @@ use concepts::{
         ResponseWithCursor, SubscribeToResponsesError, Version,
     },
 };
-use db_common::JoinSetResponseId;
+use db_common::{JoinSetCancellable, JoinSetCloseCancellations};
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tracing::{debug, instrument, warn};
@@ -425,13 +422,12 @@ impl WorkflowDbConnection for CachingDbConnection {
         );
         self.flush_non_blocking_event_cache(req.created_at).await?;
 
-        // Activities and delays are cancelled in reverse order of creation.
         if let Some(cancellations) = cancellations {
-            for response_id in cancellations.iterate_in_cancellation_order() {
-                match response_id {
-                    JoinSetResponseId::ChildExecutionId(child_execution_id_derived) => {
+            for cancellable in cancellations.iterate_in_cancellation_order() {
+                match cancellable {
+                    JoinSetCancellable::Activity(child_execution_id_derived) => {
                         let res = cancel_registry
-                            .cancel_activity(
+                            .request_activity_cancellation(
                                 self.db_connection.as_ref(),
                                 &ExecutionId::Derived(child_execution_id_derived.clone()),
                                 cancellations.cancelled_at,
@@ -443,7 +439,20 @@ impl WorkflowDbConnection for CachingDbConnection {
                             );
                         }
                     }
-                    JoinSetResponseId::DelayId(delay_id) => {
+                    JoinSetCancellable::Stub(stub_execution_id) => {
+                        let res = storage::cancel_stub_execution(
+                            self.db_connection.as_ref(),
+                            stub_execution_id.clone(),
+                            cancellations.cancelled_at,
+                        )
+                        .await;
+                        if let Err(err) = res {
+                            debug!(
+                                "Ignoring failure to finish cancelled stub {stub_execution_id} - {err:?}"
+                            );
+                        }
+                    }
+                    JoinSetCancellable::Delay(delay_id) => {
                         let res = storage::cancel_delay(
                             self.db_connection.as_ref(),
                             delay_id.clone(),
@@ -458,7 +467,7 @@ impl WorkflowDbConnection for CachingDbConnection {
             }
             // Signal cancellable children; the driver drives their close and the
             // `Cancelled` response wakes our await.
-            for child_id in cancellations.cancellable_child_ids() {
+            for child_id in cancellations.cancellable_child_workflow_ids() {
                 let res = self
                     .db_connection
                     .cancel_workflow_with_retries(

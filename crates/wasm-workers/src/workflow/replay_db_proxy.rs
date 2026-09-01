@@ -3,7 +3,6 @@
 //! that the workflow would produce next.
 
 use super::caching_db_connection::{CacheableDbEvent, WorkflowDbConnection};
-use crate::workflow::replay_advance::JoinSetCloseCancellations;
 use crate::{
     activity::cancel_registry::CancelRegistry,
     workflow::{event_history::UpsertStubOrReplayInterrupt, replay_advance::is_closing_join_next},
@@ -21,7 +20,7 @@ use concepts::{
         ResponseSubscriptionEnd, ResponseWithCursor, SubscribeToResponsesError, Version,
     },
 };
-use db_common::JoinSetResponseId;
+use db_common::{JoinSetCancellable, JoinSetCloseCancellations};
 use std::pin::Pin;
 use std::{any::Any, future::Future};
 use tokio::sync::mpsc;
@@ -181,11 +180,11 @@ async fn apply_captured_write(
     cancel_registry: &CancelRegistry,
 ) -> Result<Option<Version>, DbErrorWrite> {
     if let Some(cancellations) = &write.cancellations {
-        for response_id in cancellations.iterate_in_cancellation_order() {
-            match response_id {
-                JoinSetResponseId::ChildExecutionId(execution_id) => {
+        for cancellable in cancellations.iterate_in_cancellation_order() {
+            match cancellable {
+                JoinSetCancellable::Activity(execution_id) => {
                     let res = cancel_registry
-                        .cancel_activity(
+                        .request_activity_cancellation(
                             conn,
                             &ExecutionId::Derived(execution_id.clone()),
                             cancellations.cancelled_at,
@@ -195,7 +194,20 @@ async fn apply_captured_write(
                         debug!("Ignoring failure to cancel activity {execution_id} - {err:?}");
                     }
                 }
-                JoinSetResponseId::DelayId(delay_id) => {
+                JoinSetCancellable::Stub(stub_execution_id) => {
+                    let res = storage::cancel_stub_execution(
+                        conn,
+                        stub_execution_id.clone(),
+                        cancellations.cancelled_at,
+                    )
+                    .await;
+                    if let Err(err) = res {
+                        debug!(
+                            "Ignoring failure to finish cancelled stub {stub_execution_id} - {err:?}"
+                        );
+                    }
+                }
+                JoinSetCancellable::Delay(delay_id) => {
                     let res =
                         storage::cancel_delay(conn, delay_id.clone(), cancellations.cancelled_at)
                             .await;
