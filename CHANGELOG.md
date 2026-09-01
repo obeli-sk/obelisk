@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.6](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.41.6)
+
+This patch release corrects cancellation of stubbed activities and child workflows, and restores
+support for Node.js executables in exec activities. It also updates the Litestream Docker image to
+0.5.17 and refreshes the Litestream restore example.
+
+### Changed
+
+- *(litestream)* Updated the Litestream Docker image to 0.5.17 and documented starting Obelisk with
+  automatic database restoration from a replica -
+  ([#919](https://github.com/obeli-sk/obelisk/pull/919)).
+
+### Fixed
+
+- *(workflow)* Closing a join set now cancels stubbed activities synchronously instead of waiting
+  for the cancellation driver. Replay also reliably appends cancellation requests to child
+  workflows -
+  ([#918](https://github.com/obeli-sk/obelisk/pull/918)).
+- *(exec)* Cached executables no longer receive a `.sh` suffix, allowing Node.js executables to
+  start correctly - ([#920](https://github.com/obeli-sk/obelisk/pull/920)).
+
 ## [0.41.5](https://github.com/obeli-sk/obelisk/compare/v0.41.4...v0.41.5)
 
 This patch release standardizes remote CLI configuration around the REST API, strengthens API
