@@ -4959,7 +4959,6 @@ fn prespawn_workflow_js(
             replay_inner,
             workflow_js.js_entry_path.clone(),
             workflow_js.js_files.clone(),
-            workflow_js.params.clone(),
             workflow_js.return_type.clone(),
             component.clone(),
         )),
@@ -4968,7 +4967,7 @@ fn prespawn_workflow_js(
             workflow_js.js_entry_path.clone(),
             workflow_js.js_files.clone(),
             &workflow_js.ffqn,
-            workflow_js.params.clone(),
+            &workflow_js.params,
             workflow_js.return_type.clone(),
         ),
     }
@@ -4987,7 +4986,6 @@ fn prespawn_workflow_js(
             inner,
             workflow_js.js_entry_path.clone(),
             workflow_js.js_files.clone(),
-            workflow_js.params,
             workflow_js.return_type,
             component,
         )),
@@ -4996,7 +4994,7 @@ fn prespawn_workflow_js(
             workflow_js.js_entry_path.clone(),
             workflow_js.js_files.clone(),
             &workflow_js.ffqn,
-            workflow_js.params,
+            &workflow_js.params,
             workflow_js.return_type,
         ),
     }
