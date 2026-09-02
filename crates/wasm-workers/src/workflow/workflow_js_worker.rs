@@ -36,7 +36,6 @@ pub struct WorkflowJsWorkerCompiled {
     inner: WorkflowWorkerCompiled,
     js_entry_path: String,
     js_files: BTreeMap<String, String>,
-    user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
     user_wasm_component: WasmComponent,
@@ -48,7 +47,7 @@ impl WorkflowJsWorkerCompiled {
         js_source: String,
         js_file_name: String,
         user_ffqn: &FunctionFqn,
-        user_params: Vec<ParameterType>,
+        user_params: &[ParameterType],
         user_return_type: ReturnTypeExtendable,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
         Self::new_graph(
@@ -66,12 +65,12 @@ impl WorkflowJsWorkerCompiled {
         js_entry_path: String,
         js_files: BTreeMap<String, String>,
         user_ffqn: &FunctionFqn,
-        user_params: Vec<ParameterType>,
+        user_params: &[ParameterType],
         user_return_type: ReturnTypeExtendable,
     ) -> Result<Self, utils::wasm_tools::DecodeError> {
         let user_wasm_component = WasmComponent::new_from_fn_signature(
             user_ffqn,
-            &user_params,
+            user_params,
             &user_return_type,
             ComponentType::Workflow,
             "js-workflow",
@@ -80,7 +79,6 @@ impl WorkflowJsWorkerCompiled {
             inner,
             js_entry_path,
             js_files,
-            user_params,
             user_return_type,
             user_wasm_component,
         ))
@@ -91,7 +89,6 @@ impl WorkflowJsWorkerCompiled {
         inner: WorkflowWorkerCompiled,
         js_entry_path: String,
         js_files: BTreeMap<String, String>,
-        user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
         user_wasm_component: WasmComponent,
     ) -> Self {
@@ -99,7 +96,6 @@ impl WorkflowJsWorkerCompiled {
             inner,
             js_entry_path,
             js_files,
-            user_params,
             user_return_type,
             user_wasm_component,
         }
@@ -148,7 +144,6 @@ impl WorkflowJsWorkerCompiled {
             inner: linked,
             js_entry_path: self.js_entry_path,
             js_files: self.js_files,
-            user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
             resolved_imports,
@@ -160,7 +155,6 @@ pub struct WorkflowJsWorkerLinked {
     inner: super::workflow_worker::WorkflowWorkerLinked,
     js_entry_path: String,
     js_files: BTreeMap<String, String>,
-    user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
     /// Resolved imports: interface FQN → imported functions.
@@ -187,7 +181,6 @@ impl WorkflowJsWorkerLinked {
             inner,
             js_entry_path: self.js_entry_path,
             js_files: self.js_files,
-            user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_exports_noext,
             resolved_imports: self.resolved_imports,
@@ -199,7 +192,6 @@ pub struct WorkflowJsWorker {
     inner: WorkflowWorker,
     js_entry_path: String,
     js_files: BTreeMap<String, String>,
-    user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
     /// Resolved imports: interface FQN → imported functions.
@@ -370,14 +362,6 @@ impl Worker for WorkflowJsWorker {
     }
 
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
-        assert_eq!(
-            self.user_params.len(),
-            ctx.params
-                .as_json_values()
-                .expect("params come from database, not wasmtime")
-                .len(),
-            "type checked in Params::from_json_values"
-        );
         (ctx.ffqn, ctx.params) = Self::boa_invocation(
             &ctx.params,
             self.js_entry_path.clone(),
@@ -821,7 +805,7 @@ mod tests {
         }
     }
 
-    fn default_js_params() -> Vec<ParameterType> {
+    fn single_list_of_strings_params() -> Vec<ParameterType> {
         vec![ParameterType {
             type_wrapper: TypeWrapper::List(Box::new(TypeWrapper::String)),
             name: StrVariant::Static("params"),
@@ -884,7 +868,7 @@ mod tests {
             js_source,
             "index.js".to_string(),
             &user_ffqn,
-            default_js_params(),
+            &single_list_of_strings_params(),
             user_return_type,
         )
         .unwrap();
@@ -948,7 +932,7 @@ mod tests {
             js_source.to_string(),
             "index.js".to_string(),
             user_ffqn,
-            default_js_params(),
+            &single_list_of_strings_params(),
             return_type,
         )
         .unwrap();
@@ -1024,7 +1008,7 @@ mod tests {
             js_source.to_string(),
             "index.js".to_string(),
             user_ffqn,
-            default_js_params(),
+            &single_list_of_strings_params(),
             default_return_type(),
         )
         .unwrap();
@@ -1329,12 +1313,44 @@ mod tests {
         max_events_per_run: usize,
         response_refresh_interval: usize,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
+        compile_js_workflow_worker_with_deployment_id_and_signature(
+            js_source,
+            user_ffqn,
+            db_pool,
+            clock_fn,
+            fn_registry,
+            workflow_engine,
+            deployment_id,
+            join_next_blocking_strategy,
+            deadline_factory,
+            &single_list_of_strings_params(),
+            return_type,
+            max_events_per_run,
+            response_refresh_interval,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn compile_js_workflow_worker_with_deployment_id_and_signature(
+        js_source: &str,
+        user_ffqn: &FunctionFqn,
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: &dyn ClockFn,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        workflow_engine: Arc<Engine>,
+        deployment_id: DeploymentId,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        params: &[ParameterType],
+        return_type: ReturnTypeExtendable,
+        max_events_per_run: usize,
+        response_refresh_interval: usize,
+    ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
-        let params = default_js_params();
         let component_id = concepts::ComponentId::new(
             ComponentType::Workflow,
             StrVariant::Static("test_js_workflow"),
-            workflow_js_component_digest(js_source, user_ffqn, &params, &return_type),
+            workflow_js_component_digest(js_source, user_ffqn, params, &return_type),
         )
         .unwrap();
 
@@ -3474,7 +3490,9 @@ mod tests {
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
-    async fn workflow_js_auto_locking_upgrade_failure_records_failed_outcome(database: Database) {
+    async fn workflow_js_auto_locking_changed_signature_upgrade_failure_records_failed_outcome(
+        database: Database,
+    ) {
         use crate::activity::activity_worker::test::compile_activity_stub;
 
         test_utils::set_up();
@@ -3489,7 +3507,7 @@ mod tests {
             return 'old';
         }";
         let failing_upgrade_js_source = r"
-        export default function test_auto_locking_failure(params) {
+        export default function test_auto_locking_failure(params, mode) {
             const js = obelisk.createJoinSet();
             js.submit('testing:stub-activity/activity.foo', ['test-input']);
             return 'new';
@@ -3517,7 +3535,7 @@ mod tests {
                 )),
             );
         let (upgrade_worker, upgrade_component_id, _upgrade_runnable) =
-            compile_js_workflow_worker_with_deployment_id(
+            compile_js_workflow_worker_with_deployment_id_and_signature(
                 failing_upgrade_js_source,
                 &user_ffqn,
                 db_pool.clone(),
@@ -3530,6 +3548,17 @@ mod tests {
                     Duration::ZERO,
                     sim_clock.clone_box(),
                 )),
+                &[
+                    single_list_of_strings_params().into_iter().next().unwrap(),
+                    ParameterType {
+                        type_wrapper: TypeWrapper::String,
+                        name: StrVariant::Static("mode"),
+                        wit_type: StrVariant::Static("string"),
+                    },
+                ],
+                default_return_type(),
+                usize::MAX,
+                usize::MAX,
             );
         assert_ne!(
             original_component_id.component_digest,
