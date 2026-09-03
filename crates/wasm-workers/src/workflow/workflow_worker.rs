@@ -1580,7 +1580,6 @@ impl WorkflowWorker {
         &self,
         ctx: WorkerContext,
     ) -> Result<AutoUpgradeOutcome, WorkerError> {
-        debug!("Auto-upgrading execution");
         let new_digest = self.config.component_id.component_digest.clone();
         let execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
@@ -1758,10 +1757,14 @@ impl Worker for WorkflowWorker {
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         if ctx.component_digest != self.config.component_id.component_digest {
+            info!("Auto-upgrading execution");
+            let stopwatch = std::time::Instant::now();
             match self.auto_upgrade_locked(ctx).await? {
-                AutoUpgradeOutcome::Succeeded => info!("Execution auto-upgraded"),
+                AutoUpgradeOutcome::Succeeded => {
+                    info!("Execution auto-upgraded in {:?}", stopwatch.elapsed());
+                }
                 AutoUpgradeOutcome::Failed { reason } => {
-                    warn!(%reason, "Execution auto-upgrade failed");
+                    warn!(%reason, "Execution auto-upgrade failed in {:?}", stopwatch.elapsed());
                 }
             }
             return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
