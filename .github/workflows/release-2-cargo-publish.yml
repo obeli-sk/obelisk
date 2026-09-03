@@ -100,7 +100,7 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable Cachix push
-        uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866
         with:
           name: ${{ vars.CACHIX_CACHE_NAME || 'obeli-sk' }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
