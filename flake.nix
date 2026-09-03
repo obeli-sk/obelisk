@@ -50,6 +50,9 @@
               buildCommand = ''
                 mkdir -p "$out"
                 export HOME="$TMPDIR"
+                # Avoid the containers/image "/run/containers/<uid>/auth.json" fallback,
+                # which can exist but be unreadable on CI runners (permission denied).
+                export XDG_RUNTIME_DIR="$TMPDIR"
                 fetch() {
                   name="$1"; versionFile="$2"
                   # Strip the `oci://` scheme and drop the `:tag` (skopeo rejects tag+digest;
