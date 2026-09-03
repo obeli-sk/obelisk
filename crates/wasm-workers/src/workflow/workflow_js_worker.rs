@@ -746,7 +746,7 @@ mod tests {
         DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest, HistoryEvent, JoinSetRequest,
         JoinSetResponse, Locked, LogEntry, LogInfoAppendRow, LogLevel, PendingState,
         PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStatePendingAt, Version,
+        PendingStatePendingAt, Version, wait_for_pending_state_fn,
     };
     use concepts::time::{ClockFn, TokioSleep};
     use concepts::{
@@ -1327,6 +1327,7 @@ mod tests {
             return_type,
             max_events_per_run,
             response_refresh_interval,
+            None,
         )
     }
 
@@ -1345,6 +1346,7 @@ mod tests {
         return_type: ReturnTypeExtendable,
         max_events_per_run: usize,
         response_refresh_interval: usize,
+        logs_storage_config: Option<LogStrageConfig>,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let component_id = concepts::ComponentId::new(
@@ -1396,7 +1398,7 @@ mod tests {
                 db_pool,
                 deadline_factory,
                 CancelRegistry::new(),
-                None,
+                logs_storage_config,
             ),
             component_id,
             runnable_component,
@@ -2840,25 +2842,16 @@ mod tests {
         db_close.close().await;
     }
 
-    /// When a pause or cancel RPC signals a locally-running JS workflow via
-    /// `signal_workflow_interrupt` (`InterruptKind::PauseOrCancel`), the worker must
-    /// stop promptly without waiting for the lock deadline and append nothing
-    /// (`WorkerResultOk::DbUpdatedByWorkerOrWatcher`): the durable Paused/Cancelling
-    /// event is written out of band by the endpoint, so unlike the executor-close
-    /// signal the worker must not append an `Unlocked`.
-    #[expand_enum_database]
-    #[rstest]
-    #[tokio::test]
-    async fn signal_workflow_interrupt_interrupts_running_workflow(database: Database) {
+    /// A local pause/cancel signal interrupts CPU-bound JavaScript at the next engine epoch.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn workflow_js_local_signal_interrupts_cpu_bound_workflow() {
         test_utils::set_up();
-        let (_guard, db_pool, db_close) = database.set_up().await;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
 
         let js_source = r"
             export default function busy(params) {
-                for (let i = 0; i < 30; i++) {
-                    obelisk.sleep({ milliseconds: 300 });
-                }
-                return 'done';
+                console.log('started');
+                for (;;) {}
             }
         ";
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "busy");
@@ -2870,14 +2863,26 @@ mod tests {
         let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
         let workflow_engine =
             Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (log_sender, mut log_receiver) = mpsc::channel(1);
 
-        let (worker, component_id, _) = compile_js_workflow_worker(
+        let (worker, component_id, _) = compile_js_workflow_worker_with_deployment_id_and_signature(
             js_source,
             &ffqn,
             db_pool.clone(),
-            sim_clock.clone_box(),
+            &sim_clock,
             fn_registry,
-            workflow_engine,
+            workflow_engine.clone(),
+            DEPLOYMENT_ID_DUMMY,
+            JoinNextBlockingStrategy::Interrupt,
+            deadline_tracker_factory_test(&sim_clock),
+            &single_list_of_strings_params(),
+            default_return_type(),
+            usize::MAX,
+            usize::MAX,
+            Some(LogStrageConfig {
+                min_level: LogLevel::Debug,
+                log_sender,
+            }),
         );
         // Share the worker's registry so the test can drive `signal_workflow_interrupt`.
         let cancel_registry = worker.inner.cancel_registry.clone();
@@ -2913,43 +2918,120 @@ mod tests {
             .tick_test(sim_clock.now(), RunId::generate())
             .await;
 
-        db_pool
-            .external_api_conn()
-            .await
-            .unwrap()
-            .pause_execution(&execution_id, sim_clock.now())
-            .await
-            .unwrap();
+        let started = log_receiver.recv().await.unwrap();
+        assert_matches!(
+            started.log_entry,
+            LogEntry::Log { message, .. } if message == "started"
+        );
 
-        // `signal_workflow_interrupt` is a no-op until `run()` registers the execution,
-        // so retry until the worker (blocked in the first `obelisk.sleep`) observes it
-        // and returns; the loop is aborted once the worker task exits.
-        let signaller = tokio::spawn({
-            let cancel_registry = cancel_registry.clone();
-            let execution_id = execution_id.clone();
-            async move {
-                loop {
-                    cancel_registry.signal_workflow_interrupt(&execution_id);
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            }
-        });
-        progress.wait_for_tasks().await;
-        signaller.abort();
+        cancel_registry.signal_workflow_interrupt(&execution_id);
+        workflow_engine.increment_epoch();
+        tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
+            .await
+            .expect("epoch callback must interrupt the CPU-bound workflow");
 
-        // Pausing the locked workflow appends one `Unlocked`; the worker must not
-        // append another one when it observes the local interrupt.
         let log = db_connection.get(&execution_id).await.unwrap();
         let unlocked_count = log
             .events
             .iter()
             .filter(|e| matches!(e.event, ExecutionRequest::Unlocked(_)))
             .count();
-        assert_eq!(unlocked_count, 1, "unexpected events: {:?}", log.events);
+        assert_eq!(unlocked_count, 0, "unexpected events: {:?}", log.events);
         assert!(
-            log.pending_state.is_paused(),
-            "execution must remain paused, got: {:?}",
+            matches!(log.pending_state, PendingState::Locked(_)),
+            "local interrupt must not update the database, got: {:?}",
             log.pending_state
+        );
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_js_local_signal_interrupts_blocked_await() {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let js_source = r"
+            export default function wait_forever(params) {
+                const js = obelisk.createJoinSet();
+                js.submit('testing:stub-activity/activity.foo', ['test-input']);
+                js.joinNext();
+            }
+        ";
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "wait-forever");
+        let sim_clock = SimClock::epoch();
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+        ]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, component_id, _) = compile_js_workflow_worker_with_deployment_id(
+            js_source,
+            &ffqn,
+            db_pool.clone(),
+            &sim_clock,
+            fn_registry,
+            workflow_engine,
+            DEPLOYMENT_ID_DUMMY,
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching: 0,
+                subscription_interruption: None,
+            },
+            deadline_tracker_factory_test(&sim_clock),
+        );
+        let cancel_registry = worker.inner.cancel_registry.clone();
+        let (exec_task, _close_sender) =
+            new_js_workflow_exec_task(worker, sim_clock.clone_box(), db_pool.clone());
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        let progress = exec_task
+            .tick_test(sim_clock.now(), RunId::generate())
+            .await;
+        wait_for_pending_state_fn(
+            db_connection.as_ref(),
+            &execution_id,
+            |log| matches!(log.pending_state, PendingState::BlockedByJoinSet(_)).then_some(()),
+            Some(Duration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+
+        cancel_registry.signal_workflow_interrupt(&execution_id);
+        tokio::time::timeout(Duration::from_secs(5), progress.wait_for_tasks())
+            .await
+            .expect("local signal must interrupt the blocked workflow");
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert!(
+            matches!(log.pending_state, PendingState::BlockedByJoinSet(_)),
+            "local interrupt must not update the database, got: {:?}",
+            log.pending_state
+        );
+        assert!(
+            !log.events
+                .iter()
+                .any(|e| matches!(e.event, ExecutionRequest::Unlocked(_))),
+            "unexpected events: {:?}",
+            log.events
         );
         drop(db_connection);
         db_close.close().await;
@@ -3559,6 +3641,7 @@ mod tests {
                 default_return_type(),
                 usize::MAX,
                 usize::MAX,
+                None,
             );
         assert_ne!(
             original_component_id.component_digest,
