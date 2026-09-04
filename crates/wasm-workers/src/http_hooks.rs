@@ -99,17 +99,30 @@ fn generate_toml_snippet(
         } else {
             "entry"
         };
-        let component_policy = format_allowed_hosts(&http_policy.hosts);
-        let global_allowlist = http_policy
-            .global_allowlist
-            .as_deref()
-            .map_or_else(|| "(not enforced)".to_string(), format_allowed_hosts);
+        let effective_policies = match denied_by {
+            PolicyLayer::Component => format!(
+                "Effective deployment.toml component policy:\n{}",
+                format_allowed_hosts(&http_policy.hosts)
+            ),
+            PolicyLayer::GlobalAllowlist => format!(
+                "Effective server.toml outbound HTTP allowlist:\n{}",
+                http_policy
+                    .global_allowlist
+                    .as_deref()
+                    .map_or_else(|| "(not enforced)".to_string(), format_allowed_hosts)
+            ),
+            PolicyLayer::Both => format!(
+                "Effective deployment.toml component policy:\n{}\n\
+                 Effective server.toml outbound HTTP allowlist:\n{}",
+                format_allowed_hosts(&http_policy.hosts),
+                http_policy
+                    .global_allowlist
+                    .as_deref()
+                    .map_or_else(|| "(not enforced)".to_string(), format_allowed_hosts)
+            ),
+        };
         Some(format!(
-            "{err}\n\
-             Effective deployment.toml component policy:\n\
-             {component_policy}\n\
-             Effective server.toml outbound HTTP allowlist:\n\
-             {global_allowlist}\n\
+            "{err}\n{effective_policies}\n\
              Review and add the following {entry_word} as needed.\n\n\
              {entries}"
         ))
@@ -338,10 +351,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(message.contains("Effective deployment.toml component policy:"));
-        assert!(message.contains("- https://api.example.com [GET]; request_url_regex"));
-        assert!(
-            message.contains("Effective server.toml outbound HTTP allowlist:\n(no allowed hosts)")
-        );
+        assert!(!message.contains("Effective deployment.toml component policy:"));
+        assert!(message.contains("Effective server.toml outbound HTTP allowlist:"));
+        assert!(message.contains("(no allowed hosts)"));
     }
 }
