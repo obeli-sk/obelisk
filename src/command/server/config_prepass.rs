@@ -78,6 +78,7 @@ impl LocatedWarnings {
         entries: &[AllowedHostToml],
         ignore_missing_env_vars: bool,
         secret_registry: &SecretRegistry,
+        include_unencrypted_secret_warnings: bool,
     ) {
         let Ok((_hosts, advisories)) =
             resolve_allowed_hosts(entries.to_vec(), ignore_missing_env_vars, secret_registry)
@@ -85,6 +86,13 @@ impl LocatedWarnings {
             return;
         };
         for advisory in advisories {
+            if !include_unencrypted_secret_warnings
+                && advisory
+                    .message
+                    .starts_with("secrets allowed for potentially unencrypted host")
+            {
+                continue;
+            }
             let located = self
                 .locations
                 .get(&advisory.fingerprint)
@@ -117,7 +125,22 @@ impl LocatedWarnings {
                 }
             })
             .collect::<Vec<_>>();
-        warn!("Configuration warnings:\n- {}", lines.join("\n- "));
+        let (unencrypted_secret_warnings, configuration_warnings): (Vec<_>, Vec<_>) = lines
+            .into_iter()
+            .partition(|line| line.starts_with("secrets allowed for potentially unencrypted host"));
+        if !configuration_warnings.is_empty() {
+            warn!(
+                "Configuration warnings:\n- {}",
+                configuration_warnings.join("\n- ")
+            );
+        }
+        if !unencrypted_secret_warnings.is_empty() {
+            warn!(
+                "Effective server.toml outbound HTTP allowlist permits secrets for potentially \
+                 unencrypted hosts:\n- {}",
+                unencrypted_secret_warnings.join("\n- ")
+            );
+        }
     }
 }
 
@@ -147,6 +170,7 @@ pub(super) fn preflight(
         &server_verified.server_outbound_allowed_hosts,
         false,
         secret_registry,
+        true,
     );
 
     // The server's own unregistered secrets are always fatal; the deployment's follow availability.
@@ -163,7 +187,7 @@ pub(super) fn preflight(
     let mut unregistered = BTreeSet::new();
     if let Some(deployment) = deployment {
         let mut check = |section: &'static str, name: &ConfigName, hosts: &[AllowedHostToml]| {
-            warnings.lint(hosts, ignore_missing_env_vars, secret_registry);
+            warnings.lint(hosts, ignore_missing_env_vars, secret_registry, false);
             collect_outbound_http_secret_replacements(
                 section,
                 name,
@@ -640,7 +664,7 @@ mod tests {
 
         let mut warnings = LocatedWarnings::default();
         warnings.index_file(&path);
-        warnings.lint(&[entry], false, &SecretRegistry::empty());
+        warnings.lint(&[entry], false, &SecretRegistry::empty(), true);
 
         let (message, locations) = warnings.by_message.iter().next().expect("one advisory");
         assert!(message.contains("has no `methods`"), "{message}");

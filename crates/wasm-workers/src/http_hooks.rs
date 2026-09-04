@@ -1,5 +1,5 @@
 use crate::component_logger::ComponentLogger;
-use crate::http_request_policy::{HttpRequestPolicy, PolicyError};
+use crate::http_request_policy::{HttpRequestPolicy, PolicyError, PolicyLayer};
 use concepts::storage::LogLevel;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
@@ -32,6 +32,8 @@ pub(crate) struct HttpHooks {
     pub(crate) component_logger: ComponentLogger,
     /// The TOML config section type for error messages
     pub(crate) config_section_hint: ConfigSectionHint,
+    /// The deployment component name for error-message TOML snippets.
+    pub(crate) component_name: String,
 }
 
 /// Generate a simplified host pattern for the TOML snippet.
@@ -53,6 +55,8 @@ fn format_host_pattern(scheme: &str, host: &str, port: u16) -> String {
 fn generate_toml_snippet(
     err: &PolicyError,
     config_section_hint: ConfigSectionHint,
+    component_name: &str,
+    http_policy: &HttpRequestPolicy,
 ) -> Option<String> {
     if let PolicyError::RequestDenied {
         method,
@@ -60,31 +64,89 @@ fn generate_toml_snippet(
         host,
         port,
         request_url,
+        denied_by,
         ..
     } = err
     {
         let pattern = format_host_pattern(scheme, host, *port);
         let request_url_regex =
             toml_basic_string_escape(&format!("^{}$", regex::escape(request_url)));
-        Some(format!(
-            "{err}\n\
-             Review and add the following entries as needed.\n\n\
-             # server.toml (operator-owned allowlist)\n\
+        let server_entry = format!(
+            "# server.toml (operator-owned allowlist)\n\
              [[outbound_http.allowed_host]]\n\
              pattern = \"{pattern}\"\n\
              methods = [\"{method}\"]\n\
-             request_url_regex = \"{request_url_regex}\"\n\n\
-             # deployment.toml (component policy)\n\
-             [[{section}.allowed_host]]\n\
+             request_url_regex = \"{request_url_regex}\"",
+            method = method.as_str()
+        );
+        let deployment_entry = format!(
+            "# deployment.toml (component policy)\n\
+             [[{config_section_hint}]]\n\
+             name = \"{component_name}\"\n\
+             [[{config_section_hint}.allowed_host]]\n\
              pattern = \"{pattern}\"\n\
              methods = [\"{method}\"]\n\
              request_url_regex = \"{request_url_regex}\"",
-            section = config_section_hint,
             method = method.as_str()
+        );
+        let entries = match denied_by {
+            PolicyLayer::Component => deployment_entry,
+            PolicyLayer::GlobalAllowlist => server_entry,
+            PolicyLayer::Both => format!("{server_entry}\n\n{deployment_entry}"),
+        };
+        let entry_word = if matches!(denied_by, PolicyLayer::Both) {
+            "entries"
+        } else {
+            "entry"
+        };
+        let effective_policies = match denied_by {
+            PolicyLayer::Component => format!(
+                "Effective deployment.toml component policy:\n{}",
+                format_allowed_hosts(&http_policy.hosts)
+            ),
+            PolicyLayer::GlobalAllowlist => format!(
+                "Effective server.toml outbound HTTP allowlist:\n{}",
+                http_policy
+                    .global_allowlist
+                    .as_deref()
+                    .map_or_else(|| "(not enforced)".to_string(), format_allowed_hosts)
+            ),
+            PolicyLayer::Both => format!(
+                "Effective deployment.toml component policy:\n{}\n\
+                 Effective server.toml outbound HTTP allowlist:\n{}",
+                format_allowed_hosts(&http_policy.hosts),
+                http_policy
+                    .global_allowlist
+                    .as_deref()
+                    .map_or_else(|| "(not enforced)".to_string(), format_allowed_hosts)
+            ),
+        };
+        Some(format!(
+            "{err}\n{effective_policies}\n\
+             Review and add the following {entry_word} as needed.\n\n\
+             {entries}"
         ))
     } else {
         None
     }
+}
+
+fn format_allowed_hosts(hosts: &[crate::http_request_policy::AllowedHostPolicy]) -> String {
+    if hosts.is_empty() {
+        return "(no allowed hosts)".to_string();
+    }
+    hosts
+        .iter()
+        .map(|host| match &host.request_url_regex {
+            Some(regex) => format!(
+                "- {}; request_url_regex = \"{}\"",
+                host.pattern,
+                regex.as_str()
+            ),
+            None => format!("- {}", host.pattern),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn toml_basic_string_escape(input: &str) -> String {
@@ -123,8 +185,13 @@ impl WasiHttpHooks for HttpHooks {
         let http_policy_res = self.http_policy.apply(&mut request);
         if let Err(err) = http_policy_res {
             // Generate a helpful TOML snippet for the user
-            let log_msg = generate_toml_snippet(&err, self.config_section_hint)
-                .unwrap_or_else(|| err.to_string());
+            let log_msg = generate_toml_snippet(
+                &err,
+                self.config_section_hint,
+                &self.component_name,
+                &self.http_policy,
+            )
+            .unwrap_or_else(|| err.to_string());
             self.component_logger.log(LogLevel::Warn, log_msg); // Append to execution's logs table
             let _ = resp_trace_tx.send(ResponseTrace {
                 finished_at: self.clock_fn.now(),
@@ -175,11 +242,11 @@ impl WasiHttpHooks for HttpHooks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http_request_policy::PolicyLayer;
+    use crate::http_request_policy::{AllowedHostPolicy, HostPattern, PolicyLayer};
     use hyper::Method;
 
     #[test]
-    fn denial_guidance_includes_server_and_deployment_entries() {
+    fn denial_guidance_includes_only_the_missing_server_entry() {
         let message = generate_toml_snippet(
             &PolicyError::RequestDenied {
                 method: Method::POST,
@@ -191,11 +258,13 @@ mod tests {
                 denied_by: PolicyLayer::GlobalAllowlist,
             },
             ConfigSectionHint::ActivityWasm,
+            "example-component",
+            &HttpRequestPolicy::default(),
         )
         .unwrap();
 
         assert!(message.contains("[[outbound_http.allowed_host]]"));
-        assert!(message.contains("[[activity_wasm.allowed_host]]"));
+        assert!(!message.contains("[[activity_wasm]]"));
         assert!(message.contains("methods = [\"POST\"]"));
         assert!(
             message.contains(
@@ -203,5 +272,87 @@ mod tests {
             ),
             "unexpected guidance: {message}"
         );
+    }
+
+    #[test]
+    fn component_denial_guidance_names_the_component() {
+        let message = generate_toml_snippet(
+            &PolicyError::RequestDenied {
+                method: Method::POST,
+                scheme: "https".to_string(),
+                host: "api.example.com".to_string(),
+                port: 443,
+                path: "/v1/items".to_string(),
+                request_url: "POST https://api.example.com/v1/items".to_string(),
+                denied_by: PolicyLayer::Component,
+            },
+            ConfigSectionHint::ActivityWasm,
+            "example-component",
+            &HttpRequestPolicy::default(),
+        )
+        .unwrap();
+
+        assert!(!message.contains("[[outbound_http.allowed_host]]"));
+        assert!(message.contains("[[activity_wasm]]\nname = \"example-component\""));
+        assert!(message.contains("[[activity_wasm.allowed_host]]"));
+    }
+
+    #[test]
+    fn both_denial_guidance_includes_both_entries() {
+        let message = generate_toml_snippet(
+            &PolicyError::RequestDenied {
+                method: Method::POST,
+                scheme: "https".to_string(),
+                host: "api.example.com".to_string(),
+                port: 443,
+                path: "/v1/items".to_string(),
+                request_url: "POST https://api.example.com/v1/items".to_string(),
+                denied_by: PolicyLayer::Both,
+            },
+            ConfigSectionHint::ActivityWasm,
+            "example-component",
+            &HttpRequestPolicy::default(),
+        )
+        .unwrap();
+
+        assert!(message.contains("[[outbound_http.allowed_host]]"));
+        assert!(message.contains("[[activity_wasm.allowed_host]]"));
+    }
+
+    #[test]
+    fn denial_guidance_shows_effective_allowed_hosts() {
+        let policy = HttpRequestPolicy {
+            hosts: vec![AllowedHostPolicy {
+                pattern: HostPattern::parse_with_methods(
+                    "api.example.com",
+                    crate::http_request_policy::MethodsPattern::Specific(vec![Method::GET]),
+                )
+                .unwrap(),
+                request_url_regex: Some(
+                    regex::Regex::new(r"^GET https://api\.example\.com/").unwrap(),
+                ),
+                secrets: Vec::new(),
+            }],
+            global_allowlist: Some(Vec::new()),
+        };
+        let message = generate_toml_snippet(
+            &PolicyError::RequestDenied {
+                method: Method::POST,
+                scheme: "https".to_string(),
+                host: "api.example.com".to_string(),
+                port: 443,
+                path: "/v1/items".to_string(),
+                request_url: "POST https://api.example.com/v1/items".to_string(),
+                denied_by: PolicyLayer::GlobalAllowlist,
+            },
+            ConfigSectionHint::ActivityWasm,
+            "example-component",
+            &policy,
+        )
+        .unwrap();
+
+        assert!(!message.contains("Effective deployment.toml component policy:"));
+        assert!(message.contains("Effective server.toml outbound HTTP allowlist:"));
+        assert!(message.contains("(no allowed hosts)"));
     }
 }
