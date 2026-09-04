@@ -110,6 +110,7 @@ pub(crate) fn store(
             http_policy,
             component_logger: component_logger.clone(),
             config_section_hint: config.config_section_hint,
+            component_name: config.component_id.name.to_string(),
         },
         component_logger,
     };

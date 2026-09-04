@@ -452,6 +452,8 @@ pub(crate) enum PolicyLayer {
     Component,
     #[display("server.toml outbound HTTP allowlist")]
     GlobalAllowlist,
+    #[display("deployment.toml component policy and server.toml outbound HTTP allowlist")]
+    Both,
 }
 impl From<PolicyError> for ErrorCode {
     fn from(_value: PolicyError) -> Self {
@@ -483,26 +485,24 @@ impl HttpRequestPolicy {
             denied_by,
         };
 
-        // 1. Pass 1 (component policy): the request must match a component entry.
+        // Check both policy layers so the diagnostic can say which entries to add.
         let matching: Vec<&AllowedHostPolicy> =
             filter_matching(&self.hosts, &scheme, &host, port, &method, &request_match);
-        if matching.is_empty() {
-            return Err(deny(PolicyLayer::Component));
+        let matching_global: Option<Vec<&AllowedHostPolicy>> = self
+            .global_allowlist
+            .as_ref()
+            .map(|global| filter_matching(global, &scheme, &host, port, &method, &request_match));
+        match (
+            matching.is_empty(),
+            matching_global.as_ref().is_some_and(Vec::is_empty),
+        ) {
+            (true, true) => return Err(deny(PolicyLayer::Both)),
+            (true, false) => return Err(deny(PolicyLayer::Component)),
+            (false, true) => return Err(deny(PolicyLayer::GlobalAllowlist)),
+            (false, false) => {}
         }
 
-        // 2. Pass 2 (operator global allowlist): when enforced, the request must also
-        //    match a global entry, or the whole request is denied regardless of
-        //    any secret placement.
-        let matching_global: Option<Vec<&AllowedHostPolicy>> = match &self.global_allowlist {
-            Some(global) => {
-                let m = filter_matching(global, &scheme, &host, port, &method, &request_match);
-                if m.is_empty() {
-                    return Err(deny(PolicyLayer::GlobalAllowlist));
-                }
-                Some(m)
-            }
-            None => None,
-        };
+        // The component and, when configured, global allowlist both match.
         let matching_global = matching_global.as_deref();
 
         // 3. Replace in header values, intersecting (secret, Headers) across sides.
@@ -1356,6 +1356,27 @@ mod tests {
             err,
             PolicyError::RequestDenied {
                 denied_by: PolicyLayer::GlobalAllowlist,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn empty_component_and_global_allowlists_report_both_layers() {
+        let policy = HttpRequestPolicy {
+            hosts: Vec::new(),
+            global_allowlist: Some(Vec::new()),
+        };
+        let mut request = hyper::Request::builder()
+            .uri("https://api.example.com/path")
+            .body(empty_body())
+            .unwrap();
+
+        let err = policy.apply(&mut request).unwrap_err();
+        assert!(matches!(
+            err,
+            PolicyError::RequestDenied {
+                denied_by: PolicyLayer::Both,
                 ..
             }
         ));

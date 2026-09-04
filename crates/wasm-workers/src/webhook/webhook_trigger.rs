@@ -1889,6 +1889,7 @@ impl WebhookEndpointCtx {
                 http_policy,
                 component_logger,
                 config_section_hint: config.config_section_hint,
+                component_name: config.component_id.name.to_string(),
             },
             last_direct_call_id: None,
             backtrace_persist: config.backtrace_persist,
