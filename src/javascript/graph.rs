@@ -218,6 +218,9 @@ mod tests {
         }
         let mut f = tokio::fs::File::create(&path).await.unwrap();
         f.write_all(content.as_bytes()).await.unwrap();
+        // `write_all` can return before tokio's background blocking task has
+        // actually performed the OS-level write; `flush` waits for it.
+        f.flush().await.unwrap();
     }
 
     #[tokio::test]
