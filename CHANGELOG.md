@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- *(http)* Denied outbound HTTP request warnings show the effective `deployment.toml` component
+  policy and/or `server.toml` allowlist and suggest only the missing entry, instead of always
+  suggesting both. Warnings about secrets allowed for potentially unencrypted hosts are now
+  reported once, separately from other configuration warnings -
+  ([#925](https://github.com/obeli-sk/obelisk/pull/925)).
+
+### Fixed
+
+- *(workflow-js)* Replaying a JavaScript workflow after its parameter cardinality changed no longer
+  panics. The execution is correctly marked with an incompatible digest instead of staying locked
+  until auto expiry - ([#921](https://github.com/obeli-sk/obelisk/pull/921)).
+
 ## [0.41.6](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.41.6)
 
 This patch release corrects cancellation of stubbed activities and child workflows, and restores
