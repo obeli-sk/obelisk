@@ -348,7 +348,7 @@ tokio = { version = "1", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.19"
-toml = { version = "1.1.4", features = ["preserve_order"] }
+toml = { version = "1.1.5", features = ["preserve_order"] }
 toml_edit = "0.25.13"
 tonic = { version = "0.14.6", default-features = false }
 tonic-prost = "0.14.6"
