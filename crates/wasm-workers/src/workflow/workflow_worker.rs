@@ -2085,7 +2085,7 @@ pub(crate) mod tests {
     /// Build a [`WorkflowWorker`] configured for replay/advance: `Interrupt` strategy,
     /// backtraces enabled, WASI stubbed, infinite-deadline tracker, empty cancel registry.
     #[expect(clippy::too_many_arguments)]
-    fn build_workflow_replay_worker(
+    pub(crate) fn build_workflow_replay_worker(
         deployment_id: DeploymentId,
         component_id: ComponentId,
         runnable_component: &RunnableComponent,
@@ -2118,6 +2118,24 @@ pub(crate) mod tests {
             Arc::new(DeadlineTrackerFactoryForReplay {}),
             CancelRegistry::new(),
             logs_storage_config,
+        )
+    }
+
+    pub(crate) fn build_workflow_replay_worker_from_worker(
+        worker: &WorkflowWorker,
+        runnable_component: &RunnableComponent,
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: Box<dyn ClockFn>,
+    ) -> WorkflowWorker {
+        build_workflow_replay_worker(
+            worker.deployment_id,
+            worker.config.component_id.clone(),
+            runnable_component,
+            worker.engine.clone(),
+            worker.fn_registry.clone(),
+            db_pool,
+            None,
+            clock_fn,
         )
     }
 

@@ -3,7 +3,7 @@ package obelisk:workflow@6.0.0;
 @since(version = 4.0.0)
 interface workflow-support {
     use obelisk:types/time@5.0.0.{schedule-at, datetime};
-    use obelisk:types/execution@5.0.0.{delay-id, execution-id, response-id, function, schedule-json-error, execution-failure-kind};
+    use obelisk:types/execution@5.0.0.{delay-id, execution-id, response-id, function, schedule-json-error, execution-failure-kind, await-next-extension-error};
     use obelisk:types/join-set@5.0.0.{join-set};
 
     /// Error variants that may occur on named join set creation.
@@ -145,6 +145,10 @@ interface workflow-support {
     @since(version = 6.0.0)
     join-next: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-error>;
 
+    /// Block until the next response arrives, requiring it to belong to `function`.
+    @since(version = 6.0.0)
+    join-next-for: func(join-set: borrow<join-set>, function: function) -> result<result<option<string>, option<string>>, await-next-extension-error>;
+
     /// Attempt to process next response without blocking.
     /// Return `join-next-try-error::all-processed` if the join set has all requests matched with responses already processed.
     /// Return `join-next-try-error::pending` if no response is available yet, but there are pending requests.
@@ -182,7 +186,7 @@ interface workflow-support {
 @since(version = 6.0.0)
 interface workflow-support-backtrace {
     use obelisk:types/time@5.0.0.{schedule-at, datetime};
-    use obelisk:types/execution@5.0.0.{delay-id, execution-id, function, schedule-json-error};
+    use obelisk:types/execution@5.0.0.{delay-id, execution-id, function, schedule-json-error, await-next-extension-error};
     use obelisk:types/backtrace@5.0.0.{wasm-backtrace};
     use obelisk:types/join-set@5.0.0.{join-set};
     use workflow-support.{join-set-create-error, submit-json-error, join-next-error, join-next-try-error, stub-json-error};
@@ -217,6 +221,9 @@ interface workflow-support-backtrace {
     /// See `workflow-support.join-next`.
     @since(version = 6.0.0)
     join-next: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-error>;
+    /// See `workflow-support.join-next-for`.
+    @since(version = 6.0.0)
+    join-next-for: func(join-set: borrow<join-set>, function: function, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, await-next-extension-error>;
     /// See `workflow-support.join-next-try`.
     @since(version = 6.0.0)
     join-next-try: func(join-set: borrow<join-set>, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, join-next-try-error>;

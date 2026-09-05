@@ -47,7 +47,11 @@ pub enum ProxyKind<'a> {
         function_name: &'a str,
     },
     /// Extension awaitNext: `import { addAwaitNext } from 'ns:pkg-obelisk-ext/ifc'`
-    ExtAwaitNext,
+    ExtAwaitNext {
+        interface_name: &'a str,
+        function_name: &'a str,
+        js_name: &'a str,
+    },
     /// Extension get: `import { addGet } from 'ns:pkg-obelisk-ext/ifc'`
     ExtGet,
     /// Stub: `import { fooStub } from 'ns:pkg-obelisk-stub/ifc'`
@@ -109,8 +113,15 @@ pub fn register_import_modules(
                         },
                         context,
                     )
-                } else if wit_name.ends_with("-await-next") {
-                    create_proxy(ProxyKind::ExtAwaitNext, context)
+                } else if let Some(base_fn) = wit_name.strip_suffix("-await-next") {
+                    create_proxy(
+                        ProxyKind::ExtAwaitNext {
+                            interface_name: base_specifier,
+                            function_name: base_fn,
+                            js_name,
+                        },
+                        context,
+                    )
                 } else if wit_name.ends_with("-get") {
                     create_proxy(ProxyKind::ExtGet, context)
                 } else {
