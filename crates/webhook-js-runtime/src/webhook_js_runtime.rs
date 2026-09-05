@@ -344,7 +344,7 @@ fn create_webhook_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
             function_name,
         } => create_schedule_proxy(interface_name, function_name, context),
         ProxyKind::ExtSubmit { .. }
-        | ProxyKind::ExtAwaitNext
+        | ProxyKind::ExtAwaitNext { .. }
         | ProxyKind::ExtGet
         | ProxyKind::Stub { .. } => {
             unreachable!("webhooks do not support -obelisk-ext or -obelisk-stub imports")

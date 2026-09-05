@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(workflow)* `join-next-for` workflow-support function blocks until the next response arrives and
+  requires it to belong to a given function, returning `function-mismatch` (leaving the response
+  unprocessed) when the next response belongs to a different function or a delay.
+
 ### Changed
 
 - *(http)* Denied outbound HTTP request warnings show the effective `deployment.toml` component
@@ -13,12 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggesting both. Warnings about secrets allowed for potentially unencrypted hosts are now
   reported once, separately from other configuration warnings -
   ([#925](https://github.com/obeli-sk/obelisk/pull/925)).
+- **Breaking:** *(workflow-js)* Typed `*-await-next` extension imports now route through `join-next-for`, so JS
+  workflows record the requested function in their event history exactly as native Rust workflows
+  do. The execution log is therefore identical across languages, allowing a workflow to be replayed
+  after switching its implementation between JS and Rust mid-execution.
 
 ### Fixed
 
 - *(workflow-js)* Replaying a JavaScript workflow after its parameter cardinality changed no longer
   panics. The execution is correctly marked with an incompatible digest instead of staying locked
   until auto expiry - ([#921](https://github.com/obeli-sk/obelisk/pull/921)).
+- *(workflow-js)* A stub written from JS (`stub-json`, used by `obelisk.stub` and the typed `-stub`
+  extension imports) now hashes the type-checked return value the same way a native Rust `-stub`
+  extension does, instead of hashing the raw JSON string. The two representations previously produced
+  different `retval_hash` values, so a self-fulfilled stub recorded by one language failed the
+  determinism check when the workflow was replayed under the other, blocking mid-execution
+  JS/Rust switches for any workflow that self-fulfills a stub.
 
 ## [0.41.6](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.41.6)
 

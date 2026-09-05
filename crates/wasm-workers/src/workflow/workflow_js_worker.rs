@@ -733,7 +733,10 @@ mod tests {
     use crate::workflow::deadline_tracker::{
         DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
     };
-    use crate::workflow::workflow_worker::tests::write_stub_response;
+    use crate::workflow::workflow_worker::tests::{
+        build_workflow_replay_worker_from_worker, compile_workflow_worker_runnable,
+        write_stub_response,
+    };
     use crate::workflow::workflow_worker::{
         JoinNextBlockingStrategy, WorkflowConfig, WorkflowConfigMode,
     };
@@ -845,6 +848,40 @@ mod tests {
         user_return_type: ReturnTypeExtendable,
         max_replay_captured_writes: Option<usize>,
     ) -> WorkflowJsWorker {
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-fn");
+        build_js_replay_worker_with_signature(
+            deployment_id,
+            component_id,
+            runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool,
+            logs_storage_config,
+            clock_fn,
+            js_source,
+            &user_ffqn,
+            &single_list_of_strings_params(),
+            user_return_type,
+            max_replay_captured_writes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_js_replay_worker_with_signature(
+        deployment_id: concepts::prefixed_ulid::DeploymentId,
+        component_id: concepts::ComponentId,
+        runnable_component: &RunnableComponent,
+        workflow_engine: Arc<wasmtime::Engine>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        db_pool: Arc<dyn DbPool>,
+        logs_storage_config: Option<LogStrageConfig>,
+        clock_fn: Box<dyn concepts::time::ClockFn>,
+        js_source: String,
+        user_ffqn: &FunctionFqn,
+        params: &[ParameterType],
+        user_return_type: ReturnTypeExtendable,
+        max_replay_captured_writes: Option<usize>,
+    ) -> WorkflowJsWorker {
         use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
         let config = WorkflowConfig {
             component_id,
@@ -862,13 +899,12 @@ mod tests {
             clock_fn,
         )
         .unwrap();
-        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "test-fn");
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
             js_source,
             "index.js".to_string(),
-            &user_ffqn,
-            &single_list_of_strings_params(),
+            user_ffqn,
+            params,
             user_return_type,
         )
         .unwrap();
@@ -2349,6 +2385,552 @@ mod tests {
         );
         assert_eq!(json!("stubbed-result-42"), result["result"]);
         drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_typed_await_records_requested_ffqn(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = r"
+        import { fooAwaitNext } from 'testing:stub-activity-obelisk-ext/activity';
+
+        export default function typed_await(_params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['value']);
+            obelisk.stub(execId, { ok: 'done' });
+            return fooAwaitNext(js);
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "typed-await").await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        let requested_ffqn = log.events.iter().find_map(|event| match &event.event {
+            ExecutionRequest::HistoryEvent {
+                event:
+                    HistoryEvent::JoinNext {
+                        requested_ffqn,
+                        closing: false,
+                        ..
+                    },
+            } => Some(requested_ffqn.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            Some(Some(FunctionFqn::new_static(
+                "testing:stub-activity/activity",
+                "foo"
+            ))),
+            requested_ffqn
+        );
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_generic_join_next_records_no_requested_ffqn(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = r"
+        export default function generic_await(_params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['value']);
+            obelisk.stub(execId, { ok: 'done' });
+            return js.joinNext();
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "generic-await").await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        let requested_ffqn = log.events.iter().find_map(|event| match &event.event {
+            ExecutionRequest::HistoryEvent {
+                event:
+                    HistoryEvent::JoinNext {
+                        requested_ffqn,
+                        closing: false,
+                        ..
+                    },
+            } => Some(requested_ffqn.clone()),
+            _ => None,
+        });
+        assert_eq!(Some(None), requested_ffqn);
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_typed_await_mismatch_does_not_consume_response(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = r"
+        import { fooAwaitNext } from 'testing:stub-activity-obelisk-ext/activity';
+
+        export default function typed_mismatch(_params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.noret', []);
+            obelisk.stub(execId, { ok: null });
+            let mismatch = false;
+            try {
+                fooAwaitNext(js);
+            } catch (e) {
+                mismatch = String(e).includes('FunctionMismatch');
+            }
+            const result = js.joinNext();
+            return JSON.stringify({ mismatch, resultIsNull: result === null, lastId: js.lastId });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "typed-mismatch").await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["mismatch"]);
+        assert_eq!(json!(true), result["resultIsNull"]);
+        assert!(
+            result["lastId"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("E_"))
+        );
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_typed_await_exhausted_throws_join_set_exhausted(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let js_source = r"
+        import { fooAwaitNext } from 'testing:stub-activity-obelisk-ext/activity';
+
+        export default function typed_exhausted(_params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['value']);
+            obelisk.stub(execId, { ok: 'done' });
+            fooAwaitNext(js);
+            let exhausted = false;
+            try {
+                fooAwaitNext(js);
+            } catch (e) {
+                exhausted = e instanceof obelisk.JoinSetExhaustedError;
+            }
+            return JSON.stringify({ exhausted });
+        }";
+
+        let harness =
+            JsWorkflowTestHarness::with_stub_activity(db_pool, js_source, "typed-exhausted").await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["exhausted"]);
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn typed_await_history_replays_between_rust_and_js(
+        database: Database,
+        #[values(false, true)] producer_is_js: bool,
+    ) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+        use crate::workflow::workflow_worker::BacktraceCapture;
+        use crate::workflow::workflow_worker::test::compile_workflow;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let user_ffqn =
+            FunctionFqn::new_static("testing:stub-workflow/workflow", "submit-await-next");
+        let js_source = r"
+        import { fooSubmit, fooAwaitNext } from 'testing:stub-activity-obelisk-ext/activity';
+
+        export default function submit_await_next(arg) {
+            const js = obelisk.createJoinSet();
+            fooSubmit(js, arg);
+            return fooAwaitNext(js);
+        }";
+        let params = vec![ParameterType {
+            type_wrapper: TypeWrapper::String,
+            name: StrVariant::Static("arg"),
+            wit_type: StrVariant::Static("string"),
+        }];
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::String)),
+                err: None,
+            },
+            wit_type: StrVariant::Static("result<string>"),
+        };
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
+                .await,
+        ]);
+
+        let (native_worker, native_runnable) = compile_workflow_worker_runnable(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            CancelRegistry::new(),
+        )
+        .await;
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (js_worker, js_component_id, js_runnable) =
+            compile_js_workflow_worker_with_deployment_id_and_signature(
+                js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                &sim_clock,
+                fn_registry.clone(),
+                workflow_engine.clone(),
+                DEPLOYMENT_ID_DUMMY,
+                JoinNextBlockingStrategy::Interrupt,
+                Arc::new(DeadlineTrackerFactoryTokio::new(
+                    Duration::ZERO,
+                    sim_clock.clone_box(),
+                )),
+                &params,
+                return_type.clone(),
+                usize::MAX,
+                usize::MAX,
+                None,
+            );
+
+        let producer_component_id = if producer_is_js {
+            js_component_id.clone()
+        } else {
+            native_worker.config.component_id.clone()
+        };
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!("bar")]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: producer_component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(3),
+            tick_sleep: TICK_SLEEP,
+            component_id: producer_component_id,
+            task_limiter_global: None,
+            task_limiter_local: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::WORKFLOW,
+            locking_strategy: LockingStrategy::ByComponentDigest,
+        };
+        let (producer, _close) = if producer_is_js {
+            ExecTask::new_all_ffqns_test(
+                Arc::new(js_worker),
+                exec_config,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+            )
+        } else {
+            ExecTask::new_all_ffqns_test(
+                native_worker.clone(),
+                exec_config,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+            )
+        };
+        producer
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        let log = db_connection.get(&execution_id).await.unwrap();
+        let child_execution_id = log.events.iter().find_map(|event| match &event.event {
+            ExecutionRequest::HistoryEvent {
+                event:
+                    HistoryEvent::JoinSetRequest {
+                        request:
+                            JoinSetRequest::ChildExecutionRequest {
+                                child_execution_id, ..
+                            },
+                        ..
+                    },
+            } => Some(child_execution_id.clone()),
+            _ => None,
+        });
+        write_stub_response(
+            db_connection.as_ref(),
+            sim_clock.now(),
+            child_execution_id.expect("producer must submit a child"),
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                value: WastVal::String("stubbing bar".to_string()),
+                r#type: TypeWrapper::String,
+            })),
+        )
+        .await;
+        producer
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+
+        let replay = if producer_is_js {
+            build_workflow_replay_worker_from_worker(
+                &native_worker,
+                &native_runnable,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+            )
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+        } else {
+            build_js_replay_worker_with_signature(
+                DEPLOYMENT_ID_DUMMY,
+                js_component_id,
+                &js_runnable,
+                workflow_engine,
+                fn_registry,
+                db_pool.clone(),
+                None,
+                sim_clock.clone_box(),
+                js_source.to_string(),
+                &user_ffqn,
+                &params,
+                return_type,
+                None,
+            )
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+        }
+        .unwrap();
+        assert_matches!(replay, ReplayResponse::Finished { .. });
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    /// A self-fulfilled stub must preserve its event history across a JS/Rust backend switch.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn self_fulfilled_stub_replays_between_rust_and_js(
+        database: Database,
+        #[values(false, true)] producer_is_js: bool,
+    ) {
+        use crate::activity::activity_worker::test::compile_activity_stub;
+        use crate::workflow::workflow_worker::BacktraceCapture;
+        use crate::workflow::workflow_worker::test::compile_workflow;
+
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let user_ffqn =
+            FunctionFqn::new_static("testing:stub-workflow/workflow", "submit-stub-await");
+        let js_source = r"
+        import { fooSubmit, fooAwaitNext } from 'testing:stub-activity-obelisk-ext/activity';
+        import { fooStub } from 'testing:stub-activity-obelisk-stub/activity';
+
+        export default function submit_stub_await(arg) {
+            const js = obelisk.createJoinSet();
+            const execId = fooSubmit(js, arg);
+            fooStub(execId, { ok: 'stubbing ' + arg });
+            return fooAwaitNext(js);
+        }";
+        let params = vec![ParameterType {
+            type_wrapper: TypeWrapper::String,
+            name: StrVariant::Static("arg"),
+            wit_type: StrVariant::Static("string"),
+        }];
+        let return_type = ReturnTypeExtendable {
+            type_wrapper_tl: TypeWrapperTopLevel {
+                ok: Some(Box::new(TypeWrapper::String)),
+                err: None,
+            },
+            wit_type: StrVariant::Static("result<string>"),
+        };
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW)
+                .await,
+        ]);
+
+        let (native_worker, native_runnable) = compile_workflow_worker_runnable(
+            test_programs_stub_workflow_builder::TEST_PROGRAMS_STUB_WORKFLOW,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            JoinNextBlockingStrategy::Interrupt,
+            &fn_registry,
+            CancelRegistry::new(),
+        )
+        .await;
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (js_worker, js_component_id, js_runnable) =
+            compile_js_workflow_worker_with_deployment_id_and_signature(
+                js_source,
+                &user_ffqn,
+                db_pool.clone(),
+                &sim_clock,
+                fn_registry.clone(),
+                workflow_engine.clone(),
+                DEPLOYMENT_ID_DUMMY,
+                JoinNextBlockingStrategy::Interrupt,
+                Arc::new(DeadlineTrackerFactoryTokio::new(
+                    Duration::ZERO,
+                    sim_clock.clone_box(),
+                )),
+                &params,
+                return_type.clone(),
+                usize::MAX,
+                usize::MAX,
+                None,
+            );
+
+        let producer_component_id = if producer_is_js {
+            js_component_id.clone()
+        } else {
+            native_worker.config.component_id.clone()
+        };
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection_test().await.unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!("bar")]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: producer_component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+            })
+            .await
+            .unwrap();
+
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(3),
+            tick_sleep: TICK_SLEEP,
+            component_id: producer_component_id,
+            task_limiter_global: None,
+            task_limiter_local: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::WORKFLOW,
+            locking_strategy: LockingStrategy::ByComponentDigest,
+        };
+        let (producer, _close) = if producer_is_js {
+            ExecTask::new_all_ffqns_test(
+                Arc::new(js_worker),
+                exec_config,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+            )
+        } else {
+            ExecTask::new_all_ffqns_test(
+                native_worker.clone(),
+                exec_config,
+                sim_clock.clone_box(),
+                db_pool.clone(),
+            )
+        };
+        // The workflow fulfills its own stub, so no external response is needed.
+        let mut producer_finished = false;
+        for _ in 0..8 {
+            producer
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            if db_connection
+                .get(&execution_id)
+                .await
+                .unwrap()
+                .pending_state
+                .is_finished()
+            {
+                producer_finished = true;
+                break;
+            }
+        }
+        assert!(
+            producer_finished,
+            "producer must self-fulfill the stub and finish",
+        );
+        assert_eq!(
+            SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+                value: WastVal::String("stubbing bar".to_string()),
+                r#type: TypeWrapper::String,
+            })),
+            db_connection
+                .get_finished_result(&execution_id)
+                .await
+                .unwrap(),
+        );
+
+        let replay = if producer_is_js {
+            build_workflow_replay_worker_from_worker(
+                &native_worker,
+                &native_runnable,
+                db_pool.clone(),
+                sim_clock.clone_box(),
+            )
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+        } else {
+            build_js_replay_worker_with_signature(
+                DEPLOYMENT_ID_DUMMY,
+                js_component_id,
+                &js_runnable,
+                workflow_engine,
+                fn_registry,
+                db_pool.clone(),
+                None,
+                sim_clock.clone_box(),
+                js_source.to_string(),
+                &user_ffqn,
+                &params,
+                return_type,
+                None,
+            )
+            .replay(execution_id, BacktraceCapture::Disabled)
+            .await
+        }
+        .unwrap();
+        assert_matches!(replay, ReplayResponse::Finished { .. });
+        drop(db_connection);
         db_close.close().await;
     }
 

@@ -13,7 +13,7 @@ use crate::{
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     response::{IntoResponse, Response},
     routing,
 };
@@ -263,7 +263,14 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::put(execution_upgrade),
         )
         .route("/deployments", routing::get(list_deployments))
-        .route("/deployments", routing::post(submit_deployment))
+        .route(
+            "/deployments",
+            // axum's 2 MiB default body limit is well under a single
+            // deployment-owned file's allowed size (`max_deployment_file_bytes`,
+            // 20 MiB by default); match the gRPC submit path's message size.
+            routing::post(submit_deployment)
+                .layer(DefaultBodyLimit::max(crate::api::MAX_GRPC_MESSAGE_SIZE)),
+        )
         .route("/deployments/{deployment-id}", routing::get(get_deployment))
         .route("/files/orphans", routing::delete(gc_orphan_files))
         .route("/files/{digest}", routing::get(get_file))

@@ -1596,6 +1596,33 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function join-next", err))?;
 
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next-for",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, function): (
+                    Resource<JoinSetId>,
+                    typesTypes::execution::Function,
+                )| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, None);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let requested_ffqn = FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        )
+                        .map_err(wasmtime::Error::msg)?;
+                        let res = host
+                            .join_next_for(join_set_id, requested_ffqn, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-next-for", err))?;
+
         // join-next-try: func(join-set) -> result<result<option<string>, option<string>>, join-next-try-error>
         inst_workflow_support
             .func_wrap_async(
@@ -1974,6 +2001,34 @@ impl WorkflowCtx {
             )
             .map_err(|err| WasmFileError::linking_error("linking function join-next", err))?;
 
+        inst_workflow_support
+            .func_wrap_async(
+                "join-next-for",
+                move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                      (join_set_resource, function, wit_backtrace): (
+                    Resource<JoinSetId>,
+                    typesTypes::execution::Function,
+                    Option<typesTypes::backtrace::WasmBacktrace>,
+                )| {
+                    Box::new(async move {
+                        let (host, backtrace) =
+                            Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
+                        let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
+                        let requested_ffqn = FunctionFqn::try_from_tuple(
+                            &function.interface_name,
+                            &function.function_name,
+                        )
+                        .map_err(wasmtime::Error::msg)?;
+                        let res = host
+                            .join_next_for(join_set_id, requested_ffqn, backtrace)
+                            .await
+                            .map_err(wasmtime::Error::new)?;
+                        Ok((res,))
+                    })
+                },
+            )
+            .map_err(|err| WasmFileError::linking_error("linking function join-next-for", err))?;
+
         // join-next-try: func(join-set, backtrace) -> result<result<option<string>, option<string>>, join-next-try-error>
         inst_workflow_support
             .func_wrap_async(
@@ -2063,8 +2118,8 @@ pub(crate) mod workflow_support {
     };
     use crate::component_logger::log_activities::obelisk::log::log::Host as LogHost;
     use crate::workflow::event_history::{
-        JoinNext, JoinNextTry, Persist, ScheduleIntent, StubIntent, StubIntentErr, StubParams,
-        SubmitDelay,
+        AwaitNextExtensionError, JoinNext, JoinNextRequestingFfqn, JoinNextTry, Persist,
+        ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
@@ -2400,6 +2455,53 @@ pub(crate) mod workflow_support {
                     Ok(self.response_outcome_to_json_value(&response_id, bit))
                 }
                 Err(err) => Err(err),
+            })
+        }
+
+        pub(crate) async fn join_next_for(
+            &mut self,
+            join_set_id: JoinSetId,
+            requested_ffqn: FunctionFqn,
+            wasm_backtrace: Option<storage::WasmBacktrace>,
+        ) -> Result<
+            Result<
+                Result<Option<String>, Option<String>>,
+                typesTypes::execution::AwaitNextExtensionError,
+            >,
+            WorkflowFunctionError,
+        > {
+            let outcome = JoinNextRequestingFfqn {
+                join_set_id,
+                requested_ffqn,
+                wasm_backtrace,
+            }
+            .apply_json(
+                &mut self.event_history,
+                &mut self.event_call_cursor,
+                &mut *self.db_connection,
+                self.clock_fn.now(),
+            )
+            .await?;
+            Ok(match outcome {
+                Ok(child_execution_id) => Ok(self
+                    .get_result_json(&child_execution_id)
+                    .expect("response processed by join-next-for must be retrievable")),
+                Err(AwaitNextExtensionError::AllProcessed) => {
+                    Err(typesTypes::execution::AwaitNextExtensionError::AllProcessed)
+                }
+                Err(AwaitNextExtensionError::FunctionMismatch {
+                    specified_function,
+                    actual_function,
+                    actual_id,
+                }) => Err(
+                    typesTypes::execution::AwaitNextExtensionError::FunctionMismatch(
+                        typesTypes::execution::FunctionMismatch {
+                            specified_function: (&specified_function).into(),
+                            actual_function: actual_function.as_ref().map(Into::into),
+                            actual_id: actual_id.into(),
+                        },
+                    ),
+                ),
             })
         }
 
@@ -2798,11 +2900,12 @@ pub(crate) mod workflow_support {
                 SupportedFunctionReturnValue::from_wast_val_with_type(retval_parsed)
                     .expect("checked that ffqn is no-ext, return type must be compatible")
             };
+            // Keep stub hashes language-independent by hashing the type-checked value.
             Ok((
-                StubIntent::StubTypeChecked(retval_parsed),
+                StubIntent::StubTypeChecked(retval_parsed.clone()),
                 StubParams {
                     target_execution_id,
-                    retval_hash: StubRetVal::Untyped(retval).hash(),
+                    retval_hash: StubRetVal::Typed(retval_parsed).hash(),
                 },
             ))
         }

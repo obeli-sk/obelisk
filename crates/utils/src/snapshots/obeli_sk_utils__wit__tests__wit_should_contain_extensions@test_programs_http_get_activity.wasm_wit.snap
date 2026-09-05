@@ -109,7 +109,7 @@ package obelisk:types@5.0.0 {
         variant await-next-extension-error {
             /// All submitted requests and their responses of specified function and join set were already processed.
             all-processed,
-            /// Execution response was awaited and marked as processed, but it belongs to a different function.
+            /// The next unprocessed response belongs to a different function and remains unprocessed.
             /// This can happen when join set contains responses of multiple functions or delay requests.
             function-mismatch(function-mismatch),
         }

@@ -132,7 +132,7 @@ use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::{
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
 use crate::generated::obelisk::types::execution::{
-    ExecutionFailureKind, ExecutionId, Function, ResponseId,
+    AwaitNextExtensionError, ExecutionFailureKind, ExecutionId, Function, ResponseId,
 };
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
@@ -140,9 +140,9 @@ use crate::generated::obelisk::workflow::workflow_support::{
     self, JoinNextTryError, get_execution_failure_kind, get_result_json, last_direct_call_id,
 };
 use crate::generated::obelisk::workflow::workflow_support_backtrace::{
-    call_json, execution_id_generate, join_next, join_next_try, join_set_close, join_set_create,
-    join_set_create_named, random_string, random_u64, random_u64_inclusive, schedule_json, sleep,
-    stub_json, submit_delay, submit_json,
+    call_json, execution_id_generate, join_next, join_next_for, join_next_try, join_set_close,
+    join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive,
+    schedule_json, sleep, stub_json, submit_delay, submit_json,
 };
 use boa_common::child_error::{ChildError, ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
@@ -410,38 +410,56 @@ fn create_ext_submit_proxy(
 ///
 /// The execution ID of the child that completed is stored on the join set
 /// object as `lastId` (readable via `js.lastId`).
-fn create_ext_await_next_proxy(context: &mut Context) -> JsValue {
-    let native = NativeFunction::from_fn_ptr(|_this, args, ctx| {
-        let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
-            JsNativeError::typ().with_message("first argument must be a join set")
-        })?;
-        let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+fn create_ext_await_next_proxy(
+    interface_name: &str,
+    function_name: &str,
+    context: &mut Context,
+) -> JsValue {
+    let ifc = js_string!(interface_name);
+    let func = js_string!(function_name);
+    let native = NativeFunction::from_copy_closure_with_captures(
+        |_this, args, (ifc, func), ctx| {
+            let js_obj = args.get_or_undefined(0).as_object().ok_or_else(|| {
+                JsNativeError::typ().with_message("first argument must be a join set")
+            })?;
+            let idx = js_obj.get(js_string!(JOIN_SET_IDX_KEY), ctx)?.to_u32(ctx)? as usize;
+            let function = Function {
+                interface_name: ifc.to_std_string_escaped(),
+                function_name: func.to_std_string_escaped(),
+            };
 
-        let backtrace = capture_backtrace(ctx);
-        // `join-next` now returns the value directly; the id is read via `last-id`
-        // (exposed to JS through the `lastId` accessor on the join set object).
-        let (join_result, last_id) = with_join_set(idx, |js| {
-            let result = join_next(js, Some(&backtrace));
-            (result, js.last_id())
-        })?;
+            let backtrace = capture_backtrace(ctx);
+            // `join-next-for` returns the value directly; the id is read via `last-id`
+            // (exposed to JS through the `lastId` accessor on the join set object).
+            let (join_result, last_id) = with_join_set(idx, |js| {
+                let result = join_next_for(js, &function, Some(&backtrace));
+                (result, js.last_id())
+            })?;
 
-        match join_result {
-            Ok(inner_result) => match last_id {
-                Some(ResponseId::ExecutionId(exec_id)) => {
-                    unwrap_result(inner_result, exec_id.id.as_str(), ctx)
+            match join_result {
+                Ok(inner_result) => match last_id {
+                    Some(ResponseId::ExecutionId(exec_id)) => {
+                        unwrap_result(inner_result, exec_id.id.as_str(), ctx)
+                    }
+                    Some(ResponseId::DelayId(_)) => Err(JsNativeError::error()
+                        .with_message("unexpected delay response in awaitNext")
+                        .into()),
+                    None => Err(JsNativeError::error()
+                        .with_message("missing last-id after join-next")
+                        .into()),
+                },
+                Err(AwaitNextExtensionError::AllProcessed) => {
+                    Err(new_join_set_exhausted_error(ctx))
                 }
-                Some(ResponseId::DelayId(_)) => Err(JsNativeError::error()
-                    .with_message("unexpected delay response in awaitNext")
-                    .into()),
-                None => Err(JsNativeError::error()
-                    .with_message("missing last-id after join-next")
-                    .into()),
-            },
-            Err(_) => Err(JsNativeError::error()
-                .with_message("JoinSetEmpty: all responses processed")
-                .into()),
-        }
-    });
+                Err(e @ AwaitNextExtensionError::FunctionMismatch(_)) => {
+                    Err(JsNativeError::error()
+                        .with_message(format!("await-next failed: {e:?}"))
+                        .into())
+                }
+            }
+        },
+        (ifc, func),
+    );
     native.to_js_function(context.realm()).into()
 }
 
@@ -668,7 +686,10 @@ fn create_workflow_proxy(kind: ProxyKind, context: &mut Context) -> JsValue {
             interface_name,
             function_name,
         } => create_ext_submit_proxy(interface_name, function_name, context),
-        ProxyKind::ExtAwaitNext => create_ext_await_next_proxy(context),
+        ProxyKind::ExtAwaitNext {
+            interface_name,
+            function_name,
+        } => create_ext_await_next_proxy(interface_name, function_name, context),
         ProxyKind::ExtGet => create_ext_get_proxy(context),
         ProxyKind::Stub {
             interface_name,
