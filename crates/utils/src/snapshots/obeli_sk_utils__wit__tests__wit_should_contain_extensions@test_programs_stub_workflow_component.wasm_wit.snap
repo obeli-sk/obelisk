@@ -104,7 +104,7 @@ package obelisk:types@5.0.0 {
         variant await-next-extension-error {
             /// All submitted requests and their responses of specified function and join set were already processed.
             all-processed,
-            /// Execution response was awaited and marked as processed, but it belongs to a different function.
+            /// The next unprocessed response belongs to a different function and remains unprocessed.
             /// This can happen when join set contains responses of multiple functions or delay requests.
             function-mismatch(function-mismatch),
         }
@@ -255,6 +255,8 @@ package testing:stub-workflow {
 
         submit-await: func(arg: string) -> result<string>;
 
+        submit-await-next: func(arg: string) -> result<string>;
+
         noret-submit-await: func() -> result;
 
         submit-race-join-next-stub: func() -> result;
@@ -295,6 +297,12 @@ package testing:stub-workflow-obelisk-ext {
         submit-await-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
 
         submit-await-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
+
+        submit-await-next-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
+
+        submit-await-next-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
+
+        submit-await-next-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
         noret-submit-await-submit: func(join-set: borrow<join-set>) -> execution-id;
 
@@ -367,6 +375,8 @@ package testing:stub-workflow-obelisk-schedule {
         submit-stub-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
 
         submit-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
+
+        submit-await-next-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
 
         noret-submit-await-schedule: func(schedule-at: schedule-at) -> execution-id;
 

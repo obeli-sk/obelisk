@@ -15,7 +15,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
                 "event": {
                   "type": "stub",
                   "target_execution_id": "E_00000000000000000000000001.g:1_1",
-                  "retval_hash": "011f9f1089426c4e2d1d6c761441181fba8e690f2baeccde7036a92c7d49d6b0e1",
+                  "retval_hash": "015ea0cf9f940c12bd2cd426870708d664d83c2a428f071ca580c8cb17b027b69a",
                   "result": {
                     "Ok": null
                   }

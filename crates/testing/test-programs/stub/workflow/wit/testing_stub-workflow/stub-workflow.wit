@@ -5,6 +5,7 @@ interface workflow {
 
     submit-stub-await: func(arg: string) -> result<string>;
     submit-await: func(arg: string) -> result<string>;
+    submit-await-next: func(arg: string) -> result<string>;
 
     noret-submit-await: func() -> result;
 

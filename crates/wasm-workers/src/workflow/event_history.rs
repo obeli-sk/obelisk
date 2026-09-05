@@ -90,6 +90,13 @@ struct AppendedBlockingEvents {
 enum ProcessingStatus {
     Unprocessed,
     Processed,
+    ProcessedNonConsuming,
+}
+
+impl ProcessingStatus {
+    fn is_processed(self) -> bool {
+        self != Self::Unprocessed
+    }
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -654,12 +661,12 @@ impl EventHistory {
             if idx == last_key_idx {
                 match (response, known_response.take()) {
                     (FindMatchingResponse::Found { value, .. }, None) => {
-                        assert_eq!(
-                            Processed,
+                        assert!(
                             self.event_history
                                 .last()
                                 .expect("checked that `history_events` is not empty")
                                 .1
+                                .is_processed()
                         );
                         return Ok(value);
                     }
@@ -986,6 +993,26 @@ impl EventHistory {
         }
     }
 
+    fn restore_unprocessed_response(
+        &mut self,
+        parent_event_idx: usize,
+        response_id: &JoinSetResponseId,
+    ) {
+        self.event_history[parent_event_idx].1 = ProcessingStatus::ProcessedNonConsuming;
+        let found = self
+            .responses
+            .iter_mut()
+            .find(|(event, _)| JoinSetResponseId::from(&event.event.event.event) == *response_id);
+        let Some((_, status)) = found else {
+            unreachable!("function mismatch response must exist")
+        };
+        *status = Unprocessed;
+        if let JoinSetResponseId::ChildExecutionId(child_execution_id) = response_id {
+            self.index_child_exe_to_processed_response_idx
+                .remove(child_execution_id);
+        }
+    }
+
     // Only entry point to marking events as processed.
     fn process_event_by_key(
         &mut self,
@@ -1165,13 +1192,14 @@ impl EventHistory {
                                 response_ffqn, // mismatch between ffqns
                             },
                         )) => {
+                            let actual_id =
+                                JoinSetResponseId::ChildExecutionId(child_execution_id.clone());
                             let function_mismatch = AwaitNextExtensionError::FunctionMismatch {
                                 specified_function: requested_ffqn.clone(),
                                 actual_function: Some(response_ffqn.clone()),
-                                actual_id: JoinSetResponseId::ChildExecutionId(
-                                    child_execution_id.clone(),
-                                ),
+                                actual_id: actual_id.clone(),
                             };
+                            self.restore_unprocessed_response(found_idx, &actual_id);
                             Ok(FindMatchingResponse::Found(
                                 ChildReturnValue::JoinNextRequestingFfqn(Err(function_mismatch)),
                             ))
@@ -1181,11 +1209,13 @@ impl EventHistory {
                             result: _,
                             expires_at: _,
                         }) => {
+                            let actual_id = JoinSetResponseId::DelayId(delay_id.clone());
                             let function_mismatch = AwaitNextExtensionError::FunctionMismatch {
                                 specified_function: requested_ffqn.clone(),
                                 actual_function: None,
-                                actual_id: JoinSetResponseId::DelayId(delay_id.clone()),
+                                actual_id: actual_id.clone(),
                             };
+                            self.restore_unprocessed_response(found_idx, &actual_id);
                             Ok(FindMatchingResponse::Found(
                                 ChildReturnValue::JoinNextRequestingFfqn(Err(function_mismatch)),
                             ))
@@ -2461,7 +2491,7 @@ impl EventHistory {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum AwaitNextExtensionError {
+pub(crate) enum AwaitNextExtensionError {
     FunctionMismatch {
         specified_function: FunctionFqn,
         actual_function: Option<FunctionFqn>, // None on delay
@@ -2961,16 +2991,14 @@ pub(crate) struct JoinNextRequestingFfqn {
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
 }
 impl JoinNextRequestingFfqn {
-    pub(crate) async fn apply(
+    async fn apply_response(
         self,
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,
         db_connection: &mut dyn WorkflowDbConnection,
         called_at: DateTime<Utc>,
-    ) -> Result<
-        wasmtime::component::Val, /* result<?, await-next-extension-error> */
-        WorkflowFunctionError,
-    > {
+    ) -> Result<Result<(ExecutionIdDerived, WastVal), AwaitNextExtensionError>, WorkflowFunctionError>
+    {
         assert!(
             self.join_set_id.kind != JoinSetKind::OneOff,
             "one-off join set cannot be constructed outside of OneOff*Request"
@@ -2987,11 +3015,8 @@ impl JoinNextRequestingFfqn {
 
         let value =
             assert_matches!(value, ChildReturnValue::JoinNextRequestingFfqn(result) => result);
-        let value = match value {
+        let result = match value {
             Ok((child_execution_id, wast_val_result)) => {
-                // `-await-next` now returns `result<T, err>` directly (no id tuple);
-                // read the id via `join-set.last-id`. Mirrors `-get`.
-                let wast_val_res = WastVal::Result(Ok(Some(Box::new(wast_val_result))));
                 event_history.record_last_response_id(
                     &join_set_id,
                     JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
@@ -3000,32 +3025,50 @@ impl JoinNextRequestingFfqn {
                     .join_set_open_tracker
                     .remove_response(
                         &join_set_id,
-                        &JoinSetResponseId::ChildExecutionId(child_execution_id),
+                        &JoinSetResponseId::ChildExecutionId(child_execution_id.clone()),
                     )
                     .map_err(|err| {
                         WorkflowFunctionError::ConstraintViolation(
                             join_set_open_tracker_error_to_constraint(&err),
                         )
                     })?;
-                wast_val_res
+                Ok((child_execution_id, wast_val_result))
             }
-            Err(await_ext_err) => {
-                if let AwaitNextExtensionError::FunctionMismatch { actual_id, .. } = &await_ext_err
-                {
-                    event_history
-                        .join_set_open_tracker
-                        .remove_response(&join_set_id, actual_id)
-                        .map_err(|err| {
-                            WorkflowFunctionError::ConstraintViolation(
-                                join_set_open_tracker_error_to_constraint(&err),
-                            )
-                        })?;
-                } // all-processed does not change the join-set open-tracker
-                await_ext_err.as_wast_val_result()
+            Err(await_ext_err) => Err(await_ext_err),
+        };
+        Ok(result)
+    }
+
+    pub(crate) async fn apply(
+        self,
+        event_history: &mut EventHistory,
+        event_call_cursor: &mut EventCallCursor,
+        db_connection: &mut dyn WorkflowDbConnection,
+        called_at: DateTime<Utc>,
+    ) -> Result<wasmtime::component::Val, WorkflowFunctionError> {
+        let value = self
+            .apply_response(event_history, event_call_cursor, db_connection, called_at)
+            .await?;
+        Ok(match value {
+            Ok((_child_execution_id, wast_val_result)) => {
+                WastVal::Result(Ok(Some(Box::new(wast_val_result))))
             }
+            Err(await_ext_err) => await_ext_err.as_wast_val_result(),
         }
-        .as_val();
-        Ok(value)
+        .as_val())
+    }
+
+    #[expect(clippy::result_large_err)]
+    pub(crate) async fn apply_json(
+        self,
+        event_history: &mut EventHistory,
+        event_call_cursor: &mut EventCallCursor,
+        db_connection: &mut dyn WorkflowDbConnection,
+        called_at: DateTime<Utc>,
+    ) -> Result<Result<ExecutionIdDerived, AwaitNextExtensionError>, WorkflowFunctionError> {
+        self.apply_response(event_history, event_call_cursor, db_connection, called_at)
+            .await
+            .map(|result| result.map(|(child_execution_id, _)| child_execution_id))
     }
 }
 
