@@ -2121,6 +2121,24 @@ pub(crate) mod tests {
         )
     }
 
+    pub(crate) fn build_workflow_replay_worker_from_worker(
+        worker: &WorkflowWorker,
+        runnable_component: &RunnableComponent,
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: Box<dyn ClockFn>,
+    ) -> WorkflowWorker {
+        build_workflow_replay_worker(
+            worker.deployment_id,
+            worker.config.component_id.clone(),
+            runnable_component,
+            worker.engine.clone(),
+            worker.fn_registry.clone(),
+            db_pool,
+            None,
+            clock_fn,
+        )
+    }
+
     const LOCK_EXPIRY_WORKFLOW: Duration = Duration::from_secs(1);
 
     async fn new_workflow_exec_task(

@@ -40,6 +40,12 @@ impl Guest for Component {
         activity::foo(&arg)
     }
 
+    fn submit_await_next(arg: String) -> Result<String, ()> {
+        let join_set = join_set_create();
+        activity_ext::foo_submit(&join_set, &arg);
+        activity_ext::foo_await_next(&join_set).expect("submitted one child")
+    }
+
     fn noret_submit_await() -> Result<(), ()> {
         activity::noret()
     }
