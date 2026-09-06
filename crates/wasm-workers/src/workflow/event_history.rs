@@ -3007,6 +3007,7 @@ impl JoinNextRequestingFfqn {
             Err(await_ext_err) => {
                 if let AwaitNextExtensionError::FunctionMismatch { actual_id, .. } = &await_ext_err
                 {
+                    // Response was found, just doese not match. Mark as processed, `get` can be used to obtain the value.
                     event_history
                         .join_set_open_tracker
                         .remove_response(&join_set_id, actual_id)
@@ -3022,6 +3023,7 @@ impl JoinNextRequestingFfqn {
         Ok(result)
     }
 
+    /// Extension fn fooAwaitNext lands here.
     pub(crate) async fn apply(
         self,
         event_history: &mut EventHistory,
@@ -3042,7 +3044,7 @@ impl JoinNextRequestingFfqn {
     }
 
     #[expect(clippy::result_large_err)]
-    pub(crate) async fn apply_json(
+    pub(crate) async fn apply_join_next_for(
         self,
         event_history: &mut EventHistory,
         event_call_cursor: &mut EventCallCursor,

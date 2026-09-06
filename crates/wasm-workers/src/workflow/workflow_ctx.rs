@@ -2474,7 +2474,7 @@ pub(crate) mod workflow_support {
                 requested_ffqn,
                 wasm_backtrace,
             }
-            .apply_json(
+            .apply_join_next_for(
                 &mut self.event_history,
                 &mut self.event_call_cursor,
                 &mut *self.db_connection,

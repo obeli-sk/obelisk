@@ -45,6 +45,7 @@ interface workflow-support {
         /// All submitted requests and their responses of the specified function were already processed.
         all-processed,
         /// The next response belongs to a different function or is a delay response.
+        /// Use `join-set.last-id` for the id of the processed response.
         function-mismatch(function-mismatch),
     }
 
