@@ -2085,7 +2085,7 @@ pub(crate) mod tests {
     /// Build a [`WorkflowWorker`] configured for replay/advance: `Interrupt` strategy,
     /// backtraces enabled, WASI stubbed, infinite-deadline tracker, empty cancel registry.
     #[expect(clippy::too_many_arguments)]
-    pub(crate) fn build_workflow_replay_worker(
+    fn build_workflow_replay_worker(
         deployment_id: DeploymentId,
         component_id: ComponentId,
         runnable_component: &RunnableComponent,
