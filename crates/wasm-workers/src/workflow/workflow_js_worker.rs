@@ -2492,16 +2492,21 @@ mod tests {
             let mismatch;
             try {
                 fooAwaitNext(js);
+                throw 'unreachable';
             } catch (e) {
                 mismatch = String(e);
             }
             let exhausted = false;
             try {
                 js.joinNext();
+                throw 'unreachable';
             } catch (e) {
                 exhausted = e instanceof obelisk.JoinSetExhaustedError;
             }
-            return JSON.stringify({ mismatch, exhausted });
+            const expectedMismatch = 'Error: fooAwaitNext failed on ' + js.id()
+                + ': expected a response from testing:stub-activity/activity.foo, but the next '
+                + 'response ' + execId + ' came from testing:stub-activity/activity.noret';
+            return JSON.stringify({ mismatch, expectedMismatch, exhausted });
         }";
 
         let harness =
@@ -2510,13 +2515,7 @@ mod tests {
         harness.tick().await;
 
         let result = harness.get_result_json().await;
-        assert!(
-            result["mismatch"]
-                .as_str()
-                .is_some_and(|err| err.starts_with(
-                    "Error: fooAwaitNext failed on g:1: AwaitNextExtensionError::FunctionMismatch"
-                ))
-        );
+        assert_eq!(result["expectedMismatch"], result["mismatch"]);
         assert_eq!(json!(true), result["exhausted"]);
         drop(harness);
         db_close.close().await;

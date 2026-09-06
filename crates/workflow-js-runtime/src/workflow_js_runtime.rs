@@ -460,9 +460,26 @@ fn create_ext_await_next_proxy(
                 Err(AwaitNextExtensionError::AllProcessed) => {
                     Err(new_join_set_exhausted_error(ctx))
                 }
-                Err(e @ AwaitNextExtensionError::FunctionMismatch(_)) => {
+                Err(AwaitNextExtensionError::FunctionMismatch(mismatch)) => {
+                    let expected = format!(
+                        "{}.{}",
+                        mismatch.specified_function.interface_name,
+                        mismatch.specified_function.function_name
+                    );
+                    let actual = mismatch
+                        .actual_function
+                        .map(|function| {
+                            format!("{}.{}", function.interface_name, function.function_name)
+                        })
+                        .unwrap_or_else(|| "delay".to_string());
+                    let actual_id = match mismatch.actual_id {
+                        ResponseId::ExecutionId(id) => id.id,
+                        ResponseId::DelayId(id) => id.id,
+                    };
                     Err(JsNativeError::error()
-                        .with_message(format!("{js_name} failed on {join_set_id}: {e:?}"))
+                        .with_message(format!(
+                            "{js_name} failed on {join_set_id}: expected a response from {expected}, but the next response {actual_id} came from {actual}"
+                        ))
                         .into())
                 }
             }
