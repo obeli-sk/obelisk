@@ -104,6 +104,7 @@ jobs:
         with:
           name: ${{ vars.CACHIX_CACHE_NAME || 'obeli-sk' }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          pushFilter: "(-rustc-|-cargo-|-rust-std-|-rust-src-|-clippy-|-rustfmt-|-rust-analyzer-|-llvm-tools-|-rust-docs-|-miri-)"
 
       - name: Build default Nix package
         run: nix build .#default
