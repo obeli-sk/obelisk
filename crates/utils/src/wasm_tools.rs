@@ -1428,7 +1428,7 @@ pub(crate) mod tests {
             write!(&mut snapshot, "{pkg_fqn}\n{wit}\n\n").unwrap();
         }
 
-        insta::with_settings!({  snapshot_suffix => format!("{path}")}, {insta::assert_snapshot!(snapshot)});
+        insta::with_settings!({  snapshot_suffix => path.to_string()}, {insta::assert_snapshot!(snapshot)});
     }
 
     #[test]

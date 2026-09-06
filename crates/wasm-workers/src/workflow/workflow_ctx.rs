@@ -42,6 +42,7 @@ use log_activities::obelisk::log::log::Host;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug, error, info, instrument, trace, warn};
@@ -3110,44 +3111,49 @@ fn try_defer_replay_application_log(ctx: &mut WorkflowCtx, level: LogLevel, mess
 }
 
 impl log_activities::obelisk::log::log::Host for WorkflowCtx {
-    async fn trace(&mut self, message: String) {
-        if try_defer_replay_application_log(self, LogLevel::Trace, &message) {
+    fn trace(&mut self, message: String) -> impl Future<Output = ()> {
+        let _: () = if try_defer_replay_application_log(self, LogLevel::Trace, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Trace, &message);
         } else {
             trace_on_replay(self, LogLevel::Trace, message);
-        }
+        };
+        std::future::ready(())
     }
 
-    async fn debug(&mut self, message: String) {
-        if try_defer_replay_application_log(self, LogLevel::Debug, &message) {
+    fn debug(&mut self, message: String) -> impl Future<Output = ()> {
+        let _: () = if try_defer_replay_application_log(self, LogLevel::Debug, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Debug, &message);
         } else {
             trace_on_replay(self, LogLevel::Debug, message);
-        }
+        };
+        std::future::ready(())
     }
 
-    async fn info(&mut self, message: String) {
-        if try_defer_replay_application_log(self, LogLevel::Info, &message) {
+    fn info(&mut self, message: String) -> impl Future<Output = ()> {
+        let _: () = if try_defer_replay_application_log(self, LogLevel::Info, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Info, &message);
         } else {
             trace_on_replay(self, LogLevel::Info, message);
-        }
+        };
+        std::future::ready(())
     }
 
-    async fn warn(&mut self, message: String) {
-        if try_defer_replay_application_log(self, LogLevel::Warn, &message) {
+    fn warn(&mut self, message: String) -> impl Future<Output = ()> {
+        let _: () = if try_defer_replay_application_log(self, LogLevel::Warn, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Warn, &message);
         } else {
             trace_on_replay(self, LogLevel::Warn, message);
-        }
+        };
+        std::future::ready(())
     }
 
-    async fn error(&mut self, message: String) {
-        if try_defer_replay_application_log(self, LogLevel::Error, &message) {
+    fn error(&mut self, message: String) -> impl Future<Output = ()> {
+        let _: () = if try_defer_replay_application_log(self, LogLevel::Error, &message) {
             emit_application_log_to_tracing_only(self, LogLevel::Error, &message);
         } else {
             trace_on_replay(self, LogLevel::Error, message);
-        }
+        };
+        std::future::ready(())
     }
 }
 

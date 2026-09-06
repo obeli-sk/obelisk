@@ -464,14 +464,14 @@ impl WorkflowWorkerLinked {
 }
 
 enum RunError {
-    ResultParsingError(ResultParsingError, WorkflowCtx),
+    ResultParsingError(ResultParsingError, Box<WorkflowCtx>),
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
-    WorkerPartialResult(WorkerPartialResult, WorkflowCtx),
+    WorkerPartialResult(WorkerPartialResult, Box<WorkflowCtx>),
     /// Error that happened while running the function.
     Trap {
         reason: String,
         detail: Option<String>,
-        workflow_ctx: WorkflowCtx,
+        workflow_ctx: Box<WorkflowCtx>,
         kind: TrapKind,
     },
 }
@@ -920,7 +920,7 @@ impl WorkflowWorker {
                     results.into_iter().zip(result_types),
                 ) {
                     Ok(result) => Ok((result, workflow_ctx)),
-                    Err(err) => Err(RunError::ResultParsingError(err, workflow_ctx)),
+                    Err(err) => Err(RunError::ResultParsingError(err, Box::new(workflow_ctx))),
                 }
             }
             Err(err) => {
@@ -934,7 +934,7 @@ impl WorkflowWorker {
                         .into_worker_partial_result(workflow_ctx.version().clone());
                     Err(RunError::WorkerPartialResult(
                         worker_partial_result,
-                        workflow_ctx,
+                        Box::new(workflow_ctx),
                     ))
                 } else if let Some(trap) = err
                     .source()
@@ -948,14 +948,14 @@ impl WorkflowWorker {
                                     .expect("must have been set as it was the reason of trap")
                             ),
                             detail: None,
-                            workflow_ctx,
+                            workflow_ctx: Box::new(workflow_ctx),
                             kind: TrapKind::OutOfFuel,
                         })
                     } else {
                         Err(RunError::Trap {
                             reason: trap.to_string(),
                             detail: Some(format!("{err:?}")),
-                            workflow_ctx,
+                            workflow_ctx: Box::new(workflow_ctx),
                             kind: TrapKind::Trap,
                         })
                     }
@@ -963,7 +963,7 @@ impl WorkflowWorker {
                     Err(RunError::Trap {
                         reason: err.to_string(),
                         detail: Some(format!("{err:?}")),
-                        workflow_ctx,
+                        workflow_ctx: Box::new(workflow_ctx),
                         kind: TrapKind::HostFunctionError,
                     })
                 }
@@ -1110,7 +1110,7 @@ impl WorkflowWorker {
                         trap_kind: kind,
                         detail,
                     },
-                    workflow_ctx,
+                    *workflow_ctx,
                 )
             }
             Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
@@ -1120,7 +1120,7 @@ impl WorkflowWorker {
                 ) {
                     return WorkerResultRefactored::Interrupt(
                         InterruptKind::PauseOrCancel,
-                        workflow_ctx,
+                        *workflow_ctx,
                     );
                 }
                 if let Err(db_err) = workflow_ctx.flush().await {
@@ -1132,23 +1132,23 @@ impl WorkflowWorker {
                 match worker_partial_result {
                     WorkerPartialResult::FatalError(err, _version) => {
                         worker_span.in_scope(|| debug!("Finished with a fatal error: {err}"));
-                        WorkerResultRefactored::FatalError(err, workflow_ctx)
+                        WorkerResultRefactored::FatalError(err, *workflow_ctx)
                     }
                     WorkerPartialResult::InterruptDbUpdated => {
                         worker_span.in_scope(|| debug!("Interrupt requested"));
-                        WorkerResultRefactored::DbUpdatedByWorkerOrWatcher(workflow_ctx)
+                        WorkerResultRefactored::DbUpdatedByWorkerOrWatcher(*workflow_ctx)
                     }
                     WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::DbError(db_err),
                     WorkerPartialResult::LockExpired => {
                         // logged in epoch callback
-                        WorkerResultRefactored::LockExpired(workflow_ctx)
+                        WorkerResultRefactored::LockExpired(*workflow_ctx)
                     }
                     WorkerPartialResult::Interrupt(kind) => {
                         // logged in epoch callback
-                        WorkerResultRefactored::Interrupt(kind, workflow_ctx)
+                        WorkerResultRefactored::Interrupt(kind, *workflow_ctx)
                     }
                     WorkerPartialResult::ReplayWaitingForResponse => {
-                        WorkerResultRefactored::ReplayInterrupt(workflow_ctx)
+                        WorkerResultRefactored::ReplayInterrupt(*workflow_ctx)
                     }
                 }
             }
@@ -1160,7 +1160,7 @@ impl WorkflowWorker {
                 worker_span.in_scope(|| error!("Fatal error: Result parsing error: {err}"));
                 WorkerResultRefactored::FatalError(
                     FatalError::ResultParsingError(err),
-                    workflow_ctx,
+                    *workflow_ctx,
                 )
             }
         }
