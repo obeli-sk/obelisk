@@ -33,6 +33,7 @@ use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use log_activities::obelisk::log::log::Host;
 use route_recognizer::{Match, Router};
+use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -703,21 +704,23 @@ fn wit_backtrace_to_storage(
 }
 
 impl WebhookSupportHost for WebhookEndpointCtx {
-    async fn execution_id_generate(
+    fn execution_id_generate(
         &mut self,
-    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId> {
+    ) -> impl Future<Output = wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId>>
+    {
         let execution_id = ExecutionId::generate();
-        Ok(types::obelisk::webhook::webhook_support::ExecutionId {
+        std::future::ready(Ok(types::obelisk::webhook::webhook_support::ExecutionId {
             id: execution_id.to_string(),
-        })
+        }))
     }
 
-    async fn execution_id_current(
+    fn execution_id_current(
         &mut self,
-    ) -> wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId> {
-        Ok(types::obelisk::webhook::webhook_support::ExecutionId {
+    ) -> impl Future<Output = wasmtime::Result<types::obelisk::webhook::webhook_support::ExecutionId>>
+    {
+        std::future::ready(Ok(types::obelisk::webhook::webhook_support::ExecutionId {
             id: self.execution_id.to_string(),
-        })
+        }))
     }
 
     fn convert_get_status_error(
@@ -847,13 +850,14 @@ impl WebhookSupportHost for WebhookEndpointCtx {
     }
 
     /// The execution ID of the last `call-json`, or `none`.
-    async fn last_direct_call_id(
+    fn last_direct_call_id(
         &mut self,
-    ) -> wasmtime::Result<Option<types::obelisk::webhook::webhook_support::ExecutionId>> {
-        Ok(self
-            .last_direct_call_id
-            .as_ref()
-            .map(|id| types::obelisk::webhook::webhook_support::ExecutionId { id: id.to_string() }))
+    ) -> impl Future<
+        Output = wasmtime::Result<Option<types::obelisk::webhook::webhook_support::ExecutionId>>,
+    > {
+        std::future::ready(Ok(self.last_direct_call_id.as_ref().map(|id| {
+            types::obelisk::webhook::webhook_support::ExecutionId { id: id.to_string() }
+        })))
     }
 
     async fn get(
