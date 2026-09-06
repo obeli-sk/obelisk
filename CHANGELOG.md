@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - *(workflow)* `join-next-for` workflow-support function blocks until the next response arrives and
-  requires it to belong to a given function, returning `function-mismatch` when the next response
-  belongs to a different function or a delay.
+  requires it to belong to a given function. Its `join-next-for-error` reports `function-mismatch`
+  when the next response belongs to a different function or is a delay.
 
 ### Changed
 

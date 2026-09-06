@@ -132,12 +132,13 @@ use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::{
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
 use crate::generated::obelisk::types::execution::{
-    AwaitNextExtensionError, ExecutionFailureKind, ExecutionId, Function, ResponseId,
+    ExecutionFailureKind, ExecutionId, Function, ResponseId,
 };
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
-    self, JoinNextTryError, get_execution_failure_kind, get_result_json, last_direct_call_id,
+    self, JoinNextForError, JoinNextTryError, get_execution_failure_kind, get_result_json,
+    last_direct_call_id,
 };
 use crate::generated::obelisk::workflow::workflow_support_backtrace::{
     call_json, execution_id_generate, join_next, join_next_for, join_next_try, join_set_close,
@@ -457,10 +458,8 @@ fn create_ext_await_next_proxy(
                         .with_message(format!("{js_name} failed on {join_set_id}: missing lastId"))
                         .into()),
                 },
-                Err(AwaitNextExtensionError::AllProcessed) => {
-                    Err(new_join_set_exhausted_error(ctx))
-                }
-                Err(AwaitNextExtensionError::FunctionMismatch(mismatch)) => {
+                Err(JoinNextForError::AllProcessed) => Err(new_join_set_exhausted_error(ctx)),
+                Err(JoinNextForError::FunctionMismatch(mismatch)) => {
                     let expected = format!(
                         "{}.{}",
                         mismatch.specified_function.interface_name,

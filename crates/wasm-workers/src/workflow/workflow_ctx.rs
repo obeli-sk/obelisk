@@ -2122,8 +2122,10 @@ pub(crate) mod workflow_support {
         ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
-    use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
+    use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::{
+        JoinNextError, JoinNextForError,
+    };
     use crate::workflow::host_exports::{self, latest};
     use crate::workflow::workflow_ctx::{IFC_FQN_WORKFLOW_SUPPORT, JoinSetCreateError};
     use concepts::prefixed_ulid::{ExecutionIdDerived, ExecutionIdTopLevel};
@@ -2464,10 +2466,7 @@ pub(crate) mod workflow_support {
             requested_ffqn: FunctionFqn,
             wasm_backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<
-            Result<
-                Result<Option<String>, Option<String>>,
-                typesTypes::execution::AwaitNextExtensionError,
-            >,
+            Result<Result<Option<String>, Option<String>>, JoinNextForError>,
             WorkflowFunctionError,
         > {
             let outcome = JoinNextRequestingFfqn {
@@ -2486,22 +2485,18 @@ pub(crate) mod workflow_support {
                 Ok(child_execution_id) => Ok(self
                     .get_result_json(&child_execution_id)
                     .expect("response processed by join-next-for must be retrievable")),
-                Err(AwaitNextExtensionError::AllProcessed) => {
-                    Err(typesTypes::execution::AwaitNextExtensionError::AllProcessed)
-                }
+                Err(AwaitNextExtensionError::AllProcessed) => Err(JoinNextForError::AllProcessed),
                 Err(AwaitNextExtensionError::FunctionMismatch {
                     specified_function,
                     actual_function,
                     actual_id,
-                }) => Err(
-                    typesTypes::execution::AwaitNextExtensionError::FunctionMismatch(
-                        typesTypes::execution::FunctionMismatch {
-                            specified_function: (&specified_function).into(),
-                            actual_function: actual_function.as_ref().map(Into::into),
-                            actual_id: actual_id.into(),
-                        },
-                    ),
-                ),
+                }) => Err(JoinNextForError::FunctionMismatch(
+                    typesTypes::execution::FunctionMismatch {
+                        specified_function: (&specified_function).into(),
+                        actual_function: actual_function.as_ref().map(Into::into),
+                        actual_id: actual_id.into(),
+                    },
+                )),
             })
         }
 
