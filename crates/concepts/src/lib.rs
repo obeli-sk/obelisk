@@ -157,6 +157,15 @@ impl SupportedFunctionReturnValue {
             _ => false,
         }
     }
+
+    #[must_use]
+    pub fn value_too_large(limit: u64) -> Self {
+        Self::ExecutionFailure(FinishedExecutionFailure {
+            kind: ExecutionFailureKind::ValueTooLarge,
+            reason: Some("function result exceeds the persisted value limit".to_owned()),
+            detail: Some(format!("limit: {limit} bytes")),
+        })
+    }
 }
 
 pub const SUPPORTED_RETURN_VALUE_OK_EMPTY: SupportedFunctionReturnValue =

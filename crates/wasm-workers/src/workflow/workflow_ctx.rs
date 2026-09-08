@@ -156,6 +156,12 @@ pub(crate) struct WorkflowCtx {
     is_replay: Option<ReplayKind>,
 }
 
+impl WorkflowCtx {
+    pub(crate) fn max_persisted_value_size_bytes(&self) -> u64 {
+        self.event_history.max_persisted_value_size_bytes()
+    }
+}
+
 #[derive(derive_more::Debug)]
 pub(crate) enum ImportedFnCall<'a> {
     Direct(DirectFnCall<'a>),

@@ -598,6 +598,7 @@ impl ExecTask {
             );
         let parent = locked_execution.parent.clone();
         let execution_id = locked_execution.execution_id.clone();
+        let max_persisted_value_size_bytes = locked_execution.max_persisted_value_size_bytes;
         let mut metadata = locked_execution.metadata;
         metadata
             .set_max_persisted_value_size_bytes(locked_execution.max_persisted_value_size_bytes);
@@ -616,7 +617,10 @@ impl ExecTask {
             worker_span,
             execution_interrupt_watcher,
         };
-        let worker_result = worker.run(ctx).await;
+        let worker_result = Self::enforce_worker_result_limit(
+            worker.run(ctx).await,
+            max_persisted_value_size_bytes,
+        );
         debug!("Worker::run finished {worker_result:?}");
         let result_obtained_at = clock_fn.now();
         if component_type == ComponentType::Activity
@@ -701,6 +705,24 @@ impl ExecTask {
             version: log.next_version,
             child_finished,
         }))
+    }
+
+    fn enforce_worker_result_limit(
+        worker_result: WorkerResult,
+        max_persisted_value_size_bytes: u64,
+    ) -> WorkerResult {
+        worker_result.map(|worker_result| match worker_result {
+            WorkerResultOk::RunFinished(mut finished) => {
+                finished.retval = concepts::persisted_value::enforce_return_value_limit(
+                    finished.retval,
+                    max_persisted_value_size_bytes,
+                );
+                WorkerResultOk::RunFinished(finished)
+            }
+            WorkerResultOk::DbUpdatedByWorkerOrWatcher => {
+                WorkerResultOk::DbUpdatedByWorkerOrWatcher
+            }
+        })
     }
 
     /// Map the `WorkerError` to an optional append event
@@ -1151,8 +1173,59 @@ mod tests {
     use test_db_macro::expand_enum_database;
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
+    use val_json::{
+        type_wrapper::TypeWrapper,
+        wast_val::{WastVal, WastValWithType},
+    };
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn-child");
+
+    #[test]
+    fn oversized_activity_result_is_a_permanent_failure() {
+        let execution_id = ExecutionId::generate();
+        let result = SupportedFunctionReturnValue::Err(Some(WastValWithType {
+            value: WastVal::String("secret-result".to_owned()),
+            r#type: TypeWrapper::String,
+        }));
+
+        let worker_result = ExecTask::enforce_worker_result_limit(
+            Ok(WorkerResultOk::RunFinished(RunFinished {
+                retval: result,
+                version: Version::new(2),
+                http_client_traces: None,
+            })),
+            20,
+        );
+        let append = ExecTask::worker_result_to_execution_event(
+            ComponentType::Activity,
+            execution_id.clone(),
+            worker_result,
+            DateTime::UNIX_EPOCH,
+            None,
+            Some(Duration::from_secs(1)),
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(append.execution_id, execution_id);
+        assert_matches!(
+            append.primary_event.event,
+            ExecutionRequest::Finished {
+                retval: SupportedFunctionReturnValue::ExecutionFailure(
+                    FinishedExecutionFailure {
+                        kind: ExecutionFailureKind::ValueTooLarge,
+                        reason: Some(reason),
+                        detail: Some(detail),
+                    }
+                ),
+                ..
+            } => {
+                assert_eq!(reason, "function result exceeds the persisted value limit");
+                assert_eq!(detail, "limit: 20 bytes");
+            }
+        );
+    }
 
     async fn tick_fn<W: Worker + Debug>(
         config: ExecConfig,

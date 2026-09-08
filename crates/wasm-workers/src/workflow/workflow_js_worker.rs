@@ -581,6 +581,7 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
+        let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         let already_finished_result = log.as_finished_result();
         let (ffqn, params) = Self::boa_invocation(
             log.params(),
@@ -616,6 +617,10 @@ impl WorkflowJsWorker {
                     } => {
                         let (retval, fatal_error_from_wit) =
                             transform_to_append_finished(retval, &version, &self.user_return_type);
+                        let retval = concepts::persisted_value::enforce_return_value_limit(
+                            retval,
+                            max_persisted_value_size_bytes,
+                        );
                         if fatal_error_from_wit.is_some() {
                             // TODO: can both fatal errors be present?
                             fatal_error = fatal_error_from_wit;
@@ -662,6 +667,7 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
+        let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         if requested.captured_writes.is_empty() {
             return Err(AdvanceError::NoWrites);
         }
@@ -708,7 +714,10 @@ impl WorkflowJsWorker {
         {
             let (retval_transformed, _fatal_error_from_wit) =
                 transform_to_append_finished(retval.clone(), version, &self.user_return_type);
-            *retval = retval_transformed;
+            *retval = concepts::persisted_value::enforce_return_value_limit(
+                retval_transformed,
+                max_persisted_value_size_bytes,
+            );
         }
         Ok(WorkflowWorker::advance_from_log(
             db_conn.as_ref(),

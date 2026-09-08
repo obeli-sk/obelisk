@@ -1,4 +1,4 @@
-use crate::component_id::Digest;
+use crate::{SupportedFunctionReturnValue, component_id::Digest};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::io;
@@ -124,6 +124,19 @@ pub struct EncodedSizeExceeded {
     pub encoded_size_at_least: u64,
 }
 
+#[must_use]
+pub fn enforce_return_value_limit(
+    value: SupportedFunctionReturnValue,
+    limit: u64,
+) -> SupportedFunctionReturnValue {
+    let encoded_size_limit =
+        EncodedSizeLimit::new(limit).unwrap_or(EncodedSizeLimit::LEGACY_UNLIMITED);
+    match encoded_size_limit.validate(&value) {
+        Ok(_) => value,
+        Err(_) => SupportedFunctionReturnValue::value_too_large(limit),
+    }
+}
+
 struct LimitWriter {
     limit: u64,
     written: u64,
@@ -197,5 +210,22 @@ mod tests {
             })
         );
         assert_ne!(first_result.sha256, second_result.sha256);
+    }
+
+    #[test]
+    fn replaces_oversized_return_value_with_compact_failure() {
+        let value = SupportedFunctionReturnValue::Ok(Some(crate::WastValWithType {
+            value: val_json::wast_val::WastVal::String("secret-result".to_owned()),
+            r#type: val_json::type_wrapper::TypeWrapper::String,
+        }));
+
+        let result = enforce_return_value_limit(value, 20);
+
+        assert_eq!(result, SupportedFunctionReturnValue::value_too_large(20));
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("secret-result")
+        );
     }
 }

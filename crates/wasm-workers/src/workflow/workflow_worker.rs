@@ -1000,6 +1000,10 @@ impl WorkflowWorker {
 
         match worker_result_refactored {
             WorkerResultRefactored::Ok(retval, mut workflow_ctx) => {
+                let retval = concepts::persisted_value::enforce_return_value_limit(
+                    retval,
+                    workflow_ctx.max_persisted_value_size_bytes(),
+                );
                 match Self::close_join_sets(&mut workflow_ctx).await {
                     Ok(Either::Left(CloseJoinSetOk::Ok)) => Ok((
                         Either::Left(WorkerResultOk::RunFinished(RunFinished {
