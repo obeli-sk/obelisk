@@ -117,6 +117,12 @@
                     "string",
                     "null"
                   ]
+                },
+                "max_persisted_value_size_bytes": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "default": 18446744073709551615
                 }
               },
               "required": [
@@ -1027,6 +1033,7 @@
         {
           "type": "string",
           "enum": [
+            "value_too_large",
             "uncategorized"
           ]
         },
@@ -1207,6 +1214,13 @@
             "schedule_at": {
               "$ref": "#/$defs/HistoryEventScheduleAt"
             },
+            "params_hash": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
             "result": {
               "$ref": "#/$defs/Result_of_null_or_ScheduleRequestError"
             },
@@ -1353,8 +1367,7 @@
               "type": "string"
             },
             "params": {
-              "type": "array",
-              "items": true
+              "$ref": "#/$defs/PersistedParams"
             },
             "result": {
               "$ref": "#/$defs/Result_of_null_or_ChildExecutionRequestError"
@@ -1413,6 +1426,42 @@
         }
       ]
     },
+    "PersistedParams": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "rejected": {
+              "$ref": "#/$defs/RejectedParams"
+            }
+          },
+          "required": [
+            "rejected"
+          ]
+        },
+        {
+          "type": "array",
+          "items": true
+        }
+      ]
+    },
+    "RejectedParams": {
+      "type": "object",
+      "properties": {
+        "sha256": {
+          "type": "string"
+        },
+        "encoded_size_at_least": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sha256",
+        "encoded_size_at_least"
+      ]
+    },
     "Result_of_null_or_ChildExecutionRequestError": {
       "oneOf": [
         {
@@ -1457,6 +1506,28 @@
           },
           "required": [
             "type_check_error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "value_too_large": {
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "limit"
+              ]
+            }
+          },
+          "required": [
+            "value_too_large"
           ],
           "additionalProperties": false
         }
@@ -1527,6 +1598,28 @@
             "type_check_error"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "value_too_large": {
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "limit"
+              ]
+            }
+          },
+          "required": [
+            "value_too_large"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -1579,6 +1672,28 @@
           },
           "required": [
             "type_check_error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "value_too_large": {
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "limit"
+              ]
+            }
+          },
+          "required": [
+            "value_too_large"
           ],
           "additionalProperties": false
         }

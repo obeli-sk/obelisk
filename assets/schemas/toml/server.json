@@ -37,6 +37,9 @@
       "description": "Per-file size limit for deployment-owned blobs attached to a submit request.",
       "$ref": "#/$defs/MaxDeploymentFileBytes"
     },
+    "limits": {
+      "$ref": "#/$defs/LimitsToml"
+    },
     "api": {
       "$ref": "#/$defs/ApiConfig"
     },
@@ -229,6 +232,19 @@
       "type": "integer",
       "format": "uint32",
       "minimum": 0
+    },
+    "LimitsToml": {
+      "type": "object",
+      "properties": {
+        "max_persisted_value_size_bytes": {
+          "description": "Maximum compact JSON-encoded size of one newly persisted execution\nvalue. Each execution snapshots the effective positive value so config\nchanges do not alter replay. Historical executions created before this\nsetting was persisted retain their legacy unlimited contract.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 1048576
+        }
+      },
+      "additionalProperties": false
     },
     "ApiConfig": {
       "type": "object",
