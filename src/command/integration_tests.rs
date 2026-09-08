@@ -891,6 +891,30 @@ impl TestServer {
         let _ = server_handle.await;
     }
 
+    async fn restart_with_persisted_value_limit(self, limit: i64) -> Self {
+        let Self {
+            ip,
+            termination_sender,
+            server_handle,
+            _tmp_dir: tmp_dir,
+            ..
+        } = self;
+        drop(termination_sender);
+        let _ = server_handle.await;
+
+        let server_path = tmp_dir.path().join("server.toml");
+        let mut server_doc = std::fs::read_to_string(&server_path)
+            .unwrap()
+            .parse::<DocumentMut>()
+            .unwrap();
+        server_doc["limits"]["max_persisted_value_size_bytes"] = value(limit);
+        std::fs::write(&server_path, server_doc.to_string()).unwrap();
+
+        let deployment_path = tmp_dir.path().join("deployment.toml");
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
     // ---- helper methods ------------------------------------------------
 
     fn api_addr(&self) -> String {
@@ -3894,6 +3918,65 @@ async fn replay_and_advance_oversized_result_grpc() {
 #[tokio::test]
 async fn replay_and_advance_oversized_result_webapi() {
     replay_and_advance_oversized_result(TestExecutionClient::WebApi, test_addr!(127)).await;
+}
+
+#[tokio::test]
+async fn replay_after_restart_uses_original_persisted_value_limit() {
+    let server = TestServer::start_with_server_lines_and_component(
+        test_addr!(128),
+        "limits.max_persisted_value_size_bytes = 256",
+        "workflow_js",
+        "test_make_record_workflow",
+    )
+    .await;
+    let execution_id = server.generate_execution_id().await;
+    let submit = server
+        .submit_paused_webapi(
+            &execution_id,
+            "testing:integration/workflow-make-record.make-record",
+            vec![json!("x".repeat(240))],
+        )
+        .await;
+    assert_eq!(submit.status(), reqwest::StatusCode::CREATED);
+
+    let server = server.restart_with_persisted_value_limit(1024).await;
+    let replay = server.replay(&execution_id).await;
+    assert_eq!(replay.status(), reqwest::StatusCode::OK);
+    let replay: Value = replay.json().await.unwrap();
+    assert_eq!(replay["type"], "advanceable");
+    let captured_writes = replay["captured_writes"].clone();
+    assert!(!captured_writes.as_array().unwrap().is_empty());
+
+    let advance = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{execution_id}/advance",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .json(&json!({
+            "captured_writes": captured_writes,
+            "persist_backtrace": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(advance.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        advance.json::<Value>().await.unwrap(),
+        json!({
+            "type": "finished",
+            "value": {
+                "execution_failed": {
+                    "kind": "value_too_large",
+                    "reason": "function result exceeds the persisted value limit",
+                    "detail": "limit: 256 bytes"
+                }
+            }
+        })
+    );
+
+    server.shutdown().await;
 }
 
 // ---- Workflow: replay failed (type mismatch) with advance --force ----
