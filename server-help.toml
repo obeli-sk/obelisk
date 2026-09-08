@@ -36,6 +36,12 @@
 # OPENAI_KEY     = { env = "OPENAI_API_KEY" }   # logical name may differ from the source
 # DB_PASSWORD    = { env = "DB_PASSWORD" }
 
+## Operator-owned allowlist of process environment variables available to deployments.
+## Variables not listed here cannot be referenced by deployment.toml. Missing allowed
+## variables do not affect server startup; deployment.toml controls whether they are required.
+# [public_env]
+# allowed = ["OBELISK_PUBLIC_REGION"]
+
 ## Per-file size limit (in bytes) for deployment-owned blobs attached to a submit request.
 ## Defaults to 20 MiB.
 # max_deployment_file_bytes = 20971520

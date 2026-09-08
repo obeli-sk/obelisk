@@ -24,7 +24,7 @@ use args::{
 use clap::Parser;
 use client::ClientStartup;
 use config::config_holder::ConfigHolder;
-use config::secret_registry::{SecretRegistry, SecretsToml};
+use config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
 use config::server::ServerConfigToml;
 use directories::{BaseDirs, ProjectDirs};
 use std::future::Future;
@@ -198,6 +198,7 @@ fn main() -> Result<(), anyhow::Error> {
         Subcommand::Generate(generate) => {
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
+                PublicEnvToml::default(),
                 EnvVarCleanupStrategy::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
                 None,
@@ -209,6 +210,7 @@ fn main() -> Result<(), anyhow::Error> {
             let client_startup = ClientStartup::new(token.api_token);
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
+                PublicEnvToml::default(),
                 EnvVarCleanupStrategy::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
                 None,
@@ -266,6 +268,7 @@ fn prepare_server_startup(
     });
     let secret_registry = Arc::new(SecretRegistry::resolve(
         config.secrets.clone(),
+        config.public_env.clone(),
         env_var_cleanup,
         runtime_config_availability,
         legacy_api_token.as_ref(),

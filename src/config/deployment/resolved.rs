@@ -15,7 +15,7 @@ use super::{
 };
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
-    EnvVarConfig, EnvVarError, EnvVarsMissing, interpolate_env_vars_plaintext,
+    EnvVarConfig, EnvVarError, EnvVarsMissing, interpolate_deployment_env_vars_plaintext,
 };
 use crate::config::file_provider::{
     parse_js_graph_from_cas, parse_wit_files_from_cas, read_package_blob, verify_content_digest,
@@ -2229,12 +2229,12 @@ pub(crate) fn resolve_env_vars_plaintext(
         .into_iter()
         .map(|env_var| match env_var {
             EnvVarConfig::KeyValue { key, value } => {
-                match interpolate_env_vars_plaintext(&value, secret_registry) {
+                match interpolate_deployment_env_vars_plaintext(&value, secret_registry) {
                     Ok(val) => Ok(EnvVar { key, val }),
                     Err(err) => empty_if_missing(key, err),
                 }
             }
-            EnvVarConfig::Key(key) => match secret_registry.public_env_lookup(&key) {
+            EnvVarConfig::Key(key) => match secret_registry.deployment_env_lookup(&key) {
                 Ok(Some(val)) => Ok(EnvVar { key, val }),
                 Ok(None) => empty_if_missing(key.clone(), EnvVarError::Missing(key)),
                 Err(violation) => Err(EnvVarError::Secret(violation)),
@@ -2335,7 +2335,7 @@ pub(crate) fn resolve_allowed_hosts(
                 }
             };
 
-            let pattern_str = match interpolate_env_vars_plaintext(&entry.pattern, secret_registry) {
+            let pattern_str = match interpolate_deployment_env_vars_plaintext(&entry.pattern, secret_registry) {
                 Ok(s) => s,
                 Err(EnvVarError::Missing(var)) => {
                     if ignore_missing_env_vars {
@@ -2353,7 +2353,7 @@ pub(crate) fn resolve_allowed_hosts(
             };
             let request_url_regex = match entry.request_url_regex {
                 Some(pattern) => {
-                    let pattern = match interpolate_env_vars_plaintext(&pattern, secret_registry) {
+                    let pattern = match interpolate_deployment_env_vars_plaintext(&pattern, secret_registry) {
                         Ok(s) => s,
                         Err(EnvVarError::Missing(var)) => {
                             if ignore_missing_env_vars {

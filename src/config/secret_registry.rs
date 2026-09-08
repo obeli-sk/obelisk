@@ -25,8 +25,16 @@ pub(crate) enum SecretSourceToml {
 /// The `[secrets]` table: logical name -> source.
 pub(crate) type SecretsToml = IndexMap<String, SecretSourceToml>;
 
+/// Public environment variables that deployments may read.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PublicEnvToml {
+    #[serde(default)]
+    pub(crate) allowed: Vec<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
-#[error("attempted to load secret `{0}` as an environment variable")]
+#[error("environment variable `{0}` is not available to deployments")]
 pub(crate) struct SecretViolation(pub(crate) String);
 
 #[derive(Debug, Clone)]
@@ -35,6 +43,8 @@ pub(crate) struct SecretRegistry {
     values: HashMap<String, SecretString>,
     /// Used to reject `public_env_lookup`, contains both logical and `env` names.
     sensitive: HashSet<String>,
+    /// Process environment variable names that deployments may read.
+    public_allowed: HashSet<String>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -49,6 +59,15 @@ impl SecretRegistry {
         SecretRegistry {
             values: HashMap::default(),
             sensitive: HashSet::default(),
+            public_allowed: HashSet::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn empty_with_public_env(allowed: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            public_allowed: allowed.into_iter().collect(),
+            ..Self::empty()
         }
     }
 
@@ -60,6 +79,17 @@ impl SecretRegistry {
             Err(SecretViolation(name.to_owned()))
         } else {
             Ok(std::env::var(name).ok())
+        }
+    }
+
+    pub(crate) fn deployment_env_lookup(
+        &self,
+        name: &str,
+    ) -> Result<Option<String>, SecretViolation> {
+        if self.public_allowed.contains(name) {
+            self.public_env_lookup(name)
+        } else {
+            Err(SecretViolation(name.to_owned()))
         }
     }
 
@@ -75,7 +105,17 @@ impl SecretRegistry {
     ) -> Self {
         let values: HashMap<String, SecretString> = values.into_iter().collect();
         let sensitive = values.keys().cloned().collect();
-        Self { values, sensitive }
+        Self {
+            values,
+            sensitive,
+            public_allowed: HashSet::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_public_env(mut self, allowed: impl IntoIterator<Item = String>) -> Self {
+        self.public_allowed = allowed.into_iter().collect();
+        self
     }
 
     /// Build the registry from the resolved server configuration
@@ -84,6 +124,7 @@ impl SecretRegistry {
     /// constructed: it calls `std::env::remove_var`, which is only sound without concurrent readers.
     pub(crate) fn resolve(
         secrets: SecretsToml,
+        public_env: PublicEnvToml,
         env_var_cleanup: EnvVarCleanupStrategy,
         runtime_config_availability: RuntimeConfigAvailability,
         was_legacy_token_wiped: Option<&SecretString>,
@@ -127,7 +168,11 @@ impl SecretRegistry {
             }
         }
 
-        Ok(Self { values, sensitive })
+        Ok(Self {
+            values,
+            sensitive,
+            public_allowed: public_env.allowed.into_iter().collect(),
+        })
     }
 }
 
@@ -189,6 +234,7 @@ mod tests {
         );
         let registry = SecretRegistry::resolve(
             secrets,
+            PublicEnvToml::default(),
             EnvVarCleanupStrategy::Wipe,
             RuntimeConfigAvailability::Strict,
             None,
@@ -228,6 +274,7 @@ mod tests {
         );
         let err = SecretRegistry::resolve(
             secrets,
+            PublicEnvToml::default(),
             EnvVarCleanupStrategy::Noop,
             RuntimeConfigAvailability::Strict,
             None,
@@ -239,5 +286,25 @@ mod tests {
             err.contains("OBELISK_TEST_DEFINITELY_UNSET_2B9C"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn public_allowlist_does_not_require_values_and_rejects_other_variables() {
+        const ALLOWED: &str = "OBELISK_TEST_OPTIONAL_PUBLIC_3C8D";
+        const DENIED: &str = "OBELISK_TEST_DENIED_PUBLIC_3C8D";
+        let registry = SecretRegistry::resolve(
+            SecretsToml::new(),
+            PublicEnvToml {
+                allowed: vec![ALLOWED.to_string()],
+            },
+            EnvVarCleanupStrategy::Noop,
+            RuntimeConfigAvailability::Strict,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(registry.deployment_env_lookup(ALLOWED).unwrap(), None);
+        assert!(registry.deployment_env_lookup(DENIED).is_err());
+        assert!(registry.deployment_env_lookup("PATH").is_err());
     }
 }

@@ -22,6 +22,21 @@ pub(crate) fn interpolate_env_vars_plaintext(
 ) -> Result<String, EnvVarError> {
     interpolate_env_vars_inner(input, secret_registry)
 }
+
+pub(crate) fn interpolate_deployment_env_vars_plaintext(
+    input: &str,
+    secret_registry: &SecretRegistry,
+) -> Result<String, EnvVarError> {
+    interpolate_core(
+        input,
+        &|key| {
+            secret_registry
+                .deployment_env_lookup(key)
+                .map_err(EnvVarError::from)
+        },
+        &|key| EnvVarError::Missing(key),
+    )
+}
 pub(crate) fn interpolate_env_vars_secret(
     input: &str,
     secret_registry: &SecretRegistry,

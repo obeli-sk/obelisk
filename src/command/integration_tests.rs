@@ -174,6 +174,9 @@ directory = "{codegen_cache}"
 [database.sqlite]
 directory = "{db_dir}"
 
+[public_env]
+allowed = ["PATH", "OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
+
 [[outbound_http.allowed_host]]
 pattern = "*"
 methods = "*"
@@ -802,7 +805,11 @@ impl TestServer {
                     crate::config::secret_registry::SecretRegistry::from_test_values([(
                         "MY_SECRET".to_string(),
                         secrecy::SecretString::from("s3cret_value"),
-                    )]),
+                    )])
+                    .with_public_env([
+                        "PATH".to_string(),
+                        "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_string(),
+                    ]),
                 ),
             ))
             .await
