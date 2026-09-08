@@ -2978,6 +2978,20 @@ pub(crate) mod tests {
             wh_server_state_sender: watch::Sender<Arc<WebhookServerState>>,
         }
 
+        fn version_obelisk_test_imports(source: &str) -> String {
+            let source = source
+                .replace("obelisk.call", "dynamic.call")
+                .replace("obelisk.schedule", "dynamic.schedule");
+            let mut imports = String::new();
+            if source.contains("obelisk.") && !source.contains("obelisk:webhook@") {
+                imports.push_str("import * as obelisk from 'obelisk:webhook@1.0.0';\n");
+            }
+            if source.contains("dynamic.") && !source.contains("obelisk:webhook-dynamic@") {
+                imports.push_str("import * as dynamic from 'obelisk:webhook-dynamic@1.0.0';\n");
+            }
+            format!("{imports}{source}")
+        }
+
         async fn start_js_webhook_server(
             source: &str,
         ) -> (
@@ -3017,7 +3031,7 @@ pub(crate) mod tests {
                             entry_path: "index.js".to_string(),
                             files: std::collections::BTreeMap::from([(
                                 "index.js".to_string(),
-                                source.to_string(),
+                                version_obelisk_test_imports(source),
                             )]),
                         }),
                         config_section_hint:
@@ -3179,7 +3193,7 @@ pub(crate) mod tests {
                             entry_path: "index.js".to_string(),
                             files: std::collections::BTreeMap::from([(
                                 "index.js".to_string(),
-                                source.to_string(),
+                                version_obelisk_test_imports(source),
                             )]),
                         }),
                         config_section_hint:
@@ -3574,7 +3588,7 @@ pub(crate) mod tests {
                                 entry_path: "index.js".to_string(),
                                 files: std::collections::BTreeMap::from([(
                                     "index.js".to_string(),
-                                    js_source.to_string(),
+                                    version_obelisk_test_imports(js_source),
                                 )]),
                             }),
                             config_section_hint:

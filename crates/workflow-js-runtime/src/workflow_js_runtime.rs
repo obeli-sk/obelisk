@@ -638,17 +638,11 @@ fn new_join_set_exhausted_error(ctx: &mut Context) -> JsError {
     let fallback = || JsNativeError::error().with_message(message).into();
 
     let err = (|| -> JsResult<JsError> {
-        let global = ctx.global_object();
-        let obelisk = global
-            .get(js_string!("obelisk"), ctx)?
+        let ctor = ctx
+            .global_object()
+            .get(js_string!("__obeliskJoinSetExhaustedError"), ctx)?
             .as_object()
-            .ok_or_else(|| JsNativeError::error().with_message("global obelisk object missing"))?;
-        let ctor = obelisk
-            .get(js_string!("JoinSetExhaustedError"), ctx)?
-            .as_object()
-            .ok_or_else(|| {
-                JsNativeError::error().with_message("obelisk.JoinSetExhaustedError missing")
-            })?;
+            .ok_or_else(|| JsNativeError::error().with_message("JoinSetExhaustedError missing"))?;
         let err_obj = ctor.construct(&[JsValue::from(js_string!(message))], None, ctx)?;
         Ok(JsError::from_opaque(err_obj.into()))
     })();
@@ -1303,6 +1297,12 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         .as_object()
         .expect("temporary obelisk namespace must be an object")
         .clone();
+    let join_set_exhausted_error = obelisk.get(js_string!("JoinSetExhaustedError"), context)?;
+    context.register_global_property(
+        js_string!("__obeliskJoinSetExhaustedError"),
+        join_set_exhausted_error,
+        Attribute::all(),
+    )?;
     boa_common::child_error::register(&obelisk, context)?;
 
     let dynamic = new_object(context);

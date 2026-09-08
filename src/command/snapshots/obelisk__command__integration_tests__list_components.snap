@@ -391,7 +391,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/webhook/call_activity.js",
           "digest": "sha256:<REDACTED>",
-          "size": 437
+          "size": 489
         },
         "role": "js_entrypoint"
       }
@@ -442,7 +442,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/webhook/generate_execution_id.js",
           "digest": "sha256:<REDACTED>",
-          "size": 272
+          "size": 322
         },
         "role": "js_entrypoint"
       }
@@ -459,7 +459,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/webhook/get_status.js",
           "digest": "sha256:<REDACTED>",
-          "size": 203
+          "size": 253
         },
         "role": "js_entrypoint"
       }
@@ -493,7 +493,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/webhook/hello.js",
           "digest": "sha256:<REDACTED>",
-          "size": 295
+          "size": 345
         },
         "role": "js_entrypoint"
       }
@@ -603,7 +603,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/add_via_activity.js",
           "digest": "sha256:<REDACTED>",
-          "size": 539
+          "size": 590
         },
         "role": "js_entrypoint"
       }
@@ -637,7 +637,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/call_activity.js",
           "digest": "sha256:<REDACTED>",
-          "size": 236
+          "size": 296
         },
         "role": "js_entrypoint"
       }
@@ -654,7 +654,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/call_stub.js",
           "digest": "sha256:<REDACTED>",
-          "size": 339
+          "size": 390
         },
         "role": "js_entrypoint"
       }
@@ -671,7 +671,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/cancel_child_error.js",
           "digest": "sha256:<REDACTED>",
-          "size": 1554
+          "size": 1605
         },
         "role": "js_entrypoint"
       }
@@ -688,7 +688,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/cancel_delay_error.js",
           "digest": "sha256:<REDACTED>",
-          "size": 1026
+          "size": 1077
         },
         "role": "js_entrypoint"
       }
@@ -705,7 +705,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/cancel_sleep_error.js",
           "digest": "sha256:<REDACTED>",
-          "size": 1124
+          "size": 1175
         },
         "role": "js_entrypoint"
       }
@@ -756,7 +756,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/import_ext_activity.js",
           "digest": "sha256:<REDACTED>",
-          "size": 409
+          "size": 460
         },
         "role": "js_entrypoint"
       }
@@ -807,7 +807,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/import_stub_activity.js",
           "digest": "sha256:<REDACTED>",
-          "size": 449
+          "size": 500
         },
         "role": "js_entrypoint"
       }
@@ -824,7 +824,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/join_next_try_semantics.js",
           "digest": "sha256:<REDACTED>",
-          "size": 3379
+          "size": 3430
         },
         "role": "js_entrypoint"
       }
@@ -900,7 +900,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/rethrow_child_error.js",
           "digest": "sha256:<REDACTED>",
-          "size": 808
+          "size": 859
         },
         "role": "js_entrypoint"
       }
@@ -934,7 +934,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/sleep_cancellable.js",
           "digest": "sha256:<REDACTED>",
-          "size": 327
+          "size": 378
         },
         "role": "js_entrypoint"
       }
