@@ -5508,13 +5508,13 @@ mod tests {
         PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
     }
 
-    /// Registry holding the `MY_SECRET` referenced by `deployment-testing-wasm-local.toml`,
-    /// matching the value the integration test server registers.
+    /// Registry matching the environment exposed by the integration test server.
     fn test_secret_registry() -> Arc<SecretRegistry> {
         Arc::new(SecretRegistry::from_test_values([(
             "MY_SECRET".to_string(),
             secrecy::SecretString::from("s3cret_value"),
-        )]))
+        )])
+        .with_public_env(["PATH".to_string()]))
     }
 
     #[test]
