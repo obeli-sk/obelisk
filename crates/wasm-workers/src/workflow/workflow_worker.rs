@@ -1926,7 +1926,7 @@ pub(crate) mod tests {
         PendingStateFinishedError, PersistKind,
     };
     use concepts::storage::{
-        AppendRequest, DbConnection, DbConnectionTest, DbPool, ExecutionRequest,
+        AppendRequest, Created, DbConnection, DbConnectionTest, DbPool, ExecutionRequest,
     };
     use concepts::time::TokioSleep;
     use concepts::{
@@ -5784,11 +5784,11 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(create_event.created_at, sim_clock.now());
-        let ExecutionRequest::Created {
+        let ExecutionRequest::Created(Created {
             scheduled_at,
             max_persisted_value_size_bytes,
             ..
-        } = create_event.event
+        }) = create_event.event
         else {
             panic!("child execution log must start with Created");
         };

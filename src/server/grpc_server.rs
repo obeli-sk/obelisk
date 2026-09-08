@@ -23,7 +23,7 @@ use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage;
 use concepts::storage::BacktraceFilter;
-use concepts::storage::CreateRequest;
+use concepts::storage::Created;
 use concepts::storage::DbConnection;
 use concepts::storage::DbErrorGeneric;
 use concepts::storage::DbErrorWrite;
@@ -397,7 +397,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .map_err(map_to_status)?;
         let current_execution_with_state =
             conn.get_pending_state(&execution_id).await.to_status()?;
-        let create_request = conn.get_create_request(&execution_id).await.to_status()?;
+        let created = conn.get_create_request(&execution_id).await.to_status()?;
         let summary = grpc_gen::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary::from(
                 current_execution_with_state.clone(),
@@ -427,7 +427,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 let finished_message = grpc_gen::GetStatusResponse {
                     message: Some(Message::FinishedStatus(to_finished_status(
                         finished_result,
-                        &create_request,
+                        &created,
+                        current_execution_with_state.created_at,
                         finished.finished_at,
                     ))),
                 };
@@ -457,7 +458,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         execution_id,
                         status_stream_sender,
                         current_execution_with_state.pending_state,
-                        create_request,
+                        created,
                         request.send_finished_status,
                     )
                     .await;
@@ -1424,7 +1425,7 @@ pub(crate) async fn poll_status(
     execution_id: ExecutionId,
     status_stream_sender: mpsc::Sender<TonicResult<GetStatusResponse>>,
     mut old_pending_state: PendingState,
-    create_request: CreateRequest,
+    created: Created,
     send_finished_status: bool,
 ) {
     let conn = match db_pool.connection().await {
@@ -1438,7 +1439,7 @@ pub(crate) async fn poll_status(
         select! {
             res = async {
                 tokio::time::sleep(GET_STATUS_POLLING_SLEEP).await;
-                notify_status(conn.as_ref(), &execution_id, &status_stream_sender, old_pending_state, &create_request, send_finished_status).await
+                notify_status(conn.as_ref(), &execution_id, &status_stream_sender, old_pending_state, &created, send_finished_status).await
             } => {
                 match res {
                     Ok(new_state) => {
@@ -1468,7 +1469,7 @@ async fn notify_status(
     execution_id: &ExecutionId,
     status_stream_sender: &mpsc::Sender<TonicResult<GetStatusResponse>>,
     old_pending_state: PendingState,
-    create_request: &CreateRequest,
+    created: &Created,
     send_finished_status: bool,
 ) -> Result<PendingState, ()> {
     let pending_state = conn.get_pending_state(execution_id).await;
@@ -1514,7 +1515,8 @@ async fn notify_status(
                         let message = grpc_gen::GetStatusResponse {
                             message: Some(Message::FinishedStatus(to_finished_status(
                                 finished_result,
-                                create_request,
+                                created,
+                                execution_with_state.created_at,
                                 pending_state_finished.finished_at,
                             ))),
                         };
@@ -1544,14 +1546,15 @@ fn map_to_status(err: DbErrorGeneric) -> tonic::Status {
 
 pub(crate) fn to_finished_status(
     finished_result: SupportedFunctionReturnValue,
-    create_request: &CreateRequest,
+    created: &Created,
+    created_at: DateTime<Utc>,
     finished_at: DateTime<Utc>,
 ) -> grpc_gen::FinishedStatus {
     let result_detail = finished_result.into();
     grpc_gen::FinishedStatus {
         value: Some(result_detail),
-        created_at: Some(create_request.created_at.into()),
-        scheduled_at: Some(create_request.scheduled_at.into()),
+        created_at: Some(created_at.into()),
+        scheduled_at: Some(created.scheduled_at.into()),
         finished_at: Some(finished_at.into()),
     }
 }

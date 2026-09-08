@@ -7,6 +7,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::prefixed_ulid::RunId;
+use concepts::storage::Created;
 use concepts::storage::DbConnection;
 use concepts::storage::DbConnectionTest;
 use concepts::storage::DbPoolCloseable;
@@ -70,7 +71,7 @@ async fn diff_proptest_inner(seed: u64) {
             .filter_map(|req| {
                 // Remove Created, Unpaused
                 if let AppendRequest {
-                    event: ExecutionRequest::Created { .. } | ExecutionRequest::Unpaused,
+                    event: ExecutionRequest::Created(_) | ExecutionRequest::Unpaused,
                     ..
                 } = req
                 {
@@ -169,17 +170,7 @@ fn normalize_timestamps(
     unstructured: &mut arbitrary::Unstructured<'_>,
 ) -> arbitrary::Result<()> {
     match &mut req.event {
-        ExecutionRequest::Created {
-            ffqn: _,
-            params: _,
-            parent: _,
-            scheduled_at,
-            component_id: _,
-            deployment_id: _,
-            metadata: _,
-            scheduled_by: _,
-            max_persisted_value_size_bytes: _,
-        } => {
+        ExecutionRequest::Created(Created { scheduled_at, .. }) => {
             *scheduled_at = arbitrary_valid_datetime(unstructured)?;
         }
         ExecutionRequest::Locked(locked) => {

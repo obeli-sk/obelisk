@@ -4,8 +4,8 @@ use concepts::{
     SupportedFunctionReturnValue,
     storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, CapturedDbWrite,
-        CreateRequest, DbErrorWrite, ExecutionRequest, HistoryEvent, HistoryEventScheduleAt,
-        JoinSetRequest, Version,
+        CreateRequest, Created, DbErrorWrite, ExecutionRequest, HistoryEvent,
+        HistoryEventScheduleAt, JoinSetRequest, Version,
     },
 };
 use executor::worker::FatalError;
@@ -392,7 +392,7 @@ fn normalize_create_request_for_matching(req: CreateRequest) -> CreateRequest {
 
 fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionRequest {
     match req {
-        ExecutionRequest::Created {
+        ExecutionRequest::Created(Created {
             ffqn,
             params,
             parent,
@@ -402,7 +402,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             metadata,
             scheduled_by,
             max_persisted_value_size_bytes,
-        } => ExecutionRequest::Created {
+        }) => ExecutionRequest::Created(Created {
             ffqn,
             params,
             parent,
@@ -412,7 +412,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             metadata,
             scheduled_by,
             max_persisted_value_size_bytes,
-        },
+        }),
         ExecutionRequest::Locked(mut locked) => {
             locked.lock_expires_at = DateTime::UNIX_EPOCH;
             ExecutionRequest::Locked(locked)

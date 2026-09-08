@@ -71,68 +71,7 @@
           "type": "object",
           "properties": {
             "created": {
-              "type": "object",
-              "properties": {
-                "ffqn": {
-                  "type": "string"
-                },
-                "params": {
-                  "type": "array",
-                  "items": true
-                },
-                "parent": {
-                  "type": [
-                    "array",
-                    "null"
-                  ],
-                  "prefixItems": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "string"
-                    }
-                  ],
-                  "minItems": 2,
-                  "maxItems": 2
-                },
-                "scheduled_at": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "component_id": {
-                  "$ref": "#/$defs/ComponentId"
-                },
-                "deployment_id": {
-                  "type": "string"
-                },
-                "metadata": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  }
-                },
-                "scheduled_by": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "max_persisted_value_size_bytes": {
-                  "type": "integer",
-                  "format": "uint64",
-                  "minimum": 0,
-                  "default": 18446744073709551615
-                }
-              },
-              "required": [
-                "ffqn",
-                "params",
-                "scheduled_at",
-                "component_id",
-                "deployment_id",
-                "metadata"
-              ]
+              "$ref": "#/$defs/Created"
             }
           },
           "required": [
@@ -318,6 +257,71 @@
           "type": "string",
           "const": "cancellation_requested"
         }
+      ]
+    },
+    "Created": {
+      "description": "Persisted creation payload, excluding [`CreateRequest::paused`] because pausing is a separate event.",
+      "type": "object",
+      "properties": {
+        "ffqn": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": true
+        },
+        "parent": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "scheduled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "component_id": {
+          "$ref": "#/$defs/ComponentId"
+        },
+        "deployment_id": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "scheduled_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_persisted_value_size_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 18446744073709551615
+        }
+      },
+      "required": [
+        "ffqn",
+        "params",
+        "scheduled_at",
+        "component_id",
+        "deployment_id",
+        "metadata"
       ]
     },
     "ComponentId": {

@@ -11,9 +11,9 @@ use concepts::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
         ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
-        ComponentUpgradeReason, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
-        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
+        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse,
+        DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
         DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
@@ -565,42 +565,17 @@ struct DelayReq {
 async fn fetch_created_event(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-) -> Result<CreateRequest, DbErrorRead> {
-    let stmt = "SELECT created_at, json_value FROM t_execution_log WHERE \
+) -> Result<Created, DbErrorRead> {
+    let stmt = "SELECT json_value FROM t_execution_log WHERE \
                 execution_id = $1 AND version = 0";
 
     let row = tx.query_one(stmt, &[&execution_id.to_string()]).await?;
 
-    let created_at = get(&row, "created_at")?;
     let event: Json<ExecutionRequest> = get(&row, "json_value")?;
     let event = event.0;
 
-    if let ExecutionRequest::Created {
-        ffqn,
-        params,
-        parent,
-        scheduled_at,
-        component_id,
-        deployment_id,
-        metadata,
-        scheduled_by,
-        max_persisted_value_size_bytes,
-    } = event
-    {
-        Ok(CreateRequest {
-            created_at,
-            execution_id: execution_id.clone(),
-            ffqn,
-            params,
-            parent,
-            scheduled_at,
-            component_id,
-            deployment_id,
-            metadata,
-            scheduled_by,
-            paused: false,
-            max_persisted_value_size_bytes,
-        })
+    if let ExecutionRequest::Created(created) = event {
+        Ok(created)
     } else {
         error!("Row with version=0 must be a `Created` event - {event:?}");
         Err(consistency_db_err("expected `Created` event").into())
@@ -2379,14 +2354,14 @@ async fn lock_single_execution(
     }
 
     // Extract Created Event
-    let Some(ExecutionRequest::Created {
+    let Some(ExecutionRequest::Created(Created {
         ffqn,
         params,
         parent,
         metadata,
         max_persisted_value_size_bytes,
         ..
-    }) = events.pop_front().map(|outer| outer.event)
+    })) = events.pop_front().map(|outer| outer.event)
     else {
         error!("Execution log must contain at least `Created` event");
         return Err(consistency_db_err("execution log must contain `Created` event").into());
@@ -2487,7 +2462,7 @@ async fn append(
     req: AppendRequest,
     appending_version: Version,
 ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
-    if matches!(req.event, ExecutionRequest::Created { .. }) {
+    if matches!(req.event, ExecutionRequest::Created(_)) {
         return Err(DbErrorWrite::NonRetriable(
             DbErrorWriteNonRetriable::ValidationFailed(
                 "cannot append `Created` event - use `create` instead".into(),
@@ -2561,7 +2536,7 @@ async fn append(
 
     // Calculate current pending state
     match &event.0 {
-        ExecutionRequest::Created { .. } => {
+        ExecutionRequest::Created(_) => {
             unreachable!("handled in the caller")
         }
 

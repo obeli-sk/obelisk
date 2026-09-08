@@ -9,7 +9,7 @@ use concepts::{
     storage::{
         AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
         CancelOutcome, CapturedDbWrite, ChildExecutionRequestError, ComponentUpgradeOutcome,
-        ComponentUpgradeReason, CreateRequest, DbErrorGeneric, DbErrorRead, DbErrorWrite,
+        ComponentUpgradeReason, CreateRequest, Created, DbErrorGeneric, DbErrorRead, DbErrorWrite,
         DbErrorWriteNonRetriable, DelayCancelOutcome, ExecutionEvent, ExecutionListPagination,
         ExecutionRequest, ExecutionWithState, HistoryEvent, HistoryEventScheduleAt, JoinSetRequest,
         Locked, LockedBy, LogEntry, LogEntryRow, LogLevel, LogStreamType, Pagination, PendingState,
@@ -934,7 +934,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
         version: event.version.0,
         backtrace_id: event.backtrace_id.map(|v| v.0),
         event: Some(match event.event {
-            ExecutionRequest::Created {
+            ExecutionRequest::Created(Created {
                 ffqn,
                 params,
                 parent,
@@ -944,7 +944,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                 metadata,
                 scheduled_by,
                 max_persisted_value_size_bytes,
-            } => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
+            }) => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
                 params: Some(
                     to_any(params, format!("urn:obelisk:json:params:{ffqn}"))
                         .expect("Params must be JSON-serializable"),
@@ -1103,7 +1103,7 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                         ));
                     }
                 };
-                ExecutionRequest::Created {
+                ExecutionRequest::Created(Created {
                     ffqn,
                     params,
                     parent,
@@ -1122,7 +1122,7 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                     metadata: metadata_from_grpc_map(created.metadata)?,
                     scheduled_by: created.scheduled_by.map(TryInto::try_into).transpose()?,
                     max_persisted_value_size_bytes: if created.max_persisted_value_size_bytes == 0 { u64::MAX } else { created.max_persisted_value_size_bytes },
-                }
+                })
             }
             grpc_gen::execution_event::Event::Locked(locked) => ExecutionRequest::Locked(Locked {
                 component_id: locked
@@ -2432,7 +2432,7 @@ mod tests {
     fn legacy_grpc_created_event_with_zero_limit_is_unlimited() {
         let event = ExecutionEvent {
             created_at: DateTime::UNIX_EPOCH,
-            event: ExecutionRequest::Created {
+            event: ExecutionRequest::Created(Created {
                 ffqn: FunctionFqn::new_static("ns:pkg/ifc", "fn"),
                 params: Params::empty(),
                 parent: None,
@@ -2442,7 +2442,7 @@ mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_by: None,
                 max_persisted_value_size_bytes: 64,
-            },
+            }),
             backtrace_id: None,
             version: Version::new(0),
         };
@@ -2453,10 +2453,10 @@ mod tests {
         created.max_persisted_value_size_bytes = 0;
 
         let decoded = ExecutionEvent::try_from(grpc).unwrap();
-        let ExecutionRequest::Created {
+        let ExecutionRequest::Created(Created {
             max_persisted_value_size_bytes,
             ..
-        } = decoded.event
+        }) = decoded.event
         else {
             panic!("expected created event")
         };

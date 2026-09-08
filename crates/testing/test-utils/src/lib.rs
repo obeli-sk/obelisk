@@ -1,6 +1,6 @@
 use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest};
 use concepts::storage::{
-    ExecutionEvent, ExecutionLog, ExecutionRequest, JoinSetResponseEventOuter, Locked,
+    Created, ExecutionEvent, ExecutionLog, ExecutionRequest, JoinSetResponseEventOuter, Locked,
     PendingState, Version,
 };
 use concepts::{
@@ -146,7 +146,7 @@ impl From<ExecutionLog> for ExecutionLogSanitized {
     fn from(mut value: ExecutionLog) -> Self {
         for event in value.events.as_mut_slice() {
             match &mut event.event {
-                ExecutionRequest::Created { component_id, .. }
+                ExecutionRequest::Created(Created { component_id, .. })
                 | ExecutionRequest::Locked(Locked { component_id, .. }) => {
                     component_id.component_digest = COMPONENT_DIGEST_DUMMY;
                 }
