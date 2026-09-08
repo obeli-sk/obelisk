@@ -162,6 +162,52 @@ async fn persisted_value_guard_rejects_single_and_mixed_batch_atomically(databas
         1
     );
 
+    // A changed platform setting cannot alter the first execution's contract.
+    // A separately created execution snapshots and uses its own larger limit.
+    let large_limit_execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: large_limit_execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: 1024,
+        })
+        .await
+        .unwrap();
+    db_connection
+        .append(
+            large_limit_execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::Persist {
+                        value: vec![1; 100],
+                        kind: storage::PersistKind::ExecutionId,
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        db_connection
+            .get(&large_limit_execution_id)
+            .await
+            .unwrap()
+            .events
+            .len(),
+        2
+    );
+
     drop(db_connection);
     db_close.close().await;
 }

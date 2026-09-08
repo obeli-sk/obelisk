@@ -364,6 +364,20 @@ mod tests {
     }
 
     #[test]
+    fn binary_heavy_string_is_limited_by_encoded_size() {
+        let binary_heavy = "\0".repeat(16);
+        assert_eq!(16, binary_heavy.len());
+        assert_eq!(98, serde_json::to_vec(&binary_heavy).unwrap().len());
+        assert_matches::assert_matches!(
+            EncodedSizeLimit::new(32).unwrap().validate(&binary_heavy),
+            Err(EncodedSizeExceeded {
+                limit: 32,
+                encoded_size_at_least: 33,
+            })
+        );
+    }
+
+    #[test]
     fn hashes_compact_json_encoding() {
         let value = serde_json::json!(["a", 1]);
         let expected = Sha256::digest(br#"["a",1]"#);

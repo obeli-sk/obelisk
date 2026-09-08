@@ -2422,3 +2422,44 @@ pub fn captured_write_from_grpc(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concepts::Params;
+
+    #[test]
+    fn legacy_grpc_created_event_with_zero_limit_is_unlimited() {
+        let event = ExecutionEvent {
+            created_at: DateTime::UNIX_EPOCH,
+            event: ExecutionRequest::Created {
+                ffqn: FunctionFqn::new_static("ns:pkg/ifc", "fn"),
+                params: Params::empty(),
+                parent: None,
+                scheduled_at: DateTime::UNIX_EPOCH,
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DeploymentId::from_parts(0, 0),
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_by: None,
+                max_persisted_value_size_bytes: 64,
+            },
+            backtrace_id: None,
+            version: Version::new(0),
+        };
+        let mut grpc = from_execution_event_to_grpc(event);
+        let Some(grpc_gen::execution_event::Event::Created(created)) = grpc.event.as_mut() else {
+            panic!("expected created event")
+        };
+        created.max_persisted_value_size_bytes = 0;
+
+        let decoded = ExecutionEvent::try_from(grpc).unwrap();
+        let ExecutionRequest::Created {
+            max_persisted_value_size_bytes,
+            ..
+        } = decoded.event
+        else {
+            panic!("expected created event")
+        };
+        assert_eq!(u64::MAX, max_persisted_value_size_bytes);
+    }
+}

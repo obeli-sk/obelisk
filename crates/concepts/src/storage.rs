@@ -3358,6 +3358,36 @@ mod tests {
     }
 
     #[test]
+    fn legacy_created_event_without_value_limit_is_unlimited() {
+        let created = super::ExecutionRequest::Created {
+            ffqn: crate::FunctionFqn::new_static("ns:pkg/ifc", "fn"),
+            params: Params::empty(),
+            parent: None,
+            scheduled_at: DateTime::UNIX_EPOCH,
+            component_id: crate::ComponentId::dummy_activity(),
+            deployment_id: crate::prefixed_ulid::DeploymentId::from_parts(0, 0),
+            metadata: crate::ExecutionMetadata::empty(),
+            scheduled_by: None,
+            max_persisted_value_size_bytes: 64,
+        };
+        let mut json = serde_json::to_value(created).unwrap();
+        json.get_mut("created")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("max_persisted_value_size_bytes");
+
+        let event: super::ExecutionRequest = serde_json::from_value(json).unwrap();
+        assert_matches::assert_matches!(
+            event,
+            super::ExecutionRequest::Created {
+                max_persisted_value_size_bytes: u64::MAX,
+                ..
+            }
+        );
+    }
+
+    #[test]
     fn rejected_child_params_store_only_digest_and_size() {
         let params = Params::from_json_values_test(vec![serde_json::json!("secret-value")]);
         let rejected = super::PersistedParams::Rejected {
