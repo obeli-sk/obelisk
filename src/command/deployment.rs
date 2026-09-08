@@ -6,8 +6,7 @@ use crate::config::deployment::{
 };
 use crate::server::web_api_server::deployment::{
     DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
-    DeploymentSubmitResponse, DeploymentSwitchPayload, GcOrphanFilesResponseSer,
-    SubmitPackageErrorBody,
+    DeploymentSwitchPayload, GcOrphanFilesResponseSer, SubmitPackageErrorBody,
 };
 use anyhow::{Context as _, bail};
 use concepts::prefixed_ulid::DeploymentId;
@@ -325,6 +324,7 @@ async fn upload_and_submit_manifest(
     deployment_id: Option<DeploymentId>,
 ) -> anyhow::Result<DeploymentId> {
     let client = client_startup.web_api_client()?;
+    let deployment_id = deployment_id.unwrap_or_else(DeploymentId::generate);
     // Preflight: no blobs, so digests already in the CAS are not re-uploaded.
     let missing = match submit_attempt(
         &client,
@@ -380,19 +380,18 @@ async fn submit_attempt(
     prepared: &PreparedDeploymentManifest,
     allow_unavailable_runtime_config: bool,
     description: Option<&str>,
-    deployment_id: Option<DeploymentId>,
+    deployment_id: DeploymentId,
     files: &[&crate::config::deployment::DeploymentManifestFile],
 ) -> anyhow::Result<SubmitAttempt> {
-    let url = format!("{api_url}/v1/deployments");
+    let url = format!("{api_url}/v1/deployments/{deployment_id}");
     let request = if files.is_empty() {
         client
-            .post(url)
+            .put(url)
             .header(ACCEPT, "application/json")
             .json(&DeploymentSubmitPayload {
                 deployment_toml: prepared.deployment_toml.clone(),
                 description: description.map(str::to_string),
                 allow_unavailable_runtime_config,
-                deployment_id: deployment_id.map(|id| id.to_string()),
             })
     } else {
         let mut form = reqwest::multipart::Form::new()
@@ -404,9 +403,6 @@ async fn submit_attempt(
         if let Some(description) = description {
             form = form.text("description", description.to_string());
         }
-        if let Some(deployment_id) = deployment_id {
-            form = form.text("deployment_id", deployment_id.to_string());
-        }
         for file in files {
             form = form.part(
                 file.digest.to_string(),
@@ -414,15 +410,14 @@ async fn submit_attempt(
             );
         }
         client
-            .post(url)
+            .put(url)
             .header(ACCEPT, "application/json")
             .multipart(form)
     };
     let response = request.send().await?;
     let status = response.status();
     if status.is_success() {
-        let response: DeploymentSubmitResponse = response.json().await?;
-        return Ok(SubmitAttempt::Stored(response.deployment_id.parse()?));
+        return Ok(SubmitAttempt::Stored(deployment_id));
     }
     if status == reqwest::StatusCode::CONFLICT {
         let detail: SubmitPackageErrorBody = response.json().await?;

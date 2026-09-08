@@ -1834,10 +1834,10 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
         let request = request.into_inner();
         let runtime_config_availability =
             runtime_config_availability_from_grpc(request.runtime_config_check());
-        let requested_deployment_id = request
+        let deployment_id = request
             .deployment_id
-            .map(DeploymentId::try_from)
-            .transpose()?;
+            .argument_must_exist("deployment_id")?
+            .try_into()?;
         let mut termination_watcher = self.termination_watcher.clone();
         let supplied_files = request
             .files
@@ -1854,7 +1854,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             runtime_config_availability,
             request.created_by.clone(),
             request.description.clone(),
-            requested_deployment_id,
+            deployment_id,
             &self.prepared_dirs,
             supplied_files,
             self.db_pool.clone(),
@@ -1869,7 +1869,10 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                     "another deployment submit or switch is already running",
                 ));
             }
-            Err(server::SubmitDeploymentError::Other(err)) => {
+            Err(
+                server::SubmitDeploymentError::Conflict(err)
+                | server::SubmitDeploymentError::Other(err),
+            ) => {
                 return Err(tonic::Status::failed_precondition(format!("{err:#}")));
             }
             Err(server::SubmitDeploymentError::Package(pkg)) => {
@@ -1877,9 +1880,7 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             }
         };
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
-        Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {
-            deployment_id: Some(deployment_id.into()),
-        }))
+        Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {}))
     }
 
     #[instrument(skip_all, fields(deployment_id))]

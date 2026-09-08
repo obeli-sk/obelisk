@@ -1220,11 +1220,11 @@ message SubmitDeploymentRequest {
     // before it is persisted. Defaults to RUNTIME_CONFIG_CHECK_STRICT.
     RuntimeConfigCheck runtime_config_check = 3;
     optional string description = 4;
-    // Optional client-supplied deployment ID for idempotent submission.
+    // Client-supplied deployment ID for idempotent submission.
     // If a deployment with this ID already exists and its content digest matches
     // the submitted manifest, the submission is a no-op and returns this ID.
-    // A digest mismatch is rejected. When unset, a fresh ID is generated.
-    optional DeploymentId deployment_id = 5;
+    // A digest mismatch is rejected.
+    DeploymentId deployment_id = 5;
     // Deployment-owned file blobs referenced by the manifest. A blob may be
     // omitted when its digest already exists in the CAS; if a referenced digest
     // is neither attached here nor present in the CAS, submit fails with
@@ -1244,7 +1244,7 @@ message DeploymentFileContent {
 }
 
 message SubmitDeploymentResponse {
-    DeploymentId deployment_id = 1;
+    reserved 1;
 }
 
 // Structured detail attached (prost-encoded) to a FAILED_PRECONDITION /

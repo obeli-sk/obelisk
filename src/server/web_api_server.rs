@@ -3,10 +3,6 @@ use crate::{
     server::web_api_server::{
         backtrace::{execution_backtrace, execution_backtrace_source},
         components::{component_wit, components_list},
-        deployment::{
-            gc_orphan_files, get_current_deployment_id, get_deployment, get_file, list_deployments,
-            submit_deployment, switch_deployment,
-        },
         functions::{function_wit, functions_list},
     },
 };
@@ -109,11 +105,12 @@ pub(crate) struct WebApiState {
         components::components_list,
         functions::functions_list,
         functions::function_wit,
-        deployment::list_deployments,
-        deployment::get_current_deployment_id,
-        deployment::get_deployment,
-        deployment::submit_deployment,
-        deployment::switch_deployment,
+        deployment::list,
+        deployment::current,
+        deployment::get,
+        deployment::submit_post,
+        deployment::submit_put,
+        deployment::switch,
         deployment::get_file,
         deployment::gc_orphan_files,
     ),
@@ -262,23 +259,28 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             "/executions/{execution-id}/upgrade",
             routing::put(execution_upgrade),
         )
-        .route("/deployments", routing::get(list_deployments))
+        .route("/deployments", routing::get(deployment::list))
         .route(
             "/deployments",
-            // axum's 2 MiB default body limit is well under a single
-            // deployment-owned file's allowed size (`max_deployment_file_bytes`,
-            // 20 MiB by default); match the gRPC submit path's message size.
-            routing::post(submit_deployment)
+            routing::post(deployment::submit_post)
                 .layer(DefaultBodyLimit::max(crate::api::MAX_GRPC_MESSAGE_SIZE)),
         )
-        .route("/deployments/{deployment-id}", routing::get(get_deployment))
-        .route("/files/orphans", routing::delete(gc_orphan_files))
-        .route("/files/{digest}", routing::get(get_file))
+        .route(
+            "/deployments/{deployment-id}",
+            routing::get(deployment::get)
+                .put(deployment::submit_put)
+                .layer(DefaultBodyLimit::max(crate::api::MAX_GRPC_MESSAGE_SIZE)),
+        )
+        .route(
+            "/files/orphans",
+            routing::delete(deployment::gc_orphan_files),
+        )
+        .route("/files/{digest}", routing::get(deployment::get_file))
         .route(
             "/deployments/{deployment-id}/switch",
-            routing::put(switch_deployment),
+            routing::put(deployment::switch),
         )
-        .route("/deployment-id", routing::get(get_current_deployment_id))
+        .route("/deployment-id", routing::get(deployment::current))
         .route(
             "/executions/{execution-id}/backtrace",
             routing::get(execution_backtrace),
@@ -3421,7 +3423,7 @@ pub(crate) mod deployment {
         )
     )]
     #[instrument(skip_all)]
-    pub(crate) async fn list_deployments(
+    pub(crate) async fn list(
         state: State<Arc<WebApiState>>,
         Query(params): Query<ListDeploymentsParams>,
         accept: AcceptHeader,
@@ -3495,7 +3497,7 @@ pub(crate) mod deployment {
             (status = 200, description = "Current deployment ID", body = String)
         )
     )]
-    pub(crate) async fn get_current_deployment_id(
+    pub(crate) async fn current(
         state: State<Arc<WebApiState>>,
         accept: TextDefaultAcceptHeader,
     ) -> Result<Response, HttpResponse> {
@@ -3587,7 +3589,7 @@ pub(crate) mod deployment {
         )
     )]
     #[instrument(skip_all, fields(deployment_id))]
-    pub(crate) async fn get_deployment(
+    pub(crate) async fn get(
         Path(deployment_id): Path<DeploymentId>,
         Query(params): Query<GetDeploymentParams>,
         state: State<Arc<WebApiState>>,
@@ -3660,10 +3662,6 @@ pub(crate) mod deployment {
         /// the deployment before persisting it.
         #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
-        /// Optional client-supplied deployment ID for idempotent submission.
-        /// If a deployment with this ID already exists and its content digest
-        /// matches, the submission is a no-op; a digest mismatch is rejected.
-        pub deployment_id: Option<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3739,15 +3737,9 @@ pub(crate) mod deployment {
         deployment_toml: String,
         description: Option<String>,
         allow_unavailable_runtime_config: bool,
-        deployment_id: Option<String>,
         files: Vec<server::SuppliedFile>,
     }
 
-    /// Parse a `multipart/form-data` submit package. Text fields `deployment_toml`,
-    /// `description`, `allow_unavailable_runtime_config`, and `deployment_id` carry the
-    /// manifest and options. Every other part is a deployment-owned file blob: its
-    /// `filename` is the deployment-relative path and its form-field `name` is the
-    /// claimed `sha256:...` content digest (or `file` when unknown).
     async fn parse_multipart_submit(
         mut multipart: axum::extract::Multipart,
         accept: AcceptHeader,
@@ -3760,7 +3752,6 @@ pub(crate) mod deployment {
         let mut deployment_toml = None;
         let mut description = None;
         let mut allow_unavailable_runtime_config = false;
-        let mut deployment_id = None;
         let mut files = Vec::new();
         while let Some(field) = multipart
             .next_field()
@@ -3792,14 +3783,6 @@ pub(crate) mod deployment {
                     })?;
                     allow_unavailable_runtime_config = value.trim() == "true";
                 }
-                "deployment_id" => {
-                    deployment_id = Some(
-                        field
-                            .text()
-                            .await
-                            .map_err(|err| bad(format!("invalid `deployment_id` field: {err}")))?,
-                    );
-                }
                 // Any other part is a file blob. `name` is the claimed digest (or `file`).
                 _ => {
                     let supplied_digest = (name != "file").then_some(name);
@@ -3822,7 +3805,6 @@ pub(crate) mod deployment {
                 .ok_or_else(|| bad("missing `deployment_toml` field".to_string()))?,
             description,
             allow_unavailable_runtime_config,
-            deployment_id,
             files,
         })
     }
@@ -3840,13 +3822,47 @@ pub(crate) mod deployment {
         tag = "deployments",
         request_body = DeploymentSubmitPayload,
         responses(
-            (status = 200, description = "Deployment submitted", body = DeploymentSubmitResponse),
+            (status = 201, description = "Deployment submitted", body = DeploymentSubmitResponse),
             (status = 400, description = "Invalid config"),
             (status = 409, description = "Incomplete or invalid package", body = SubmitPackageErrorBody)
         )
     )]
     #[instrument(skip_all)]
-    pub(crate) async fn submit_deployment(
+    pub(crate) async fn submit_post(
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+        request: axum::extract::Request,
+    ) -> Result<Response, HttpResponse> {
+        let deployment_id = DeploymentId::generate();
+        submit(deployment_id, true, state, accept, request).await
+    }
+
+    /// Submit a deployment with a client-supplied ID.
+    #[utoipa::path(
+        put,
+        path = "/v1/deployments/{deployment_id}",
+        tag = "deployments",
+        params(("deployment_id" = String, Path, description = "Deployment ID")),
+        request_body = DeploymentSubmitPayload,
+        responses(
+            (status = 204, description = "Deployment submitted"),
+            (status = 400, description = "Invalid config"),
+            (status = 409, description = "Deployment ID or package conflict", body = SubmitPackageErrorBody)
+        )
+    )]
+    #[instrument(skip_all, fields(%deployment_id))]
+    pub(crate) async fn submit_put(
+        Path(deployment_id): Path<DeploymentId>,
+        state: State<Arc<WebApiState>>,
+        accept: AcceptHeader,
+        request: axum::extract::Request,
+    ) -> Result<Response, HttpResponse> {
+        submit(deployment_id, false, state, accept, request).await
+    }
+
+    async fn submit(
+        deployment_id: DeploymentId,
+        return_id: bool,
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,
         request: axum::extract::Request,
@@ -3880,21 +3896,10 @@ pub(crate) mod deployment {
                 deployment_toml: payload.deployment_toml,
                 description: payload.description,
                 allow_unavailable_runtime_config: payload.allow_unavailable_runtime_config,
-                deployment_id: payload.deployment_id,
                 files: Vec::new(),
             }
         };
 
-        let requested_deployment_id = inputs
-            .deployment_id
-            .as_deref()
-            .map(str::parse::<DeploymentId>)
-            .transpose()
-            .map_err(|err| HttpResponse {
-                status: StatusCode::BAD_REQUEST,
-                message: format!("invalid deployment_id: {err}"),
-                accept,
-            })?;
         let mut termination_watcher = state.termination_watcher.clone();
         let result = Box::pin(crate::command::server::submit_deployment(
             state.server_verified.clone(),
@@ -3902,7 +3907,7 @@ pub(crate) mod deployment {
             runtime_config_availability_from_bool(inputs.allow_unavailable_runtime_config),
             Some("web-api".to_string()),
             inputs.description,
-            requested_deployment_id,
+            deployment_id,
             &state.prepared_dirs,
             inputs.files,
             state.db_pool.clone(),
@@ -3911,12 +3916,19 @@ pub(crate) mod deployment {
         ))
         .await;
 
-        let deployment_id = match result {
-            Ok(deployment_id) => deployment_id,
+        match result {
+            Ok(_) => {}
             Err(server::SubmitDeploymentError::Busy) => {
                 return Err(HttpResponse {
                     status: StatusCode::SERVICE_UNAVAILABLE,
                     message: "another deployment submit or switch is already running".to_string(),
+                    accept,
+                });
+            }
+            Err(server::SubmitDeploymentError::Conflict(err)) => {
+                return Err(HttpResponse {
+                    status: StatusCode::CONFLICT,
+                    message: format!("{err:#}"),
                     accept,
                 });
             }
@@ -3939,21 +3951,32 @@ pub(crate) mod deployment {
                     .into_response(),
                 });
             }
-        };
-        Ok(match accept {
-            AcceptHeader::Json => pretty_json_response(
-                StatusCode::OK,
-                &DeploymentSubmitResponse {
-                    deployment_id: deployment_id.to_string(),
-                },
-            ),
-            AcceptHeader::Text => HttpResponse {
-                status: StatusCode::OK,
-                message: deployment_id.to_string(),
-                accept,
-            }
-            .into_response(),
-        })
+        }
+        if return_id {
+            let mut response = match accept {
+                AcceptHeader::Json => pretty_json_response(
+                    StatusCode::CREATED,
+                    &DeploymentSubmitResponse {
+                        deployment_id: deployment_id.to_string(),
+                    },
+                ),
+                AcceptHeader::Text => HttpResponse {
+                    status: StatusCode::CREATED,
+                    message: deployment_id.to_string(),
+                    accept,
+                }
+                .into_response(),
+            };
+            response.headers_mut().insert(
+                header::LOCATION,
+                format!("/v1/deployments/{deployment_id}")
+                    .parse()
+                    .expect("deployment location must be a valid header value"),
+            );
+            Ok(response)
+        } else {
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
     }
 
     /// Fetch a deployment file blob by content digest.
@@ -4050,7 +4073,7 @@ pub(crate) mod deployment {
         )
     )]
     #[instrument(skip_all, fields(deployment_id))]
-    pub(crate) async fn switch_deployment(
+    pub(crate) async fn switch(
         Path(deployment_id): Path<DeploymentId>,
         state: State<Arc<WebApiState>>,
         accept: AcceptHeader,

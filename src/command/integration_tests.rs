@@ -1125,21 +1125,24 @@ impl TestServer {
             .client
             .post(format!("{}/v1/deployments", self.base_url))
             .header("Accept", "application/json")
-            .json(&json!({ "deployment_toml": deployment_toml }))
+            .json(&json!({
+                "deployment_toml": deployment_toml,
+            }))
             .send()
             .await
             .expect("webapi submit deployment request failed");
-        assert!(
-            resp.status().is_success(),
-            "webapi submit deployment failed: {}",
-            resp.status()
-        );
+        assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         let body: Value = resp.json().await.unwrap();
-        body["deployment_id"]
-            .as_str()
-            .expect("webapi submit deployment: missing deployment_id field")
-            .parse()
-            .expect("webapi submit deployment: invalid deployment id")
+        let deployment_id = body["deployment_id"].as_str().unwrap().parse().unwrap();
+        assert_eq!(location, format!("/v1/deployments/{deployment_id}"));
+        deployment_id
     }
 
     /// Submit a deployment via the Web API with an explicit (idempotency) deployment ID,
@@ -1150,11 +1153,10 @@ impl TestServer {
         deployment_id: DeploymentId,
     ) -> reqwest::Response {
         self.client
-            .post(format!("{}/v1/deployments", self.base_url))
+            .put(format!("{}/v1/deployments/{deployment_id}", self.base_url))
             .header("Accept", "application/json")
             .json(&json!({
                 "deployment_toml": deployment_toml,
-                "deployment_id": deployment_id.to_string(),
             }))
             .send()
             .await
@@ -1181,6 +1183,7 @@ impl TestServer {
                 .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
                 .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
+        let deployment_id = DeploymentId::generate();
         let submit = async |files| {
             grpc_client
                 .clone()
@@ -1189,7 +1192,7 @@ impl TestServer {
                     created_by: Some("test".to_string()),
                     runtime_config_check: RuntimeConfigCheck::Strict as i32,
                     description: None,
-                    deployment_id: None,
+                    deployment_id: Some(deployment_id.into()),
                     files,
                 })
                 .await
@@ -1197,7 +1200,7 @@ impl TestServer {
 
         // Preflight: no blobs attached. Succeeds outright when every referenced
         // digest is already in the CAS.
-        let resp = match submit(Vec::new()).await {
+        match submit(Vec::new()).await {
             Ok(resp) => resp.into_inner(),
             Err(status) => {
                 let detail = grpc::grpc_gen::SubmitDeploymentErrorDetail::decode(status.details())
@@ -1224,11 +1227,7 @@ impl TestServer {
                     .into_inner()
             }
         };
-        resp.deployment_id
-            .expect("submit_deployment: missing deployment_id")
-            .id
-            .parse()
-            .expect("submit_deployment: invalid deployment id")
+        deployment_id
     }
 
     /// Hot-redeploy to the given deployment over gRPC, asserting the switch succeeded.
@@ -1418,23 +1417,23 @@ impl TestDeployClient {
                         .unwrap()
                         .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
                         .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
-                let submit_resp = grpc_client
+                let deployment_id = DeploymentId::generate();
+                grpc_client
                     .submit_deployment(SubmitDeploymentRequest {
                         deployment_toml: new_deployment_toml,
                         created_by: Some("test".to_string()),
                         runtime_config_check: RuntimeConfigCheck::Strict as i32,
                         description: None,
-                        deployment_id: None,
+                        deployment_id: Some(deployment_id.into()),
                         // The mutated active manifest references only blobs already in the CAS.
                         files: Vec::new(),
                     })
                     .await
-                    .unwrap()
-                    .into_inner();
-                let second_id = submit_resp.deployment_id.unwrap().id;
+                    .unwrap();
+
                 let switch_resp = grpc_client
                     .switch_deployment(SwitchDeploymentRequest {
-                        deployment_id: Some(GrpcDeploymentId { id: second_id }),
+                        deployment_id: Some(deployment_id.into()),
                         runtime_config_check: RuntimeConfigCheck::Strict as i32,
                         apply: true,
                     })
@@ -2249,6 +2248,28 @@ async fn list_components_grpc_filters_with_explicit_deployment_id() {
 }
 
 #[tokio::test]
+async fn submit_deployment_with_generated_id_webapi() {
+    let server = TestServer::start(test_addr!(40_105)).await;
+
+    let deployment_toml = server.active_deployment_toml().await;
+    let deployment_id = server.webapi_submit_deployment(&deployment_toml).await;
+
+    let resp = server
+        .client
+        .get(format!(
+            "{}/v1/deployments/{deployment_id}",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .expect("get generated deployment failed");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
     let server = TestServer::start(test_addr!(40_104)).await;
 
@@ -2266,9 +2287,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         "first submit failed: {}",
         resp1.status()
     );
-    let body1: Value = resp1.json().await.unwrap();
-    let returned1: DeploymentId = body1["deployment_id"].as_str().unwrap().parse().unwrap();
-    assert_eq!(deployment_id, returned1, "explicit ID must be honored");
+    assert_eq!(resp1.status(), reqwest::StatusCode::NO_CONTENT);
 
     // Resubmitting the identical manifest under the same ID is an idempotent no-op.
     let resp2 = server
@@ -2279,12 +2298,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         "idempotent resubmit failed: {}",
         resp2.status()
     );
-    let body2: Value = resp2.json().await.unwrap();
-    let returned2: DeploymentId = body2["deployment_id"].as_str().unwrap().parse().unwrap();
-    assert_eq!(
-        deployment_id, returned2,
-        "no-op resubmit must return same ID"
-    );
+    assert_eq!(resp2.status(), reqwest::StatusCode::NO_CONTENT);
 
     // Submitting a different manifest under the same ID is rejected as a digest conflict.
     let mut mutated = deployment_toml.parse::<DocumentMut>().unwrap();
@@ -2299,7 +2313,7 @@ async fn submit_deployment_is_idempotent_by_id_and_digest_webapi() {
         .await;
     assert_eq!(
         resp3.status(),
-        reqwest::StatusCode::BAD_REQUEST,
+        reqwest::StatusCode::CONFLICT,
         "different config under same ID must be rejected as a digest conflict"
     );
 
@@ -2417,7 +2431,7 @@ ffqn = "testing:integration/deferred.run"
     assert_eq!(detail.digest_mismatches.len(), 1);
 
     // Retry with the correct blob persists the complete deployment.
-    let resp = submit(
+    submit(
         vec![grpc::grpc_gen::DeploymentFileContent {
             path: "deferred.js".to_string(),
             digest: Some(expected_digest.clone()),
@@ -2426,12 +2440,7 @@ ffqn = "testing:integration/deferred.run"
         grpc_id.clone(),
     )
     .await
-    .expect("submit with correct blob must succeed")
-    .into_inner();
-    assert_eq!(
-        resp.deployment_id.expect("deployment_id").id,
-        deployment_id.to_string()
-    );
+    .expect("submit with correct blob must succeed");
 
     // The stored deployment is complete and now exists.
     let stored = grpc_client
@@ -2883,7 +2892,9 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
         .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
         .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
 
-    let submit = |check: RuntimeConfigCheck, id: Option<GrpcDeploymentId>| {
+    let deployment_id = DeploymentId::generate();
+
+    let submit = |check: RuntimeConfigCheck| {
         let mut client = grpc_client.clone();
         async move {
             client
@@ -2892,7 +2903,7 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
                     created_by: Some("test".to_string()),
                     runtime_config_check: check as i32,
                     description: None,
-                    deployment_id: id,
+                    deployment_id: Some(deployment_id.into()),
                     files: Vec::new(),
                 })
                 .await
@@ -2900,7 +2911,7 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     };
 
     // Strict submit fails on the missing env var and stores nothing.
-    let status = submit(RuntimeConfigCheck::Strict, None)
+    let status = submit(RuntimeConfigCheck::Strict)
         .await
         .expect_err("strict submit must reject a missing env var");
     assert!(
@@ -2912,20 +2923,15 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     );
 
     // ALLOW_UNAVAILABLE submit tolerates the missing env var and persists.
-    let stored_id = submit(RuntimeConfigCheck::AllowUnavailable, None)
+    submit(RuntimeConfigCheck::AllowUnavailable)
         .await
-        .expect("allow-missing submit must persist")
-        .into_inner()
-        .deployment_id
-        .expect("deployment_id")
-        .id;
-    let stored_grpc_id = GrpcDeploymentId { id: stored_id };
+        .expect("allow-missing submit must persist");
 
     // A hot redeploy with ALLOW_UNAVAILABLE is rejected outright.
     let status = grpc_client
         .clone()
         .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(stored_grpc_id.clone()),
+            deployment_id: Some(deployment_id.into()),
             runtime_config_check: RuntimeConfigCheck::AllowUnavailable as i32,
             apply: true,
         })
@@ -2940,7 +2946,7 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     let status = grpc_client
         .clone()
         .switch_deployment(SwitchDeploymentRequest {
-            deployment_id: Some(stored_grpc_id),
+            deployment_id: Some(deployment_id.into()),
             runtime_config_check: RuntimeConfigCheck::Strict as i32,
             apply: true,
         })
@@ -2957,7 +2963,7 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     server.shutdown().await;
 }
 
-/// Phase 6: the REST `POST /v1/deployments` accepts a `multipart/form-data` package
+/// Phase 6: REST deployment submission accepts a `multipart/form-data` package
 /// and reports an incomplete package as a structured `409` so the client retries with
 /// the missing blobs attached.
 #[tokio::test]
@@ -2990,12 +2996,13 @@ ffqn = "testing:integration/pkg.run"
     let toml = prepared.deployment_toml.clone();
     let expected_digest = prepared.files[0].digest.to_string();
     let content = prepared.files[0].bytes.clone();
-    let url = format!("{}/v1/deployments", server.base_url);
+    let deployment_id = DeploymentId::generate();
+    let url = format!("{}/v1/deployments/{deployment_id}", server.base_url);
 
     // Preflight with no file parts: incomplete package, stored nothing, lists the missing file.
     let resp = server
         .client
-        .post(&url)
+        .put(&url)
         .header("Accept", "application/json")
         .multipart(reqwest::multipart::Form::new().text("deployment_toml", toml.clone()))
         .send()
@@ -3018,7 +3025,7 @@ ffqn = "testing:integration/pkg.run"
         .unwrap();
     let resp = server
         .client
-        .post(&url)
+        .put(&url)
         .header("Accept", "application/json")
         .multipart(
             reqwest::multipart::Form::new()
@@ -3042,7 +3049,7 @@ ffqn = "testing:integration/pkg.run"
         .unwrap();
     let resp = server
         .client
-        .post(&url)
+        .put(&url)
         .header("Accept", "application/json")
         .multipart(
             reqwest::multipart::Form::new()
@@ -3052,9 +3059,11 @@ ffqn = "testing:integration/pkg.run"
         .send()
         .await
         .expect("multipart retry failed");
-    assert_eq!(resp.status().as_u16(), 200, "complete package must succeed");
-    let body: Value = resp.json().await.unwrap();
-    let deployment_id = body["deployment_id"].as_str().expect("deployment_id");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::NO_CONTENT,
+        "complete package must succeed"
+    );
 
     // The stored deployment now exists and is retrievable.
     let resp = server

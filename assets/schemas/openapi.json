@@ -257,7 +257,7 @@
           "deployments"
         ],
         "summary": "Get current deployment ID",
-        "operationId": "get_current_deployment_id",
+        "operationId": "current",
         "responses": {
           "200": {
             "description": "Current deployment ID",
@@ -278,7 +278,7 @@
           "deployments"
         ],
         "summary": "List deployments",
-        "operationId": "list_deployments",
+        "operationId": "list",
         "parameters": [
           {
             "name": "cursor_from",
@@ -350,7 +350,7 @@
         ],
         "summary": "Submit a new deployment.",
         "description": "Accepts either an `application/json` body (no attached file blobs; referenced\nfiles must already exist in the CAS) or a `multipart/form-data` package whose\nparts carry the manifest and the deployment-owned file blobs. On an incomplete\npackage the server stores nothing and returns a `409` `SubmitPackageErrorBody`\nlisting the missing files to attach and retry.",
-        "operationId": "submit_deployment",
+        "operationId": "submit_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -362,7 +362,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Deployment submitted",
             "content": {
               "application/json": {
@@ -394,7 +394,7 @@
           "deployments"
         ],
         "summary": "Get a specific deployment by ID",
-        "operationId": "get_deployment",
+        "operationId": "get",
         "parameters": [
           {
             "name": "deployment_id",
@@ -430,6 +430,52 @@
             "description": "Deployment not found"
           }
         }
+      },
+      "put": {
+        "tags": [
+          "deployments"
+        ],
+        "summary": "Submit a deployment with a client-supplied ID.",
+        "operationId": "submit_put",
+        "parameters": [
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "description": "Deployment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploymentSubmitPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Deployment submitted"
+          },
+          "400": {
+            "description": "Invalid config"
+          },
+          "409": {
+            "description": "Deployment ID or package conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitPackageErrorBody"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/deployments/{deployment_id}/switch": {
@@ -438,7 +484,7 @@
           "deployments"
         ],
         "summary": "Switch the active deployment",
-        "operationId": "switch_deployment",
+        "operationId": "switch",
         "parameters": [
           {
             "name": "deployment_id",
@@ -2386,13 +2432,6 @@
           "allow_unavailable_runtime_config": {
             "type": "boolean",
             "description": "Tolerate runtime requirements unavailable on this server while verifying\nthe deployment before persisting it."
-          },
-          "deployment_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Optional client-supplied deployment ID for idempotent submission.\nIf a deployment with this ID already exists and its content digest\nmatches, the submission is a no-op; a digest mismatch is rejected."
           },
           "deployment_toml": {
             "type": "string",
