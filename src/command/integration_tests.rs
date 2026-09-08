@@ -705,7 +705,12 @@ impl TestServer {
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
 
-    async fn start_with_server_lines_and_exec_only(ip: String, server_toml_lines: &str) -> Self {
+    async fn start_with_server_lines_and_component(
+        ip: String,
+        server_toml_lines: &str,
+        section: &str,
+        component_name: &str,
+    ) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, server_toml_lines);
         let mut deployment_doc = std::fs::read_to_string(&deployment_path)
             .unwrap()
@@ -713,13 +718,14 @@ impl TestServer {
             .unwrap();
         deployment_doc
             .as_table_mut()
-            .retain(|key, _| key == "activity_exec");
-        deployment_doc["activity_exec"]
+            .retain(|key, _| key == section);
+        deployment_doc[section]
             .as_array_of_tables_mut()
             .unwrap()
             .retain(|table| {
-                table.get("ffqn").and_then(toml_edit::Item::as_str)
-                    == Some("testing:integration/exec-greet.greet-inline")
+                ["name", "ffqn"].into_iter().any(|key| {
+                    table.get(key).and_then(toml_edit::Item::as_str) == Some(component_name)
+                })
             });
         std::fs::write(&deployment_path, deployment_doc.to_string()).unwrap();
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
@@ -3846,6 +3852,50 @@ async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
     .await;
 }
 
+async fn replay_and_advance_oversized_result(client: TestExecutionClient, addr: String) {
+    let server = TestServer::start_with_server_lines_and_component(
+        addr,
+        "limits.max_persisted_value_size_bytes = 256",
+        "workflow_js",
+        "test_make_record_workflow",
+    )
+    .await;
+    let stepped = client
+        .step_execution_until_finished(
+            &server,
+            "testing:integration/workflow-make-record.make-record",
+            vec![json!("x".repeat(240))],
+        )
+        .await;
+    assert_eq!(stepped.steps, 1);
+    let failure_key = match client {
+        TestExecutionClient::Grpc => "execution_failure",
+        TestExecutionClient::WebApi => "execution_failed",
+    };
+    assert_eq!(
+        stepped.retval,
+        serde_json::Value::Object(serde_json::Map::from_iter([(
+            failure_key.to_string(),
+            json!({
+                "kind": "value_too_large",
+                "reason": "function result exceeds the persisted value limit",
+                "detail": "limit: 256 bytes"
+            }),
+        )]))
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn replay_and_advance_oversized_result_grpc() {
+    replay_and_advance_oversized_result(TestExecutionClient::Grpc, test_addr!(126)).await;
+}
+
+#[tokio::test]
+async fn replay_and_advance_oversized_result_webapi() {
+    replay_and_advance_oversized_result(TestExecutionClient::WebApi, test_addr!(127)).await;
+}
+
 // ---- Workflow: replay failed (type mismatch) with advance --force ----
 
 const REPLAY_FAILED_FFQN: &str = "testing:integration/workflow-return-wrong-type.return-wrong-type";
@@ -4125,9 +4175,11 @@ async fn submit_nonexistent_function_returns_404() {
 
 #[tokio::test]
 async fn grpc_submit_enforces_exact_persisted_value_boundary() {
-    let server = TestServer::start_with_server_lines_and_exec_only(
+    let server = TestServer::start_with_server_lines_and_component(
         test_addr!(124),
         "limits.max_persisted_value_size_bytes = 16",
+        "activity_exec",
+        "testing:integration/exec-greet.greet-inline",
     )
     .await;
     let mut grpc_client =
@@ -4187,9 +4239,11 @@ async fn grpc_submit_enforces_exact_persisted_value_boundary() {
 
 #[tokio::test]
 async fn rest_submit_enforces_exact_persisted_value_boundary() {
-    let server = TestServer::start_with_server_lines_and_exec_only(
+    let server = TestServer::start_with_server_lines_and_component(
         test_addr!(125),
         "limits.max_persisted_value_size_bytes = 16",
+        "activity_exec",
+        "testing:integration/exec-greet.greet-inline",
     )
     .await;
     let ffqn = "testing:integration/exec-greet.greet-inline";
