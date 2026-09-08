@@ -755,7 +755,7 @@ mod tests {
     use concepts::component_id::{COMPONENT_DIGEST_DUMMY, ComponentDigest, Digest};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, DeploymentId, ExecutorId, RunId};
     use concepts::storage::{
-        CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest,
+        CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest, Created,
         DbConnectionTest, DbPool, DbPoolCloseable, ExecutionRequest, HistoryEvent, JoinSetRequest,
         JoinSetResponse, Locked, LogEntry, LogInfoAppendRow, LogLevel, PendingState,
         PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
@@ -4115,10 +4115,7 @@ mod tests {
         );
         let original_log = db_connection.get(&execution_id).await.unwrap();
         assert_eq!(5, original_log.events.len());
-        assert_matches!(
-            &original_log.events[0].event,
-            ExecutionRequest::Created { .. }
-        );
+        assert_matches!(&original_log.events[0].event, ExecutionRequest::Created(_));
         assert_matches!(&original_log.events[1].event, ExecutionRequest::Locked(_));
         assert_matches!(
             &original_log.events[2].event,
@@ -4412,7 +4409,7 @@ mod tests {
         assert_eq!(original_deployment_id, log.deployment_id);
         assert_eq!(original_component_id.component_digest, log.component_digest);
         assert_eq!(8, log.events.len());
-        assert_matches!(&log.events[0].event, ExecutionRequest::Created { .. });
+        assert_matches!(&log.events[0].event, ExecutionRequest::Created(_));
         assert_matches!(&log.events[1].event, ExecutionRequest::Locked(_));
         assert_matches!(&log.events[5].event, ExecutionRequest::Locked(_));
         assert_matches!(
@@ -4548,7 +4545,7 @@ mod tests {
             log.responses.len(),
             "stub write should append a response"
         );
-        assert_matches!(&log.events[0].event, ExecutionRequest::Created { .. });
+        assert_matches!(&log.events[0].event, ExecutionRequest::Created(_));
         assert_matches!(&log.events[1].event, ExecutionRequest::Locked(_));
         assert_matches!(
             &log.events[2].event,
@@ -6014,7 +6011,7 @@ mod tests {
             .unwrap();
         // Check that the current system time is used.
         assert_eq!(create_event.created_at, sim_clock.now());
-        let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
+        let ExecutionRequest::Created(Created { scheduled_at, .. }) = create_event.event else {
             panic!("child execution log must start with Created");
         };
         assert_eq!(scheduled_at, sim_clock.now());
@@ -6160,7 +6157,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(create_event.created_at, sim_clock.now());
-        let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
+        let ExecutionRequest::Created(Created { scheduled_at, .. }) = create_event.event else {
             panic!("scheduled execution log must start with Created");
         };
         assert_eq!(scheduled_at, expected_scheduled_at);

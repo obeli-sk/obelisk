@@ -1578,7 +1578,7 @@ mod tests {
         let actually_created_at = assert_matches!(
             execution_log.events.first().unwrap(),
             ExecutionEvent {
-                event: ExecutionRequest::Created { .. },
+                event: ExecutionRequest::Created(_),
                 created_at: actually_created_at,
                 backtrace_id: None,
                 version: Version(0),

@@ -181,8 +181,8 @@ mod tests {
     use concepts::component_id::COMPONENT_DIGEST_DUMMY;
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutorId, RunId};
     use concepts::storage::{
-        AppendRequest, DbPool, ExecutionRequest, Locked, PendingState, PendingStateFinished,
-        PendingStateFinishedResultKind, PendingStatePendingAt, Version,
+        AppendRequest, Created, DbPool, ExecutionRequest, Locked, PendingState,
+        PendingStateFinished, PendingStateFinishedResultKind, PendingStatePendingAt, Version,
     };
     use test_utils::sim_clock::SimClock;
 
@@ -399,11 +399,11 @@ mod tests {
                 child_log.pending_state,
             );
             // Verify child has the correct target FFQN
-            if let ExecutionRequest::Created {
+            if let ExecutionRequest::Created(Created {
                 ffqn,
                 max_persisted_value_size_bytes,
                 ..
-            } = &child_log.events[0].event
+            }) = &child_log.events[0].event
             {
                 assert_eq!(*ffqn, TARGET_FFQN);
                 assert_eq!(
@@ -465,7 +465,7 @@ mod tests {
         } = &schedule_log.events[2].event
         {
             let child_log = conn.get(child_id).await.unwrap();
-            if let ExecutionRequest::Created { ffqn, .. } = &child_log.events[0].event {
+            if let ExecutionRequest::Created(Created { ffqn, .. }) = &child_log.events[0].event {
                 assert_eq!(*ffqn, TARGET_FFQN);
             } else {
                 panic!("first event of child must be Created");

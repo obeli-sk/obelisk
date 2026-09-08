@@ -9,9 +9,9 @@ use concepts::{
     ComponentId, ExecutionId, JoinSetId,
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
-        self, AppendRequest, AppendResponseToExecution, BacktraceInfo, CreateRequest, DbConnection,
-        DbErrorRead, DbErrorWrite, LogInfoAppendRow, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, SubscribeToResponsesError, Version,
+        self, AppendRequest, AppendResponseToExecution, BacktraceInfo, CreateRequest, Created,
+        DbConnection, DbErrorRead, DbErrorWrite, LogInfoAppendRow, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, SubscribeToResponsesError, Version,
     },
 };
 use db_common::{JoinSetCancellable, JoinSetCloseCancellations};
@@ -107,7 +107,7 @@ pub(crate) trait WorkflowDbConnection: Send + Any {
     async fn get_stub_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead>;
+    ) -> Result<Created, DbErrorRead>;
 
     async fn subscribe_to_next_responses(
         &self,
@@ -536,7 +536,7 @@ impl WorkflowDbConnection for CachingDbConnection {
     async fn get_stub_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead> {
+    ) -> Result<Created, DbErrorRead> {
         if let Some(caching_buffer) = &self.caching_buffer
             && let Some(found) = caching_buffer.writes.iter().find_map(|event| match event {
                 CachedDbWrite::NonBlocking(CacheableDbEvent::SubmitChildExecution {
@@ -548,7 +548,7 @@ impl WorkflowDbConnection for CachingDbConnection {
                 _ => None,
             })
         {
-            return Ok(found);
+            return Ok(Created::from(found));
         }
 
         self.db_connection.get_create_request(execution_id).await

@@ -15,7 +15,7 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutionIdDerived},
     storage::{
         self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceInfo,
-        CapturedDbWrite, CreateRequest, DbConnection, DbErrorRead, DbErrorWrite,
+        CapturedDbWrite, CreateRequest, Created, DbConnection, DbErrorRead, DbErrorWrite,
         DbErrorWriteNonRetriable, ExecutionRequest, LogInfoAppendRow, ResponseCursor,
         ResponseSubscriptionEnd, ResponseWithCursor, SubscribeToResponsesError, Version,
     },
@@ -762,7 +762,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
     async fn get_stub_create_request(
         &self,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead> {
+    ) -> Result<Created, DbErrorRead> {
         if let Some(create_req) =
             self.collector
                 .preview
@@ -776,7 +776,7 @@ impl WorkflowDbConnection for ReplayWorkflowDbConnection {
                     _ => None,
                 })
         {
-            return Ok(create_req);
+            return Ok(Created::from(create_req));
         }
         self.real_connection.get_create_request(execution_id).await
     }
@@ -912,7 +912,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(found, create_request);
+        assert_eq!(found, Created::from(create_request));
     }
 
     /// `append_join_set_close` must signal a cancellable child workflow the same way

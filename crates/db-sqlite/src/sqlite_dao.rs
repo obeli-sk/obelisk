@@ -11,9 +11,9 @@ use concepts::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
         ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
-        ComponentUpgradeReason, CreateRequest, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DbConnection,
-        DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite,
-        DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
+        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse,
+        DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
         DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
         DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
         DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
@@ -869,52 +869,27 @@ impl SqlitePool {
     fn fetch_created_event(
         conn: &Connection,
         execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead> {
+    ) -> Result<Created, DbErrorRead> {
         let mut stmt = conn.prepare(
-            "SELECT created_at, json_value FROM t_execution_log WHERE \
+            "SELECT json_value FROM t_execution_log WHERE \
             execution_id = :execution_id AND version = 0",
         )?;
-        let (created_at, event) = stmt.query_row(
+        let event = stmt.query_row(
             named_params! {
                 ":execution_id": execution_id.to_string(),
             },
             |row| {
-                let created_at = row.get("created_at")?;
                 let event = row
                     .get::<_, JsonWrapper<ExecutionRequest>>("json_value")
                     .map_err(|serde| {
                         error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
                         consistency_rusqlite("cannot deserialize `Created` event")
                     })?;
-                Ok((created_at, event.0))
+                Ok(event.0)
             },
         )?;
-        if let ExecutionRequest::Created {
-            ffqn,
-            params,
-            parent,
-            scheduled_at,
-            component_id,
-            deployment_id,
-            metadata,
-            scheduled_by,
-            max_persisted_value_size_bytes,
-        } = event
-        {
-            Ok(CreateRequest {
-                created_at,
-                execution_id: execution_id.clone(),
-                ffqn,
-                params,
-                parent,
-                scheduled_at,
-                component_id,
-                deployment_id,
-                metadata,
-                scheduled_by,
-                paused: false,
-                max_persisted_value_size_bytes,
-            })
+        if let ExecutionRequest::Created(created) = event {
+            Ok(created)
         } else {
             error!("Row with version=0 must be a `Created` event - {event:?}");
             Err(consistency_db_err("expected `Created` event").into())
@@ -2097,14 +2072,14 @@ impl SqlitePool {
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .collect::<VecDeque<_>>();
-        let Some(ExecutionRequest::Created {
+        let Some(ExecutionRequest::Created(Created {
             ffqn,
             params,
             parent,
             metadata,
             max_persisted_value_size_bytes,
             ..
-        }) = events.pop_front().map(|outer| outer.event)
+        })) = events.pop_front().map(|outer| outer.event)
         else {
             return Err(consistency_db_err("execution log must contain `Created` event").into());
         };
@@ -2201,7 +2176,7 @@ impl SqlitePool {
         req: AppendRequest,
         appending_version: Version,
     ) -> Result<(AppendResponse, AppendNotifier), DbErrorWrite> {
-        if matches!(req.event, ExecutionRequest::Created { .. }) {
+        if matches!(req.event, ExecutionRequest::Created(_)) {
             return Err(DbErrorWrite::NonRetriable(
                 DbErrorWriteNonRetriable::ValidationFailed(
                     "cannot append `Created` event - use `create` instead".into(),
@@ -2273,7 +2248,7 @@ impl SqlitePool {
         // Calculate current pending state
 
         match &req.event {
-            ExecutionRequest::Created { .. } => {
+            ExecutionRequest::Created(_) => {
                 unreachable!("handled in the caller")
             }
 

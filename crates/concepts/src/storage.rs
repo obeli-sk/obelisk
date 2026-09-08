@@ -121,20 +121,9 @@ impl ExecutionLog {
     }
 
     #[must_use]
-    pub fn get_create_request(&self) -> CreateRequest {
-        assert_matches!(self.events.first().cloned(), Some(ExecutionEvent {
-            event:ExecutionRequest::Created{
-                ffqn,params,parent,scheduled_at,component_id,deployment_id,metadata,scheduled_by,max_persisted_value_size_bytes},
-                created_at, .. }) => CreateRequest { created_at, execution_id:
-                    self.execution_id.clone(), ffqn, params, parent, scheduled_at,
-                    component_id, deployment_id, metadata, scheduled_by, paused: false,
-                    max_persisted_value_size_bytes })
-    }
-
-    #[must_use]
     pub fn ffqn(&self) -> &FunctionFqn {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionRequest::Created { ffqn, .. },
+            event: ExecutionRequest::Created(Created { ffqn, .. }),
             ..
         }) => ffqn)
     }
@@ -142,7 +131,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn params(&self) -> &Params {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionRequest::Created { params, .. },
+            event: ExecutionRequest::Created(Created { params, .. }),
             ..
         }) => params)
     }
@@ -150,10 +139,10 @@ impl ExecutionLog {
     #[must_use]
     pub fn max_persisted_value_size_bytes(&self) -> u64 {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionRequest::Created {
+            event: ExecutionRequest::Created(Created {
                 max_persisted_value_size_bytes,
                 ..
-            },
+            }),
             ..
         }) => *max_persisted_value_size_bytes)
     }
@@ -161,7 +150,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionRequest::Created { parent, .. },
+            event: ExecutionRequest::Created(Created { parent, .. }),
             ..
         }) => parent.clone())
     }
@@ -393,7 +382,7 @@ pub enum JoinSetResponse {
     },
 }
 
-pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created {
+pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created(Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::empty(),
     parent: None,
@@ -403,7 +392,7 @@ pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created {
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
     max_persisted_value_size_bytes: u64::MAX,
-};
+});
 pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent {
     event: HistoryEvent::JoinSetCreate {
         join_set_id: JoinSetId {
@@ -426,23 +415,8 @@ pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent
 #[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionRequest {
-    #[display("Created({ffqn}, `{scheduled_at}`)")]
-    Created {
-        ffqn: FunctionFqn,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
-        #[debug(skip)]
-        params: Params,
-        parent: Option<(ExecutionId, JoinSetId)>,
-        scheduled_at: DateTime<Utc>,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
-        component_id: ComponentId,
-        deployment_id: DeploymentId,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
-        metadata: ExecutionMetadata,
-        scheduled_by: Option<ExecutionId>,
-        #[serde(default = "crate::persisted_value::legacy_unlimited_persisted_value_size")]
-        max_persisted_value_size_bytes: u64,
-    },
+    #[display("Created({_0})")]
+    Created(Created),
     Locked(Locked),
     /// Releases a lock.
     ///
@@ -521,7 +495,7 @@ impl ExecutionRequest {
         use crate::persisted_value::PersistedValueClass;
 
         match self {
-            Self::Created { .. }
+            Self::Created(_)
             | Self::HistoryEvent {
                 event:
                     HistoryEvent::JoinSetRequest {
@@ -543,7 +517,7 @@ impl ExecutionRequest {
         max_persisted_value_size_bytes: u64,
     ) -> Result<(), DbErrorWriteNonRetriable> {
         match self {
-            Self::Created { params, .. } => {
+            Self::Created(Created { params, .. }) => {
                 validate_logical_value(params, max_persisted_value_size_bytes)
             }
             Self::TemporarilyFailed { reason, detail, .. } => {
@@ -697,6 +671,52 @@ pub struct Unlocked {
     pub reason: StrVariant,
 }
 
+/// Persisted creation payload, excluding [`CreateRequest::paused`] because pausing is a separate event.
+#[derive(
+    Clone,
+    derive_more::Debug,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[cfg_attr(any(test, feature = "test"), derive(arbitrary::Arbitrary))]
+#[display("{ffqn}, `{scheduled_at}`")]
+pub struct Created {
+    pub ffqn: FunctionFqn,
+    #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
+    #[debug(skip)]
+    pub params: Params,
+    pub parent: Option<(ExecutionId, JoinSetId)>,
+    pub scheduled_at: DateTime<Utc>,
+    #[cfg_attr(any(test, feature = "test"), arbitrary(value = ComponentId::dummy_activity()))]
+    pub component_id: ComponentId,
+    pub deployment_id: DeploymentId,
+    #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
+    pub metadata: ExecutionMetadata,
+    pub scheduled_by: Option<ExecutionId>,
+    #[serde(default = "crate::persisted_value::legacy_unlimited_persisted_value_size")]
+    pub max_persisted_value_size_bytes: u64,
+}
+
+impl From<CreateRequest> for Created {
+    fn from(value: CreateRequest) -> Self {
+        Self {
+            ffqn: value.ffqn,
+            params: value.params,
+            parent: value.parent,
+            scheduled_at: value.scheduled_at,
+            component_id: value.component_id,
+            deployment_id: value.deployment_id,
+            metadata: value.metadata,
+            scheduled_by: value.scheduled_by,
+            max_persisted_value_size_bytes: value.max_persisted_value_size_bytes,
+        }
+    }
+}
+
 #[derive(
     Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -725,7 +745,7 @@ impl ExecutionRequest {
     #[must_use]
     pub const fn variant(&self) -> &'static str {
         match self {
-            ExecutionRequest::Created { .. } => "created",
+            ExecutionRequest::Created(_) => "created",
             ExecutionRequest::Locked(_) => "locked",
             ExecutionRequest::Unlocked(_) => "unlocked",
             ExecutionRequest::ComponentUpgradeFinished { .. } => "component_upgrade_finished",
@@ -742,10 +762,10 @@ impl ExecutionRequest {
     #[must_use]
     pub fn join_set_id(&self) -> Option<&JoinSetId> {
         match self {
-            Self::Created {
+            Self::Created(Created {
                 parent: Some((_parent_id, join_set_id)),
                 ..
-            } => Some(join_set_id),
+            }) => Some(join_set_id),
             Self::HistoryEvent {
                 event:
                     HistoryEvent::JoinSetCreate { join_set_id, .. }
@@ -1372,17 +1392,7 @@ impl CreateRequest {
 
 impl From<CreateRequest> for ExecutionRequest {
     fn from(value: CreateRequest) -> Self {
-        Self::Created {
-            ffqn: value.ffqn,
-            params: value.params,
-            parent: value.parent,
-            scheduled_at: value.scheduled_at,
-            component_id: value.component_id,
-            deployment_id: value.deployment_id,
-            metadata: value.metadata,
-            scheduled_by: value.scheduled_by,
-            max_persisted_value_size_bytes: value.max_persisted_value_size_bytes,
-        }
+        Self::Created(Created::from(value))
     }
 }
 
@@ -2370,39 +2380,12 @@ pub trait DbConnection: DbExecutor {
     ) -> Result<(), DbErrorStubResponse>;
 
     #[instrument(skip(self))]
-    async fn get_create_request(
-        &self,
-        execution_id: &ExecutionId,
-    ) -> Result<CreateRequest, DbErrorRead> {
+    async fn get_create_request(&self, execution_id: &ExecutionId) -> Result<Created, DbErrorRead> {
         let execution_event = self
             .get_execution_event(execution_id, &Version::new(0))
             .await?;
-        if let ExecutionRequest::Created {
-            ffqn,
-            params,
-            parent,
-            scheduled_at,
-            component_id,
-            deployment_id,
-            metadata,
-            scheduled_by,
-            max_persisted_value_size_bytes,
-        } = execution_event.event
-        {
-            Ok(CreateRequest {
-                created_at: execution_event.created_at,
-                execution_id: execution_id.clone(),
-                ffqn,
-                params,
-                parent,
-                scheduled_at,
-                component_id,
-                deployment_id,
-                metadata,
-                scheduled_by,
-                paused: false,
-                max_persisted_value_size_bytes,
-            })
+        if let ExecutionRequest::Created(created) = execution_event.event {
+            Ok(created)
         } else {
             Err(DbErrorRead::Generic(DbErrorGeneric::Uncategorized {
                 reason: "execution log must start with creation".into(),
@@ -3359,7 +3342,7 @@ mod tests {
 
     #[test]
     fn legacy_created_event_without_value_limit_is_unlimited() {
-        let created = super::ExecutionRequest::Created {
+        let created = super::ExecutionRequest::Created(super::Created {
             ffqn: crate::FunctionFqn::new_static("ns:pkg/ifc", "fn"),
             params: Params::empty(),
             parent: None,
@@ -3369,7 +3352,7 @@ mod tests {
             metadata: crate::ExecutionMetadata::empty(),
             scheduled_by: None,
             max_persisted_value_size_bytes: 64,
-        };
+        });
         let mut json = serde_json::to_value(created).unwrap();
         json.get_mut("created")
             .unwrap()
@@ -3380,10 +3363,10 @@ mod tests {
         let event: super::ExecutionRequest = serde_json::from_value(json).unwrap();
         assert_matches::assert_matches!(
             event,
-            super::ExecutionRequest::Created {
+            super::ExecutionRequest::Created(super::Created {
                 max_persisted_value_size_bytes: u64::MAX,
                 ..
-            }
+            })
         );
     }
 
