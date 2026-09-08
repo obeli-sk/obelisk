@@ -187,12 +187,13 @@ mod allowed_hosts {
 
     #[test]
     fn request_url_regex_interpolates_env_vars() {
+        const VAR: &str = "OBELISK_TEST_REQUEST_URL_REGEX_DOMAIN";
         let (hosts, _advisories) = resolve_allowed_hosts(
             vec![allowed_host_with_regex(
                 r"^GET https://${OBELISK_TEST_REQUEST_URL_REGEX_DOMAIN:-api\.example\.com}/v1/",
             )],
             false,
-            &std::sync::Arc::new(SecretRegistry::empty()),
+            &std::sync::Arc::new(SecretRegistry::empty_with_public_env([VAR.to_string()])),
         )
         .unwrap();
 
@@ -209,7 +210,7 @@ mod allowed_hosts {
                 "^GET https://${{{VAR}}}/"
             ))],
             false,
-            &std::sync::Arc::new(SecretRegistry::empty()),
+            &std::sync::Arc::new(SecretRegistry::empty_with_public_env([VAR.to_string()])),
         )
         .unwrap_err()
         .to_string();
@@ -224,7 +225,7 @@ mod allowed_hosts {
                 "^GET https://${{{VAR}}}/"
             ))],
             true,
-            &std::sync::Arc::new(SecretRegistry::empty()),
+            &std::sync::Arc::new(SecretRegistry::empty_with_public_env([VAR.to_string()])),
         )
         .unwrap();
         assert!(hosts.is_empty());
@@ -242,13 +243,13 @@ mod env_vars {
             value: format!("${{{VAR}}}"),
         }];
 
-        let error = resolve_env_vars_plaintext(env_vars.clone(), false, &SecretRegistry::empty())
+        let registry = SecretRegistry::empty_with_public_env([VAR.to_string()]);
+        let error = resolve_env_vars_plaintext(env_vars.clone(), false, &registry)
             .unwrap_err()
             .to_string();
         assert!(error.contains(VAR), "unexpected error: {error}");
 
-        let resolved =
-            resolve_env_vars_plaintext(env_vars, true, &SecretRegistry::empty()).unwrap();
+        let resolved = resolve_env_vars_plaintext(env_vars, true, &registry).unwrap();
         assert_eq!(resolved[0].key, "RENAMED_ENV_VAR");
         assert_eq!(resolved[0].val, "");
     }

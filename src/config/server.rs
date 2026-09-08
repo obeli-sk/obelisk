@@ -8,7 +8,7 @@ use crate::config::deployment::{
     ValueOrUnlimited,
 };
 use crate::config::env_var::{interpolate_env_vars_plaintext, interpolate_env_vars_secret};
-use crate::config::secret_registry::{SecretRegistry, SecretsToml};
+use crate::config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
 use concepts::ContentDigest;
 use concepts::component_id::Digest;
 use db_postgres::postgres_dao::{self, PostgresConfig};
@@ -35,6 +35,9 @@ pub(crate) struct ServerConfigToml {
     /// `secrets` and `allowed_host[].secrets`; they cannot interpolate them.
     #[serde(default)]
     pub(crate) secrets: SecretsToml,
+    /// Operator-owned allowlist of process environment variables that deployments may read.
+    #[serde(default)]
+    pub(crate) public_env: PublicEnvToml,
     /// Permit deployments to run host processes through `activity_exec`.
     /// `false` denies all (default), `true` allows any, a map from exec activity
     /// names to `sha256:...` content digests allows only the named scripts.
