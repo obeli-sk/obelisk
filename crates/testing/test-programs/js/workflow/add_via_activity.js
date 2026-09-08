@@ -14,3 +14,4 @@ export default function add_via_activity(a, b) {
 function createJoinSet() {
     return obelisk.createJoinSet();
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

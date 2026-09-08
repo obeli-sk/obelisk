@@ -349,8 +349,12 @@ impl WebhookEndpointCompiled {
         let resolved_imports_json = if let Some(js_config) = &self.config.js_config {
             let mut resolved = std::collections::HashMap::new();
             for source in js_config.files.values() {
-                let imports = crate::js_imports::resolve_js_imports(source, fn_registry)
-                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+                let imports = crate::js_imports::resolve_js_imports(
+                    source,
+                    fn_registry,
+                    crate::js_imports::WEBHOOK_BUILTIN_MODULES,
+                )
+                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
                 for (specifier, functions) in imports {
                     resolved.entry(specifier).or_insert(functions);
                 }
@@ -3643,9 +3647,10 @@ pub(crate) mod tests {
         async fn webhook_js_call_activity() {
             test_utils::set_up();
             let js_source = r#"
+                import * as dynamic from "obelisk:webhook-dynamic@1.0.0";
                 export default function handle(request) {
                     // Call fibo(10) directly
-                    const result = obelisk.call("testing:fibo/fibo.fibo", [10]);
+                    const result = dynamic.call("testing:fibo/fibo.fibo", [10]);
                     return Response.json({ result });
                 }
             "#;
@@ -3818,9 +3823,11 @@ pub(crate) mod tests {
             // fibo returns result<u64> (no err type), so the child fails with a unit
             // err: a ChildError whose `.value` is undefined.
             let js_source = r#"
+                import * as obelisk from "obelisk:webhook@1.0.0";
+                import * as dynamic from "obelisk:webhook-dynamic@1.0.0";
                 export default function handle(request) {
                     try {
-                        obelisk.call("testing:fibo/fibo.fibo", [50]);
+                        dynamic.call("testing:fibo/fibo.fibo", [50]);
                         return Response.json({ threw: false });
                     } catch (e) {
                         return Response.json({

@@ -5,3 +5,4 @@ export default function sleep_cancellable() {
     obelisk.sleep({ milliseconds: 100000 });
     return "ok";
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

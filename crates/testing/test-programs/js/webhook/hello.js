@@ -6,3 +6,4 @@ export default function handle(request) {
         headers: { "content-type": "text/plain", "x-execution-id": execId },
     });
 }
+import * as obelisk from "obelisk:webhook@1.0.0";

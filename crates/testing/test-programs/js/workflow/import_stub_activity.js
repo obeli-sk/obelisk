@@ -9,3 +9,4 @@ export default function call_stub(id) {
     const result = myStubAwaitNext(js);
     return result;
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

@@ -3,3 +3,4 @@ export default function handle(request) {
     const status = obelisk.getStatus(execId);
     return Response.json({ executionStatus: status });
 }
+import * as obelisk from "obelisk:webhook@1.0.0";

@@ -765,7 +765,7 @@ pub fn execute(
 
     // Set up the obelisk global object with workflow APIs BEFORE module evaluation
     // so that `obelisk.*` is available during module initialization
-    setup_obelisk_api(&mut context).expect("obelisk API setup must work");
+    setup_obelisk_api(&loader, &mut context).expect("obelisk API setup must work");
 
     // Set up console
     setup_console(&mut context, Logger).expect("console setup must work");
@@ -986,7 +986,7 @@ fn get_default_export_workflow(
 }
 
 /// Set up the global `obelisk` object with workflow support functions.
-fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
+fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResult<()> {
     let obelisk = new_object(context);
 
     // obelisk.executionIdCurrent()
@@ -1282,7 +1282,7 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // Set obelisk as global
+    // Install briefly while defining classes whose source refers to the namespace.
     context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
     context.eval(Source::from_bytes(
         "obelisk.JoinSetExhaustedError = class JoinSetExhaustedError extends Error {\n\
@@ -1297,7 +1297,55 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
     // obelisk.ChildError (plus the deprecated obelisk.ChildExecutionError alias):
     // native, brand-safe error thrown for a failed awaited child execution, a
     // cancelled delay, or a cancelled sleep.
-    boa_common::child_error::register(context)?;
+    let obelisk = context
+        .global_object()
+        .get(js_string!("obelisk"), context)?
+        .as_object()
+        .expect("temporary obelisk namespace must be an object")
+        .clone();
+    boa_common::child_error::register(&obelisk, context)?;
+
+    let dynamic = new_object(context);
+    dynamic.set(
+        js_string!("call"),
+        obelisk.get(js_string!("call"), context)?,
+        false,
+        context,
+    )?;
+    dynamic.set(
+        js_string!("schedule"),
+        obelisk.get(js_string!("schedule"), context)?,
+        false,
+        context,
+    )?;
+    imports::register_builtin_module(
+        "obelisk:workflow@1.0.0",
+        &[
+            "executionIdCurrent",
+            "executionIdGenerate",
+            "createJoinSet",
+            "sleep",
+            "randomU64",
+            "randomU64Inclusive",
+            "randomString",
+            "getResult",
+            "stub",
+            "JoinSetExhaustedError",
+            "ChildError",
+            "ChildExecutionError",
+        ],
+        &obelisk,
+        loader,
+        context,
+    );
+    imports::register_builtin_module(
+        "obelisk:workflow-dynamic@1.0.0",
+        &["call", "schedule"],
+        &dynamic,
+        loader,
+        context,
+    );
+    context.eval(Source::from_bytes("delete globalThis.obelisk"))?;
 
     Ok(())
 }

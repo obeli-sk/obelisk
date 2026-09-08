@@ -84,3 +84,4 @@ export default function join_next_try_semantics(id) {
 
     return okResult;
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

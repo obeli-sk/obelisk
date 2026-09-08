@@ -132,8 +132,9 @@ impl WorkflowJsWorkerCompiled {
         // Parse errors in JS source are caught here early rather than at runtime.
         let mut resolved_imports = HashMap::new();
         for source in self.js_files.values() {
-            let imports = resolve_js_imports(source, fn_registry.as_ref())
-                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+            let imports =
+                resolve_js_imports(source, fn_registry.as_ref(), WORKFLOW_BUILTIN_MODULES)
+                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
             for (specifier, functions) in imports {
                 resolved_imports.entry(specifier).or_insert(functions);
             }
@@ -198,7 +199,7 @@ pub struct WorkflowJsWorker {
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
-use crate::js_imports::{NamedFnImport, resolve_js_imports};
+use crate::js_imports::{NamedFnImport, WORKFLOW_BUILTIN_MODULES, resolve_js_imports};
 
 impl WorkflowJsWorker {
     pub async fn capture_backtraces(

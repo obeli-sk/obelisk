@@ -147,12 +147,13 @@ fn is_relative_specifier(spec: &str) -> bool {
 /// (`ns:pkg/ifc`, `obelisk:*`). False for relative paths (those are followed
 /// here) and bare module names (those are rejected).
 fn is_passthrough_specifier(spec: &str) -> bool {
-    !is_relative_specifier(spec)
-        && !spec.starts_with('/')
-        && !spec.starts_with("http://")
-        && !spec.starts_with("https://")
-        && spec.contains(':')
-        && spec.contains('/')
+    spec.starts_with("obelisk:")
+        || !is_relative_specifier(spec)
+            && !spec.starts_with('/')
+            && !spec.starts_with("http://")
+            && !spec.starts_with("https://")
+            && spec.contains(':')
+            && spec.contains('/')
 }
 
 /// Extract every module specifier (import + re-export) from the given JS source.
@@ -258,6 +259,20 @@ mod tests {
         let graph = collect_graph(dir.path(), "index.js").await.unwrap();
         assert_eq!(graph.files.len(), 1);
         assert_eq!(graph.entry_path, "index.js");
+    }
+
+    #[tokio::test]
+    async fn passes_through_obelisk_builtin_imports() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "index.js",
+            "import * as obelisk from 'obelisk:workflow@1.0.0';\nexport default () => obelisk.executionIdCurrent();\n",
+        )
+        .await;
+
+        let graph = collect_graph(dir.path(), "index.js").await.unwrap();
+        assert_eq!(graph.files.len(), 1);
     }
 
     #[tokio::test]

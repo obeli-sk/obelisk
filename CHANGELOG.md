@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** *(config)* Deployments can only read process environment variables listed in the
   server's `[public_env].allowed` allowlist. This prevents platform-provided variables, including
   sensitive Kubernetes values, from being exposed through `deployment.toml`.
+- **Breaking:** *(workflow-js, webhook-js)* Obelisk runtime APIs must now be imported from the
+  versioned `obelisk:workflow@1.0.0` or `obelisk:webhook@1.0.0` synthetic modules. Dynamic
+  `call` and `schedule` operations are available separately from the corresponding
+  `obelisk:workflow-dynamic@1.0.0` and `obelisk:webhook-dynamic@1.0.0` modules. The unversioned
+  global `obelisk` object has been removed.
 - **Breaking:** *(executor)* The default execution lock expiry is now 30 seconds instead of 1
   second, and workflow lock extension starts 15 seconds before expiry instead of 100 milliseconds.
   A workflow extends its lock only after persisting progress since the previous extension, avoiding

@@ -14,3 +14,4 @@ export default function stub_join_next_try_loop(id) {
         // obelisk.sleep({ seconds: 1 });
     }
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

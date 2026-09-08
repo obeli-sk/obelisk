@@ -9,6 +9,33 @@ use boa_engine::module::{MapModuleLoader, SyntheticModuleInitializer};
 use boa_engine::{Context, JsString, JsValue, Module, js_string, object::JsObject};
 use std::collections::HashMap;
 
+/// Register a runtime-native ES module backed by properties of `exports`.
+pub fn register_builtin_module(
+    specifier: &str,
+    names: &[&str],
+    exports: &JsObject,
+    loader: &MapModuleLoader,
+    context: &mut Context,
+) {
+    let export_names: Vec<JsString> = names.iter().map(|name| js_string!(*name)).collect();
+    let module = Module::synthetic(
+        &export_names,
+        SyntheticModuleInitializer::from_copy_closure_with_captures(
+            |module, (object, names): &(JsObject, Vec<JsString>), context| {
+                for name in names {
+                    module.set_export(name, object.get(name.clone(), context)?)?;
+                }
+                Ok(())
+            },
+            (exports.clone(), export_names.clone()),
+        ),
+        None,
+        None,
+        context,
+    );
+    loader.insert(specifier, module);
+}
+
 /// Suffix appended to WIT package names for schedule imports.
 pub const SCHEDULE_SUFFIX: &str = "-obelisk-schedule";
 /// Suffix appended to WIT package names for extension imports (submit/awaitNext/get).
