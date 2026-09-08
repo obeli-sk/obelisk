@@ -432,6 +432,7 @@ pub(crate) enum SubmitOutcome {
     ExistsWithSameParameters,
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit(
     deployment_id: DeploymentId,
     db_connection: &dyn DbExternalApi,
@@ -441,6 +442,7 @@ pub(crate) async fn submit(
     paused: bool,
     component_registry_ro: &ComponentConfigRegistryRO,
     max_persisted_value_size_bytes: u64,
+    origin: concepts::persisted_value::PersistedValueOrigin,
 ) -> Result<SubmitOutcome, SubmitError> {
     let span = Span::current();
     span.record("execution_id", tracing::field::display(&execution_id));
@@ -538,8 +540,17 @@ pub(crate) async fn submit(
     concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
         .expect("verified server value limit is positive")
         .validate(&params)
-        .map_err(|_| SubmitError::ValueTooLarge {
-            limit: max_persisted_value_size_bytes,
+        .map_err(|exceeded| {
+            concepts::persisted_value::report_rejection(
+                Some(&execution_id),
+                Some(ffqn),
+                concepts::persisted_value::PersistedValueClass::Params,
+                origin,
+                exceeded,
+            );
+            SubmitError::ValueTooLarge {
+                limit: max_persisted_value_size_bytes,
+            }
         })?;
 
     // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.

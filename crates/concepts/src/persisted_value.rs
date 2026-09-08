@@ -1,10 +1,90 @@
-use crate::{SupportedFunctionReturnValue, component_id::Digest};
+use crate::{ExecutionId, FunctionFqn, SupportedFunctionReturnValue, component_id::Digest};
+use opentelemetry::{KeyValue, global, metrics::Counter};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::io;
+use std::sync::OnceLock;
 
 pub const DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 1024 * 1024;
 pub const PERSISTED_EVENT_OVERHEAD_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistedValueClass {
+    Params,
+    Result,
+    Stub,
+    Persist,
+    FailureDetail,
+}
+
+impl PersistedValueClass {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Params => "params",
+            Self::Result => "result",
+            Self::Stub => "stub",
+            Self::Persist => "persist",
+            Self::FailureDetail => "failure_detail",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistedValueOrigin {
+    Grpc,
+    Rest,
+    Webhook,
+    Workflow,
+    Activity,
+    StorageGuard,
+}
+
+impl PersistedValueOrigin {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Grpc => "grpc",
+            Self::Rest => "rest",
+            Self::Webhook => "webhook",
+            Self::Workflow => "workflow",
+            Self::Activity => "activity",
+            Self::StorageGuard => "storage_guard",
+        }
+    }
+}
+
+pub fn report_rejection(
+    execution_id: Option<&ExecutionId>,
+    ffqn: Option<&FunctionFqn>,
+    value_class: PersistedValueClass,
+    origin: PersistedValueOrigin,
+    exceeded: EncodedSizeExceeded,
+) {
+    tracing::warn!(
+        ?execution_id,
+        ?ffqn,
+        value_class = value_class.as_str(),
+        origin = origin.as_str(),
+        limit = exceeded.limit,
+        encoded_size_at_least = exceeded.encoded_size_at_least,
+        "Rejected oversized persisted value"
+    );
+
+    static REJECTIONS: OnceLock<Counter<u64>> = OnceLock::new();
+    REJECTIONS
+        .get_or_init(|| {
+            global::meter("obelisk")
+                .u64_counter("obelisk_persisted_value_rejected_total")
+                .with_description("Number of persisted values rejected by the size limit")
+                .build()
+        })
+        .add(
+            1,
+            &[
+                KeyValue::new("value_class", value_class.as_str()),
+                KeyValue::new("origin", origin.as_str()),
+            ],
+        );
+}
 
 #[must_use]
 pub fn compact_json_sha256<T: Serialize + ?Sized>(value: &T) -> Digest {

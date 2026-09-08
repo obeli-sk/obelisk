@@ -514,6 +514,30 @@ pub enum ExecutionRequest {
 }
 
 impl ExecutionRequest {
+    #[must_use]
+    pub const fn persisted_value_class(
+        &self,
+    ) -> Option<crate::persisted_value::PersistedValueClass> {
+        use crate::persisted_value::PersistedValueClass;
+
+        match self {
+            Self::Created { .. }
+            | Self::HistoryEvent {
+                event:
+                    HistoryEvent::JoinSetRequest {
+                        request: JoinSetRequest::ChildExecutionRequest { .. },
+                        ..
+                    },
+            } => Some(PersistedValueClass::Params),
+            Self::Finished { .. } => Some(PersistedValueClass::Result),
+            Self::HistoryEvent {
+                event: HistoryEvent::Persist { .. },
+            } => Some(PersistedValueClass::Persist),
+            Self::TemporarilyFailed { .. } => Some(PersistedValueClass::FailureDetail),
+            _ => None,
+        }
+    }
+
     pub fn validate_persisted_values(
         &self,
         max_persisted_value_size_bytes: u64,
@@ -1313,6 +1337,36 @@ impl CreateRequest {
     pub fn validate_persisted_values(&self) -> Result<(), DbErrorWriteNonRetriable> {
         ExecutionRequest::from(self.clone())
             .validate_for_persistence(self.max_persisted_value_size_bytes)
+    }
+
+    pub fn validate_for_storage(&self) -> Result<(), DbErrorWriteNonRetriable> {
+        let result = self.validate_persisted_values();
+        if result.is_err() {
+            let limit = self.max_persisted_value_size_bytes;
+            let size_limit = crate::persisted_value::EncodedSizeLimit::new(limit)
+                .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
+            if let Err(exceeded) = size_limit.validate(&self.params) {
+                crate::persisted_value::report_rejection(
+                    Some(&self.execution_id),
+                    Some(&self.ffqn),
+                    crate::persisted_value::PersistedValueClass::Params,
+                    crate::persisted_value::PersistedValueOrigin::StorageGuard,
+                    exceeded,
+                );
+            } else {
+                tracing::warn!(
+                    execution_id = %self.execution_id,
+                    ffqn = %self.ffqn,
+                    origin = "storage_guard",
+                    limit,
+                    encoded_size_at_least = limit
+                        .saturating_add(crate::persisted_value::PERSISTED_EVENT_OVERHEAD_BYTES)
+                        .saturating_add(1),
+                    "Rejected oversized persisted event envelope"
+                );
+            }
+        }
+        result
     }
 }
 

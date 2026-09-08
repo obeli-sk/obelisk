@@ -1507,7 +1507,14 @@ async fn execution_stub(
     let value_limit =
         concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
             .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
-    if value_limit.validate(&return_value).is_err() {
+    if let Err(exceeded) = value_limit.validate(&return_value) {
+        concepts::persisted_value::report_rejection(
+            Some(&ExecutionId::Derived(execution_id.clone())),
+            Some(&ffqn),
+            concepts::persisted_value::PersistedValueClass::Stub,
+            concepts::persisted_value::PersistedValueOrigin::Rest,
+            exceeded,
+        );
         return Err(HttpResponse {
             status: StatusCode::PAYLOAD_TOO_LARGE,
             message: format!(
@@ -1535,7 +1542,14 @@ async fn execution_stub(
         SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
             .expect("checked that ffqn is no-ext, return type must be Compatible")
     };
-    if value_limit.validate(&return_value).is_err() {
+    if let Err(exceeded) = value_limit.validate(&return_value) {
+        concepts::persisted_value::report_rejection(
+            Some(&ExecutionId::Derived(execution_id.clone())),
+            Some(&ffqn),
+            concepts::persisted_value::PersistedValueClass::Stub,
+            concepts::persisted_value::PersistedValueOrigin::Rest,
+            exceeded,
+        );
         return Err(HttpResponse {
             status: StatusCode::PAYLOAD_TOO_LARGE,
             message: format!(
@@ -2271,6 +2285,7 @@ async fn execution_submit(
         payload.paused,
         &component_registry_ro,
         state.server_verified.max_persisted_value_size_bytes(),
+        concepts::persisted_value::PersistedValueOrigin::Rest,
     )
     .await
     .map_err(|err| ErrorWrapper(err, accept))?;

@@ -213,6 +213,13 @@ impl DirectFnCall<'_> {
         .expect("persisted value limit must be positive")
         .validate(&params)
         {
+            concepts::persisted_value::report_rejection(
+                Some(ctx.db_connection.execution_id()),
+                Some(&ffqn),
+                concepts::persisted_value::PersistedValueClass::Params,
+                concepts::persisted_value::PersistedValueOrigin::Workflow,
+                exceeded,
+            );
             return Err(WorkflowFunctionError::ImportedFunctionCallError {
                 ffqn,
                 reason: "child execution parameters exceed the persisted value limit".into(),
@@ -606,7 +613,16 @@ impl StubFnCall<'_> {
                     .validate(&retval)
                 {
                     Ok(_) => Ok(StubIntent::StubTypeChecked(retval)),
-                    Err(_) => Ok(StubIntent::Err(StubIntentErr::ValueTooLarge { limit })),
+                    Err(exceeded) => {
+                        concepts::persisted_value::report_rejection(
+                            Some(ctx.db_connection.execution_id()),
+                            Some(target_ffqn),
+                            concepts::persisted_value::PersistedValueClass::Stub,
+                            concepts::persisted_value::PersistedValueOrigin::Workflow,
+                            exceeded,
+                        );
+                        Ok(StubIntent::Err(StubIntentErr::ValueTooLarge { limit }))
+                    }
                 }
             }
             Ok(create_req) => Ok(StubIntent::Err(StubIntentErr::TypeCheckError(format!(
@@ -2983,11 +2999,17 @@ pub(crate) mod workflow_support {
                         ));
                     }
                 };
-                if concepts::persisted_value::EncodedSizeLimit::new(limit)
+                if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(limit)
                     .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
                     .validate(&retval_parsed)
-                    .is_err()
                 {
+                    concepts::persisted_value::report_rejection(
+                        Some(self.db_connection.execution_id()),
+                        Some(&target_ffqn),
+                        concepts::persisted_value::PersistedValueClass::Stub,
+                        concepts::persisted_value::PersistedValueOrigin::Workflow,
+                        exceeded,
+                    );
                     return Ok((
                         StubIntent::Err(StubIntentErr::ValueTooLarge { limit }),
                         StubParams {
@@ -3014,11 +3036,17 @@ pub(crate) mod workflow_support {
                 SupportedFunctionReturnValue::from_wast_val_with_type(retval_parsed)
                     .expect("checked that ffqn is no-ext, return type must be compatible")
             };
-            if concepts::persisted_value::EncodedSizeLimit::new(limit)
+            if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(limit)
                 .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
                 .validate(&retval_parsed)
-                .is_err()
             {
+                concepts::persisted_value::report_rejection(
+                    Some(self.db_connection.execution_id()),
+                    Some(&target_ffqn),
+                    concepts::persisted_value::PersistedValueClass::Stub,
+                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                    exceeded,
+                );
                 return Ok((
                     StubIntent::Err(StubIntentErr::ValueTooLarge { limit }),
                     StubParams {
@@ -3152,6 +3180,13 @@ pub(crate) mod workflow_support {
             .expect("persisted value limit must be positive")
             .validate(&params)
             {
+                concepts::persisted_value::report_rejection(
+                    Some(self.db_connection.execution_id()),
+                    Some(&target_ffqn),
+                    concepts::persisted_value::PersistedValueClass::Params,
+                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                    exceeded,
+                );
                 return Ok(Err(ScheduleJsonError::ValueTooLarge(exceeded.limit)));
             }
 

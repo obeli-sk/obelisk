@@ -1503,11 +1503,17 @@ impl EventHistory {
                 wasm_backtrace,
             }) => {
                 let limit = self.max_persisted_value_size_bytes;
-                if concepts::persisted_value::EncodedSizeLimit::new(limit)
+                if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(limit)
                     .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
                     .validate(&value)
-                    .is_err()
                 {
+                    concepts::persisted_value::report_rejection(
+                        Some(db_connection.execution_id()),
+                        None,
+                        concepts::persisted_value::PersistedValueClass::Persist,
+                        concepts::persisted_value::PersistedValueOrigin::Workflow,
+                        exceeded,
+                    );
                     return Err(DbErrorWriteOrReplayInterrupt::PersistedValueTooLarge {
                         value_kind: "persisted history value",
                         limit,
@@ -1583,18 +1589,27 @@ impl EventHistory {
                                     Some(child_req),
                                 )
                             }
-                            Err(exceeded) => (
-                                Err(ChildExecutionRequestError::ValueTooLarge {
-                                    limit: exceeded.limit,
-                                }),
-                                storage::PersistedParams::Rejected {
-                                    rejected: storage::RejectedParams {
-                                        sha256: checked.sha256,
-                                        encoded_size_at_least: exceeded.encoded_size_at_least,
+                            Err(exceeded) => {
+                                concepts::persisted_value::report_rejection(
+                                    Some(db_connection.execution_id()),
+                                    Some(&target_ffqn),
+                                    concepts::persisted_value::PersistedValueClass::Params,
+                                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                                    exceeded,
+                                );
+                                (
+                                    Err(ChildExecutionRequestError::ValueTooLarge {
+                                        limit: exceeded.limit,
+                                    }),
+                                    storage::PersistedParams::Rejected {
+                                        rejected: storage::RejectedParams {
+                                            sha256: checked.sha256,
+                                            encoded_size_at_least: exceeded.encoded_size_at_least,
+                                        },
                                     },
-                                },
-                                None,
-                            ),
+                                    None,
+                                )
+                            }
                         }
                     }
                     SubmitChildIntent::Err(err) => {
@@ -1739,12 +1754,21 @@ impl EventHistory {
                                 };
                                 (Ok(()), Some(child_req))
                             }
-                            Err(exceeded) => (
-                                Err(ScheduleRequestError::ValueTooLarge {
-                                    limit: exceeded.limit,
-                                }),
-                                None,
-                            ),
+                            Err(exceeded) => {
+                                concepts::persisted_value::report_rejection(
+                                    Some(db_connection.execution_id()),
+                                    Some(&ffqn),
+                                    concepts::persisted_value::PersistedValueClass::Params,
+                                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                                    exceeded,
+                                );
+                                (
+                                    Err(ScheduleRequestError::ValueTooLarge {
+                                        limit: exceeded.limit,
+                                    }),
+                                    None,
+                                )
+                            }
                         }
                     }
                     ScheduleIntent::Err(err) => (Err(err), None),

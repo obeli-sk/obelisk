@@ -247,6 +247,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             request.paused,
             &component_registry_ro,
             self.server_verified.max_persisted_value_size_bytes(),
+            concepts::persisted_value::PersistedValueOrigin::Grpc,
         )
         .await?;
 
@@ -322,7 +323,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         let value_limit =
             concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
                 .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
-        if value_limit.validate(&untyped_return_value).is_err() {
+        if let Err(exceeded) = value_limit.validate(&untyped_return_value) {
+            concepts::persisted_value::report_rejection(
+                Some(&ExecutionId::Derived(execution_id.clone())),
+                Some(ffqn),
+                concepts::persisted_value::PersistedValueClass::Stub,
+                concepts::persisted_value::PersistedValueOrigin::Grpc,
+                exceeded,
+            );
             return Err(tonic::Status::resource_exhausted(format!(
                 "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
             )));
@@ -341,7 +349,14 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
                 .expect("checked that ffqn is no-ext, return type must be Compatible")
         };
-        if value_limit.validate(&return_value).is_err() {
+        if let Err(exceeded) = value_limit.validate(&return_value) {
+            concepts::persisted_value::report_rejection(
+                Some(&ExecutionId::Derived(execution_id.clone())),
+                Some(ffqn),
+                concepts::persisted_value::PersistedValueClass::Stub,
+                concepts::persisted_value::PersistedValueOrigin::Grpc,
+                exceeded,
+            );
             return Err(tonic::Status::resource_exhausted(format!(
                 "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
             )));

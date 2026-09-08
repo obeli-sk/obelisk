@@ -639,7 +639,35 @@ async fn validate_append_requests(
                 "Dropping HTTP client traces to fit persisted event envelope"
             );
         }
-        request.validate_for_persistence(limit)?;
+        if let Err(error) = request.validate_for_persistence(limit) {
+            let logical_value_rejected = request.event.validate_persisted_values(limit).is_err();
+            if logical_value_rejected {
+                if let Some(value_class) = request.event.persisted_value_class() {
+                    concepts::persisted_value::report_rejection(
+                        Some(execution_id),
+                        None,
+                        value_class,
+                        concepts::persisted_value::PersistedValueOrigin::StorageGuard,
+                        concepts::persisted_value::EncodedSizeExceeded {
+                            limit,
+                            encoded_size_at_least: limit.saturating_add(1),
+                        },
+                    );
+                }
+            } else {
+                warn!(
+                    %execution_id,
+                    event = request.event.variant(),
+                    origin = "storage_guard",
+                    limit,
+                    encoded_size_at_least = limit
+                        .saturating_add(concepts::persisted_value::PERSISTED_EVENT_OVERHEAD_BYTES)
+                        .saturating_add(1),
+                    "Rejected oversized persisted event envelope"
+                );
+            }
+            return Err(error.into());
+        }
     }
     Ok(limit)
 }
@@ -4191,7 +4219,7 @@ impl DbConnection for PostgresConnection {
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         debug!("create");
         trace!(?req, "create");
-        req.validate_persisted_values()?;
+        req.validate_for_storage()?;
         let created_at = req.created_at;
 
         let mut client_guard = self.client.lock().await;
@@ -4350,7 +4378,7 @@ impl DbConnection for PostgresConnection {
         assert!(!batch.is_empty(), "Empty batch request");
 
         for request in &child_req {
-            request.validate_persisted_values()?;
+            request.validate_for_storage()?;
         }
 
         let mut client_guard = self.client.lock().await;

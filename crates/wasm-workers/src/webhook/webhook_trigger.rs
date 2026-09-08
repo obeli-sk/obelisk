@@ -996,6 +996,13 @@ impl WebhookEndpointCtx {
                 .expect("persisted value limit must be positive")
                 .validate(&params)
         {
+            concepts::persisted_value::report_rejection(
+                Some(&ExecutionId::TopLevel(self.execution_id)),
+                Some(&ffqn),
+                concepts::persisted_value::PersistedValueClass::Params,
+                concepts::persisted_value::PersistedValueOrigin::Webhook,
+                exceeded,
+            );
             return Err(ScheduleJsonError::ValueTooLarge(exceeded.limit).into());
         }
 
@@ -1610,12 +1617,21 @@ impl WebhookEndpointCtx {
                                 max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
                             }],
                         ),
-                        Err(exceeded) => (
-                            Err(concepts::storage::ScheduleRequestError::ValueTooLarge {
-                                limit: exceeded.limit,
-                            }),
-                            vec![],
-                        ),
+                        Err(exceeded) => {
+                            concepts::persisted_value::report_rejection(
+                                Some(&ExecutionId::TopLevel(self.execution_id)),
+                                Some(&ffqn),
+                                concepts::persisted_value::PersistedValueClass::Params,
+                                concepts::persisted_value::PersistedValueOrigin::Webhook,
+                                exceeded,
+                            );
+                            (
+                                Err(concepts::storage::ScheduleRequestError::ValueTooLarge {
+                                    limit: exceeded.limit,
+                                }),
+                                vec![],
+                            )
+                        }
                     };
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
@@ -1694,6 +1710,13 @@ impl WebhookEndpointCtx {
             .expect("persisted value limit must be positive")
             .validate(&params)
             {
+                concepts::persisted_value::report_rejection(
+                    Some(&ExecutionId::TopLevel(self.execution_id)),
+                    Some(&ffqn),
+                    concepts::persisted_value::PersistedValueClass::Params,
+                    concepts::persisted_value::PersistedValueOrigin::Webhook,
+                    exceeded,
+                );
                 return Err(WebhookEndpointFunctionError::ValueTooLarge {
                     limit: exceeded.limit,
                 });
