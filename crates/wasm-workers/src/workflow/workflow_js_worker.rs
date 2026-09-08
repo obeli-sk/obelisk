@@ -1958,6 +1958,24 @@ mod tests {
             .await
         }
 
+        async fn with_stub_activity_and_limit(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+            max_persisted_value_size_bytes: u64,
+        ) -> Self {
+            Self::new_with_return_type(
+                db_pool,
+                js_source,
+                fn_name,
+                TestActivities::Stub,
+                JoinNextBlockingStrategy::Interrupt,
+                default_return_type(),
+                max_persisted_value_size_bytes,
+            )
+            .await
+        }
+
         /// Create harness with stub activity registered and a given blocking strategy.
         async fn with_stub_activity_strategy(
             db_pool: Arc<dyn DbPool>,
@@ -2005,6 +2023,7 @@ mod tests {
                 activities,
                 join_next_blocking_strategy,
                 default_return_type(),
+                u64::MAX,
             )
             .await
         }
@@ -2016,6 +2035,7 @@ mod tests {
             activities: TestActivities,
             join_next_blocking_strategy: JoinNextBlockingStrategy,
             return_type: ReturnTypeExtendable,
+            max_persisted_value_size_bytes: u64,
         ) -> Self {
             use crate::activity::activity_worker::test::compile_activity_stub;
 
@@ -2098,7 +2118,7 @@ mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
-                    max_persisted_value_size_bytes: u64::MAX,
+                    max_persisted_value_size_bytes,
                 })
                 .await
                 .unwrap();
@@ -2306,6 +2326,7 @@ mod tests {
             TestActivities::ChildErrorProjections,
             JoinNextBlockingStrategy::Interrupt,
             projection.parent_return_type(),
+            u64::MAX,
         )
         .await;
 
@@ -2411,6 +2432,63 @@ mod tests {
             "lastId should be a child execution id, got {result}"
         );
         assert_eq!(json!("stubbed-result-42"), result["result"]);
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_rejects_oversized_stub_without_persisting_value(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_stub_limit(params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            try {
+                obelisk.stub(execId, {'ok': 'sensitive-' + 'x'.repeat(2048)});
+                return JSON.stringify({ rejected: false });
+            } catch (e) {
+                return JSON.stringify({ rejected: true, message: e.message });
+            }
+        }";
+
+        let harness = JsWorkflowTestHarness::with_stub_activity_and_limit(
+            db_pool,
+            js_source,
+            "test-stub-limit",
+            512,
+        )
+        .await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["rejected"]);
+        assert!(result["message"].as_str().unwrap().contains("512"));
+
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        assert!(log.events.iter().any(|event| matches!(
+            &event.event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::Stub {
+                    result: Err(concepts::storage::StubError::ValueTooLarge { limit: 512 }),
+                    ..
+                }
+            }
+        )));
+        assert!(
+            !serde_json::to_string(&log.events)
+                .unwrap()
+                .contains("sensitive-")
+        );
+
         drop(harness);
         db_close.close().await;
     }

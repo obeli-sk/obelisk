@@ -584,7 +584,16 @@ impl StubFnCall<'_> {
                 // Otherwise, we assume the parent workflow and this stub writer share the
                 // same WIT definition, meaning type checking is done at server startup.
                 // `stub-json` must do its own type checking before this call.
-                Ok(StubIntent::StubTypeChecked(retval))
+                let limit = ctx
+                    .max_persisted_value_size_bytes()
+                    .min(create_req.max_persisted_value_size_bytes);
+                match concepts::persisted_value::EncodedSizeLimit::new(limit)
+                    .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                    .validate(&retval)
+                {
+                    Ok(_) => Ok(StubIntent::StubTypeChecked(retval)),
+                    Err(_) => Ok(StubIntent::Err(StubIntentErr::ValueTooLarge { limit })),
+                }
             }
             Ok(create_req) => Ok(StubIntent::Err(StubIntentErr::TypeCheckError(format!(
                 "ffqn mismatch, code stubs {target_ffqn}, but execution was created with {}",
@@ -2874,12 +2883,12 @@ pub(crate) mod workflow_support {
             retval: String,
         ) -> Result<(StubIntent, StubParams), DbErrorRead> {
             // Look up the target function's FFQN
-            let target_ffqn = match self
+            let target_create_request = match self
                 .db_connection
                 .get_stub_create_request(&ExecutionId::Derived(target_execution_id.clone()))
                 .await
             {
-                Ok(create_req) => create_req.ffqn.clone(),
+                Ok(create_req) => create_req,
                 Err(DbErrorRead::NotFound) => {
                     return Ok((
                         StubIntent::Err(StubIntentErr::ExecutionNotFound),
@@ -2893,6 +2902,10 @@ pub(crate) mod workflow_support {
                     return Err(db_err); // intermittent error
                 }
             };
+            let target_ffqn = target_create_request.ffqn;
+            let limit = self
+                .max_persisted_value_size_bytes()
+                .min(target_create_request.max_persisted_value_size_bytes);
 
             // Get the function metadata to determine the return type
             let Some((fn_metadata, fn_component_id)) = self
@@ -2956,6 +2969,19 @@ pub(crate) mod workflow_support {
                         ));
                     }
                 };
+                if concepts::persisted_value::EncodedSizeLimit::new(limit)
+                    .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                    .validate(&retval_parsed)
+                    .is_err()
+                {
+                    return Ok((
+                        StubIntent::Err(StubIntentErr::ValueTooLarge { limit }),
+                        StubParams {
+                            target_execution_id,
+                            retval_hash: StubRetVal::Untyped(retval).hash(),
+                        },
+                    ));
+                }
                 let type_wrapper = TypeWrapper::from(return_type.type_wrapper_tl);
                 let retval_parsed = match deserialize_value(&retval_parsed, type_wrapper) {
                     Ok(ok) => ok,
@@ -2974,6 +3000,19 @@ pub(crate) mod workflow_support {
                 SupportedFunctionReturnValue::from_wast_val_with_type(retval_parsed)
                     .expect("checked that ffqn is no-ext, return type must be compatible")
             };
+            if concepts::persisted_value::EncodedSizeLimit::new(limit)
+                .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                .validate(&retval_parsed)
+                .is_err()
+            {
+                return Ok((
+                    StubIntent::Err(StubIntentErr::ValueTooLarge { limit }),
+                    StubParams {
+                        target_execution_id,
+                        retval_hash: StubRetVal::Typed(retval_parsed).hash(),
+                    },
+                ));
+            }
             // Keep stub hashes language-independent by hashing the type-checked value.
             Ok((
                 StubIntent::StubTypeChecked(retval_parsed.clone()),

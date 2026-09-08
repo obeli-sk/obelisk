@@ -2968,12 +2968,14 @@ pub(crate) enum StubIntent {
 pub(crate) enum StubIntentErr {
     ExecutionNotFound,      // results in `StubError::ExecutionNotFound`
     TypeCheckError(String), // results in `StubError::TypeCheckError`
+    ValueTooLarge { limit: u64 },
 }
 impl From<StubIntentErr> for StubError {
     fn from(value: StubIntentErr) -> StubError {
         match value {
             StubIntentErr::ExecutionNotFound => StubError::ExecutionNotFound,
             StubIntentErr::TypeCheckError(reason) => StubError::TypeCheckError(reason),
+            StubIntentErr::ValueTooLarge { limit } => StubError::ValueTooLarge { limit },
         }
     }
 }

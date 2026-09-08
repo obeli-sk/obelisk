@@ -1486,11 +1486,12 @@ async fn execution_stub(
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    let ffqn = db_connection
+    let create_request = db_connection
         .get_create_request(&ExecutionId::Derived(execution_id.clone()))
         .await
-        .map_err(|err| ErrorWrapper(err, accept))?
-        .ffqn;
+        .map_err(|err| ErrorWrapper(err, accept))?;
+    let ffqn = create_request.ffqn;
+    let max_persisted_value_size_bytes = create_request.max_persisted_value_size_bytes;
 
     // Check that ffqn exists
     let Some((_component_id, fn_metadata)) =
@@ -1503,6 +1504,18 @@ async fn execution_stub(
         });
     };
     let created_at = Now.now();
+    let value_limit =
+        concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+            .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
+    if value_limit.validate(&return_value).is_err() {
+        return Err(HttpResponse {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: format!(
+                "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
+            ),
+            accept,
+        });
+    }
 
     // Type check `return_value`
     let return_value = {
@@ -1522,6 +1535,15 @@ async fn execution_stub(
         SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
             .expect("checked that ffqn is no-ext, return type must be Compatible")
     };
+    if value_limit.validate(&return_value).is_err() {
+        return Err(HttpResponse {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: format!(
+                "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
+            ),
+            accept,
+        });
+    }
     storage::stub_execution(
         db_connection.as_ref(),
         execution_id,
