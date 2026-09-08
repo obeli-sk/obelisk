@@ -651,7 +651,8 @@ impl ExecTask {
             can_be_retried,
             unlock_expiry_on_limit_reached,
         )? {
-            Some(append) => {
+            Some(mut append) => {
+                append.enforce_failure_diagnostic_limit(max_persisted_value_size_bytes);
                 debug!("Appending {append:?}");
                 let db_exec = db_pool.db_exec_conn().await?;
                 append.append(db_exec.as_ref()).await
@@ -994,6 +995,28 @@ pub(crate) struct Append {
 }
 
 impl Append {
+    fn enforce_failure_diagnostic_limit(&mut self, limit: u64) {
+        match &mut self.primary_event.event {
+            ExecutionRequest::TemporarilyFailed { reason, detail, .. } => {
+                let mut bounded_reason = Some(reason.to_string());
+                concepts::persisted_value::truncate_failure_diagnostics(
+                    &mut bounded_reason,
+                    detail,
+                    limit,
+                );
+                *reason = StrVariant::from(bounded_reason.unwrap_or_default());
+            }
+            ExecutionRequest::Finished { retval, .. } => {
+                *retval =
+                    concepts::persisted_value::enforce_return_value_limit(retval.clone(), limit);
+                if let Some(child_finished) = &mut self.child_finished {
+                    child_finished.result = retval.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) async fn append(self, db_exec: &dyn DbExecutor) -> Result<(), DbErrorWrite> {
         if let Some(child_finished) = self.child_finished {
             assert_matches!(
@@ -1240,6 +1263,44 @@ mod tests {
             Some("persisted history value exceeds the persisted value limit")
         );
         assert_eq!(failure.detail.as_deref(), Some("limit: 512 bytes"));
+    }
+
+    #[test]
+    fn temporary_failure_diagnostics_are_utf8_safely_bounded() {
+        let mut append = ExecTask::worker_result_to_execution_event(
+            ComponentType::Activity,
+            ExecutionId::generate(),
+            Err(WorkerError::ActivityTrap {
+                reason: "😀".repeat(100),
+                trap_kind: TrapKind::Trap,
+                detail: Some("secret-detail".repeat(100)),
+                version: Version::new(2),
+                http_client_traces: None,
+            }),
+            DateTime::UNIX_EPOCH,
+            None,
+            Some(Duration::from_secs(1)),
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap();
+        append.enforce_failure_diagnostic_limit(128);
+
+        let (reason, detail) = assert_matches!(
+            append.primary_event.event,
+            ExecutionRequest::TemporarilyFailed { reason, detail, .. } => (reason, detail)
+        );
+        let reason = reason.to_string();
+        assert!(
+            concepts::persisted_value::validate_failure_diagnostics(
+                &Some(reason.clone()),
+                &detail,
+                128,
+            )
+            .is_ok()
+        );
+        assert!(reason.contains("...[truncated; original UTF-8 bytes:"));
+        assert!(detail.is_none());
     }
 
     async fn tick_fn<W: Worker + Debug>(

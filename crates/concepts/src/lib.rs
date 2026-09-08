@@ -59,6 +59,10 @@ impl FinishedExecutionFailure {
     pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
         PendingStateFinishedError::ExecutionFailure(self.kind)
     }
+
+    pub fn truncate_diagnostics(&mut self, limit: u64) -> bool {
+        persisted_value::truncate_failure_diagnostics(&mut self.reason, &mut self.detail, limit)
+    }
 }
 
 #[derive(

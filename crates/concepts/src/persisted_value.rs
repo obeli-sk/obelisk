@@ -126,15 +126,109 @@ pub struct EncodedSizeExceeded {
 
 #[must_use]
 pub fn enforce_return_value_limit(
-    value: SupportedFunctionReturnValue,
+    mut value: SupportedFunctionReturnValue,
     limit: u64,
 ) -> SupportedFunctionReturnValue {
+    if let SupportedFunctionReturnValue::ExecutionFailure(failure) = &mut value {
+        failure.truncate_diagnostics(limit);
+    }
     let encoded_size_limit =
         EncodedSizeLimit::new(limit).unwrap_or(EncodedSizeLimit::LEGACY_UNLIMITED);
     match encoded_size_limit.validate(&value) {
         Ok(_) => value,
         Err(_) => SupportedFunctionReturnValue::value_too_large(limit),
     }
+}
+
+#[derive(Serialize)]
+struct FailureDiagnostics<'a> {
+    reason: &'a Option<String>,
+    detail: &'a Option<String>,
+}
+
+pub fn validate_failure_diagnostics(
+    reason: &Option<String>,
+    detail: &Option<String>,
+    limit: u64,
+) -> Result<u64, EncodedSizeExceeded> {
+    EncodedSizeLimit::new(limit)
+        .unwrap_or(EncodedSizeLimit::LEGACY_UNLIMITED)
+        .validate(&FailureDiagnostics { reason, detail })
+}
+
+/// Bounds diagnostic text while preserving as much of its UTF-8 prefix as fits.
+///
+/// Returns whether either field was changed.
+pub fn truncate_failure_diagnostics(
+    reason: &mut Option<String>,
+    detail: &mut Option<String>,
+    limit: u64,
+) -> bool {
+    if validate_failure_diagnostics(reason, detail, limit).is_ok() {
+        return false;
+    }
+
+    let original_utf8_bytes =
+        reason.as_ref().map_or(0, String::len) + detail.as_ref().map_or(0, String::len);
+    let marker = format!("...[truncated; original UTF-8 bytes: {original_utf8_bytes}]");
+
+    if let Some(original_detail) = detail.take()
+        && let Some(truncated) = largest_fitting_prefix(&original_detail, &marker, |candidate| {
+            validate_failure_diagnostics(reason, &Some(candidate.to_owned()), limit).is_ok()
+        })
+    {
+        *detail = Some(truncated);
+        return true;
+    }
+
+    *detail = None;
+    if let Some(original_reason) = reason.take()
+        && let Some(truncated) = largest_fitting_prefix(&original_reason, &marker, |candidate| {
+            validate_failure_diagnostics(&Some(candidate.to_owned()), detail, limit).is_ok()
+        })
+    {
+        *reason = Some(truncated);
+        return true;
+    }
+
+    *reason = None;
+    true
+}
+
+fn largest_fitting_prefix(
+    original: &str,
+    marker: &str,
+    mut fits: impl FnMut(&str) -> bool,
+) -> Option<String> {
+    let candidate = format!("{original}{marker}");
+    if fits(&candidate) {
+        return Some(candidate);
+    }
+    if !fits(marker) {
+        return None;
+    }
+
+    let mut low = 0usize;
+    let mut high = original.len();
+    let mut best = 0usize;
+    while low <= high {
+        let midpoint = low + (high - low) / 2;
+        let mut prefix_len = midpoint;
+        while !original.is_char_boundary(prefix_len) {
+            prefix_len -= 1;
+        }
+        let candidate = format!("{}{marker}", &original[..prefix_len]);
+        if fits(&candidate) {
+            best = prefix_len;
+            low = midpoint.saturating_add(1);
+        } else if midpoint == 0 {
+            break;
+        } else {
+            high = midpoint - 1;
+        }
+    }
+
+    Some(format!("{}{marker}", &original[..best]))
 }
 
 struct LimitWriter {
@@ -227,5 +321,35 @@ mod tests {
                 .unwrap()
                 .contains("secret-result")
         );
+    }
+
+    #[test]
+    fn truncates_failure_diagnostics_on_utf8_boundaries() {
+        let mut reason = Some("failure".to_owned());
+        let mut detail = Some("sensitive-😀".repeat(100));
+        let original_utf8_bytes = reason.as_ref().unwrap().len() + detail.as_ref().unwrap().len();
+
+        assert!(truncate_failure_diagnostics(&mut reason, &mut detail, 128));
+        assert!(validate_failure_diagnostics(&reason, &detail, 128).is_ok());
+        assert_eq!(reason.as_deref(), Some("failure"));
+        let detail = detail.unwrap();
+        assert!(detail.starts_with("sensitive-😀"));
+        assert!(detail.ends_with(&format!(
+            "...[truncated; original UTF-8 bytes: {original_utf8_bytes}]"
+        )));
+    }
+
+    #[test]
+    fn truncates_oversized_reason_when_detail_marker_cannot_fit() {
+        let mut reason = Some("😀".repeat(100));
+        let mut detail = Some("secret-detail".repeat(100));
+
+        assert!(truncate_failure_diagnostics(&mut reason, &mut detail, 96));
+        assert!(validate_failure_diagnostics(&reason, &detail, 96).is_ok());
+        assert!(detail.is_none());
+        let reason = reason.unwrap();
+        assert!(reason.is_char_boundary(reason.len()));
+        assert!(reason.contains("...[truncated; original UTF-8 bytes:"));
+        assert!(!reason.contains("secret-detail"));
     }
 }
