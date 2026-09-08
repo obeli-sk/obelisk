@@ -735,9 +735,9 @@ dependencies = [
 
 [[package]]
 name = "comfy-table"
-version = "7.2.2"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "958c5d6ecf1f214b4c2bbbbf6ab9523a864bd136dcf71a7e8904799acfe1ad47"
+checksum = "136c8c4c3823846e8ba6d4bda011b4e5d5827b8bb0ac26c31f9ab31abe9f54f2"
 dependencies = [
  "unicode-segmentation",
  "unicode-width",
@@ -1223,6 +1223,32 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+]
+
+[[package]]
+name = "data-encoding"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
+
+[[package]]
+name = "data-encoding-macro"
+version = "0.1.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6a127ecbb3c4632e1525380e04c0c3fcf8dcb44d32a79ea290d8a36906edcd8"
+dependencies = [
+ "data-encoding",
+ "data-encoding-macro-internal",
+]
+
+[[package]]
+name = "data-encoding-macro-internal"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
+dependencies = [
+ "data-encoding",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -2277,9 +2303,9 @@ dependencies = [
 
 [[package]]
 name = "icu_collections"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2984d1cd16c883d7935b9e07e44071dca8d917fd52ecc02c04d5fa0b5a3f191c"
+checksum = "fa68d21081c4a05d5a901a1c62add574c77048b6a1c67be3b50ce0b60d4ca513"
 dependencies = [
  "displaydoc",
  "potential_utf",
@@ -2304,9 +2330,9 @@ dependencies = [
 
 [[package]]
 name = "icu_normalizer"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c56e5ee99d6e3d33bd91c5d85458b6005a22140021cc324cea84dd0e72cff3b4"
+checksum = "12f9cf5f235641ed274641dd81c3f28d870e276763d0797aeeab72317b1c646f"
 dependencies = [
  "icu_collections",
  "icu_normalizer_data",
@@ -2320,16 +2346,17 @@ dependencies = [
 
 [[package]]
 name = "icu_normalizer_data"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da3be0ae77ea334f4da67c12f149704f19f81d1adf7c51cf482943e84a2bad38"
+checksum = "1563da1ed3e0b3bf3d74c9b85917ac9c56464d2f57242270c09c9e752f8021a0"
 
 [[package]]
 name = "icu_properties"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bee3b67d0ea5c2cca5003417989af8996f8604e34fb9ddf96208a033901e70de"
+checksum = "7e7ca276ad3145661a65914e6daf131ca5120cd3dcee8f8f3214b8875184a148"
 dependencies = [
+ "displaydoc",
  "icu_collections",
  "icu_locale_core",
  "icu_properties_data",
@@ -2340,9 +2367,9 @@ dependencies = [
 
 [[package]]
 name = "icu_properties_data"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e2bbb201e0c04f7b4b3e14382af113e17ba4f63e2c9d2ee626b720cbce54a14"
+checksum = "e590f038c1464a96894fd6d10127e90a8be4509f56ff7ecef851b15cee0b7caa"
 
 [[package]]
 name = "icu_provider"
@@ -3021,9 +3048,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-ast"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "977223f109626c8a1ee7a56520bfe3b587fae0a3f7f27ffb92bf8d5663d86705"
+checksum = "c9de387375d5ba68873c653ce89ce00c00973c539fedf3f0043ab00f5d57d92d"
 dependencies = [
  "bitflags 2.13.1",
  "indexmap 2.14.2",
@@ -3037,9 +3064,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-engine"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48b645e1ec0ae50549f7b46d665a7cbabc0276ff790fbdf314bae11681a9fa16"
+checksum = "d527a8b1c0178d1d8a24d16323383295ce4386645cc610d4330c064a96c15975"
 dependencies = [
  "aligned-vec",
  "arrayvec",
@@ -3049,6 +3076,8 @@ dependencies = [
  "cfg-if",
  "cow-utils",
  "dashmap",
+ "data-encoding",
+ "data-encoding-macro",
  "dynify",
  "either",
  "fast-float2",
@@ -3089,9 +3118,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-gc"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd0ad22b93148fe364fe82b1255c610226070adfcd10cee34c0ccad34481c272"
+checksum = "1be0a3b87305c84b14b566b92688a97cba07fb367d65c105f77530b224af2ea2"
 dependencies = [
  "arrayvec",
  "either",
@@ -3103,9 +3132,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-interner"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6e18b8078d5638110b9056ce4f1f9b41cf7207a2e57cfa45e1568a3b2531151"
+checksum = "cd04a5db1f3a7fa64ab61afa2d5b69c04c33524e154210cb155e4b887f8fd616"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap 2.14.2",
@@ -3119,23 +3148,23 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-macros"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e4620f7c2ca838478ee7fffb1f504f76bdc3f210a0d67ae92f555b4d46438c0"
+checksum = "37d8ac1b285fd9041787c9a5fcdcc74e06c5b914decb65340fc6524594299559"
 dependencies = [
  "cfg-if",
  "cow-utils",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
- "synstructure",
+ "syn 3.0.5",
+ "synstructure 0.14.0",
 ]
 
 [[package]]
 name = "obeli-sk-boa-parser"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec9e930b7b6343ffde3fb97e415491c9c75c1f4dcc41de40f0f6a3b72459721d"
+checksum = "f63fb99a9a6db34673af3643d5b09998000d3689854f21b7c913f588c902e234"
 dependencies = [
  "bitflags 2.13.1",
  "fast-float2",
@@ -3151,13 +3180,12 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-runtime"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5ef80964b0e292245c9abdd9e44534091646075d24932eae650b4b8e1898b65"
+checksum = "2ae991357007996e30bf349b3bc6756ee3858556e01d8ebf87817217e3362d5e"
 dependencies = [
  "bytemuck",
  "either",
- "form_urlencoded",
  "futures",
  "futures-lite 2.6.1",
  "http",
@@ -3171,9 +3199,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-string"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3cce696c3b13108c651e719ea3d549d65841fa89427e412e383aab6b2336ef6"
+checksum = "74b737090a9764516e287366ad6c4b169220ab64f47aaa5dcc2cb8db050394bb"
 dependencies = [
  "fast-float2",
  "itoa",
@@ -3185,9 +3213,9 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-boa-wintertc"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f699a862ed00fd7c5ec00b16190c8e9174eeed3c1d0921af169880e30f999ae"
+checksum = "7ffd15a0f2ceb505623938597d8162f69391499a81512d800cb730515fc9d5bf"
 dependencies = [
  "base64 0.23.1",
  "comfy-table",
@@ -3415,18 +3443,18 @@ dependencies = [
 
 [[package]]
 name = "obeli-sk-small-btree"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "296b76ac6e3f94a82ad4b13ab25d62c1a1e63c140a6ff17af47364f92cd801e2"
+checksum = "b732c4bd38be1ce12d9d9257cf941e504e6daf6c9b95b8f76e1aa531a1df521e"
 dependencies = [
  "arrayvec",
 ]
 
 [[package]]
 name = "obeli-sk-tag-ptr"
-version = "1.0.0-obeli-sk.11"
+version = "1.0.0-obeli-sk.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ede0925a63d3373ce567e28f3acb62c6bb24527f3955237f7cfb8a32508ff60"
+checksum = "05eb2467af59caf21ddda61f0f8e3d3c061a1cc05ff26b971c4767045bd8f6e4"
 
 [[package]]
 name = "obeli-sk-utils"
@@ -4496,11 +4524,10 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "regress"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "158a764437582235e3501f683b93a0a6f8d825d04a789dbe5ed30b8799b8908a"
+checksum = "32eef8b209c3c1c15dbad02c1f30f9539f00dc7253e0cbcdaae442a50a09d7c1"
 dependencies = [
- "hashbrown 0.16.1",
  "memchr",
 ]
 
@@ -5289,6 +5316,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "synstructure"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -7707,7 +7745,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
- "synstructure",
+ "synstructure 0.13.2",
 ]
 
 [[package]]
@@ -7748,7 +7786,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
- "synstructure",
+ "synstructure 0.13.2",
 ]
 
 [[package]]

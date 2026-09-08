@@ -95,6 +95,8 @@ skip = [
     # proc-macro ecosystem is mid-migration: syn 3 is used by serde_derive, async-trait,
     # tokio-macros, thiserror-impl 2, etc., while many crates still pull syn 2
     { name = "syn", version = "2" },
+    # Boa is on 0.14, transitive yoke is on 0.13
+    { name = "synstructure", version = "0.13" },
 ]
 
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
