@@ -904,9 +904,9 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@6.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@7.0.0";
 const IFC_FQN_WORKFLOW_SUPPORT_BACKTRACE: &str =
-    "obelisk:workflow/workflow-support-backtrace@6.0.0";
+    "obelisk:workflow/workflow-support-backtrace@7.0.0";
 
 #[derive(Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum ReplayKind {
@@ -1140,7 +1140,7 @@ impl WorkflowCtx {
     }
 
     fn add_to_linker_join_set(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@5.0.0";
+        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@6.0.0";
         let mut inst_join_set_ifc = linker
             .instance(IFC_FQN_JOIN_SET)
             .map_err(|err| WasmFileError::linking_error(IFC_FQN_JOIN_SET, err))?;

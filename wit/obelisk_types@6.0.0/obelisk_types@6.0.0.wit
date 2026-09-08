@@ -1,4 +1,4 @@
-package obelisk:types@5.0.0;
+package obelisk:types@6.0.0;
 
 @since(version = 3.0.0)
 interface time {

@@ -536,6 +536,7 @@ fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
         ExecutionFailureKind::NondeterminismDetected => "nondeterminism-detected",
         ExecutionFailureKind::OutOfFuel => "out-of-fuel",
         ExecutionFailureKind::Cancelled => "cancelled",
+        ExecutionFailureKind::ValueTooLarge => "value-too-large",
         ExecutionFailureKind::Uncategorized => "uncategorized",
     }
 }

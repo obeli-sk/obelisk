@@ -17,7 +17,7 @@ use wit_parser::{
     WorldItem, WorldKey,
 };
 
-const OBELISK_TYPES_VERSION_MAJOR: u64 = 5;
+const OBELISK_TYPES_VERSION_MAJOR: u64 = 6;
 const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
@@ -35,28 +35,28 @@ pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@5.0.0/obelisk_types@5.0.0.wit"
+    "/wit/obelisk_types@6.0.0/obelisk_types@6.0.0.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
-    "obelisk_types@5.0.0",
-    "obelisk_types@5.0.0.wit",
+    "obelisk_types@6.0.0",
+    "obelisk_types@6.0.0.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
-    "obelisk_workflow@6.0.0",
-    "obelisk_workflow@6.0.0.wit",
+    "obelisk_workflow@7.0.0",
+    "obelisk_workflow@7.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@6.0.0/obelisk_workflow@6.0.0.wit"
+        "/wit/obelisk_workflow@7.0.0/obelisk_workflow@7.0.0.wit"
     )),
 ];
 
 pub const WIT_OBELISK_WEBHOOK_PACKAGE: [&str; 3] = [
-    "obelisk_webhook@6.0.0",
-    "obelisk_webhook@6.0.0.wit",
+    "obelisk_webhook@7.0.0",
+    "obelisk_webhook@7.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_webhook@6.0.0/obelisk_webhook@6.0.0.wit"
+        "/wit/obelisk_webhook@7.0.0/obelisk_webhook@7.0.0.wit"
     )),
 ];
 

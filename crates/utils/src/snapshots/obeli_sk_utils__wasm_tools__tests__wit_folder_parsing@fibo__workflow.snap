@@ -6,9 +6,9 @@ testing:fibo-workflow-obelisk-ext
 package testing:fibo-workflow-obelisk-ext;
 
 interface workflow {
-  use obelisk:types/execution@5.0.0.{execution-id};
-  use obelisk:types/join-set@5.0.0.{join-set};
-  use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
+  use obelisk:types/execution@6.0.0.{execution-id};
+  use obelisk:types/join-set@6.0.0.{join-set};
+  use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
   fibow-submit: func(join-set: borrow<join-set>, n: u8, iterations: u32) -> result<execution-id, child-execution-request-error>;
 
@@ -71,9 +71,9 @@ testing:fibo-workflow-obelisk-schedule
 package testing:fibo-workflow-obelisk-schedule;
 
 interface workflow {
-  use obelisk:types/execution@5.0.0.{execution-id};
-  use obelisk:types/time@5.0.0.{schedule-at};
-  use obelisk:types/execution@5.0.0.{schedule-json-error};
+  use obelisk:types/execution@6.0.0.{execution-id};
+  use obelisk:types/time@6.0.0.{schedule-at};
+  use obelisk:types/execution@6.0.0.{schedule-json-error};
 
   fibow-schedule: func(schedule-at: schedule-at, n: u8, iterations: u32) -> result<execution-id, schedule-json-error>;
 

@@ -68,12 +68,12 @@ pub(crate) mod types {
         path: "host-wit-webhook/",
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@5.0.0;
-                    import obelisk:types/execution@5.0.0;
-                    import obelisk:types/backtrace@5.0.0;
-                    import obelisk:types/join-set@5.0.0;
-                    import obelisk:webhook/webhook-support@6.0.0;
-                    import obelisk:webhook/webhook-support-backtrace@6.0.0;
+                    import obelisk:types/time@6.0.0;
+                    import obelisk:types/execution@6.0.0;
+                    import obelisk:types/backtrace@6.0.0;
+                    import obelisk:types/join-set@6.0.0;
+                    import obelisk:webhook/webhook-support@7.0.0;
+                    import obelisk:webhook/webhook-support-backtrace@7.0.0;
                 }",
         world: "any:any/bindings",
         imports: {
