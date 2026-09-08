@@ -109,14 +109,13 @@ impl ConfigHolder {
     }
 
     /// Create a `ConfigHolder` for server configuration.
-    /// If `server_config` is `None`, all fields will use built-in defaults.
-    /// If `server_config` is `Some(path)`, the file must exist.
+    /// If `config_source` is `None`, all fields will use built-in defaults.
     pub(crate) fn new(
         project_dirs: Option<ProjectDirs>,
         base_dirs: Option<BaseDirs>,
-        server_config: Option<PathBuf>,
+        config_source: Option<PathBuf>,
     ) -> Result<Self, anyhow::Error> {
-        let server_config_dir = if let Some(path) = &server_config {
+        let server_config_dir = if let Some(path) = &config_source {
             let exists = path.try_exists().unwrap_or_default();
             if !exists {
                 bail!("cannot find server config file {path:?}");
@@ -128,12 +127,12 @@ impl ConfigHolder {
             None
         };
 
-        if let Some(path) = &server_config {
+        if let Some(path) = &config_source {
             info!("Using server configuration file {:?}", path);
         }
 
         Ok(Self {
-            config_source: server_config,
+            config_source,
             path_prefixes: PathPrefixes {
                 server_config_dir,
                 project_dirs,

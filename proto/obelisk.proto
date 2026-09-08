@@ -1273,6 +1273,8 @@ message SubmitDeploymentErrorDetail {
     repeated DigestMismatch digest_mismatches = 4;
     // Attached blobs exceeding the per-file size limit.
     repeated FileIssue oversized_files = 5;
+    // Secret names referenced by the deployment but absent from the server registry.
+    repeated string unregistered_secrets = 6;
 }
 
 message FileIssue {

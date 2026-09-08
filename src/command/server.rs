@@ -1,4 +1,5 @@
 mod config_prepass;
+pub(crate) use config_prepass::secret_scaffold_snippet;
 
 use crate::ServerStartup;
 use crate::args::shadow;
@@ -692,7 +693,7 @@ pub(crate) async fn verify(
     config: ServerConfigToml,
     deployment: Option<PathBuf>, // None if `server verify` contains no explicit `deployment.toml` - verify current active deployment.
     verify_params: VerifyParams,
-    skip_db: bool,
+    skip_db: bool, // always true for `deployment verify`
     fix: bool,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
@@ -829,6 +830,11 @@ pub(crate) async fn verify(
     } else {
         None
     };
+    let can_suggest_fix = !fix
+        && config_holder.config_source.is_some()
+        && deployment_opt
+            .as_ref()
+            .is_some_and(|deployment| deployment.source_path.is_some());
     let (deployment, deployment_id) = if let Some(deployment) = deployment_opt {
         (deployment, DeploymentId::generate())
     } else {
@@ -845,7 +851,20 @@ pub(crate) async fn verify(
         &server_verified,
         Some(&deployment),
         verify_params.runtime_config_availability,
-    )?;
+    )
+    .map_err(|err| {
+        if can_suggest_fix
+            && let config_prepass::PreflightError::UnregisteredSecrets(secret_err) = &err
+        {
+            anyhow::anyhow!(
+                "{secret_err}. Add them to server.toml, or remove the references. Run again with \
+                 `--fix` to scaffold them:\n\n{}",
+                config_prepass::secret_scaffold_snippet(&secret_err.names)
+            )
+        } else {
+            err.into()
+        }
+    })?;
     // The offline `-d` path resolved into an in-memory CAS; the DB path reads blobs from the
     // pool's CAS. Resolution and WASM materialization always have a CAS.
     let cas: Arc<dyn Cas> = if let Some(cas) = offline_cas {
@@ -2491,6 +2510,8 @@ pub(crate) enum SubmitDeploymentError {
     Conflict(anyhow::Error),
     #[display("deployment package validation failed")]
     Package(SubmitPackageError),
+    #[display("deployment references unregistered server secrets")]
+    UnregisteredSecrets(BTreeSet<String>),
     #[display("deployment processing failed")]
     Other(anyhow::Error),
 }
@@ -2498,6 +2519,19 @@ pub(crate) enum SubmitDeploymentError {
 impl From<anyhow::Error> for SubmitDeploymentError {
     fn from(err: anyhow::Error) -> Self {
         Self::Other(err)
+    }
+}
+
+impl SubmitDeploymentError {
+    fn from_preflight(err: config_prepass::PreflightError) -> Self {
+        match err {
+            config_prepass::PreflightError::UnregisteredSecrets(err) => {
+                Self::UnregisteredSecrets(err.names)
+            }
+            err @ config_prepass::PreflightError::MissingSecretReplacements(_) => {
+                Self::Other(err.into())
+            }
+        }
     }
 }
 
@@ -2766,7 +2800,7 @@ async fn submit_deployment_manifest(
                 Some(&deployment_resolved),
                 runtime_config_availability,
             )
-            .map_err(SubmitDeploymentError::Other)?;
+            .map_err(SubmitDeploymentError::from_preflight)?;
             let compiled_linked = deployment_verify_config_compile_link(
                 server_verified,
                 prepared_dirs,
@@ -3076,7 +3110,7 @@ async fn prepare_switch_deployment(
         Some(&target_deployment),
         verify_params.runtime_config_availability,
     )
-    .map_err(SwitchError::Other)?;
+    .map_err(|err| SwitchError::Other(err.into()))?;
     let compiled_linked = deployment_verify_config_compile_link(
         deployment_switch_manager.inner.server_verified.clone(),
         &deployment_switch_manager.inner.prepared_dirs,
@@ -5598,10 +5632,9 @@ mod tests {
         assert!(err.contains("replace_in = [\"headers\"]"));
     }
 
-    /// Every unregistered secret across several entries is gathered into one error,
-    /// registered names are omitted, and the error carries a paste-able `[secrets]` scaffold.
+    /// Every unregistered secret across several entries is gathered into one typed error.
     #[test]
-    fn unregistered_secrets_collect_all_and_error_shows_scaffold() {
+    fn unregistered_secrets_collect_all_in_typed_error() {
         use crate::command::server::config_prepass::{
             collect_unregistered_allowed_host_secrets, report_unregistered_secrets,
         };
@@ -5627,14 +5660,16 @@ mod tests {
             "the deployment's outbound HTTP entries",
             RuntimeConfigAvailability::Strict,
         )
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+        let message = err.to_string();
 
-        assert!(err.contains("`MISSING_A`, `MISSING_B`"), "{err}");
-        assert!(!err.contains("KNOWN"), "{err}");
-        assert!(err.contains("[secrets]"), "{err}");
-        assert!(err.contains("MISSING_A = { env = \"MISSING_A\" }"), "{err}");
-        assert!(err.contains("MISSING_B = { env = \"MISSING_B\" }"), "{err}");
+        assert_eq!(
+            err.names,
+            std::collections::BTreeSet::from(["MISSING_A".to_string(), "MISSING_B".to_string()])
+        );
+        assert!(message.contains("`MISSING_A`, `MISSING_B`"), "{message}");
+        assert!(!message.contains("KNOWN"), "{message}");
+        assert!(!message.contains("--fix"), "{message}");
     }
 
     /// When unavailable runtime config is allowed, unregistered secrets are a warning,

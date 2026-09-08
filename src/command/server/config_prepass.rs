@@ -12,10 +12,43 @@ use crate::config::secret_registry::SecretRegistry;
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, Item, Table, value};
 use tracing::warn;
 use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
+
+#[derive(Debug)]
+pub(super) struct UnregisteredSecretsError {
+    pub(super) names: BTreeSet<String>,
+    source_desc: String,
+}
+
+impl fmt::Display for UnregisteredSecretsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let list = self.names.iter().cloned().collect::<Vec<_>>().join("`, `");
+        write!(
+            formatter,
+            "{} reference(s) secret(s) `{list}` that are not registered in the server \
+             `[secrets]` table",
+            self.source_desc
+        )
+    }
+}
+
+impl std::error::Error for UnregisteredSecretsError {}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(super) struct MissingSecretReplacementsError(String);
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PreflightError {
+    #[error(transparent)]
+    UnregisteredSecrets(#[from] UnregisteredSecretsError),
+    #[error(transparent)]
+    MissingSecretReplacements(#[from] MissingSecretReplacementsError),
+}
 
 /// Pairs each per-entry `allowed_host` advisory with the source `path:line` of its
 /// `[[*.allowed_host]]` block, deduplicating identical findings across entries.
@@ -151,7 +184,7 @@ pub(super) fn preflight(
     server_verified: &super::ServerVerified,
     deployment: Option<&DeploymentResolved>,
     availability: RuntimeConfigAvailability,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), PreflightError> {
     let secret_registry = &*server_verified.secret_registry;
     let global_http_config = &server_verified.global_http_config;
     let ignore_missing_env_vars = availability == RuntimeConfigAvailability::AllowUnavailable;
@@ -303,13 +336,16 @@ pub(super) fn collect_unregistered_allowed_host_secrets(
 }
 
 /// Render a paste-able `[secrets]` block scaffolding each name as `X = { env = "X" }`.
-pub(super) fn secret_scaffold_snippet(names: &BTreeSet<String>) -> String {
-    use std::fmt::Write as _;
-    let mut snippet = String::from("[secrets]\n");
+pub(crate) fn secret_scaffold_snippet(names: &BTreeSet<String>) -> String {
+    let mut table = Table::new();
     for name in names {
-        let _ = writeln!(snippet, "{name} = {{ env = \"{name}\" }}");
+        let mut inline = toml_edit::InlineTable::new();
+        inline.insert("env", name.as_str().into());
+        table.insert(name, value(inline));
     }
-    snippet
+    let mut doc = DocumentMut::new();
+    doc["secrets"] = Item::Table(table);
+    doc.to_string()
 }
 
 /// Emit a single finding for every unregistered secret `source_desc` references, with a
@@ -318,31 +354,22 @@ pub(super) fn report_unregistered_secrets(
     unregistered: &BTreeSet<String>,
     source_desc: &str,
     availability: RuntimeConfigAvailability,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), UnregisteredSecretsError> {
     if unregistered.is_empty() {
         return Ok(());
     }
-    let list = unregistered
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("`, `");
-    let snippet = secret_scaffold_snippet(unregistered);
-    let message = format!(
-        "{source_desc} reference(s) secret(s) `{list}` that are not registered in the server \
-         `[secrets]` table.\n\
-         Add them to server.toml (adjust each `env` to its source variable), or remove the \
-         references. Run again with `--fix` to scaffold them:\n\n\
-         {snippet}"
-    );
+    let error = UnregisteredSecretsError {
+        names: unregistered.clone(),
+        source_desc: source_desc.to_string(),
+    };
     if availability == RuntimeConfigAvailability::AllowUnavailable {
         warn!(
-            "{message}\nSkipping these load-time secret checks because unavailable runtime \
+            "{error}\nSkipping these load-time secret checks because unavailable runtime \
              configuration is allowed; activation will enforce them strictly."
         );
         Ok(())
     } else {
-        bail!("{message}");
+        Err(error)
     }
 }
 
@@ -446,7 +473,7 @@ pub(super) fn collect_outbound_http_secret_replacements(
 pub(super) fn report_missing_outbound_http_secret_replacements(
     missing: &[MissingSecretReplacement],
     availability: RuntimeConfigAvailability,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), MissingSecretReplacementsError> {
     if missing.is_empty() {
         return Ok(());
     }
@@ -495,7 +522,7 @@ pub(super) fn report_missing_outbound_http_secret_replacements(
         );
         Ok(())
     } else {
-        bail!("{message}");
+        Err(MissingSecretReplacementsError(message))
     }
 }
 
