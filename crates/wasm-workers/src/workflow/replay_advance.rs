@@ -503,10 +503,12 @@ fn normalize_history_event_for_matching(event: HistoryEvent) -> HistoryEvent {
         HistoryEvent::Schedule {
             execution_id,
             schedule_at,
+            params_hash,
             result,
         } => HistoryEvent::Schedule {
             execution_id,
             schedule_at: normalize_schedule_at_for_matching(schedule_at),
+            params_hash,
             result,
         },
         HistoryEvent::Stub {

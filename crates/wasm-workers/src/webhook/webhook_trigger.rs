@@ -1014,6 +1014,7 @@ impl WebhookEndpointCtx {
         let event = HistoryEvent::Schedule {
             execution_id: execution_id.clone(),
             schedule_at: history_event_schedule_at,
+            params_hash: Some(concepts::persisted_value::compact_json_sha256(&params)),
             result: Ok(()),
         };
         let append_req = AppendRequest {
@@ -1567,10 +1568,12 @@ impl WebhookEndpointCtx {
                     .get_by_exported_function(&ffqn)
                     .expect("target function must be found in fn_registry");
                 let created_at = self.clock_fn.now();
+                let params = Params::from_wasmtime(Arc::from(params));
 
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
+                    params_hash: Some(concepts::persisted_value::compact_json_sha256(&params)),
                     result: Ok(()),
                 };
                 let schedule_at = schedule_at.as_date_time(created_at).map_err(|_err| {
@@ -1585,7 +1588,7 @@ impl WebhookEndpointCtx {
                     created_at,
                     execution_id: new_execution_id.clone(),
                     ffqn,
-                    params: Params::from_wasmtime(Arc::from(params)),
+                    params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
                     scheduled_at: schedule_at,

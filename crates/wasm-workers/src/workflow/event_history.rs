@@ -1379,14 +1379,19 @@ impl EventHistory {
                     DeterministicKey::Schedule {
                         target_execution_id,
                         schedule_at,
+                        params_hash,
                     },
                     HistoryEvent::Schedule {
                         execution_id: found_execution_id,
                         schedule_at: found_schedule_at,
+                        params_hash: found_params_hash,
                         result: found_result,
                     },
                 ) if *target_execution_id == *found_execution_id
-                    && schedule_at == found_schedule_at =>
+                    && schedule_at == found_schedule_at
+                    && found_params_hash
+                        .as_ref()
+                        .is_none_or(|found_params_hash| found_params_hash == params_hash) =>
                 {
                     trace!(%target_execution_id, "Matched Schedule, result: {:?}", found_result);
                     // Clone the result before mutating self
@@ -1638,6 +1643,7 @@ impl EventHistory {
                 scheduled_at_if_new,
                 execution_id: new_execution_id,
                 ffqn,
+                params_hash,
                 intent,
                 wasm_backtrace,
             }) => {
@@ -1669,6 +1675,7 @@ impl EventHistory {
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
+                    params_hash: Some(params_hash),
                     result,
                 };
 
@@ -2862,6 +2869,7 @@ pub(crate) struct Schedule {
     pub(crate) scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
     pub(crate) execution_id: ExecutionId,
     pub(crate) ffqn: FunctionFqn,
+    pub(crate) params_hash: concepts::component_id::Digest,
     pub(crate) intent: ScheduleIntent,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -3484,6 +3492,7 @@ enum DeterministicKey {
     Schedule {
         target_execution_id: ExecutionId,
         schedule_at: HistoryEventScheduleAt,
+        params_hash: concepts::component_id::Digest,
     },
 
     #[display("Stub({})", params.target_execution_id)]
@@ -3628,10 +3637,12 @@ impl EventCallNonBlocking {
             EventCallNonBlocking::Schedule(Schedule {
                 execution_id,
                 schedule_at,
+                params_hash,
                 ..
             }) => DeterministicKey::Schedule {
                 target_execution_id: execution_id.clone(),
                 schedule_at: *schedule_at,
+                params_hash: params_hash.clone(),
             },
             EventCallNonBlocking::Stub(Stub { intent, params, .. }) => DeterministicKey::Stub {
                 intent: intent.clone(),
@@ -4225,6 +4236,7 @@ mod tests {
                     scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
                     ffqn: MOCK_FFQN,
+                    params_hash: concepts::persisted_value::compact_json_sha256(&Params::empty()),
                     intent: ScheduleIntent::Ok {
                         fn_component_id: ComponentId::dummy_activity(),
                         params: Params::empty(),

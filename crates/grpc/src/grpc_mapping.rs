@@ -1355,6 +1355,11 @@ fn history_event_from_grpc(
             schedule_at: schedule_at_from_grpc(
                 schedule.scheduled_at.argument_must_exist("scheduled_at")?,
             )?,
+            params_hash: schedule
+                .params_hash
+                .map(|hash| hash.parse())
+                .transpose()
+                .map_err(|_| tonic::Status::invalid_argument("invalid schedule.params_hash"))?,
             result: match schedule.result.argument_must_exist("result")? {
                 grpc_gen::execution_event::history_event::schedule::Result::Ok(_) => Ok(()),
                 grpc_gen::execution_event::history_event::schedule::Result::Error(err) => Err(
@@ -1593,6 +1598,7 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
             HistoryEvent::Schedule {
                 execution_id,
                 schedule_at: scheduled_at,
+                params_hash,
                 result,
             } => history_event::Event::Schedule(history_event::Schedule {
                 execution_id: Some(grpc_gen::ExecutionId {
@@ -1628,6 +1634,7 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                         )
                     }
                 }),
+                params_hash: params_hash.map(|hash| hash.to_string()),
             }),
             HistoryEvent::Stub {
                 target_execution_id,

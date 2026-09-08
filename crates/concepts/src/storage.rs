@@ -719,6 +719,10 @@ pub enum HistoryEvent {
     Schedule {
         execution_id: ExecutionId,
         schedule_at: HistoryEventScheduleAt, // Stores intention to schedule an execution at a date/offset
+        // backcompat: 0.41 schedule events did not fingerprint parameters.
+        #[serde(default)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
+        params_hash: Option<crate::component_id::Digest>,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
         result: Result<(), ScheduleRequestError>,
     },

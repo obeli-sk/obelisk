@@ -1,8 +1,31 @@
+use crate::component_id::Digest;
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use std::io;
 
 pub const DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 1024 * 1024;
 pub const PERSISTED_EVENT_OVERHEAD_BYTES: u64 = 64 * 1024;
+
+#[must_use]
+pub fn compact_json_sha256<T: Serialize + ?Sized>(value: &T) -> Digest {
+    struct HashWriter(Sha256);
+
+    impl io::Write for HashWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.update(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = HashWriter(Sha256::new());
+    serde_json::to_writer(&mut writer, value)
+        .unwrap_or_else(|err| panic!("persisted value serialization failed: {err}"));
+    Digest(writer.0.finalize().into())
+}
 
 // backcompat: 0.41 created events without a limit remain unlimited during replay.
 pub const fn legacy_unlimited_persisted_value_size() -> u64 {
@@ -93,5 +116,12 @@ mod tests {
                 encoded_size_at_least: 14
             })
         );
+    }
+
+    #[test]
+    fn hashes_compact_json_encoding() {
+        let value = serde_json::json!(["a", 1]);
+        let expected = Sha256::digest(br#"["a",1]"#);
+        assert_eq!(compact_json_sha256(&value), Digest(expected.into()));
     }
 }

@@ -286,14 +286,16 @@ impl ScheduleFnCall<'_> {
             }
         })?;
         let execution_id_val = execution_id_into_wast_val(&execution_id).as_val();
+        let params = Params::from_wasmtime(Arc::from(target_params));
         let result = Schedule {
             schedule_at,
             scheduled_at_if_new,
             execution_id,
             ffqn: target_ffqn,
+            params_hash: concepts::persisted_value::compact_json_sha256(&params),
             intent: ScheduleIntent::Ok {
                 fn_component_id: target_component_id,
-                params: Params::from_wasmtime(Arc::from(target_params)),
+                params,
             },
             wasm_backtrace,
         }
@@ -2766,6 +2768,7 @@ pub(crate) mod workflow_support {
                 }
             };
 
+            let params_hash = concepts::persisted_value::compact_json_sha256(&params_json);
             // Compute intent from fn_registry lookup
             let intent = self.get_schedule_intent(&target_ffqn, params_json);
 
@@ -2774,6 +2777,7 @@ pub(crate) mod workflow_support {
                 scheduled_at_if_new,
                 execution_id,
                 ffqn: target_ffqn,
+                params_hash,
                 intent,
                 wasm_backtrace,
             }

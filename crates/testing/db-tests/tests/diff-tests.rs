@@ -256,6 +256,7 @@ fn normalize_history_event_timestamps(
         HistoryEvent::Schedule {
             execution_id: _,
             schedule_at,
+            params_hash: _,
             result: _,
         } => {
             normalize_schedule_at(schedule_at, unstructured)?;

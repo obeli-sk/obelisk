@@ -123,6 +123,7 @@ impl Worker for CronWorker {
                 event: HistoryEvent::Schedule {
                     execution_id: scheduled_execution_id,
                     schedule_at: HistoryEventScheduleAt::Now,
+                    params_hash: Some(concepts::persisted_value::compact_json_sha256(&self.params)),
                     result: Ok(()),
                 },
             },
