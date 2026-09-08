@@ -46,7 +46,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug, error, info, instrument, trace, warn};
-use val_json::wast_val::WastVal;
+use val_json::wast_val::{ValKey, WastVal};
 use wasmtime::component::{Linker, Resource, ResourceType, Val};
 use wasmtime_wasi::{
     ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
@@ -286,7 +286,7 @@ impl ScheduleFnCall<'_> {
             }
         })?;
         let execution_id_val = execution_id_into_wast_val(&execution_id).as_val();
-        Ok(Schedule {
+        let result = Schedule {
             schedule_at,
             scheduled_at_if_new,
             execution_id,
@@ -303,9 +303,13 @@ impl ScheduleFnCall<'_> {
             &mut *ctx.db_connection,
             called_at,
         )
-        .await?
-        .map(|()| execution_id_val)
-        .expect("Ok intent cannot produce ScheduleRequestError"))
+        .await?;
+        Ok(match result {
+            Ok(()) => wasmtime::component::Val::Result(Ok(Some(Box::new(execution_id_val)))),
+            Err(err) => wasmtime::component::Val::Result(Err(Some(Box::new(
+                schedule_request_error_to_wast_val(err).as_val(),
+            )))),
+        })
     }
 }
 
@@ -360,7 +364,7 @@ impl SubmitExecutionFnCall<'_> {
         let child_execution_id = ctx.next_child_id(&join_set_id);
         let child_execution_id_val =
             execution_id_derived_into_wast_val(&child_execution_id).as_val();
-        Ok(SubmitChildExecution {
+        let result = SubmitChildExecution {
             target_ffqn: target_ffqn.clone(),
             join_set_id,
             intent: SubmitChildIntent::Ok {
@@ -376,9 +380,45 @@ impl SubmitExecutionFnCall<'_> {
             &mut *ctx.db_connection,
             called_at,
         )
-        .await?
-        .map(|()| child_execution_id_val)
-        .expect("Ok intent cannot produce ChildExecutionRequestError"))
+        .await?;
+        Ok(match result {
+            Ok(()) => wasmtime::component::Val::Result(Ok(Some(Box::new(child_execution_id_val)))),
+            Err(err) => wasmtime::component::Val::Result(Err(Some(Box::new(
+                child_request_error_to_wast_val(err).as_val(),
+            )))),
+        })
+    }
+}
+
+fn child_request_error_to_wast_val(err: storage::ChildExecutionRequestError) -> WastVal {
+    match err {
+        storage::ChildExecutionRequestError::FunctionNotFound => {
+            WastVal::Variant(ValKey::from_kebab("function-not-found"), None)
+        }
+        storage::ChildExecutionRequestError::TypeCheckError(detail) => WastVal::Variant(
+            ValKey::from_kebab("type-check-error"),
+            Some(Box::new(WastVal::String(detail))),
+        ),
+        storage::ChildExecutionRequestError::ValueTooLarge { limit } => WastVal::Variant(
+            ValKey::from_kebab("value-too-large"),
+            Some(Box::new(WastVal::U64(limit))),
+        ),
+    }
+}
+
+fn schedule_request_error_to_wast_val(err: storage::ScheduleRequestError) -> WastVal {
+    match err {
+        storage::ScheduleRequestError::FunctionNotFound => {
+            WastVal::Variant(ValKey::from_kebab("function-not-found"), None)
+        }
+        storage::ScheduleRequestError::TypeCheckError(detail) => WastVal::Variant(
+            ValKey::from_kebab("type-check-error"),
+            Some(Box::new(WastVal::String(detail))),
+        ),
+        storage::ScheduleRequestError::ValueTooLarge { limit } => WastVal::Variant(
+            ValKey::from_kebab("value-too-large"),
+            Some(Box::new(WastVal::U64(limit))),
+        ),
     }
 }
 

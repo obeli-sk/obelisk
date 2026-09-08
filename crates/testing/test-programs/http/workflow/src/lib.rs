@@ -33,7 +33,8 @@ impl Guest for Component {
         let join_set = join_set_create();
         let length = urls.len();
         for url in urls {
-            let _execution_id = get_successful_submit(&join_set, &url);
+            let _execution_id =
+                get_successful_submit(&join_set, &url).expect("submit must succeed");
         }
         let mut list = Vec::with_capacity(length);
         for _ in 0..length {
@@ -53,7 +54,8 @@ impl Guest for Component {
         log::info(&format!("Created join set {join_set_id}"));
         assert_eq!("g:1", join_set_id);
         for _ in 0..concurrency {
-            let _execution_id = get_successful_submit(&join_set, &url);
+            let _execution_id =
+                get_successful_submit(&join_set, &url).expect("submit must succeed");
         }
         let mut list = Vec::with_capacity(concurrency as usize);
         for _ in 0..concurrency {

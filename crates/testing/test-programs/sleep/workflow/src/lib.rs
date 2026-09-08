@@ -60,14 +60,16 @@ impl Guest for Component {
 
     fn sleep_activity_submit() -> Result<(), ()> {
         let join_set = workflow_support::join_set_create();
-        sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1));
+        sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1))
+            .expect("submit must succeed");
         // Should be cancelled in join set close
         Ok(())
     }
 
     fn sleep_activity_submit_then_trap() -> Result<(), ()> {
         let join_set = workflow_support::join_set_create();
-        sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1));
+        sleep_activity_ext::sleep_submit(&join_set, DurationEnum::Days(1))
+            .expect("submit must succeed");
         // Should be cancelled in join set close
         panic!()
     }
@@ -81,7 +83,8 @@ impl Guest for Component {
     }
 
     fn schedule_noop(duration: DurationEnum) -> Result<(), ()> {
-        sleep_activity_schedule::noop_schedule(ScheduleAt::In(duration));
+        sleep_activity_schedule::noop_schedule(ScheduleAt::In(duration))
+            .expect("schedule must succeed");
         Ok(())
     }
 

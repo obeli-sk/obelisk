@@ -32,7 +32,8 @@ async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
 
     let fibo_res = if n >= 10 {
         println!("scheduling");
-        let execution_id = workflow_schedule::fiboa_schedule(ScheduleAt::Now, n, iterations);
+        let execution_id = workflow_schedule::fiboa_schedule(ScheduleAt::Now, n, iterations)
+            .expect("schedule must succeed");
         format!("scheduled: {}", execution_id.id)
     } else if n > 1 {
         // Call the execution directly.

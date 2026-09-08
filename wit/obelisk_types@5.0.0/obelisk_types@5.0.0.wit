@@ -118,6 +118,12 @@ interface execution {
         value-too-large(u64),
     }
 
+    variant child-execution-request-error {
+        function-not-found,
+        type-check-error(string),
+        value-too-large(u64),
+    }
+
 }
 
 @since(version = 4.2.0)

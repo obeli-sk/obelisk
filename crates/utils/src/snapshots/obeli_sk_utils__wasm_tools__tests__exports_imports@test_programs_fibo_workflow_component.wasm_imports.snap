@@ -107,7 +107,7 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<_, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string) }>",
+        "type_wrapper": "result<_, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
         "wit_type": "result<_, schedule-json-error>"
       }
     },
@@ -135,7 +135,7 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string) }>",
+        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
         "wit_type": "result<execution-id, submit-json-error>"
       }
     },
@@ -176,8 +176,8 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",

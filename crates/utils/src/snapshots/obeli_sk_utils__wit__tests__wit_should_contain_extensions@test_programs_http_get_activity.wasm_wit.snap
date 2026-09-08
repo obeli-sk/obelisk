@@ -101,6 +101,7 @@ package obelisk:types@5.0.0 {
             nondeterminism-detected,
             out-of-fuel,
             cancelled,
+            value-too-large,
             uncategorized,
         }
 
@@ -136,6 +137,7 @@ package obelisk:types@5.0.0 {
             /// Conflict can happen when a second writer attempts to stub a value, while the
             /// value is not equal to the already stubbed value.
             conflict,
+            value-too-large(u64),
         }
 
         @since(version = 4.2.0)
@@ -144,6 +146,13 @@ package obelisk:types@5.0.0 {
             ffqn-parsing-error(string),
             function-not-found,
             type-check-error(string),
+            value-too-large(u64),
+        }
+
+        variant child-execution-request-error {
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
         }
     }
     @since(version = 4.2.0)
@@ -485,27 +494,27 @@ package testing:http-obelisk-ext {
         use testing:http/http-get.{response, response-str};
         use obelisk:types/execution@5.0.0.{execution-id};
         use obelisk:types/join-set@5.0.0.{join-set};
-        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
-        get-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-submit: func(join-set: borrow<join-set>, url: string) -> result<execution-id, child-execution-request-error>;
 
         get-await-next: func(join-set: borrow<join-set>) -> result<result<string, string>, await-next-extension-error>;
 
         get-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-        get-resp-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-resp-submit: func(join-set: borrow<join-set>, url: string) -> result<execution-id, child-execution-request-error>;
 
         get-resp-await-next: func(join-set: borrow<join-set>) -> result<result<response, string>, await-next-extension-error>;
 
         get-resp-get: func(execution-id: execution-id) -> result<result<response, string>, get-extension-error>;
 
-        get-successful-submit: func(join-set: borrow<join-set>, url: string) -> execution-id;
+        get-successful-submit: func(join-set: borrow<join-set>, url: string) -> result<execution-id, child-execution-request-error>;
 
         get-successful-await-next: func(join-set: borrow<join-set>) -> result<result<string, string>, await-next-extension-error>;
 
         get-successful-get: func(execution-id: execution-id) -> result<result<string, string>, get-extension-error>;
 
-        secret-get-submit: func(join-set: borrow<join-set>, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
+        secret-get-submit: func(join-set: borrow<join-set>, url: string, env-var: string, header: option<tuple<string, string>>) -> result<execution-id, child-execution-request-error>;
 
         secret-get-await-next: func(join-set: borrow<join-set>) -> result<result<response-str, string>, await-next-extension-error>;
 
@@ -515,9 +524,9 @@ package testing:http-obelisk-ext {
         use testing:http/http-get.{response-str};
         use obelisk:types/execution@5.0.0.{execution-id};
         use obelisk:types/join-set@5.0.0.{join-set};
-        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
-        secret-post-submit: func(join-set: borrow<join-set>, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
+        secret-post-submit: func(join-set: borrow<join-set>, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> result<execution-id, child-execution-request-error>;
 
         secret-post-await-next: func(join-set: borrow<join-set>) -> result<result<response-str, string>, await-next-extension-error>;
 
@@ -531,20 +540,22 @@ package testing:http-obelisk-schedule {
         use testing:http/http-get.{response, response-str};
         use obelisk:types/execution@5.0.0.{execution-id};
         use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/execution@5.0.0.{schedule-json-error};
 
-        get-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-schedule: func(schedule-at: schedule-at, url: string) -> result<execution-id, schedule-json-error>;
 
-        get-resp-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-resp-schedule: func(schedule-at: schedule-at, url: string) -> result<execution-id, schedule-json-error>;
 
-        get-successful-schedule: func(schedule-at: schedule-at, url: string) -> execution-id;
+        get-successful-schedule: func(schedule-at: schedule-at, url: string) -> result<execution-id, schedule-json-error>;
 
-        secret-get-schedule: func(schedule-at: schedule-at, url: string, env-var: string, header: option<tuple<string, string>>) -> execution-id;
+        secret-get-schedule: func(schedule-at: schedule-at, url: string, env-var: string, header: option<tuple<string, string>>) -> result<execution-id, schedule-json-error>;
     }
     interface http-post {
         use testing:http/http-get.{response-str};
         use obelisk:types/execution@5.0.0.{execution-id};
         use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/execution@5.0.0.{schedule-json-error};
 
-        secret-post-schedule: func(schedule-at: schedule-at, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> execution-id;
+        secret-post-schedule: func(schedule-at: schedule-at, url: string, env-var: string, headers: list<tuple<string, string>>, body: string) -> result<execution-id, schedule-json-error>;
     }
 }
