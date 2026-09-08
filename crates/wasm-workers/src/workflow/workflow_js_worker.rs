@@ -132,8 +132,9 @@ impl WorkflowJsWorkerCompiled {
         // Parse errors in JS source are caught here early rather than at runtime.
         let mut resolved_imports = HashMap::new();
         for source in self.js_files.values() {
-            let imports = resolve_js_imports(source, fn_registry.as_ref())
-                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+            let imports =
+                resolve_js_imports(source, fn_registry.as_ref(), WORKFLOW_BUILTIN_MODULES)
+                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
             for (specifier, functions) in imports {
                 resolved_imports.entry(specifier).or_insert(functions);
             }
@@ -198,7 +199,7 @@ pub struct WorkflowJsWorker {
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
-use crate::js_imports::{NamedFnImport, resolve_js_imports};
+use crate::js_imports::{NamedFnImport, WORKFLOW_BUILTIN_MODULES, resolve_js_imports};
 
 impl WorkflowJsWorker {
     pub async fn capture_backtraces(
@@ -965,7 +966,7 @@ mod tests {
 
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             "index.js".to_string(),
             user_ffqn,
             &single_list_of_strings_params(),
@@ -1041,7 +1042,7 @@ mod tests {
 
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             "index.js".to_string(),
             user_ffqn,
             &single_list_of_strings_params(),
@@ -1285,6 +1286,20 @@ mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
+    fn version_obelisk_test_imports(source: &str) -> String {
+        let source = source
+            .replace("obelisk.call", "dynamic.call")
+            .replace("obelisk.schedule", "dynamic.schedule");
+        let mut imports = String::new();
+        if source.contains("obelisk.") && !source.contains("obelisk:workflow@") {
+            imports.push_str("import * as obelisk from 'obelisk:workflow@1.0.0';\n");
+        }
+        if source.contains("dynamic.") && !source.contains("obelisk:workflow-dynamic@") {
+            imports.push_str("import * as dynamic from 'obelisk:workflow-dynamic@1.0.0';\n");
+        }
+        format!("{imports}{source}")
+    }
+
     fn compile_js_workflow_worker(
         js_source: &str,
         user_ffqn: &FunctionFqn,
@@ -1384,11 +1399,12 @@ mod tests {
         response_refresh_interval: usize,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> (WorkflowJsWorker, concepts::ComponentId, RunnableComponent) {
+        let js_source = version_obelisk_test_imports(js_source);
         let wasm_path = workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME;
         let component_id = concepts::ComponentId::new(
             ComponentType::Workflow,
             StrVariant::Static("test_js_workflow"),
-            workflow_js_component_digest(js_source, user_ffqn, params, &return_type),
+            workflow_js_component_digest(&js_source, user_ffqn, params, &return_type),
         )
         .unwrap();
 
@@ -1418,7 +1434,7 @@ mod tests {
 
         let js_compiled = WorkflowJsWorkerCompiled::new(
             compiled,
-            js_source.to_string(),
+            js_source,
             "index.js".to_string(),
             user_ffqn,
             params,
@@ -1880,7 +1896,7 @@ mod tests {
                 log_sender,
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );
@@ -2730,7 +2746,7 @@ mod tests {
                 db_pool.clone(),
                 None,
                 sim_clock.clone_box(),
-                js_source.to_string(),
+                version_obelisk_test_imports(js_source),
                 &user_ffqn,
                 &params,
                 return_type,
@@ -2924,7 +2940,7 @@ mod tests {
                 db_pool.clone(),
                 None,
                 sim_clock.clone_box(),
-                js_source.to_string(),
+                version_obelisk_test_imports(js_source),
                 &user_ffqn,
                 &params,
                 return_type,
@@ -4556,7 +4572,7 @@ mod tests {
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );
@@ -4723,7 +4739,7 @@ mod tests {
                 log_sender: log_sender.clone(),
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );
@@ -4842,7 +4858,7 @@ mod tests {
             db_pool,
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             Some(MAX),
         );
@@ -5165,7 +5181,7 @@ mod tests {
             db_pool.clone(),
             logs_storage_config,
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         ));
@@ -5265,7 +5281,7 @@ mod tests {
                 log_sender,
             }),
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );
@@ -5373,7 +5389,7 @@ mod tests {
             db_pool.clone(),
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         ));
@@ -5471,7 +5487,7 @@ mod tests {
             db_pool,
             logs_storage_config,
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );
@@ -5571,7 +5587,7 @@ mod tests {
             db_pool,
             logs_storage_config,
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );
@@ -5822,7 +5838,7 @@ mod tests {
             db_pool.clone(),
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );
@@ -5963,7 +5979,7 @@ mod tests {
             db_pool.clone(),
             None,
             sim_clock.clone_box(),
-            js_source.to_string(),
+            version_obelisk_test_imports(js_source),
             default_return_type(),
             None, // max_replay_captured_writes
         );

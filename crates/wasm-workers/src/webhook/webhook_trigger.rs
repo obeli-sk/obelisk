@@ -349,8 +349,12 @@ impl WebhookEndpointCompiled {
         let resolved_imports_json = if let Some(js_config) = &self.config.js_config {
             let mut resolved = std::collections::HashMap::new();
             for source in js_config.files.values() {
-                let imports = crate::js_imports::resolve_js_imports(source, fn_registry)
-                    .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
+                let imports = crate::js_imports::resolve_js_imports(
+                    source,
+                    fn_registry,
+                    crate::js_imports::WEBHOOK_BUILTIN_MODULES,
+                )
+                .map_err(|e| crate::WasmFileError::linking_error("JS import resolution", e))?;
                 for (specifier, functions) in imports {
                     resolved.entry(specifier).or_insert(functions);
                 }
@@ -2974,6 +2978,20 @@ pub(crate) mod tests {
             wh_server_state_sender: watch::Sender<Arc<WebhookServerState>>,
         }
 
+        fn version_obelisk_test_imports(source: &str) -> String {
+            let source = source
+                .replace("obelisk.call", "dynamic.call")
+                .replace("obelisk.schedule", "dynamic.schedule");
+            let mut imports = String::new();
+            if source.contains("obelisk.") && !source.contains("obelisk:webhook@") {
+                imports.push_str("import * as obelisk from 'obelisk:webhook@1.0.0';\n");
+            }
+            if source.contains("dynamic.") && !source.contains("obelisk:webhook-dynamic@") {
+                imports.push_str("import * as dynamic from 'obelisk:webhook-dynamic@1.0.0';\n");
+            }
+            format!("{imports}{source}")
+        }
+
         async fn start_js_webhook_server(
             source: &str,
         ) -> (
@@ -3013,7 +3031,7 @@ pub(crate) mod tests {
                             entry_path: "index.js".to_string(),
                             files: std::collections::BTreeMap::from([(
                                 "index.js".to_string(),
-                                source.to_string(),
+                                version_obelisk_test_imports(source),
                             )]),
                         }),
                         config_section_hint:
@@ -3175,7 +3193,7 @@ pub(crate) mod tests {
                             entry_path: "index.js".to_string(),
                             files: std::collections::BTreeMap::from([(
                                 "index.js".to_string(),
-                                source.to_string(),
+                                version_obelisk_test_imports(source),
                             )]),
                         }),
                         config_section_hint:
@@ -3570,7 +3588,7 @@ pub(crate) mod tests {
                                 entry_path: "index.js".to_string(),
                                 files: std::collections::BTreeMap::from([(
                                     "index.js".to_string(),
-                                    js_source.to_string(),
+                                    version_obelisk_test_imports(js_source),
                                 )]),
                             }),
                             config_section_hint:
@@ -3643,9 +3661,10 @@ pub(crate) mod tests {
         async fn webhook_js_call_activity() {
             test_utils::set_up();
             let js_source = r#"
+                import * as dynamic from "obelisk:webhook-dynamic@1.0.0";
                 export default function handle(request) {
                     // Call fibo(10) directly
-                    const result = obelisk.call("testing:fibo/fibo.fibo", [10]);
+                    const result = dynamic.call("testing:fibo/fibo.fibo", [10]);
                     return Response.json({ result });
                 }
             "#;
@@ -3818,9 +3837,11 @@ pub(crate) mod tests {
             // fibo returns result<u64> (no err type), so the child fails with a unit
             // err: a ChildError whose `.value` is undefined.
             let js_source = r#"
+                import * as obelisk from "obelisk:webhook@1.0.0";
+                import * as dynamic from "obelisk:webhook-dynamic@1.0.0";
                 export default function handle(request) {
                     try {
-                        obelisk.call("testing:fibo/fibo.fibo", [50]);
+                        dynamic.call("testing:fibo/fibo.fibo", [50]);
                         return Response.json({ threw: false });
                     } catch (e) {
                         return Response.json({

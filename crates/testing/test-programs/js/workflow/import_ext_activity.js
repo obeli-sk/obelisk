@@ -8,3 +8,4 @@ export default function add_via_activity(a, b) {
     console.log('Got execId:', js.lastId, 'result:', JSON.stringify(result));
     return result;
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

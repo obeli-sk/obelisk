@@ -6,3 +6,4 @@ export default function call_stub(id) {
     obelisk.stub(execId, { 'ok': 'stub-ok' });
     return js.joinNext();
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

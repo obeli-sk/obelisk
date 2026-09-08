@@ -121,7 +121,7 @@ use boa_engine::class::Class;
 use boa_engine::module::MapModuleLoader;
 use boa_engine::{
     Context, JsArgs, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
-    js_string, object::builtins::JsDate, property::Attribute,
+    js_string, object::builtins::JsDate,
 };
 use boa_runtime::extensions::FetchExtension;
 use boa_runtime::fetch::request::JsRequest;
@@ -384,7 +384,7 @@ async fn run_js_handler_inner(
     setup_crypto(&mut context).expect("crypto setup must work");
 
     // Set up the obelisk global object with webhook support APIs
-    setup_obelisk_api(&mut context).expect("obelisk API setup must work");
+    setup_obelisk_api(&loader, &mut context).expect("obelisk API setup must work");
 
     // Register synthetic modules for WIT-style imports (e.g., 'ns:pkg/ifc').
     let resolved_imports = read_resolved_imports();
@@ -591,7 +591,7 @@ fn call_child_error(
 }
 
 /// Set up the global `obelisk` object with webhook support functions.
-fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
+fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResult<()> {
     let obelisk = new_object(context);
 
     // obelisk.executionIdGenerate()
@@ -851,13 +851,42 @@ fn setup_obelisk_api(context: &mut Context) -> JsResult<()> {
         context,
     )?;
 
-    // Set obelisk as global
-    context.register_global_property(js_string!("obelisk"), obelisk, Attribute::all())?;
-
-    // obelisk.ChildError (plus the deprecated obelisk.ChildExecutionError alias):
-    // native, brand-safe error thrown for a failed child execution awaited via
-    // obelisk.call / obelisk.get / obelisk.tryGet.
-    boa_common::child_error::register(context)?;
+    boa_common::child_error::register(&obelisk, context)?;
+    let dynamic = new_object(context);
+    dynamic.set(
+        js_string!("call"),
+        obelisk.get(js_string!("call"), context)?,
+        false,
+        context,
+    )?;
+    dynamic.set(
+        js_string!("schedule"),
+        obelisk.get(js_string!("schedule"), context)?,
+        false,
+        context,
+    )?;
+    imports::register_builtin_module(
+        "obelisk:webhook@1.0.0",
+        &[
+            "executionIdGenerate",
+            "executionIdCurrent",
+            "getStatus",
+            "get",
+            "tryGet",
+            "ChildError",
+            "ChildExecutionError",
+        ],
+        &obelisk,
+        loader,
+        context,
+    );
+    imports::register_builtin_module(
+        "obelisk:webhook-dynamic@1.0.0",
+        &["call", "schedule"],
+        &dynamic,
+        loader,
+        context,
+    );
 
     Ok(())
 }

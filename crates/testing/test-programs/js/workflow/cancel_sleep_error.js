@@ -23,3 +23,4 @@ export default function cancel_sleep_error() {
     }
     throw 'sleep was not cancelled';
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

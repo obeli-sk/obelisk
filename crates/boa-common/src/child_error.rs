@@ -66,17 +66,40 @@ impl Class for ChildError {
 /// native class, moves the constructor under `obelisk` (off the global
 /// namespace), and splices its prototype chain onto `Error` so that
 /// `instanceof Error` holds and instances inherit `Error.prototype`.
-pub fn register(context: &mut Context) -> JsResult<()> {
+pub fn register(namespace: &JsObject, context: &mut Context) -> JsResult<()> {
     context.register_global_class::<ChildError>()?;
-    // backcompat: 0.40.x apps catch obelisk.ChildExecutionError; keep the alias
-    // (same constructor, so `instanceof` is identical) until the old name is removed.
-    context.eval(Source::from_bytes(
-        "obelisk.ChildError = globalThis.ChildError;\n\
-         delete globalThis.ChildError;\n\
-         Object.setPrototypeOf(obelisk.ChildError.prototype, Error.prototype);\n\
-         Object.setPrototypeOf(obelisk.ChildError, Error);\n\
-         obelisk.ChildExecutionError = obelisk.ChildError;",
-    ))?;
+    let global = context.global_object();
+    let constructor = global.get(js_string!("ChildError"), context)?;
+    let constructor_object = constructor
+        .as_object()
+        .expect("class constructor must be an object");
+    let prototype = constructor_object.get(js_string!("prototype"), context)?;
+    let error = context.intrinsics().constructors().error().constructor();
+    let error_prototype = error.get(js_string!("prototype"), context)?;
+    prototype
+        .as_object()
+        .expect("class prototype must be an object")
+        .set_prototype(error_prototype.as_object());
+    constructor_object.set_prototype(Some(error));
+    namespace.set(
+        js_string!("ChildError"),
+        constructor.clone(),
+        false,
+        context,
+    )?;
+    namespace.set(
+        js_string!("ChildExecutionError"),
+        constructor.clone(),
+        false,
+        context,
+    )?;
+    global.set(
+        js_string!("__obeliskChildError"),
+        constructor,
+        false,
+        context,
+    )?;
+    context.eval(Source::from_bytes("delete globalThis.ChildError"))?;
     Ok(())
 }
 
@@ -177,16 +200,12 @@ fn build_message(parts: &ChildErrorParts, value: &JsValue) -> String {
 /// Fetch the `obelisk.ChildError` constructor.
 fn ctor(context: &mut Context) -> JsResult<JsObject> {
     let global = context.global_object();
-    let obelisk = global
-        .get(js_string!("obelisk"), context)?
-        .as_object()
-        .ok_or_else(|| JsNativeError::error().with_message("global obelisk object missing"))?;
-    obelisk
-        .get(js_string!("ChildError"), context)?
+    global
+        .get(js_string!("__obeliskChildError"), context)?
         .as_object()
         .ok_or_else(|| {
             JsNativeError::error()
-                .with_message("obelisk.ChildError missing")
+                .with_message("ChildError constructor missing")
                 .into()
         })
 }

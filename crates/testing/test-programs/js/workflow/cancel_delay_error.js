@@ -21,3 +21,4 @@ export default function cancel_delay_error() {
     }
     throw 'delay was not cancelled';
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

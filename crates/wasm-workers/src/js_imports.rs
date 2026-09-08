@@ -10,6 +10,53 @@ use concepts::{FunctionRegistry, IfcFqnName, PackageIfcFns};
 use std::collections::HashMap;
 use std::str::FromStr;
 
+pub(crate) struct BuiltinModule {
+    specifier: &'static str,
+    exports: &'static [&'static str],
+}
+
+pub(crate) const WORKFLOW_BUILTIN_MODULES: &[BuiltinModule] = &[
+    BuiltinModule {
+        specifier: "obelisk:workflow@1.0.0",
+        exports: &[
+            "executionIdCurrent",
+            "executionIdGenerate",
+            "createJoinSet",
+            "sleep",
+            "randomU64",
+            "randomU64Inclusive",
+            "randomString",
+            "getResult",
+            "stub",
+            "JoinSetExhaustedError",
+            "ChildError",
+            "ChildExecutionError",
+        ],
+    },
+    BuiltinModule {
+        specifier: "obelisk:workflow-dynamic@1.0.0",
+        exports: &["call", "schedule"],
+    },
+];
+pub(crate) const WEBHOOK_BUILTIN_MODULES: &[BuiltinModule] = &[
+    BuiltinModule {
+        specifier: "obelisk:webhook@1.0.0",
+        exports: &[
+            "executionIdGenerate",
+            "executionIdCurrent",
+            "getStatus",
+            "get",
+            "tryGet",
+            "ChildError",
+            "ChildExecutionError",
+        ],
+    },
+    BuiltinModule {
+        specifier: "obelisk:webhook-dynamic@1.0.0",
+        exports: &["call", "schedule"],
+    },
+];
+
 /// Convert a JS camelCase name to WIT kebab-case.
 fn camel_to_kebab(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
@@ -70,6 +117,7 @@ fn kebab_to_camel(s: &str) -> String {
 fn extract_and_verify<'a>(
     js_code: &str,
     all_exports: &'a [PackageIfcFns],
+    builtin_modules: &[BuiltinModule],
 ) -> Result<HashMap<IfcFqnName, &'a PackageIfcFns>, String> {
     let mut interner = boa_engine::interner::Interner::new();
     let mut parser = boa_engine::parser::Parser::new(boa_engine::Source::from_bytes(js_code));
@@ -90,16 +138,34 @@ fn extract_and_verify<'a>(
             continue;
         }
 
+        if specifier.starts_with("obelisk:") {
+            if let Some(module) = builtin_modules
+                .iter()
+                .find(|module| module.specifier == specifier)
+            {
+                if let ImportName::Name(sym) = entry.import_name() {
+                    let name = interner.resolve_expect(sym).utf8().ok_or_else(|| {
+                        format!("imported name from `{specifier}` is not valid UTF-8")
+                    })?;
+                    if !module.exports.contains(&name) {
+                        return Err(format!(
+                            "export `{name}` not found in Obelisk JavaScript module `{specifier}`"
+                        ));
+                    }
+                }
+                continue;
+            }
+            return Err(format!(
+                "unsupported Obelisk JavaScript module `{specifier}`"
+            ));
+        }
+
         let ifc_fqn = IfcFqnName::from_str(specifier).map_err(|e| {
             format!(
                 "import specifier `{specifier}` is not a WIT interface FQN \
                  (`ns:pkg/ifc` or `ns:pkg/ifc@ver`): {e}"
             )
         })?;
-        if ifc_fqn.is_namespace_obelisk() {
-            continue;
-        }
-
         let ifc = all_exports
             .iter()
             .find(|pkg| pkg.ifc_fqn == ifc_fqn)
@@ -145,9 +211,10 @@ fn verify_named_import(js_name: &str, ifc: &PackageIfcFns) -> Result<(), String>
 pub(crate) fn resolve_js_imports(
     js_code: &str,
     fn_registry: &dyn FunctionRegistry,
+    builtin_modules: &[BuiltinModule],
 ) -> Result<HashMap<IfcFqnName, Vec<NamedFnImport>>, String> {
     let all_exports = fn_registry.all_exports();
-    let referenced = extract_and_verify(js_code, all_exports)?;
+    let referenced = extract_and_verify(js_code, all_exports, builtin_modules)?;
     Ok(referenced
         .into_iter()
         .map(|(ifc_fqn, ifc)| (ifc_fqn, expand_interface(ifc)))
@@ -167,4 +234,42 @@ fn expand_interface(ifc: &PackageIfcFns) -> Vec<NamedFnImport> {
             NamedFnImport { js_name, wit_name }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_supported_builtin_module() {
+        let imports = extract_and_verify(
+            "import * as obelisk from 'obelisk:workflow@1.0.0';",
+            &[],
+            WORKFLOW_BUILTIN_MODULES,
+        )
+        .unwrap();
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn rejects_unsupported_builtin_version() {
+        let err = extract_and_verify(
+            "import * as obelisk from 'obelisk:workflow@2.0.0';",
+            &[],
+            WORKFLOW_BUILTIN_MODULES,
+        )
+        .unwrap_err();
+        assert!(err.contains("unsupported Obelisk JavaScript module"));
+    }
+
+    #[test]
+    fn rejects_unknown_builtin_export() {
+        let err = extract_and_verify(
+            "import { call } from 'obelisk:workflow@1.0.0';",
+            &[],
+            WORKFLOW_BUILTIN_MODULES,
+        )
+        .unwrap_err();
+        assert!(err.contains("export `call` not found"));
+    }
 }

@@ -32,3 +32,4 @@ export default function cancel_child_error() {
     }
     throw 'joinNext did not throw for a cancelled child';
 }
+import * as obelisk from "obelisk:workflow@1.0.0";

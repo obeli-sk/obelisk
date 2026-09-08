@@ -18,3 +18,4 @@ export default function rethrow_child_error(id) {
     }
     return 'unreachable';
 }
+import * as obelisk from "obelisk:workflow@1.0.0";
