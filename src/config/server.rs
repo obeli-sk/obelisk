@@ -81,6 +81,10 @@ pub(crate) struct ServerConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LimitsToml {
+    /// Maximum compact JSON-encoded size of one newly persisted execution
+    /// value. Each execution snapshots the effective positive value so config
+    /// changes do not alter replay. Historical executions created before this
+    /// setting was persisted retain their legacy unlimited contract.
     #[serde(default = "default_max_persisted_value_size_bytes")]
     pub(crate) max_persisted_value_size_bytes: u64,
 }

@@ -183,6 +183,13 @@
 
 ## Appendix: Environment variable interpolation
 # Keys that support environment variable interpolation can use `${SOME}` to get the value of environment variable `SOME`.
-# Maximum compact JSON-encoded size of one durable execution value. Must be positive.
+# Maximum compact JSON-encoded size of one newly persisted execution value.
+# Must be positive. The default is 1 MiB. Each new top-level execution snapshots
+# the effective value, and child or scheduled executions inherit it, so changing
+# this setting affects only new execution trees and does not change replay.
+# Existing database events need no schema migration. Created events written by
+# older releases have no stored limit and retain their legacy unlimited contract.
+# This is separate from MAX_GRPC_MESSAGE_SIZE, which remains a larger transport
+# bound. Increasing the transport bound does not relax this persisted-value limit.
 [limits]
 max_persisted_value_size_bytes = 1048576
