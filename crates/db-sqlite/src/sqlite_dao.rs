@@ -936,10 +936,18 @@ impl SqlitePool {
     fn validate_append_requests(
         conn: &Connection,
         execution_id: &ExecutionId,
-        requests: &[AppendRequest],
+        requests: &mut [AppendRequest],
     ) -> Result<u64, DbErrorWrite> {
         let limit = Self::persisted_value_limit(conn, execution_id)?;
         for request in requests {
+            if request.event.drop_http_client_traces_to_fit(limit) {
+                warn!(
+                    %execution_id,
+                    event = request.event.variant(),
+                    max_persisted_value_size_bytes = limit,
+                    "Dropping HTTP client traces to fit persisted event envelope"
+                );
+            }
             request.validate_for_persistence(limit)?;
         }
         Ok(limit)
@@ -4378,8 +4386,13 @@ impl DbExecutor for SqlitePool {
         let (version, notifier) = self
             .transaction(
                 move |tx| {
-                    Self::validate_append_requests(tx, &execution_id, std::slice::from_ref(&req))?;
-                    Self::append(tx, &execution_id, req.clone(), version.clone())
+                    let mut req = req.clone();
+                    Self::validate_append_requests(
+                        tx,
+                        &execution_id,
+                        std::slice::from_mut(&mut req),
+                    )?;
+                    Self::append(tx, &execution_id, req, version.clone())
                 },
                 TxType::MultipleWrites, // insert + update t_state
                 "append",
@@ -4415,8 +4428,12 @@ impl DbExecutor for SqlitePool {
         let (version, notifiers) = {
             self.transaction(
                 move |tx| {
-                    let limit =
-                        Self::validate_append_requests(tx, &events.execution_id, &events.batch)?;
+                    let mut events = events.clone();
+                    let limit = Self::validate_append_requests(
+                        tx,
+                        &events.execution_id,
+                        &mut events.batch,
+                    )?;
                     response.validate_for_persistence(limit)?;
                     let mut version = events.version.clone();
                     let mut notifier_of_child = None;
@@ -5450,7 +5467,8 @@ impl DbConnection for SqlitePool {
         let (version, notifier) = self
             .transaction(
                 move |tx| {
-                    Self::validate_append_requests(tx, &execution_id, &batch)?;
+                    let mut batch = batch.clone();
+                    Self::validate_append_requests(tx, &execution_id, &mut batch)?;
                     let mut version = version.clone();
                     let mut notifier = None;
                     for append_request in &batch {
@@ -5490,7 +5508,8 @@ impl DbConnection for SqlitePool {
         let (version, notifiers) = self
             .transaction(
                 move |tx| {
-                    Self::validate_append_requests(tx, &execution_id, &batch)?;
+                    let mut batch = batch.clone();
+                    Self::validate_append_requests(tx, &execution_id, &mut batch)?;
                     let mut version = version.clone();
                     let mut notifier = None;
                     for append_request in &batch {
@@ -5553,7 +5572,8 @@ impl DbConnection for SqlitePool {
         let (version, notifiers) = self
             .transaction(
                 move |tx| {
-                    Self::validate_append_requests(tx, &execution_id, &batch)?;
+                    let mut batch = batch.clone();
+                    Self::validate_append_requests(tx, &execution_id, &mut batch)?;
                     let mut notifier = None;
                     let mut version = version.clone();
                     for append_request in &batch {
@@ -5970,17 +5990,18 @@ impl DbConnection for SqlitePool {
         let notifiers = self
             .transaction(
                 move |tx| {
+                    let mut req = req.clone();
                     let limit = Self::validate_append_requests(
                         tx,
                         &execution_id,
-                        std::slice::from_ref(&req),
+                        std::slice::from_mut(&mut req),
                     )
                     .map_err(DbErrorStubResponse::Write)?;
                     response
                         .validate_for_persistence(limit)
                         .map_err(|error| DbErrorStubResponse::Write(error.into()))?;
                     let version_raw = version.0;
-                    match Self::append(tx, &execution_id, req.clone(), version.clone()) {
+                    match Self::append(tx, &execution_id, req, version.clone()) {
                         Ok((_next_version, notifier_of_child)) => {
                             let pending_at_parent = Self::append_response(
                                 tx,

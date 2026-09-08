@@ -2,6 +2,7 @@ use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, DelayId, RunId};
 use concepts::storage::DeploymentFileRecord;
+use concepts::storage::http_client_trace::{HttpClientTrace, RequestTrace};
 use concepts::storage::{
     self, AppendEventsToExecution, AppendRequest, AppendResponseToExecution, BacktraceFilter,
     BacktraceInfo, CancelOutcome, CreateRequest, DbConnection, DbConnectionTest,
@@ -159,6 +160,72 @@ async fn persisted_value_guard_rejects_single_and_mixed_batch_atomically(databas
     assert_eq!(
         db_connection.get(&execution_id).await.unwrap().events.len(),
         1
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn persisted_value_guard_drops_oversized_http_traces(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: 64,
+        })
+        .await
+        .unwrap();
+
+    db_connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionRequest::Finished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    http_client_traces: Some(vec![HttpClientTrace {
+                        req: RequestTrace {
+                            sent_at: sim_clock.now(),
+                            uri: "x".repeat(70_000),
+                            method: "GET".to_string(),
+                        },
+                        resp: None,
+                    }]),
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_matches!(
+        db_connection
+            .get(&execution_id)
+            .await
+            .unwrap()
+            .last_event()
+            .event,
+        ExecutionRequest::Finished {
+            http_client_traces: None,
+            ..
+        }
     );
 
     drop(db_connection);

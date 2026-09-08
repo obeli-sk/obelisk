@@ -576,6 +576,57 @@ impl ExecutionRequest {
         self.validate_persisted_values(max_persisted_value_size_bytes)?;
         self.validate_persisted_event_envelope(max_persisted_value_size_bytes)
     }
+
+    /// Drops optional HTTP client traces only when doing so makes an otherwise
+    /// valid execution event fit its persisted envelope.
+    pub fn drop_http_client_traces_to_fit(&mut self, max_persisted_value_size_bytes: u64) -> bool {
+        if self
+            .validate_for_persistence(max_persisted_value_size_bytes)
+            .is_ok()
+            || self
+                .validate_persisted_values(max_persisted_value_size_bytes)
+                .is_err()
+        {
+            return false;
+        }
+
+        let traces = match self {
+            Self::TemporarilyFailed {
+                http_client_traces, ..
+            }
+            | Self::TemporarilyTimedOut {
+                http_client_traces, ..
+            }
+            | Self::Finished {
+                http_client_traces, ..
+            } => http_client_traces.take(),
+            _ => None,
+        };
+        let Some(traces) = traces else {
+            return false;
+        };
+
+        if self
+            .validate_persisted_event_envelope(max_persisted_value_size_bytes)
+            .is_ok()
+        {
+            true
+        } else {
+            match self {
+                Self::TemporarilyFailed {
+                    http_client_traces, ..
+                }
+                | Self::TemporarilyTimedOut {
+                    http_client_traces, ..
+                }
+                | Self::Finished {
+                    http_client_traces, ..
+                } => *http_client_traces = Some(traces),
+                _ => unreachable!("only trace-bearing events can reach restoration"),
+            }
+            false
+        }
+    }
 }
 
 fn persisted_value_validation_failed() -> DbErrorWriteNonRetriable {

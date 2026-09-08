@@ -627,10 +627,18 @@ async fn persisted_value_limit(
 async fn validate_append_requests(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
-    requests: &[AppendRequest],
+    requests: &mut [AppendRequest],
 ) -> Result<u64, DbErrorWrite> {
     let limit = persisted_value_limit(tx, execution_id).await?;
     for request in requests {
+        if request.event.drop_http_client_traces_to_fit(limit) {
+            warn!(
+                %execution_id,
+                event = request.event.variant(),
+                max_persisted_value_size_bytes = limit,
+                "Dropping HTTP client traces to fit persisted event envelope"
+            );
+        }
         request.validate_for_persistence(limit)?;
     }
     Ok(limit)
@@ -3907,7 +3915,7 @@ impl DbExecutor for PostgresConnection {
         &self,
         execution_id: ExecutionId,
         version: Version,
-        req: AppendRequest,
+        mut req: AppendRequest,
     ) -> Result<AppendResponse, DbErrorWrite> {
         debug!(%req, "append");
         trace!(?req, "append");
@@ -3916,7 +3924,7 @@ impl DbExecutor for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        validate_append_requests(&tx, &execution_id, std::slice::from_ref(&req)).await?;
+        validate_append_requests(&tx, &execution_id, std::slice::from_mut(&mut req)).await?;
 
         let (new_version, notifier) = append(&tx, &execution_id, req, version).await?;
 
@@ -3932,7 +3940,7 @@ impl DbExecutor for PostgresConnection {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_batch_respond_to_parent(
         &self,
-        events: AppendEventsToExecution,
+        mut events: AppendEventsToExecution,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
@@ -3953,7 +3961,7 @@ impl DbExecutor for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let limit = validate_append_requests(&tx, &events.execution_id, &events.batch).await?;
+        let limit = validate_append_requests(&tx, &events.execution_id, &mut events.batch).await?;
         response.validate_for_persistence(limit)?;
 
         let mut version = events.version;
@@ -4241,7 +4249,7 @@ impl DbConnection for PostgresConnection {
     async fn append_batch(
         &self,
         current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
+        mut batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbErrorWrite> {
@@ -4252,7 +4260,7 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        validate_append_requests(&tx, &execution_id, &batch).await?;
+        validate_append_requests(&tx, &execution_id, &mut batch).await?;
 
         let mut version = version;
         let mut notifier = None;
@@ -4277,7 +4285,7 @@ impl DbConnection for PostgresConnection {
     async fn append_batch_with_delay_response(
         &self,
         current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
+        mut batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
         join_set_id: JoinSetId,
@@ -4290,7 +4298,7 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        validate_append_requests(&tx, &execution_id, &batch).await?;
+        validate_append_requests(&tx, &execution_id, &mut batch).await?;
 
         let mut version = version;
         let mut notifiers = Vec::new();
@@ -4331,7 +4339,7 @@ impl DbConnection for PostgresConnection {
     async fn append_batch_create_new_execution(
         &self,
         current_time: DateTime<Utc>,
-        batch: Vec<AppendRequest>,
+        mut batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
@@ -4348,7 +4356,7 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        validate_append_requests(&tx, &execution_id, &batch).await?;
+        validate_append_requests(&tx, &execution_id, &mut batch).await?;
 
         let mut version = version;
         let mut notifier = None;
@@ -4763,7 +4771,7 @@ impl DbConnection for PostgresConnection {
         &self,
         execution_id: ExecutionIdDerived,
         version: Version,
-        req: AppendRequest,
+        mut req: AppendRequest,
         response: AppendResponseToExecution,
         current_time: DateTime<Utc>,
     ) -> Result<(), DbErrorStubResponse> {
@@ -4782,7 +4790,7 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        let limit = validate_append_requests(&tx, &execution_id, std::slice::from_ref(&req))
+        let limit = validate_append_requests(&tx, &execution_id, std::slice::from_mut(&mut req))
             .await
             .map_err(DbErrorStubResponse::Write)?;
         response

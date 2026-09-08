@@ -375,4 +375,31 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn storage_validator_drops_optional_http_traces_to_fit() {
+        use crate::storage::http_client_trace::{HttpClientTrace, RequestTrace};
+
+        let mut event = crate::storage::ExecutionRequest::Finished {
+            retval: crate::SUPPORTED_RETURN_VALUE_OK_EMPTY,
+            http_client_traces: Some(vec![HttpClientTrace {
+                req: RequestTrace {
+                    sent_at: chrono::DateTime::UNIX_EPOCH,
+                    uri: "x".repeat(70_000),
+                    method: "GET".to_string(),
+                },
+                resp: None,
+            }]),
+        };
+
+        assert!(event.drop_http_client_traces_to_fit(64));
+        assert!(event.validate_for_persistence(64).is_ok());
+        assert_matches::assert_matches!(
+            event,
+            crate::storage::ExecutionRequest::Finished {
+                http_client_traces: None,
+                ..
+            }
+        );
+    }
 }
