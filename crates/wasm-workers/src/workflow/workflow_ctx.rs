@@ -67,6 +67,11 @@ pub(crate) enum WorkflowFunctionError {
     },
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
+    #[error("{value_kind} exceeds the {limit}-byte persisted value limit")]
+    PersistedValueTooLarge {
+        value_kind: &'static str,
+        limit: u64,
+    },
     // retriable errors:
     #[error("interrupt, db updated")]
     InterruptDbUpdated,
@@ -118,6 +123,12 @@ impl WorkflowFunctionError {
             WorkflowFunctionError::ConstraintViolation(reason) => {
                 WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
             }
+            WorkflowFunctionError::PersistedValueTooLarge { value_kind, limit } => {
+                WorkerPartialResult::FatalError(
+                    FatalError::PersistedValueTooLarge { value_kind, limit },
+                    version,
+                )
+            }
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::Interrupt(kind) => WorkerPartialResult::Interrupt(kind),
             WorkflowFunctionError::ReplayInterrupt => WorkerPartialResult::ReplayWaitingForResponse,
@@ -135,6 +146,9 @@ impl From<ApplyError> for WorkflowFunctionError {
             ApplyError::DbError(db_error) => WorkflowFunctionError::DbError(db_error),
             ApplyError::ConstraintViolation(reason) => {
                 WorkflowFunctionError::ConstraintViolation(reason)
+            }
+            ApplyError::PersistedValueTooLarge { value_kind, limit } => {
+                WorkflowFunctionError::PersistedValueTooLarge { value_kind, limit }
             }
             ApplyError::Interrupt(kind) => WorkflowFunctionError::Interrupt(kind),
             ApplyError::ReplayInterrupt => WorkflowFunctionError::ReplayInterrupt,

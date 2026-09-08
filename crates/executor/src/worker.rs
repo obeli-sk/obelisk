@@ -140,6 +140,11 @@ pub enum FatalError {
     OutOfFuel { reason: String },
     #[error("constraint violation: {reason}")]
     ConstraintViolation { reason: StrVariant },
+    #[error("{value_kind} exceeds the {limit}-byte persisted value limit")]
+    PersistedValueTooLarge {
+        value_kind: &'static str,
+        limit: u64,
+    },
     // Applies to activities.
     #[error("cancelled")]
     Cancelled,
@@ -176,6 +181,11 @@ impl From<FatalError> for FinishedExecutionFailure {
                     detail: None,
                 }
             }
+            FatalError::PersistedValueTooLarge { value_kind, limit } => FinishedExecutionFailure {
+                reason: Some(format!("{value_kind} exceeds the persisted value limit")),
+                kind: ExecutionFailureKind::ValueTooLarge,
+                detail: Some(format!("limit: {limit} bytes")),
+            },
             FatalError::ImportedFunctionCallError { detail, .. }
             | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionFailure {
                 reason: Some(reason_generic),
@@ -222,6 +232,11 @@ impl From<&FatalError> for FinishedExecutionFailure {
                     detail: None,
                 }
             }
+            FatalError::PersistedValueTooLarge { value_kind, limit } => FinishedExecutionFailure {
+                reason: Some(format!("{value_kind} exceeds the persisted value limit")),
+                kind: ExecutionFailureKind::ValueTooLarge,
+                detail: Some(format!("limit: {limit} bytes")),
+            },
             FatalError::ImportedFunctionCallError { detail, .. }
             | FatalError::WorkflowTrap { detail, .. } => FinishedExecutionFailure {
                 reason: Some(reason_generic),

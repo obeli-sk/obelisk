@@ -105,6 +105,11 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
+    #[error("{value_kind} exceeds the {limit}-byte persisted value limit")]
+    PersistedValueTooLarge {
+        value_kind: &'static str,
+        limit: u64,
+    },
     #[error("execution interrupt: {0:?}")]
     Interrupt(InterruptKind),
     #[error("replay interrupt")]
@@ -117,12 +122,20 @@ pub(crate) enum DbErrorWriteOrReplayInterrupt {
     DbError(#[from] DbErrorWrite),
     #[error("replay interrupt")]
     ReplayInterrupt,
+    #[error("{value_kind} exceeds the {limit}-byte persisted value limit")]
+    PersistedValueTooLarge {
+        value_kind: &'static str,
+        limit: u64,
+    },
 }
 impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
     fn from(value: DbErrorWriteOrReplayInterrupt) -> Self {
         match value {
             DbErrorWriteOrReplayInterrupt::DbError(err) => ApplyError::DbError(err),
             DbErrorWriteOrReplayInterrupt::ReplayInterrupt => ApplyError::ReplayInterrupt,
+            DbErrorWriteOrReplayInterrupt::PersistedValueTooLarge { value_kind, limit } => {
+                ApplyError::PersistedValueTooLarge { value_kind, limit }
+            }
         }
     }
 }
@@ -1489,6 +1502,17 @@ impl EventHistory {
                 kind,
                 wasm_backtrace,
             }) => {
+                let limit = self.max_persisted_value_size_bytes;
+                if concepts::persisted_value::EncodedSizeLimit::new(limit)
+                    .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                    .validate(&value)
+                    .is_err()
+                {
+                    return Err(DbErrorWriteOrReplayInterrupt::PersistedValueTooLarge {
+                        value_kind: "persisted history value",
+                        limit,
+                    });
+                }
                 // Cacheable event.
                 let event = HistoryEvent::Persist { value, kind };
                 let history_event = (event.clone(), version.clone());
@@ -3729,9 +3753,10 @@ mod tests {
     use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
     use crate::workflow::event_history::{
         ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn, JoinNextTry,
-        JoinNextTryError, JoinSetCreate, OneOffDelayRequest, Schedule, ScheduleIntent, Stub,
-        StubIntent, StubParams, SubmitChildIntent, SubmitDelay,
+        JoinNextTryError, JoinSetCreate, OneOffDelayRequest, Persist, Schedule, ScheduleIntent,
+        Stub, StubIntent, StubParams, SubmitChildIntent, SubmitDelay,
     };
+    use crate::workflow::workflow_ctx::WorkflowFunctionError;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
@@ -4329,6 +4354,53 @@ mod tests {
             )
             .await
             .unwrap();
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn oversized_persist_fails_before_entering_non_blocking_buffer() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution_with_limit(db_connection.as_ref(), &sim_clock, 4).await;
+
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id.clone(),
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+        let err = Persist::apply_string(
+            "oversized",
+            0,
+            100,
+            None,
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap_err();
+        assert_matches!(
+            err,
+            WorkflowFunctionError::PersistedValueTooLarge {
+                value_kind: "persisted history value",
+                limit: 4,
+            }
+        );
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert!(
+            !log.event_history()
+                .any(|(event, _)| matches!(event, HistoryEvent::Persist { .. }))
+        );
         db_close.close().await;
     }
 

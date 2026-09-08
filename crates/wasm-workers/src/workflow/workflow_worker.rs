@@ -1190,6 +1190,11 @@ impl WorkflowWorker {
             Err(ApplyError::ConstraintViolation(reason)) => Err(JoinSetCloseError::FatalError {
                 err: FatalError::ConstraintViolation { reason },
             }),
+            Err(ApplyError::PersistedValueTooLarge { value_kind, limit }) => {
+                Err(JoinSetCloseError::FatalError {
+                    err: FatalError::PersistedValueTooLarge { value_kind, limit },
+                })
+            }
             Err(ApplyError::Interrupt(kind)) => Err(JoinSetCloseError::Interrupt(
                 workflow_ctx.version().clone(),
                 kind,

@@ -1227,6 +1227,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn oversized_persist_error_is_a_compact_permanent_failure() {
+        let failure = FinishedExecutionFailure::from(FatalError::PersistedValueTooLarge {
+            value_kind: "persisted history value",
+            limit: 512,
+        });
+
+        assert_eq!(failure.kind, ExecutionFailureKind::ValueTooLarge);
+        assert_eq!(
+            failure.reason.as_deref(),
+            Some("persisted history value exceeds the persisted value limit")
+        );
+        assert_eq!(failure.detail.as_deref(), Some("limit: 512 bytes"));
+    }
+
     async fn tick_fn<W: Worker + Debug>(
         config: ExecConfig,
         clock_fn: Box<dyn ClockFn>,
