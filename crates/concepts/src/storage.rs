@@ -513,6 +513,88 @@ pub enum ExecutionRequest {
     CancellationRequested,
 }
 
+impl ExecutionRequest {
+    pub fn validate_persisted_values(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        match self {
+            Self::Created { params, .. } => {
+                validate_logical_value(params, max_persisted_value_size_bytes)
+            }
+            Self::TemporarilyFailed { reason, detail, .. } => {
+                crate::persisted_value::validate_failure_diagnostics(
+                    &Some(reason.to_string()),
+                    detail,
+                    max_persisted_value_size_bytes,
+                )
+                .map(|_| ())
+                .map_err(|_| persisted_value_validation_failed())
+            }
+            Self::Finished { retval, .. } => {
+                validate_logical_value(retval, max_persisted_value_size_bytes)
+            }
+            Self::HistoryEvent {
+                event: HistoryEvent::Persist { value, .. },
+            } => validate_logical_value(value, max_persisted_value_size_bytes),
+            Self::HistoryEvent {
+                event:
+                    HistoryEvent::JoinSetRequest {
+                        request:
+                            JoinSetRequest::ChildExecutionRequest {
+                                params: PersistedParams::Inline(params),
+                                ..
+                            },
+                        ..
+                    },
+            } => validate_logical_value(params, max_persisted_value_size_bytes),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn validate_persisted_event_envelope(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        let event_limit = max_persisted_value_size_bytes
+            .saturating_add(crate::persisted_value::PERSISTED_EVENT_OVERHEAD_BYTES);
+        crate::persisted_value::EncodedSizeLimit::new(event_limit)
+            .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+            .validate(self)
+            .map(|_| ())
+            .map_err(|_| {
+                DbErrorWriteNonRetriable::ValidationFailed(StrVariant::Static(
+                    "execution event exceeds persisted event size limit",
+                ))
+            })
+    }
+
+    pub fn validate_for_persistence(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        self.validate_persisted_values(max_persisted_value_size_bytes)?;
+        self.validate_persisted_event_envelope(max_persisted_value_size_bytes)
+    }
+}
+
+fn persisted_value_validation_failed() -> DbErrorWriteNonRetriable {
+    DbErrorWriteNonRetriable::ValidationFailed(StrVariant::Static(
+        "execution value exceeds persisted value limit",
+    ))
+}
+
+fn validate_logical_value<T: Serialize + ?Sized>(
+    value: &T,
+    max_persisted_value_size_bytes: u64,
+) -> Result<(), DbErrorWriteNonRetriable> {
+    crate::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+        .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+        .validate(value)
+        .map(|_| ())
+        .map_err(|_| persisted_value_validation_failed())
+}
+
 /// Reason for auditing only
 #[derive(
     Clone, Debug, PartialEq, Eq, derive_more::Display, Serialize, Deserialize, schemars::JsonSchema,
@@ -1149,6 +1231,16 @@ pub struct AppendRequest {
     pub event: ExecutionRequest,
 }
 
+impl AppendRequest {
+    pub fn validate_for_persistence(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        self.event
+            .validate_for_persistence(max_persisted_value_size_bytes)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct CreateRequest {
@@ -1168,14 +1260,8 @@ pub struct CreateRequest {
 
 impl CreateRequest {
     pub fn validate_persisted_values(&self) -> Result<(), DbErrorWriteNonRetriable> {
-        let limit =
-            crate::persisted_value::EncodedSizeLimit::new(self.max_persisted_value_size_bytes)
-                .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
-        limit.validate(&self.params).map(|_| ()).map_err(|_| {
-            DbErrorWriteNonRetriable::ValidationFailed(StrVariant::Static(
-                "execution parameters exceed persisted value limit",
-            ))
-        })
+        ExecutionRequest::from(self.clone())
+            .validate_for_persistence(self.max_persisted_value_size_bytes)
     }
 }
 
@@ -1234,6 +1320,15 @@ pub struct AppendResponseToExecution {
     pub child_execution_id: ExecutionIdDerived,
     pub finished_version: Version,
     pub result: SupportedFunctionReturnValue,
+}
+
+impl AppendResponseToExecution {
+    pub fn validate_for_persistence(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        validate_logical_value(&self.result, max_persisted_value_size_bytes)
+    }
 }
 
 /// A captured database write operation with all arguments needed to replay it

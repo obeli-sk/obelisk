@@ -95,6 +95,79 @@ async fn test_append_batch_respond_to_parent(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn persisted_value_guard_rejects_single_and_mixed_batch_atomically(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let execution_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: 64,
+        })
+        .await
+        .unwrap();
+
+    let oversized = AppendRequest {
+        created_at: sim_clock.now(),
+        event: ExecutionRequest::HistoryEvent {
+            event: HistoryEvent::Persist {
+                value: vec![1; 100],
+                kind: storage::PersistKind::ExecutionId,
+            },
+        },
+    };
+    let err = db_connection
+        .append(execution_id.clone(), Version::new(1), oversized.clone())
+        .await
+        .unwrap_err();
+    assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::ValidationFailed(_))
+    );
+
+    let err = db_connection
+        .append_batch(
+            sim_clock.now(),
+            vec![
+                AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionRequest::Paused,
+                },
+                oversized,
+            ],
+            execution_id.clone(),
+            Version::new(1),
+        )
+        .await
+        .unwrap_err();
+    assert_matches!(
+        err,
+        DbErrorWrite::NonRetriable(DbErrorWriteNonRetriable::ValidationFailed(_))
+    );
+    assert_eq!(
+        db_connection.get(&execution_id).await.unwrap().events.len(),
+        1
+    );
+
+    drop(db_connection);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn test_lock_pending_should_sort_by_scheduled_at(
     database: Database,
     #[values(

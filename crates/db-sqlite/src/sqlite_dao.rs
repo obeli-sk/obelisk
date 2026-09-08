@@ -921,6 +921,30 @@ impl SqlitePool {
         }
     }
 
+    fn persisted_value_limit(
+        conn: &Connection,
+        execution_id: &ExecutionId,
+    ) -> Result<u64, DbErrorWrite> {
+        Self::fetch_created_event(conn, execution_id)
+            .map(|request| request.max_persisted_value_size_bytes)
+            .map_err(|error| match error {
+                DbErrorRead::NotFound => DbErrorWrite::NotFound,
+                DbErrorRead::Generic(error) => DbErrorWrite::Generic(error),
+            })
+    }
+
+    fn validate_append_requests(
+        conn: &Connection,
+        execution_id: &ExecutionId,
+        requests: &[AppendRequest],
+    ) -> Result<u64, DbErrorWrite> {
+        let limit = Self::persisted_value_limit(conn, execution_id)?;
+        for request in requests {
+            request.validate_for_persistence(limit)?;
+        }
+        Ok(limit)
+    }
+
     fn check_expected_next_and_appending_version(
         expected_version: &Version,
         appending_version: &Version,
@@ -4353,7 +4377,10 @@ impl DbExecutor for SqlitePool {
         let created_at = req.created_at;
         let (version, notifier) = self
             .transaction(
-                move |tx| Self::append(tx, &execution_id, req.clone(), version.clone()),
+                move |tx| {
+                    Self::validate_append_requests(tx, &execution_id, std::slice::from_ref(&req))?;
+                    Self::append(tx, &execution_id, req.clone(), version.clone())
+                },
                 TxType::MultipleWrites, // insert + update t_state
                 "append",
             )
@@ -4388,6 +4415,9 @@ impl DbExecutor for SqlitePool {
         let (version, notifiers) = {
             self.transaction(
                 move |tx| {
+                    let limit =
+                        Self::validate_append_requests(tx, &events.execution_id, &events.batch)?;
+                    response.validate_for_persistence(limit)?;
                     let mut version = events.version.clone();
                     let mut notifier_of_child = None;
                     for append_request in &events.batch {
@@ -5420,6 +5450,7 @@ impl DbConnection for SqlitePool {
         let (version, notifier) = self
             .transaction(
                 move |tx| {
+                    Self::validate_append_requests(tx, &execution_id, &batch)?;
                     let mut version = version.clone();
                     let mut notifier = None;
                     for append_request in &batch {
@@ -5459,6 +5490,7 @@ impl DbConnection for SqlitePool {
         let (version, notifiers) = self
             .transaction(
                 move |tx| {
+                    Self::validate_append_requests(tx, &execution_id, &batch)?;
                     let mut version = version.clone();
                     let mut notifier = None;
                     for append_request in &batch {
@@ -5514,9 +5546,14 @@ impl DbConnection for SqlitePool {
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
         assert!(!batch.is_empty(), "Empty batch request");
 
+        for request in &child_req {
+            request.validate_persisted_values()?;
+        }
+
         let (version, notifiers) = self
             .transaction(
                 move |tx| {
+                    Self::validate_append_requests(tx, &execution_id, &batch)?;
                     let mut notifier = None;
                     let mut version = version.clone();
                     for append_request in &batch {
@@ -5933,6 +5970,15 @@ impl DbConnection for SqlitePool {
         let notifiers = self
             .transaction(
                 move |tx| {
+                    let limit = Self::validate_append_requests(
+                        tx,
+                        &execution_id,
+                        std::slice::from_ref(&req),
+                    )
+                    .map_err(DbErrorStubResponse::Write)?;
+                    response
+                        .validate_for_persistence(limit)
+                        .map_err(|error| DbErrorStubResponse::Write(error.into()))?;
                     let version_raw = version.0;
                     match Self::append(tx, &execution_id, req.clone(), version.clone()) {
                         Ok((_next_version, notifier_of_child)) => {

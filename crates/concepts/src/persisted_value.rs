@@ -352,4 +352,27 @@ mod tests {
         assert!(reason.contains("...[truncated; original UTF-8 bytes:"));
         assert!(!reason.contains("secret-detail"));
     }
+
+    #[test]
+    fn storage_validator_checks_logical_values_and_event_envelope() {
+        let oversized_value = crate::storage::ExecutionRequest::HistoryEvent {
+            event: crate::storage::HistoryEvent::Persist {
+                value: vec![1; 100],
+                kind: crate::storage::PersistKind::ExecutionId,
+            },
+        };
+        assert!(oversized_value.validate_for_persistence(64).is_err());
+
+        let oversized_envelope =
+            crate::storage::ExecutionRequest::Unlocked(crate::storage::Unlocked {
+                unlocked_at: chrono::DateTime::UNIX_EPOCH,
+                reason: crate::StrVariant::from("x".repeat(70_000)),
+            });
+        assert!(oversized_envelope.validate_persisted_values(64).is_ok());
+        assert!(
+            oversized_envelope
+                .validate_persisted_event_envelope(64)
+                .is_err()
+        );
+    }
 }
