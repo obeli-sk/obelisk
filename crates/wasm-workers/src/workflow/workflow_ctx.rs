@@ -1118,10 +1118,14 @@ impl WorkflowCtx {
             |state: &mut Self| state,
         )
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk::log", err))?;
-        // link obelisk:types/execution@4.2.0 (has no host functions, just type definitions)
+        // Link type-only interfaces imported by workflow components.
         typesTypes::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
             .map_err(|err| {
-                WasmFileError::linking_error("cannot link obelisk:types/execution@4.2.0", err)
+                WasmFileError::linking_error("cannot link obelisk:types/execution@6.0.0", err)
+            })?;
+        typesTypes::function::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
+            .map_err(|err| {
+                WasmFileError::linking_error("cannot link obelisk:types/function@6.0.0", err)
             })?;
 
         // link obelisk:workflow/workflow-support interface (native, no backtrace)
@@ -1373,7 +1377,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function, params): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                 )| {
                     Box::new(async move {
@@ -1510,7 +1514,7 @@ impl WorkflowCtx {
                       (execution_id, schedule_at, function, params): (
                     typesTypes::execution::ExecutionId,
                     ScheduleAtTypes,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
@@ -1551,7 +1555,7 @@ impl WorkflowCtx {
             .func_wrap_async(
                 "call-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (function, params): (typesTypes::execution::Function, String)| {
+                      (function, params): (typesTypes::function::Function, String)| {
                     Box::new(async move {
                         let (host, backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller, None);
@@ -1643,7 +1647,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                 )| {
                     Box::new(async move {
                         let (host, backtrace) =
@@ -1845,7 +1849,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function, params, wit_backtrace): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
@@ -1902,7 +1906,7 @@ impl WorkflowCtx {
                       (execution_id, schedule_at, function, params, wit_backtrace): (
                     typesTypes::execution::ExecutionId,
                     ScheduleAtTypes,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
@@ -1945,7 +1949,7 @@ impl WorkflowCtx {
                 "call-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (function, params, wit_backtrace): (
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
@@ -2048,7 +2052,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function, wit_backtrace): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
@@ -2163,6 +2167,7 @@ pub(crate) mod workflow_support {
         ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
+    use crate::workflow::host_exports::latest::obelisk::types::function::Host as FunctionIfcHost;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::{
         JoinNextError, JoinNextForError,
@@ -2182,6 +2187,7 @@ pub(crate) mod workflow_support {
     use wasmtime::component::Resource;
 
     impl ExecutionIfcHost for WorkflowCtx {}
+    impl FunctionIfcHost for WorkflowCtx {}
 
     pub(crate) fn execution_failure_kind_to_wit(
         kind: concepts::ExecutionFailureKind,

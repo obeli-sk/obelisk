@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use generated::export;
 use generated::exports::testing::fibo_workflow::workflow::Guest;
-use generated::obelisk::types::execution::Function;
+use generated::obelisk::types::function::Function;
 use generated::obelisk::types::time::ScheduleAt;
 use generated::obelisk::workflow::workflow_support::{
     GetResultJsonError, ScheduleJsonError, SubmitJsonError, execution_id_generate, get_result_json,

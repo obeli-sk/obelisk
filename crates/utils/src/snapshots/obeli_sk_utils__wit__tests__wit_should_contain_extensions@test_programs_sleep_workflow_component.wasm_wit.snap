@@ -6,6 +6,7 @@ package root:component;
 
 world root {
     import obelisk:types/time@6.0.0;
+    import obelisk:types/function@6.0.0;
     import obelisk:types/execution@6.0.0;
     import obelisk:types/join-set@6.0.0;
     import obelisk:workflow/workflow-support@7.0.0;
@@ -52,8 +53,20 @@ package obelisk:types@6.0.0 {
             in(duration),
         }
     }
+    @since(version = 6.0.0)
+    interface function {
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+    }
     @since(version = 4.0.0)
     interface execution {
+        use function.{function};
+
         @since(version = 3.0.0)
         record execution-id {
             id: string,
@@ -62,14 +75,6 @@ package obelisk:types@6.0.0 {
         @since(version = 3.0.0)
         record delay-id {
             id: string,
-        }
-
-        @since(version = 3.0.0)
-        record function {
-            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-            interface-name: string,
-            /// must not contain dot (`.`)
-            function-name: string,
         }
 
         @since(version = 3.0.0)
@@ -203,7 +208,9 @@ package obelisk:workflow@7.0.0 {
         use obelisk:types/time@6.0.0.{schedule-at};
         use obelisk:types/execution@6.0.0.{delay-id};
         use obelisk:types/time@6.0.0.{datetime};
-        use obelisk:types/execution@6.0.0.{execution-id, function, schedule-json-error};
+        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/function@6.0.0.{function};
+        use obelisk:types/execution@6.0.0.{schedule-json-error};
 
         variant join-next-try-error {
             all-processed,

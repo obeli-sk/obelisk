@@ -37,7 +37,7 @@ impl Guest for Component {
             workflow_support::schedule_json(
                 &exe,
                 schedule_at,
-                &generated::obelisk::types::execution::Function {
+                &generated::obelisk::types::function::Function {
                     interface_name: "testing:sleep-workflow/workflow".to_string(),
                     function_name: "sleep-host-activity".to_string(),
                 },

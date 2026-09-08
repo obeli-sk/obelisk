@@ -11,6 +11,7 @@ use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested};
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
+use crate::workflow::host_exports::latest::obelisk::types::function as types_function;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
 use assert_matches::assert_matches;
@@ -2214,8 +2215,8 @@ impl EventHistory {
         if specified_ffqn != found_ffqn {
             return Err(GetExtensionError::FunctionMismatch(
                 types_execution::FunctionMismatch {
-                    specified_function: types_execution::Function::from(specified_ffqn),
-                    actual_function: Some(types_execution::Function::from(found_ffqn)),
+                    specified_function: types_function::Function::from(specified_ffqn),
+                    actual_function: Some(types_function::Function::from(found_ffqn)),
                     actual_id: types_execution::ResponseId::ExecutionId(
                         types_execution::ExecutionId::from(child_execution_id),
                     ),

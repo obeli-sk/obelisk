@@ -5,6 +5,7 @@ expression: wit
 package root:component;
 
 world root {
+    import obelisk:types/function@6.0.0;
     import obelisk:types/execution@6.0.0;
     import obelisk:types/join-set@6.0.0;
     import testing:stub-activity-obelisk-ext/activity;
@@ -52,8 +53,20 @@ package obelisk:types@6.0.0 {
             in(duration),
         }
     }
+    @since(version = 6.0.0)
+    interface function {
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+    }
     @since(version = 4.0.0)
     interface execution {
+        use function.{function};
+
         @since(version = 3.0.0)
         record execution-id {
             id: string,
@@ -62,14 +75,6 @@ package obelisk:types@6.0.0 {
         @since(version = 3.0.0)
         record delay-id {
             id: string,
-        }
-
-        @since(version = 3.0.0)
-        record function {
-            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-            interface-name: string,
-            /// must not contain dot (`.`)
-            function-name: string,
         }
 
         @since(version = 3.0.0)

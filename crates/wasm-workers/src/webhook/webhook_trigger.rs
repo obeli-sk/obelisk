@@ -46,6 +46,7 @@ use tracing::{
     Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace, warn,
 };
 use types::obelisk::types::execution::Host as ExecutionHost;
+use types::obelisk::types::function::Host as FunctionHost;
 use types::obelisk::types::join_set::HostJoinSet;
 use types::obelisk::webhook::webhook_support::Host as WebhookSupportHost;
 use val_json::wast_val::WastVal;
@@ -69,6 +70,7 @@ pub(crate) mod types {
         inline: "package any:any;
                 world bindings {
                     import obelisk:types/time@6.0.0;
+                    import obelisk:types/function@6.0.0;
                     import obelisk:types/execution@6.0.0;
                     import obelisk:types/backtrace@6.0.0;
                     import obelisk:types/join-set@6.0.0;
@@ -682,6 +684,8 @@ impl ExecutionHost for WebhookEndpointCtx {
         }
     }
 }
+
+impl FunctionHost for WebhookEndpointCtx {}
 
 fn wit_backtrace_to_storage(
     bt: types::obelisk::types::backtrace::WasmBacktrace,
@@ -1772,9 +1776,11 @@ impl WebhookEndpointCtx {
         // link obelisk:log
         log_activities::obelisk::log::log::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
             .map_err(|err| WasmFileError::linking_error("cannot link log activities", err))?;
-        // link obelisk:types
+        // Link type-only interfaces imported by webhook components.
         types::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
-            .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types", err))?;
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/execution@6.0.0", err))?;
+        types::obelisk::types::function::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/function@6.0.0", err))?;
         // link obelisk:webhook/webhook-support (native, no backtrace)
         types::obelisk::webhook::webhook_support::add_to_linker::<_, WebhookEndpointCtx>(
             linker,
