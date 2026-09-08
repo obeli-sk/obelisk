@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** *(executor)* The default execution lock expiry is now 30 seconds instead of 1
+  second, and workflow lock extension starts 15 seconds before expiry instead of 100 milliseconds.
+  A workflow extends its lock only after persisting progress since the previous extension, avoiding
+  an ever-growing execution log when replay alone takes longer than the lock duration.
 - *(http)* Denied outbound HTTP request warnings show the effective `deployment.toml` component
   policy and/or `server.toml` allowlist and suggest only the missing entry, instead of always
   suggesting both. Warnings about secrets allowed for potentially unencrypted hosts are now

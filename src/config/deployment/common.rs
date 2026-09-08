@@ -407,7 +407,7 @@ pub const fn default_batch_size() -> u32 {
 
 #[must_use]
 pub const fn default_lock_expiry() -> DurationConfig {
-    DurationConfig::Seconds(1)
+    DurationConfig::Seconds(30)
 }
 
 #[must_use]
@@ -422,7 +422,7 @@ pub const fn default_lock_extension() -> bool {
 
 #[must_use]
 pub const fn default_lock_extension_leeway() -> DurationConfig {
-    DurationConfig::Milliseconds(100)
+    DurationConfig::Seconds(15)
 }
 
 #[must_use]

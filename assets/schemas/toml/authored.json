@@ -105,7 +105,7 @@
           "default": {
             "batch_size": 5,
             "lock_expiry": {
-              "seconds": 1
+              "seconds": 30
             },
             "tick_sleep": {
               "milliseconds": 200
@@ -180,7 +180,7 @@
         "lock_expiry": {
           "$ref": "#/$defs/DurationConfig",
           "default": {
-            "seconds": 1
+            "seconds": 30
           }
         },
         "tick_sleep": {
@@ -641,7 +641,7 @@
           "default": {
             "batch_size": 5,
             "lock_expiry": {
-              "seconds": 1
+              "seconds": 30
             },
             "tick_sleep": {
               "milliseconds": 200
@@ -765,7 +765,7 @@
           "default": {
             "batch_size": 5,
             "lock_expiry": {
-              "seconds": 1
+              "seconds": 30
             },
             "tick_sleep": {
               "milliseconds": 200
@@ -867,7 +867,7 @@
           "default": {
             "batch_size": 5,
             "lock_expiry": {
-              "seconds": 1
+              "seconds": 30
             },
             "tick_sleep": {
               "milliseconds": 200
@@ -904,7 +904,7 @@
           "description": "Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.",
           "$ref": "#/$defs/DurationConfig",
           "default": {
-            "milliseconds": 100
+            "seconds": 15
           }
         },
         "logs_store_min_level": {
@@ -1033,7 +1033,7 @@
           "default": {
             "batch_size": 5,
             "lock_expiry": {
-              "seconds": 1
+              "seconds": 30
             },
             "tick_sleep": {
               "milliseconds": 200
@@ -1060,7 +1060,7 @@
           "description": "Starts extending the lock shortly before it expires, at `expires_at` minus this leeway.",
           "$ref": "#/$defs/DurationConfig",
           "default": {
-            "milliseconds": 100
+            "seconds": 15
           }
         },
         "logs_store_min_level": {
@@ -1290,7 +1290,7 @@
           "default": {
             "batch_size": 5,
             "lock_expiry": {
-              "seconds": 1
+              "seconds": 30
             },
             "tick_sleep": {
               "milliseconds": 200
