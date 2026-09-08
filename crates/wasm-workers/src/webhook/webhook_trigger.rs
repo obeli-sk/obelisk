@@ -507,6 +507,7 @@ pub struct WebhookServerState {
     pub deployment_id: DeploymentId,
     pub router: Arc<MethodAwareRouter<WebhookEndpointInstanceLinked>>,
     pub fn_registry: Arc<dyn FunctionRegistry>,
+    pub max_persisted_value_size_bytes: u64,
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -561,6 +562,7 @@ pub async fn server(
                                     trace!(%execution_id, %deployment_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                     RequestHandler {
                                         deployment_id: state.deployment_id,
+                                        max_persisted_value_size_bytes: state.max_persisted_value_size_bytes,
                                         engine: engine.clone(),
                                         clock_fn: clock_fn.clone_box(),
                                         sleep: sleep.clone(),
@@ -633,6 +635,7 @@ pub struct WebhookEndpointJsConfig {
 struct WebhookEndpointCtx {
     component_id: ComponentId,
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
     db_pool: Arc<dyn DbPool>,
@@ -1029,7 +1032,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
             paused: false,
-            max_persisted_value_size_bytes: u64::MAX,
+            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1199,7 +1202,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: None,
             paused: false,
-            max_persisted_value_size_bytes: u64::MAX,
+            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1459,7 +1462,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: None,
             paused: false,
-            max_persisted_value_size_bytes: u64::MAX,
+            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
         };
         let conn = self.db_pool.connection().await?;
         let version = conn.create(create_request).await?;
@@ -1590,7 +1593,7 @@ impl WebhookEndpointCtx {
                     deployment_id: self.deployment_id,
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                     paused: false,
-                    max_persisted_value_size_bytes: u64::MAX,
+                    max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
                 };
                 let db_connection = self.db_pool.connection().await?;
                 let expected_next_version = version.increment();
@@ -1683,7 +1686,7 @@ impl WebhookEndpointCtx {
                 deployment_id: self.deployment_id,
                 scheduled_by: None,
                 paused: false,
-                max_persisted_value_size_bytes: u64::MAX,
+                max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
             };
             let db_connection = self.db_pool.connection().await?;
             let appended = vec![req_join_set_created, req_child_exec, req_join_next];
@@ -1805,6 +1808,7 @@ impl WebhookEndpointCtx {
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
         deployment_id: DeploymentId,
+        max_persisted_value_size_bytes: u64,
         config: &Arc<WebhookEndpointConfig>,
         resolved_imports_json: Option<&'a str>,
         engine: &Engine,
@@ -1897,6 +1901,7 @@ impl WebhookEndpointCtx {
             version: None,
             component_id: config.component_id.clone(),
             deployment_id,
+            max_persisted_value_size_bytes,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
             component_logger: component_logger.clone(),
@@ -2071,6 +2076,7 @@ impl WasiHttpView for WebhookEndpointCtx {
 
 struct RequestHandler {
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     engine: Arc<Engine>,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
@@ -2173,6 +2179,7 @@ impl RequestHandler {
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
                 self.deployment_id,
+                self.max_persisted_value_size_bytes,
                 &found_instance.config,
                 instance_match.handler().resolved_imports_json.as_deref(),
                 &self.engine,
@@ -2339,6 +2346,8 @@ pub(crate) mod tests {
         use tracing::info;
         use utils::sha256sum::calculate_sha256_file;
 
+        const MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 23_456;
+
         struct SetUpFiboWebhook {
             #[expect(dead_code)]
             set: tokio::task::JoinSet<Result<(), WebhookServerError>>,
@@ -2445,6 +2454,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
                 });
                 let (wh_server_state_sender, wh_server_state_watcher) =
                     watch::channel(initial_state);
@@ -2561,7 +2571,7 @@ pub(crate) mod tests {
         #[expand_enum_database]
         #[rstest]
         #[tokio::test]
-        async fn scheduling_should_work(
+        async fn scheduling_inherits_persisted_value_limit(
             db: db_tests::Database,
             #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
             locking_strategy: LockingStrategy,
@@ -2580,6 +2590,16 @@ pub(crate) mod tests {
             let conn = fibo_webhook_harness.db_pool.connection().await.unwrap();
             let create_req = conn.get_create_request(&execution_id).await.unwrap();
             assert_eq!(FIBOA_WORKFLOW_FFQN, create_req.ffqn);
+            assert_eq!(
+                MAX_PERSISTED_VALUE_SIZE_BYTES,
+                create_req.max_persisted_value_size_bytes
+            );
+            let scheduled_by = create_req.scheduled_by.unwrap();
+            let webhook_create_req = conn.get_create_request(&scheduled_by).await.unwrap();
+            assert_eq!(
+                MAX_PERSISTED_VALUE_SIZE_BYTES,
+                webhook_create_req.max_persisted_value_size_bytes
+            );
             let expected_params = Params::from_json_values_test(vec![json!(10), json!(1)]);
             assert_eq!(
                 serde_json::to_string(&expected_params).unwrap(),
@@ -2750,6 +2770,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -2927,6 +2948,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3069,6 +3091,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3234,6 +3257,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3630,6 +3654,7 @@ pub(crate) mod tests {
                         deployment_id: DEPLOYMENT_ID_DUMMY,
                         router: Arc::new(router),
                         fn_registry,
+                        max_persisted_value_size_bytes: u64::MAX,
                     }));
                 let mut server_set = tokio::task::JoinSet::new();
                 server_set.spawn(webhook_trigger::server(

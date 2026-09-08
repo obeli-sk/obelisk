@@ -2013,6 +2013,7 @@ pub(crate) struct ServerVerified {
 struct ServerVerifiedLaunch {
     engines: Engines,
     build_semaphore: Option<u64>,
+    max_persisted_value_size_bytes: u64,
     /// Deprecated server-wide override; when set, applies to every workflow. See
     /// `WorkflowsGlobalConfigToml::lock_extension_leeway`.
     deprecated_workflows_lock_extension_leeway: Option<Duration>,
@@ -2114,6 +2115,7 @@ impl ServerVerified {
             launch: ServerVerifiedLaunch {
                 engines,
                 build_semaphore,
+                max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 deprecated_workflows_lock_extension_leeway,
                 workflows_max_replay_captured_writes,
             },
@@ -2166,6 +2168,7 @@ pub(crate) struct ServerCompiledLinked {
     pub(crate) http_servers_to_webhooks_and_state: HttpServersToWebhooksAndState,
     supressed_errors: Option<String>,
     frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
+    max_persisted_value_size_bytes: u64,
 }
 
 impl ServerCompiledLinked {
@@ -2238,6 +2241,7 @@ impl ServerCompiledLinked {
                     deployment_id,
                     &webhooks,
                     fn_registry.clone(),
+                    server_verified.max_persisted_value_size_bytes,
                 ));
                 (http_server, (webhooks, state))
             })
@@ -2256,6 +2260,7 @@ impl ServerCompiledLinked {
             http_servers_to_webhooks_and_state,
             supressed_errors: linked.supressed_errors,
             frame_files: linked.all_frame_files,
+            max_persisted_value_size_bytes: server_verified.max_persisted_value_size_bytes,
         })
     }
 
@@ -2287,6 +2292,7 @@ impl ServerCompiledLinked {
         create_missing_cron_seeds(
             db_pool,
             deployment_id,
+            self.max_persisted_value_size_bytes,
             self.workers_linked.iter().filter_map(|worker_linked| {
                 if let LinkedWorkerKind::Cron(cron_config) = &worker_linked.worker {
                     Some(cron_config.as_ref())
@@ -3173,6 +3179,7 @@ async fn switch_hot_redeploy(
 async fn create_missing_cron_seeds(
     db_pool: &Arc<dyn DbPool>,
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     cron_configs: impl Iterator<Item = &ScheduleWorkerConfig>,
 ) -> Result<(), anyhow::Error> {
     let conn = db_pool.external_api_conn().await?;
@@ -3206,8 +3213,7 @@ async fn create_missing_cron_seeds(
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_by: None,
                 paused: false,
-                max_persisted_value_size_bytes:
-                    concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
+                max_persisted_value_size_bytes,
             })
             .await
             .map_err(|e| {
@@ -3436,6 +3442,7 @@ pub(crate) fn build_webhook_server_state(
     deployment_id: DeploymentId,
     webhooks: &[WebhookInstancesAndRoutes],
     fn_registry: Arc<dyn FunctionRegistry>,
+    max_persisted_value_size_bytes: u64,
 ) -> WebhookServerState {
     let mut router = MethodAwareRouter::default();
     for (webhook_instance_linked, routes) in webhooks {
@@ -3457,6 +3464,7 @@ pub(crate) fn build_webhook_server_state(
         deployment_id,
         router: Arc::new(router),
         fn_registry,
+        max_persisted_value_size_bytes,
     }
 }
 

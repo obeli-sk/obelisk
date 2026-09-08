@@ -89,6 +89,10 @@ impl Worker for CronWorker {
         let now = self.clock_fn.now();
         let current_execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
+        let max_persisted_value_size_bytes = ctx
+            .metadata
+            .max_persisted_value_size_bytes()
+            .unwrap_or(u64::MAX);
 
         let db_connection = self
             .db_pool
@@ -109,7 +113,7 @@ impl Worker for CronWorker {
             metadata: ExecutionMetadata::empty(),
             scheduled_by: Some(current_execution_id.clone()),
             paused: false,
-            max_persisted_value_size_bytes: u64::MAX,
+            max_persisted_value_size_bytes,
         };
 
         // Build the history event for the schedule
@@ -182,6 +186,7 @@ mod tests {
     use test_utils::sim_clock::SimClock;
 
     const TARGET_FFQN: FunctionFqn = FunctionFqn::new_static("test:pkg/ifc", "do-work");
+    const MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 12_345;
 
     fn make_cron_component_id() -> ComponentId {
         ComponentId::new(
@@ -236,7 +241,8 @@ mod tests {
         let locked_event = make_locked_event(now);
         WorkerContext {
             execution_id,
-            metadata: ExecutionMetadata::empty(),
+            metadata: ExecutionMetadata::empty()
+                .with_max_persisted_value_size_bytes(MAX_PERSISTED_VALUE_SIZE_BYTES),
             component_digest: locked_event.component_id.component_digest.clone(),
             ffqn: cron_ffqn(&TARGET_FFQN),
             params: Params::empty(),
@@ -337,7 +343,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn once_schedule_creates_child_and_finishes() {
+    async fn once_schedule_inherits_persisted_value_limit() {
         let now = test_time();
         let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
         let sim_clock = SimClock::new(now);
@@ -392,8 +398,17 @@ mod tests {
                 child_log.pending_state,
             );
             // Verify child has the correct target FFQN
-            if let ExecutionRequest::Created { ffqn, .. } = &child_log.events[0].event {
+            if let ExecutionRequest::Created {
+                ffqn,
+                max_persisted_value_size_bytes,
+                ..
+            } = &child_log.events[0].event
+            {
                 assert_eq!(*ffqn, TARGET_FFQN);
+                assert_eq!(
+                    *max_persisted_value_size_bytes,
+                    MAX_PERSISTED_VALUE_SIZE_BYTES
+                );
             } else {
                 panic!("first event of child must be Created");
             }
