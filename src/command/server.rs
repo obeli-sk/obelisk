@@ -2449,6 +2449,7 @@ impl SubmitPackageError {
 /// other error (parse/idempotency/storage).
 pub(crate) enum SubmitDeploymentError {
     Busy,
+    Conflict(anyhow::Error),
     Package(SubmitPackageError),
     Other(anyhow::Error),
 }
@@ -2568,7 +2569,7 @@ fn validate_submit_package(
 /// Shared logic for submitting a deployment (used by both gRPC and web API).
 /// Validates the manifest and its file set as a package; persists only a complete
 /// deployment. Compile/link verification still happens when the deployment is activated.
-#[instrument(skip_all)]
+#[instrument(skip_all, fields(%deployment_id))]
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit_deployment(
     server_verified: ServerVerified,
@@ -2576,7 +2577,7 @@ pub(crate) async fn submit_deployment(
     runtime_config_availability: RuntimeConfigAvailability,
     created_by: Option<String>,
     description: Option<String>,
-    requested_deployment_id: Option<DeploymentId>,
+    deployment_id: DeploymentId,
     prepared_dirs: &PreparedDirs,
     supplied_files: Vec<SuppliedFile>,
     db_pool: Arc<dyn DbPool>,
@@ -2584,7 +2585,11 @@ pub(crate) async fn submit_deployment(
     deployment_switch_manager: DeploymentSwitchManagerHandle,
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
+
     let _submit_permit = deployment_switch_manager.try_acquire_submit_permit()?;
+
+    // FIXME: Verbatim manifest? It is not stored!!
+
     // The deployment digest is the hash of the verbatim manifest; it transitively covers
     // every referenced file because the manifest embeds each file's content digest. It is
     // used only for idempotency, not returned (the client already has the manifest).
@@ -2595,21 +2600,18 @@ pub(crate) async fn submit_deployment(
         .await
         .map_err(anyhow::Error::from)?;
 
-    // Idempotent submission: if the caller supplied a deployment ID that already
-    // exists, return it as a no-op when the content digest matches, and reject a
-    // digest mismatch as a conflict. A stored deployment is always complete.
-    if let Some(requested_deployment_id) = requested_deployment_id
-        && let Some(existing) = conn
-            .get_deployment(requested_deployment_id)
-            .await
-            .map_err(anyhow::Error::from)?
+    // Client-supplied deployment ID for idempotent submission.
+    if let Some(existing) = conn
+        .get_deployment(deployment_id)
+        .await
+        .map_err(anyhow::Error::from)?
     {
         if existing.digest == digest {
-            info!(%requested_deployment_id, "Deployment already exists with matching digest, returning existing ID");
-            return Ok(requested_deployment_id);
+            info!("Deployment already exists with matching digest, returning existing ID");
+            return Ok(deployment_id);
         }
-        return Err(SubmitDeploymentError::Other(anyhow::anyhow!(
-            "deployment {requested_deployment_id} already exists with a different content digest \
+        return Err(SubmitDeploymentError::Conflict(anyhow::anyhow!(
+            "deployment {deployment_id} already exists with a different content digest \
              (existing {}, submitted {digest}); use a fresh deployment ID",
             existing.digest
         )));
@@ -2660,7 +2662,6 @@ pub(crate) async fn submit_deployment(
     // package validation. Any failure from here through the insert leaves the blobs just
     // written to the CAS as orphans, reclaimed by the best-effort sweep below; no deployment
     // row is inserted on failure.
-    let deployment_id = requested_deployment_id.unwrap_or_else(DeploymentId::generate);
     let validate_and_persist = {
         let db_pool_ref: &dyn DbPool = &*db_pool;
         let conn_ref = conn.as_ref();
