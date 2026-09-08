@@ -43,8 +43,20 @@ package obelisk:types@6.0.0 {
             in(duration),
         }
     }
+    @since(version = 6.0.0)
+    interface function {
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+    }
     @since(version = 4.0.0)
     interface execution {
+        use function.{function};
+
         @since(version = 3.0.0)
         record execution-id {
             id: string,
@@ -53,14 +65,6 @@ package obelisk:types@6.0.0 {
         @since(version = 3.0.0)
         record delay-id {
             id: string,
-        }
-
-        @since(version = 3.0.0)
-        record function {
-            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-            interface-name: string,
-            /// must not contain dot (`.`)
-            function-name: string,
         }
 
         @since(version = 3.0.0)
@@ -87,6 +91,7 @@ package obelisk:types@6.0.0 {
             nondeterminism-detected,
             out-of-fuel,
             cancelled,
+            value-too-large,
             uncategorized,
         }
 
@@ -122,6 +127,7 @@ package obelisk:types@6.0.0 {
             /// Conflict can happen when a second writer attempts to stub a value, while the
             /// value is not equal to the already stubbed value.
             conflict,
+            value-too-large(u64),
         }
 
         @since(version = 4.2.0)
@@ -130,6 +136,13 @@ package obelisk:types@6.0.0 {
             ffqn-parsing-error(string),
             function-not-found,
             type-check-error(string),
+            value-too-large(u64),
+        }
+
+        variant child-execution-request-error {
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
         }
     }
     @since(version = 4.2.0)
@@ -183,9 +196,9 @@ package ns:pkg-obelisk-ext {
     interface ifc {
         use obelisk:types/execution@6.0.0.{execution-id};
         use obelisk:types/join-set@6.0.0.{join-set};
-        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
-        my-fn-submit: func(join-set: borrow<join-set>, id: u64) -> execution-id;
+        my-fn-submit: func(join-set: borrow<join-set>, id: u64) -> result<execution-id, child-execution-request-error>;
 
         my-fn-await-next: func(join-set: borrow<join-set>) -> result<result<string, string>, await-next-extension-error>;
 

@@ -3,9 +3,9 @@ use anyhow::Context;
 use concepts::{
     ComponentType, ContentDigest, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
     IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, PkgFqn, ReturnType,
-    ReturnTypeExtendable, ReturnTypeNonExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_CANCELLABLE,
-    SUFFIX_FN_GET, SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
-    SUFFIX_PKG_SCHEDULE, SUFFIX_PKG_STUB, StrVariant,
+    ReturnTypeExtendable, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_CANCELLABLE, SUFFIX_FN_GET,
+    SUFFIX_FN_SCHEDULE, SUFFIX_FN_STUB, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT, SUFFIX_PKG_SCHEDULE,
+    SUFFIX_PKG_STUB, StrVariant,
 };
 use indexmap::{IndexMap, indexmap};
 use std::{
@@ -670,10 +670,31 @@ impl ExIm {
             TypeWrapper::Record(indexmap! {TypeKey::new_kebab("id") => TypeWrapper::String});
         let join_set_id_type_wrapper = TypeWrapper::Borrow;
 
-        let return_type_execution_id = ReturnType::NonExtendable(ReturnTypeNonExtendable {
-            type_wrapper: execution_id_type_wrapper.clone(),
-            wit_type: concepts::StrVariant::Static("execution-id"),
+        let child_execution_request_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            TypeKey::new_kebab("function-not-found") => None,
+            TypeKey::new_kebab("type-check-error") => Some(TypeWrapper::String),
+            TypeKey::new_kebab("value-too-large") => Some(TypeWrapper::U64),
         });
+        let return_type_submit = ReturnType::detect(
+            TypeWrapper::Result {
+                ok: Some(Box::new(execution_id_type_wrapper.clone())),
+                err: Some(Box::new(child_execution_request_error_type_wrapper)),
+            },
+            StrVariant::Static("result<execution-id, child-execution-request-error>"),
+        );
+        let schedule_json_error_type_wrapper = TypeWrapper::Variant(indexmap! {
+            TypeKey::new_kebab("ffqn-parsing-error") => Some(TypeWrapper::String),
+            TypeKey::new_kebab("function-not-found") => None,
+            TypeKey::new_kebab("type-check-error") => Some(TypeWrapper::String),
+            TypeKey::new_kebab("value-too-large") => Some(TypeWrapper::U64),
+        });
+        let return_type_schedule = ReturnType::detect(
+            TypeWrapper::Result {
+                ok: Some(Box::new(execution_id_type_wrapper.clone())),
+                err: Some(Box::new(schedule_json_error_type_wrapper)),
+            },
+            StrVariant::Static("result<execution-id, schedule-json-error>"),
+        );
         let param_type_execution_id = ParameterType {
             type_wrapper: execution_id_type_wrapper.clone(),
             name: StrVariant::Static("execution-id"),
@@ -738,6 +759,7 @@ impl ExIm {
             TypeKey::new_kebab("execution-not-found") => None,
             TypeKey::new_kebab("type-check-error") => Some(TypeWrapper::String),
             TypeKey::new_kebab("conflict") => None,
+            TypeKey::new_kebab("value-too-large") => Some(TypeWrapper::U64),
         });
 
         let mut extensions = Vec::new();
@@ -826,7 +848,7 @@ impl ExIm {
                         params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
                         ParameterTypes(params)
                     },
-                    return_type: return_type_execution_id.clone(),
+                    return_type: return_type_submit.clone(),
                     extension: Some(FunctionExtension::Submit),
                     submittable: false,
                 };
@@ -915,7 +937,7 @@ impl ExIm {
                             params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
                             ParameterTypes(params)
                         },
-                        return_type: return_type_execution_id.clone(),
+                        return_type: return_type_schedule.clone(),
                         extension: Some(FunctionExtension::Schedule),
                         submittable: true,
                     };

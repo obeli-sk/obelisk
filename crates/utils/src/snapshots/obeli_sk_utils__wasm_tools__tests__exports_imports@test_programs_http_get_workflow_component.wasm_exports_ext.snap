@@ -1,6 +1,5 @@
 ---
 source: crates/utils/src/wasm_tools.rs
-assertion_line: 1131
 expression: exports
 ---
 {
@@ -92,8 +91,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",
@@ -115,8 +114,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",
@@ -233,8 +232,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",
@@ -256,8 +255,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",
@@ -297,8 +296,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",
@@ -320,8 +319,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-json-error>"
       }
     },
     "extension": "schedule",
@@ -343,8 +342,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-json-error>"
       }
     },
     "extension": "schedule",
@@ -366,8 +365,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-json-error>"
       }
     },
     "extension": "schedule",
@@ -394,8 +393,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-json-error>"
       }
     },
     "extension": "schedule",
@@ -417,8 +416,8 @@ expression: exports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, schedule-json-error>"
       }
     },
     "extension": "schedule",
