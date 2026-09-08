@@ -17,7 +17,7 @@ use wit_parser::{
     WorldItem, WorldKey,
 };
 
-const OBELISK_TYPES_VERSION_MAJOR: u64 = 5;
+const OBELISK_TYPES_VERSION_MAJOR: u64 = 6;
 const OBELISK_TYPES_VERSION_MINOR: u64 = 0;
 const OBELISK_TYPES_VERSION_PATCH: u64 = 0;
 const OBELISK_TYPES_VERSION: &str = formatcp!(
@@ -35,28 +35,28 @@ pub const WIT_OBELISK_LOG_PACKAGE: [&str; 3] = [
 ];
 const WIT_OBELISK_TYPES_PACKAGE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/wit/obelisk_types@5.0.0/obelisk_types@5.0.0.wit"
+    "/wit/obelisk_types@6.0.0/obelisk_types@6.0.0.wit"
 ));
 pub const WIT_OBELISK_TYPES_PACKAGE: [&str; 3] = [
-    "obelisk_types@5.0.0",
-    "obelisk_types@5.0.0.wit",
+    "obelisk_types@6.0.0",
+    "obelisk_types@6.0.0.wit",
     WIT_OBELISK_TYPES_PACKAGE_CONTENT,
 ];
 pub const WIT_OBELISK_WORKFLOW_PACKAGE: [&str; 3] = [
-    "obelisk_workflow@6.0.0",
-    "obelisk_workflow@6.0.0.wit",
+    "obelisk_workflow@7.0.0",
+    "obelisk_workflow@7.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_workflow@6.0.0/obelisk_workflow@6.0.0.wit"
+        "/wit/obelisk_workflow@7.0.0/obelisk_workflow@7.0.0.wit"
     )),
 ];
 
 pub const WIT_OBELISK_WEBHOOK_PACKAGE: [&str; 3] = [
-    "obelisk_webhook@6.0.0",
-    "obelisk_webhook@6.0.0.wit",
+    "obelisk_webhook@7.0.0",
+    "obelisk_webhook@7.0.0.wit",
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/wit/obelisk_webhook@6.0.0/obelisk_webhook@6.0.0.wit"
+        "/wit/obelisk_webhook@7.0.0/obelisk_webhook@7.0.0.wit"
     )),
 ];
 
@@ -253,6 +253,36 @@ fn add_extended_interfaces(
             external_id: None,
         })
     };
+    let type_id_child_execution_request_error = {
+        let actual_type_id = *execution_ifc
+            .types
+            .get("child-execution-request-error")
+            .expect("`child-execution-request-error` must exist");
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: wit_parser::Docs::default(),
+            stability: wit_parser::Stability::default(),
+            span: Span::default(),
+            external_id: None,
+        })
+    };
+    let type_id_schedule_json_error = {
+        let actual_type_id = *execution_ifc
+            .types
+            .get("schedule-json-error")
+            .expect("`schedule-json-error` must exist");
+        resolve.types.alloc(TypeDef {
+            name: None,
+            kind: TypeDefKind::Type(Type::Id(actual_type_id)),
+            owner: TypeOwner::Interface(execution_ifc_id),
+            docs: wit_parser::Docs::default(),
+            stability: wit_parser::Stability::default(),
+            span: Span::default(),
+            external_id: None,
+        })
+    };
     // obelisk:types/execution.{stub-error}
     let type_id_stub_error = {
         let actual_type_id = *execution_ifc
@@ -331,10 +361,18 @@ fn add_extended_interfaces(
                         "get-extension-error".to_string(),
                         type_id_get_extension_error,
                     );
+                    types.insert(
+                        "child-execution-request-error".to_string(),
+                        type_id_child_execution_request_error,
+                    );
                 }
                 PackageExtension::ObeliskSchedule => {
                     types.insert("execution-id".to_string(), type_id_execution_id);
                     types.insert("schedule-at".to_string(), type_id_schedule_at);
+                    types.insert(
+                        "schedule-json-error".to_string(),
+                        type_id_schedule_json_error,
+                    );
                 }
                 PackageExtension::ObeliskStub => {
                     types.insert("execution-id".to_string(), type_id_execution_id);
@@ -359,7 +397,7 @@ fn add_extended_interfaces(
                 });
                 let (params, result) = match fn_ext {
                     FunctionExtension::Submit => {
-                        // -submit: func(join-set: borrow<join-set>, <params>) -> execution-id;
+                        // -submit: func(join-set: borrow<join-set>, <params>) -> result<execution-id, child-execution-request-error>;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskExt);
                         let mut params = vec![Param {
                             name: generate_param_name("join-set", &original_fn.params),
@@ -368,7 +406,19 @@ fn add_extended_interfaces(
                         }];
                         params.extend_from_slice(&original_fn.params);
 
-                        (params, Some(Type::Id(type_id_execution_id)))
+                        let result = resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: Some(Type::Id(type_id_execution_id)),
+                                err: Some(Type::Id(type_id_child_execution_request_error)),
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                            span: Span::default(),
+                            external_id: None,
+                        });
+                        (params, Some(Type::Id(result)))
                     }
                     FunctionExtension::AwaitNext => {
                         // -await-next: func(join-set: borrow<join-set>) ->
@@ -399,7 +449,7 @@ fn add_extended_interfaces(
                         (params, result)
                     }
                     FunctionExtension::Schedule => {
-                        // -schedule: func(schedule-at: schedule-at, <params>) -> execution-id;
+                        // -schedule: func(schedule-at: schedule-at, <params>) -> result<execution-id, schedule-json-error>;
                         assert_eq!(pkg_ext, PackageExtension::ObeliskSchedule);
                         let schedule_at_param_name =
                             generate_param_name("schedule-at", &original_fn.params);
@@ -409,8 +459,19 @@ fn add_extended_interfaces(
                             span: Span::default(),
                         }];
                         params.extend_from_slice(&original_fn.params);
-                        let result = Some(Type::Id(type_id_execution_id));
-                        (params, result)
+                        let result = resolve.types.alloc(TypeDef {
+                            name: None,
+                            kind: TypeDefKind::Result(wit_parser::Result_ {
+                                ok: Some(Type::Id(type_id_execution_id)),
+                                err: Some(Type::Id(type_id_schedule_json_error)),
+                            }),
+                            owner: TypeOwner::None,
+                            docs: wit_parser::Docs::default(),
+                            stability: wit_parser::Stability::default(),
+                            span: Span::default(),
+                            external_id: None,
+                        });
+                        (params, Some(Type::Id(result)))
                     }
                     FunctionExtension::Stub => {
                         // -stub: func(execution_id: execution-id, original retval) -> result<_, stub-error>;

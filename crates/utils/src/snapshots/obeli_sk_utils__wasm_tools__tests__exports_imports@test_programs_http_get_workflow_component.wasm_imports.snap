@@ -3,8 +3,8 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:types/join-set@5.0.0.[method]join-set.id": {
-    "ffqn": "obelisk:types/join-set@5.0.0.[method]join-set.id",
+  "obelisk:types/join-set@6.0.0.[method]join-set.id": {
+    "ffqn": "obelisk:types/join-set@6.0.0.[method]join-set.id",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -21,8 +21,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@6.0.0.join-set-create": {
-    "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-set-create",
+  "obelisk:workflow/workflow-support@7.0.0.join-set-create": {
+    "ffqn": "obelisk:workflow/workflow-support@7.0.0.join-set-create",
     "parameter_types": [],
     "return_type": {
       "non_extendable": {
@@ -67,8 +67,8 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",

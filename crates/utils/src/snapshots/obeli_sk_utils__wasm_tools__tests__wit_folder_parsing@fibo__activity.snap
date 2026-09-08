@@ -1,17 +1,16 @@
 ---
 source: crates/utils/src/wasm_tools.rs
-assertion_line: 1220
 expression: snapshot
 ---
 testing:fibo-obelisk-ext
 package testing:fibo-obelisk-ext;
 
 interface fibo {
-  use obelisk:types/execution@5.0.0.{execution-id};
-  use obelisk:types/join-set@5.0.0.{join-set};
-  use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
+  use obelisk:types/execution@6.0.0.{execution-id};
+  use obelisk:types/join-set@6.0.0.{join-set};
+  use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
-  fibo-submit: func(join-set: borrow<join-set>, n: u8) -> execution-id;
+  fibo-submit: func(join-set: borrow<join-set>, n: u8) -> result<execution-id, child-execution-request-error>;
 
   fibo-await-next: func(join-set: borrow<join-set>) -> result<result<u64>, await-next-extension-error>;
 
@@ -24,8 +23,9 @@ testing:fibo-obelisk-schedule
 package testing:fibo-obelisk-schedule;
 
 interface fibo {
-  use obelisk:types/execution@5.0.0.{execution-id};
-  use obelisk:types/time@5.0.0.{schedule-at};
+  use obelisk:types/execution@6.0.0.{execution-id};
+  use obelisk:types/time@6.0.0.{schedule-at};
+  use obelisk:types/execution@6.0.0.{schedule-json-error};
 
-  fibo-schedule: func(schedule-at: schedule-at, n: u8) -> execution-id;
+  fibo-schedule: func(schedule-at: schedule-at, n: u8) -> result<execution-id, schedule-json-error>;
 }

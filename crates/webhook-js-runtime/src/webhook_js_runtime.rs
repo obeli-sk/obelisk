@@ -102,7 +102,8 @@
 
 use crate::generated::obelisk::log::log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
-use crate::generated::obelisk::types::execution::{ExecutionFailureKind, ExecutionId, Function};
+use crate::generated::obelisk::types::execution::{ExecutionFailureKind, ExecutionId};
+use crate::generated::obelisk::types::function::Function;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::webhook::webhook_support::{
     self, ExecutionStatus, ExecutionStatusFinished,
@@ -525,6 +526,7 @@ fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
         ExecutionFailureKind::NondeterminismDetected => "nondeterminism-detected",
         ExecutionFailureKind::OutOfFuel => "out-of-fuel",
         ExecutionFailureKind::Cancelled => "cancelled",
+        ExecutionFailureKind::ValueTooLarge => "value-too-large",
         ExecutionFailureKind::Uncategorized => "uncategorized",
     }
 }

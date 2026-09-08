@@ -26,7 +26,8 @@ async fn main(_request: Request<Body>) -> Result<Response<Body>, Error> {
     let body_str = String::from_utf8_lossy(body_bytes).into_owned();
 
     // Schedule an execution to trigger get_version_or_create
-    let execution_id = workflow_schedule::fiboa_schedule(ScheduleAt::Now, 10, 1);
+    let execution_id =
+        workflow_schedule::fiboa_schedule(ScheduleAt::Now, 10, 1).expect("schedule must succeed");
 
     // Return body and scheduled execution id separated by newline
     let response_text = format!("{body_str}\n{}", execution_id.id);

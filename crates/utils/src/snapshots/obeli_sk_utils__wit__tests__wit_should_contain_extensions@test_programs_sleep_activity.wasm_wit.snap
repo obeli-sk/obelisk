@@ -5,7 +5,7 @@ expression: wit
 package root:component;
 
 world root {
-    import obelisk:types/time@5.0.0;
+    import obelisk:types/time@6.0.0;
     import wasi:io/poll@0.2.9;
     import wasi:clocks/monotonic-clock@0.2.9;
     import wasi:io/error@0.2.9;
@@ -25,7 +25,7 @@ world root {
     export testing:sleep-obelisk-ext/sleep;
     export testing:sleep-obelisk-schedule/sleep;
 }
-package obelisk:types@5.0.0 {
+package obelisk:types@6.0.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -52,8 +52,20 @@ package obelisk:types@5.0.0 {
             in(duration),
         }
     }
+    @since(version = 6.0.0)
+    interface function {
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+    }
     @since(version = 4.0.0)
     interface execution {
+        use function.{function};
+
         @since(version = 3.0.0)
         record execution-id {
             id: string,
@@ -62,14 +74,6 @@ package obelisk:types@5.0.0 {
         @since(version = 3.0.0)
         record delay-id {
             id: string,
-        }
-
-        @since(version = 3.0.0)
-        record function {
-            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-            interface-name: string,
-            /// must not contain dot (`.`)
-            function-name: string,
         }
 
         @since(version = 3.0.0)
@@ -96,6 +100,7 @@ package obelisk:types@5.0.0 {
             nondeterminism-detected,
             out-of-fuel,
             cancelled,
+            value-too-large,
             uncategorized,
         }
 
@@ -131,6 +136,7 @@ package obelisk:types@5.0.0 {
             /// Conflict can happen when a second writer attempts to stub a value, while the
             /// value is not equal to the already stubbed value.
             conflict,
+            value-too-large(u64),
         }
 
         @since(version = 4.2.0)
@@ -139,6 +145,13 @@ package obelisk:types@5.0.0 {
             ffqn-parsing-error(string),
             function-not-found,
             type-check-error(string),
+            value-too-large(u64),
+        }
+
+        variant child-execution-request-error {
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
         }
     }
     @since(version = 4.2.0)
@@ -283,7 +296,7 @@ package wasi:cli@0.2.9 {
 
 package testing:sleep {
     interface sleep {
-        use obelisk:types/time@5.0.0.{duration};
+        use obelisk:types/time@6.0.0.{duration};
 
         sleep: func(duration: duration) -> result;
 
@@ -296,24 +309,24 @@ package testing:sleep {
 
 package testing:sleep-obelisk-ext {
     interface sleep {
-        use obelisk:types/time@5.0.0.{duration};
-        use obelisk:types/execution@5.0.0.{execution-id};
-        use obelisk:types/join-set@5.0.0.{join-set};
-        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/time@6.0.0.{duration};
+        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/join-set@6.0.0.{join-set};
+        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
-        sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> execution-id;
+        sleep-submit: func(join-set: borrow<join-set>, duration: duration) -> result<execution-id, child-execution-request-error>;
 
         sleep-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        sleep-loop-submit: func(join-set: borrow<join-set>, duration: duration, iterations: u32) -> execution-id;
+        sleep-loop-submit: func(join-set: borrow<join-set>, duration: duration, iterations: u32) -> result<execution-id, child-execution-request-error>;
 
         sleep-loop-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         sleep-loop-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        noop-submit: func(join-set: borrow<join-set>) -> execution-id;
+        noop-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         noop-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
@@ -324,14 +337,15 @@ package testing:sleep-obelisk-ext {
 
 package testing:sleep-obelisk-schedule {
     interface sleep {
-        use obelisk:types/time@5.0.0.{duration};
-        use obelisk:types/execution@5.0.0.{execution-id};
-        use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/time@6.0.0.{duration};
+        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/time@6.0.0.{schedule-at};
+        use obelisk:types/execution@6.0.0.{schedule-json-error};
 
-        sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> execution-id;
+        sleep-schedule: func(schedule-at: schedule-at, duration: duration) -> result<execution-id, schedule-json-error>;
 
-        sleep-loop-schedule: func(schedule-at: schedule-at, duration: duration, iterations: u32) -> execution-id;
+        sleep-loop-schedule: func(schedule-at: schedule-at, duration: duration, iterations: u32) -> result<execution-id, schedule-json-error>;
 
-        noop-schedule: func(schedule-at: schedule-at) -> execution-id;
+        noop-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
     }
 }

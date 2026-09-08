@@ -11,6 +11,7 @@ use crate::workflow::deadline_tracker::{InterruptKind, PreemptRequested};
 use crate::workflow::host_exports::ffqn_into_wast_val;
 use crate::workflow::host_exports::latest;
 use crate::workflow::host_exports::latest::obelisk::types::execution as types_execution;
+use crate::workflow::host_exports::latest::obelisk::types::function as types_function;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextError;
 use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError;
 use assert_matches::assert_matches;
@@ -104,6 +105,11 @@ pub(crate) enum ApplyError {
     DbError(#[from] DbErrorWrite),
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
+    #[error("{value_kind} exceeds the {limit}-byte persisted value limit")]
+    PersistedValueTooLarge {
+        value_kind: &'static str,
+        limit: u64,
+    },
     #[error("execution interrupt: {0:?}")]
     Interrupt(InterruptKind),
     #[error("replay interrupt")]
@@ -116,12 +122,20 @@ pub(crate) enum DbErrorWriteOrReplayInterrupt {
     DbError(#[from] DbErrorWrite),
     #[error("replay interrupt")]
     ReplayInterrupt,
+    #[error("{value_kind} exceeds the {limit}-byte persisted value limit")]
+    PersistedValueTooLarge {
+        value_kind: &'static str,
+        limit: u64,
+    },
 }
 impl From<DbErrorWriteOrReplayInterrupt> for ApplyError {
     fn from(value: DbErrorWriteOrReplayInterrupt) -> Self {
         match value {
             DbErrorWriteOrReplayInterrupt::DbError(err) => ApplyError::DbError(err),
             DbErrorWriteOrReplayInterrupt::ReplayInterrupt => ApplyError::ReplayInterrupt,
+            DbErrorWriteOrReplayInterrupt::PersistedValueTooLarge { value_kind, limit } => {
+                ApplyError::PersistedValueTooLarge { value_kind, limit }
+            }
         }
     }
 }
@@ -144,6 +158,7 @@ pub(crate) enum UpsertStubOrReplayInterrupt {
 pub(crate) struct EventHistory {
     replaying_unfinished_execution: bool,
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     // Contains requests (events produced by the workflow)
     event_history: Vec<(HistoryEvent, ProcessingStatus, Version)>,
@@ -217,9 +232,14 @@ struct EventCallVersionRange {
     max_excluding: Version,
 }
 impl EventHistory {
+    pub(crate) fn max_persisted_value_size_bytes(&self) -> u64 {
+        self.max_persisted_value_size_bytes
+    }
+
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
+        max_persisted_value_size_bytes: u64,
         event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<ResponseWithCursor>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -238,6 +258,7 @@ impl EventHistory {
         EventHistory {
             replaying_unfinished_execution,
             deployment_id,
+            max_persisted_value_size_bytes,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
             index_delay_id_to_expires_at: IndexMap::default(),
@@ -1055,7 +1076,7 @@ impl EventHistory {
                 ) if *join_set_id == *found_join_set_id
                     && *execution_id == *child_execution_id
                     && target_ffqn == stored_target_ffqn
-                    && params == stored_params =>
+                    && stored_params.matches(params) =>
                 {
                     trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest, result: {found_result:?}");
                     let found_result = found_result.clone();
@@ -1375,14 +1396,19 @@ impl EventHistory {
                     DeterministicKey::Schedule {
                         target_execution_id,
                         schedule_at,
+                        params_hash,
                     },
                     HistoryEvent::Schedule {
                         execution_id: found_execution_id,
                         schedule_at: found_schedule_at,
+                        params_hash: found_params_hash,
                         result: found_result,
                     },
                 ) if *target_execution_id == *found_execution_id
-                    && schedule_at == found_schedule_at =>
+                    && schedule_at == found_schedule_at
+                    && found_params_hash
+                        .as_ref()
+                        .is_none_or(|found_params_hash| found_params_hash == params_hash) =>
                 {
                     trace!(%target_execution_id, "Matched Schedule, result: {:?}", found_result);
                     // Clone the result before mutating self
@@ -1476,6 +1502,23 @@ impl EventHistory {
                 kind,
                 wasm_backtrace,
             }) => {
+                let limit = self.max_persisted_value_size_bytes;
+                if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(limit)
+                    .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                    .validate(&value)
+                {
+                    concepts::persisted_value::report_rejection(
+                        Some(db_connection.execution_id()),
+                        None,
+                        concepts::persisted_value::PersistedValueClass::Persist,
+                        concepts::persisted_value::PersistedValueOrigin::Workflow,
+                        exceeded,
+                    );
+                    return Err(DbErrorWriteOrReplayInterrupt::PersistedValueTooLarge {
+                        value_kind: "persisted history value",
+                        limit,
+                    });
+                }
                 // Cacheable event.
                 let event = HistoryEvent::Persist { value, kind };
                 let history_event = (event.clone(), version.clone());
@@ -1513,27 +1556,69 @@ impl EventHistory {
                         fn_component_id,
                         params,
                     } => {
-                        let child_req = CreateRequest {
-                            created_at: called_at,
-                            execution_id: ExecutionId::Derived(child_execution_id.clone()),
-                            ffqn: target_ffqn.clone(),
-                            params: params.clone(),
-                            parent: Some((
-                                db_connection.execution_id().clone(),
-                                join_set_id.clone(),
-                            )),
-                            metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
-                            scheduled_at: called_at,
-                            component_id: fn_component_id,
-                            deployment_id: self.deployment_id,
-                            scheduled_by: None,
-                            paused: false,
-                        };
-                        (Ok(()), params, Some(child_req))
+                        let checked = concepts::persisted_value::EncodedSizeLimit::new(
+                            self.max_persisted_value_size_bytes,
+                        )
+                        .expect("persisted value limit must be positive")
+                        .validate_and_hash(&params);
+                        match checked.encoded_size {
+                            Ok(_) => {
+                                let child_req = CreateRequest {
+                                    created_at: called_at,
+                                    execution_id: ExecutionId::Derived(child_execution_id.clone()),
+                                    ffqn: target_ffqn.clone(),
+                                    params: params.clone(),
+                                    parent: Some((
+                                        db_connection.execution_id().clone(),
+                                        join_set_id.clone(),
+                                    )),
+                                    metadata: ExecutionMetadata::from_parent_span(
+                                        &self.worker_span,
+                                    ),
+                                    scheduled_at: called_at,
+                                    component_id: fn_component_id,
+                                    deployment_id: self.deployment_id,
+                                    scheduled_by: None,
+                                    paused: false,
+                                    max_persisted_value_size_bytes: self
+                                        .max_persisted_value_size_bytes,
+                                };
+                                (
+                                    Ok(()),
+                                    storage::PersistedParams::Inline(params),
+                                    Some(child_req),
+                                )
+                            }
+                            Err(exceeded) => {
+                                concepts::persisted_value::report_rejection(
+                                    Some(db_connection.execution_id()),
+                                    Some(&target_ffqn),
+                                    concepts::persisted_value::PersistedValueClass::Params,
+                                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                                    exceeded,
+                                );
+                                (
+                                    Err(ChildExecutionRequestError::ValueTooLarge {
+                                        limit: exceeded.limit,
+                                    }),
+                                    storage::PersistedParams::Rejected {
+                                        rejected: storage::RejectedParams {
+                                            sha256: checked.sha256,
+                                            encoded_size_at_least: exceeded.encoded_size_at_least,
+                                        },
+                                    },
+                                    None,
+                                )
+                            }
+                        }
                     }
                     SubmitChildIntent::Err(err) => {
                         // Function was not found or params parsing error
-                        (Err(err), Params::empty(), None)
+                        (
+                            Err(err),
+                            storage::PersistedParams::Inline(Params::empty()),
+                            None,
+                        )
                     }
                 };
 
@@ -1633,6 +1718,7 @@ impl EventHistory {
                 scheduled_at_if_new,
                 execution_id: new_execution_id,
                 ffqn,
+                params_hash,
                 intent,
                 wasm_backtrace,
             }) => {
@@ -1642,20 +1728,48 @@ impl EventHistory {
                         fn_component_id,
                         params,
                     } => {
-                        let child_req = CreateRequest {
-                            created_at: called_at,
-                            execution_id: new_execution_id.clone(),
-                            metadata: ExecutionMetadata::from_linked_span(&self.worker_span),
-                            ffqn,
-                            params,
-                            parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                            scheduled_at: scheduled_at_if_new,
-                            component_id: fn_component_id,
-                            deployment_id: self.deployment_id,
-                            scheduled_by: Some(db_connection.execution_id().clone()),
-                            paused: false,
-                        };
-                        (Ok(()), Some(child_req))
+                        match concepts::persisted_value::EncodedSizeLimit::new(
+                            self.max_persisted_value_size_bytes,
+                        )
+                        .expect("persisted value limit must be positive")
+                        .validate(&params)
+                        {
+                            Ok(_) => {
+                                let child_req = CreateRequest {
+                                    created_at: called_at,
+                                    execution_id: new_execution_id.clone(),
+                                    metadata: ExecutionMetadata::from_linked_span(
+                                        &self.worker_span,
+                                    ),
+                                    ffqn,
+                                    params,
+                                    parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
+                                    scheduled_at: scheduled_at_if_new,
+                                    component_id: fn_component_id,
+                                    deployment_id: self.deployment_id,
+                                    scheduled_by: Some(db_connection.execution_id().clone()),
+                                    paused: false,
+                                    max_persisted_value_size_bytes: self
+                                        .max_persisted_value_size_bytes,
+                                };
+                                (Ok(()), Some(child_req))
+                            }
+                            Err(exceeded) => {
+                                concepts::persisted_value::report_rejection(
+                                    Some(db_connection.execution_id()),
+                                    Some(&ffqn),
+                                    concepts::persisted_value::PersistedValueClass::Params,
+                                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                                    exceeded,
+                                );
+                                (
+                                    Err(ScheduleRequestError::ValueTooLarge {
+                                        limit: exceeded.limit,
+                                    }),
+                                    None,
+                                )
+                            }
+                        }
                     }
                     ScheduleIntent::Err(err) => (Err(err), None),
                 };
@@ -1663,6 +1777,7 @@ impl EventHistory {
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
+                    params_hash: Some(params_hash),
                     result,
                 };
 
@@ -2034,7 +2149,7 @@ impl EventHistory {
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: ffqn.clone(),
-                        params: params.clone(),
+                        params: storage::PersistedParams::Inline(params.clone()),
                         result: Ok(()),
                     },
                 };
@@ -2069,6 +2184,7 @@ impl EventHistory {
                     deployment_id: self.deployment_id,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
                 };
 
                 db_connection
@@ -2211,8 +2327,8 @@ impl EventHistory {
         if specified_ffqn != found_ffqn {
             return Err(GetExtensionError::FunctionMismatch(
                 types_execution::FunctionMismatch {
-                    specified_function: types_execution::Function::from(specified_ffqn),
-                    actual_function: Some(types_execution::Function::from(found_ffqn)),
+                    specified_function: types_function::Function::from(specified_ffqn),
+                    actual_function: Some(types_function::Function::from(found_ffqn)),
                     actual_id: types_execution::ResponseId::ExecutionId(
                         types_execution::ExecutionId::from(child_execution_id),
                     ),
@@ -2855,6 +2971,7 @@ pub(crate) struct Schedule {
     pub(crate) scheduled_at_if_new: DateTime<Utc>, // Actual time based on first execution. Should be disregarded on replay.
     pub(crate) execution_id: ExecutionId,
     pub(crate) ffqn: FunctionFqn,
+    pub(crate) params_hash: concepts::component_id::Digest,
     pub(crate) intent: ScheduleIntent,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -2899,12 +3016,14 @@ pub(crate) enum StubIntent {
 pub(crate) enum StubIntentErr {
     ExecutionNotFound,      // results in `StubError::ExecutionNotFound`
     TypeCheckError(String), // results in `StubError::TypeCheckError`
+    ValueTooLarge { limit: u64 },
 }
 impl From<StubIntentErr> for StubError {
     fn from(value: StubIntentErr) -> StubError {
         match value {
             StubIntentErr::ExecutionNotFound => StubError::ExecutionNotFound,
             StubIntentErr::TypeCheckError(reason) => StubError::TypeCheckError(reason),
+            StubIntentErr::ValueTooLarge { limit } => StubError::ValueTooLarge { limit },
         }
     }
 }
@@ -3245,7 +3364,7 @@ impl OneOffDelayRequest {
             .next_join_set_one_off_named(suffix)
             .map_err(|err| WorkflowFunctionError::ImportedFunctionCallError {
                 // Only `sleep-named-bt` passes the name
-                ffqn: FunctionFqn::new_static("obelisk:workflow/workflow-support@6.0.0", "sleep"),
+                ffqn: FunctionFqn::new_static("obelisk:workflow/workflow-support@7.0.0", "sleep"),
                 reason: "invalid sleep join set name".into(),
                 detail: Some(err.to_string()),
             })?;
@@ -3477,6 +3596,7 @@ enum DeterministicKey {
     Schedule {
         target_execution_id: ExecutionId,
         schedule_at: HistoryEventScheduleAt,
+        params_hash: concepts::component_id::Digest,
     },
 
     #[display("Stub({})", params.target_execution_id)]
@@ -3621,10 +3741,12 @@ impl EventCallNonBlocking {
             EventCallNonBlocking::Schedule(Schedule {
                 execution_id,
                 schedule_at,
+                params_hash,
                 ..
             }) => DeterministicKey::Schedule {
                 target_execution_id: execution_id.clone(),
                 schedule_at: *schedule_at,
+                params_hash: params_hash.clone(),
             },
             EventCallNonBlocking::Stub(Stub { intent, params, .. }) => DeterministicKey::Stub {
                 intent: intent.clone(),
@@ -3655,15 +3777,16 @@ mod tests {
     use crate::workflow::deadline_tracker::deadline_tracker_factory_test;
     use crate::workflow::event_history::{
         ApplyError, AwaitNextExtensionError, ChildReturnValue, JoinNextRequestingFfqn, JoinNextTry,
-        JoinNextTryError, JoinSetCreate, OneOffDelayRequest, Schedule, ScheduleIntent, Stub,
-        StubIntent, StubParams, SubmitChildIntent, SubmitDelay,
+        JoinNextTryError, JoinSetCreate, OneOffDelayRequest, Persist, Schedule, ScheduleIntent,
+        Stub, StubIntent, StubParams, SubmitChildIntent, SubmitDelay,
     };
+    use crate::workflow::workflow_ctx::WorkflowFunctionError;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::{DEPLOYMENT_ID_DUMMY, ExecutionIdDerived, ExecutorId, RunId};
     use concepts::storage::{
-        AppendRequest, CreateRequest, DbConnectionTest, ExecutionRequest, HistoryEventScheduleAt,
-        Locked, StubRetVal,
+        AppendRequest, CreateRequest, DbConnectionTest, ExecutionRequest, HistoryEvent,
+        HistoryEventScheduleAt, JoinSetRequest, Locked, PersistedParams, StubRetVal,
     };
     use concepts::storage::{
         DbConnection, DbPoolCloseable, JoinSetResponse, JoinSetResponseEvent, Version,
@@ -4218,6 +4341,7 @@ mod tests {
                     scheduled_at_if_new: sim_clock.now(),
                     execution_id: ExecutionId::generate(),
                     ffqn: MOCK_FFQN,
+                    params_hash: concepts::persisted_value::compact_json_sha256(&Params::empty()),
                     intent: ScheduleIntent::Ok {
                         fn_component_id: ComponentId::dummy_activity(),
                         params: Params::empty(),
@@ -4254,6 +4378,279 @@ mod tests {
             )
             .await
             .unwrap();
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn oversized_persist_fails_before_entering_non_blocking_buffer() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution_with_limit(db_connection.as_ref(), &sim_clock, 4).await;
+
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id.clone(),
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+        let err = Persist::apply_string(
+            "oversized",
+            0,
+            100,
+            None,
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap_err();
+        assert_matches!(
+            err,
+            WorkflowFunctionError::PersistedValueTooLarge {
+                value_kind: "persisted history value",
+                limit: 4,
+            }
+        );
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        assert!(
+            !log.event_history()
+                .any(|(event, _)| matches!(event, HistoryEvent::Persist { .. }))
+        );
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn oversized_child_params_are_rejected_and_match_on_replay() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution_with_limit(db_connection.as_ref(), &sim_clock, 4).await;
+        let join_set_id =
+            JoinSetId::new(concepts::JoinSetKind::Named, StrVariant::Static("children")).unwrap();
+        let child_execution_id = execution_id.next_level(&join_set_id);
+        let params = Params::from_json_values_test(vec![serde_json::json!("oversized")]);
+
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id.clone(),
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+        JoinSetCreate {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        let result = SubmitChildExecution {
+            target_ffqn: MOCK_FFQN,
+            join_set_id: join_set_id.clone(),
+            child_execution_id: child_execution_id.clone(),
+            intent: SubmitChildIntent::Ok {
+                fn_component_id: ComponentId::dummy_activity(),
+                params: params.clone(),
+            },
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            Err(concepts::storage::ChildExecutionRequestError::ValueTooLarge { limit: 4 }),
+            result
+        );
+        event_history
+            .finalize(
+                &mut event_call_cursor,
+                &mut *caching_db_connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap();
+
+        let log = db_connection.get(&execution_id).await.unwrap();
+        let rejected = log
+            .event_history()
+            .find_map(|(event, _version)| match event {
+                HistoryEvent::JoinSetRequest {
+                    request: JoinSetRequest::ChildExecutionRequest { params, .. },
+                    ..
+                } => Some(params),
+                _ => None,
+            });
+        assert_matches!(rejected, Some(PersistedParams::Rejected { .. }));
+        assert!(
+            db_connection
+                .get(&ExecutionId::Derived(child_execution_id.clone()))
+                .await
+                .is_err()
+        );
+
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id,
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+        JoinSetCreate {
+            join_set_id: join_set_id.clone(),
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        let replayed = SubmitChildExecution {
+            target_ffqn: MOCK_FFQN,
+            join_set_id,
+            child_execution_id,
+            intent: SubmitChildIntent::Ok {
+                fn_component_id: ComponentId::dummy_activity(),
+                params,
+            },
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            Err(concepts::storage::ChildExecutionRequestError::ValueTooLarge { limit: 4 }),
+            replayed
+        );
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn oversized_schedule_params_are_rejected_and_match_on_replay() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution_with_limit(db_connection.as_ref(), &sim_clock, 4).await;
+        let scheduled_execution_id = ExecutionId::generate();
+        let params = Params::from_json_values_test(vec![serde_json::json!("oversized")]);
+        let params_hash = concepts::persisted_value::compact_json_sha256(&params);
+
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id.clone(),
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+        let result = Schedule {
+            schedule_at: HistoryEventScheduleAt::Now,
+            scheduled_at_if_new: sim_clock.now(),
+            execution_id: scheduled_execution_id.clone(),
+            ffqn: MOCK_FFQN,
+            params_hash: params_hash.clone(),
+            intent: ScheduleIntent::Ok {
+                fn_component_id: ComponentId::dummy_activity(),
+                params: params.clone(),
+            },
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            Err(concepts::storage::ScheduleRequestError::ValueTooLarge { limit: 4 }),
+            result
+        );
+        event_history
+            .finalize(
+                &mut event_call_cursor,
+                &mut *caching_db_connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap();
+        assert!(db_connection.get(&scheduled_execution_id).await.is_err());
+
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id,
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+        let replayed = Schedule {
+            schedule_at: HistoryEventScheduleAt::Now,
+            scheduled_at_if_new: sim_clock.now(),
+            execution_id: scheduled_execution_id,
+            ffqn: MOCK_FFQN,
+            params_hash,
+            intent: ScheduleIntent::Ok {
+                fn_component_id: ComponentId::dummy_activity(),
+                params,
+            },
+            wasm_backtrace: None,
+        }
+        .apply(
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            Err(concepts::storage::ScheduleRequestError::ValueTooLarge { limit: 4 }),
+            replayed
+        );
         db_close.close().await;
     }
 
@@ -4591,6 +4988,14 @@ mod tests {
         db_connection: &dyn DbConnection,
         sim_clock: &SimClock,
     ) -> ExecutionId {
+        create_execution_with_limit(db_connection, sim_clock, u64::MAX).await
+    }
+
+    async fn create_execution_with_limit(
+        db_connection: &dyn DbConnection,
+        sim_clock: &SimClock,
+        max_persisted_value_size_bytes: u64,
+    ) -> ExecutionId {
         let created_at = sim_clock.now();
         let execution_id = ExecutionId::generate();
         db_connection
@@ -4606,6 +5011,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes,
             })
             .await
             .unwrap();
@@ -4668,6 +5074,7 @@ mod tests {
         let cancel_registry = CancelRegistry::new();
         let event_history = EventHistory::new(
             DEPLOYMENT_ID_DUMMY,
+            exec_log.max_persisted_value_size_bytes(),
             history_events,
             exec_log.responses,
             join_next_blocking_strategy,

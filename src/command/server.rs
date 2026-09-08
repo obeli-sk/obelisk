@@ -419,6 +419,8 @@ pub(crate) enum SubmitError {
     FunctionNotFound,
     #[error("{0}")]
     ParamsInvalid(String),
+    #[error("execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
     #[error("execution already exists with the same id and different parameters")]
     Conflict,
     #[error(transparent)]
@@ -430,6 +432,7 @@ pub(crate) enum SubmitOutcome {
     ExistsWithSameParameters,
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) async fn submit(
     deployment_id: DeploymentId,
     db_connection: &dyn DbExternalApi,
@@ -438,6 +441,8 @@ pub(crate) async fn submit(
     mut params: Vec<serde_json::Value>,
     paused: bool,
     component_registry_ro: &ComponentConfigRegistryRO,
+    max_persisted_value_size_bytes: u64,
+    origin: concepts::persisted_value::PersistedValueOrigin,
 ) -> Result<SubmitOutcome, SubmitError> {
     let span = Span::current();
     span.record("execution_id", tracing::field::display(&execution_id));
@@ -532,6 +537,21 @@ pub(crate) async fn submit(
             .map(|ParameterType { type_wrapper, .. }| type_wrapper),
     )
     .map_err(|err| SubmitError::ParamsInvalid(format!("argument `params` invalid - {err}")))?;
+    concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+        .expect("verified server value limit is positive")
+        .validate(&params)
+        .map_err(|exceeded| {
+            concepts::persisted_value::report_rejection(
+                Some(&execution_id),
+                Some(ffqn),
+                concepts::persisted_value::PersistedValueClass::Params,
+                origin,
+                exceeded,
+            );
+            SubmitError::ValueTooLarge {
+                limit: max_persisted_value_size_bytes,
+            }
+        })?;
 
     // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
     let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
@@ -548,6 +568,7 @@ pub(crate) async fn submit(
             deployment_id,
             scheduled_by: None,
             paused,
+            max_persisted_value_size_bytes,
         })
         .await;
     match res {
@@ -1984,6 +2005,7 @@ pub(crate) struct ServerVerified {
     workflows_response_refresh_interval: usize,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
+    max_persisted_value_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
@@ -2002,6 +2024,7 @@ pub(crate) struct ServerVerified {
 struct ServerVerifiedLaunch {
     engines: Engines,
     build_semaphore: Option<u64>,
+    max_persisted_value_size_bytes: u64,
     /// Deprecated server-wide override; when set, applies to every workflow. See
     /// `WorkflowsGlobalConfigToml::lock_extension_leeway`.
     deprecated_workflows_lock_extension_leeway: Option<Duration>,
@@ -2011,6 +2034,10 @@ struct ServerVerifiedLaunch {
 }
 
 impl ServerVerified {
+    pub(crate) const fn max_persisted_value_size_bytes(&self) -> u64 {
+        self.max_persisted_value_size_bytes
+    }
+
     #[instrument(name = "ServerVerified::new", skip_all)]
     async fn new(
         engines: Engines,
@@ -2058,6 +2085,9 @@ impl ServerVerified {
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
         }
+        if config.limits.max_persisted_value_size_bytes == 0 {
+            bail!("`limits.max_persisted_value_size_bytes` must be greater than zero");
+        }
         let workflows_response_refresh_interval =
             config.workflows_global_config.response_refresh_interval;
         if workflows_response_refresh_interval == 0 {
@@ -2096,6 +2126,7 @@ impl ServerVerified {
             launch: ServerVerifiedLaunch {
                 engines,
                 build_semaphore,
+                max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 deprecated_workflows_lock_extension_leeway,
                 workflows_max_replay_captured_writes,
             },
@@ -2112,6 +2143,7 @@ impl ServerVerified {
                 None
             },
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
+            max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
             global_http_config,
             server_outbound_allowed_hosts,
             source_path,
@@ -2147,6 +2179,7 @@ pub(crate) struct ServerCompiledLinked {
     pub(crate) http_servers_to_webhooks_and_state: HttpServersToWebhooksAndState,
     supressed_errors: Option<String>,
     frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
+    max_persisted_value_size_bytes: u64,
 }
 
 impl ServerCompiledLinked {
@@ -2219,6 +2252,7 @@ impl ServerCompiledLinked {
                     deployment_id,
                     &webhooks,
                     fn_registry.clone(),
+                    server_verified.max_persisted_value_size_bytes,
                 ));
                 (http_server, (webhooks, state))
             })
@@ -2237,6 +2271,7 @@ impl ServerCompiledLinked {
             http_servers_to_webhooks_and_state,
             supressed_errors: linked.supressed_errors,
             frame_files: linked.all_frame_files,
+            max_persisted_value_size_bytes: server_verified.max_persisted_value_size_bytes,
         })
     }
 
@@ -2268,6 +2303,7 @@ impl ServerCompiledLinked {
         create_missing_cron_seeds(
             db_pool,
             deployment_id,
+            self.max_persisted_value_size_bytes,
             self.workers_linked.iter().filter_map(|worker_linked| {
                 if let LinkedWorkerKind::Cron(cron_config) = &worker_linked.worker {
                     Some(cron_config.as_ref())
@@ -3154,6 +3190,7 @@ async fn switch_hot_redeploy(
 async fn create_missing_cron_seeds(
     db_pool: &Arc<dyn DbPool>,
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     cron_configs: impl Iterator<Item = &ScheduleWorkerConfig>,
 ) -> Result<(), anyhow::Error> {
     let conn = db_pool.external_api_conn().await?;
@@ -3187,6 +3224,7 @@ async fn create_missing_cron_seeds(
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes,
             })
             .await
             .map_err(|e| {
@@ -3415,6 +3453,7 @@ pub(crate) fn build_webhook_server_state(
     deployment_id: DeploymentId,
     webhooks: &[WebhookInstancesAndRoutes],
     fn_registry: Arc<dyn FunctionRegistry>,
+    max_persisted_value_size_bytes: u64,
 ) -> WebhookServerState {
     let mut router = MethodAwareRouter::default();
     for (webhook_instance_linked, routes) in webhooks {
@@ -3436,6 +3475,7 @@ pub(crate) fn build_webhook_server_state(
         deployment_id,
         router: Arc::new(router),
         fn_registry,
+        max_persisted_value_size_bytes,
     }
 }
 

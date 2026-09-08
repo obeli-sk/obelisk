@@ -246,6 +246,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             params,
             request.paused,
             &component_registry_ro,
+            self.server_verified.max_persisted_value_size_bytes(),
+            concepts::persisted_value::PersistedValueOrigin::Grpc,
         )
         .await?;
 
@@ -292,11 +294,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             .external_api_conn()
             .await
             .map_err(map_to_status)?;
-        let ffqn = db_connection
+        let create_request = db_connection
             .get_create_request(&ExecutionId::Derived(execution_id.clone()))
             .await
-            .to_status()?
-            .ffqn;
+            .to_status()?;
+        let ffqn = create_request.ffqn;
+        let max_persisted_value_size_bytes = create_request.max_persisted_value_size_bytes;
 
         // Check that ffqn exists
         let Some((component_id, fn_metadata)) =
@@ -311,6 +314,27 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         span.record("ffqn", tracing::field::display(ffqn));
 
         let return_value = request.return_value.argument_must_exist("return_value")?;
+        let untyped_return_value: serde_json::Value = serde_json::from_slice(&return_value.value)
+            .map_err(|err| {
+            tonic::Status::invalid_argument(format!(
+                "cannot deserialize return value according to its type - {err}"
+            ))
+        })?;
+        let value_limit =
+            concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+                .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
+        if let Err(exceeded) = value_limit.validate(&untyped_return_value) {
+            concepts::persisted_value::report_rejection(
+                Some(&ExecutionId::Derived(execution_id.clone())),
+                Some(ffqn),
+                concepts::persisted_value::PersistedValueClass::Stub,
+                concepts::persisted_value::PersistedValueOrigin::Grpc,
+                exceeded,
+            );
+            return Err(tonic::Status::resource_exhausted(format!(
+                "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
+            )));
+        }
         // Type check `return_value`
         let return_value = {
             let type_wrapper = fn_metadata.return_type.type_wrapper();
@@ -325,6 +349,18 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
                 .expect("checked that ffqn is no-ext, return type must be Compatible")
         };
+        if let Err(exceeded) = value_limit.validate(&return_value) {
+            concepts::persisted_value::report_rejection(
+                Some(&ExecutionId::Derived(execution_id.clone())),
+                Some(ffqn),
+                concepts::persisted_value::PersistedValueClass::Stub,
+                concepts::persisted_value::PersistedValueOrigin::Grpc,
+                exceeded,
+            );
+            return Err(tonic::Status::resource_exhausted(format!(
+                "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
+            )));
+        }
         storage::stub_execution(
             db_connection.as_ref(),
             execution_id,
@@ -1710,6 +1746,9 @@ impl From<SubmitError> for tonic::Status {
             ),
             SubmitError::FunctionNotFound => tonic::Status::not_found("function not found"),
             SubmitError::ParamsInvalid(reason) => tonic::Status::invalid_argument(reason),
+            err @ SubmitError::ValueTooLarge { .. } => {
+                tonic::Status::resource_exhausted(err.to_string())
+            }
             err @ SubmitError::Conflict => tonic::Status::already_exists(err.to_string()),
             SubmitError::DbErrorWrite(db_err) => db_error_write_to_status(&db_err),
         }

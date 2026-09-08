@@ -1486,11 +1486,12 @@ async fn execution_stub(
         .external_api_conn()
         .await
         .map_err(|e| ErrorWrapper(e, accept))?;
-    let ffqn = db_connection
+    let create_request = db_connection
         .get_create_request(&ExecutionId::Derived(execution_id.clone()))
         .await
-        .map_err(|err| ErrorWrapper(err, accept))?
-        .ffqn;
+        .map_err(|err| ErrorWrapper(err, accept))?;
+    let ffqn = create_request.ffqn;
+    let max_persisted_value_size_bytes = create_request.max_persisted_value_size_bytes;
 
     // Check that ffqn exists
     let Some((_component_id, fn_metadata)) =
@@ -1503,6 +1504,25 @@ async fn execution_stub(
         });
     };
     let created_at = Now.now();
+    let value_limit =
+        concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+            .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
+    if let Err(exceeded) = value_limit.validate(&return_value) {
+        concepts::persisted_value::report_rejection(
+            Some(&ExecutionId::Derived(execution_id.clone())),
+            Some(&ffqn),
+            concepts::persisted_value::PersistedValueClass::Stub,
+            concepts::persisted_value::PersistedValueOrigin::Rest,
+            exceeded,
+        );
+        return Err(HttpResponse {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: format!(
+                "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
+            ),
+            accept,
+        });
+    }
 
     // Type check `return_value`
     let return_value = {
@@ -1522,6 +1542,22 @@ async fn execution_stub(
         SupportedFunctionReturnValue::from_wast_val_with_type(return_value)
             .expect("checked that ffqn is no-ext, return type must be Compatible")
     };
+    if let Err(exceeded) = value_limit.validate(&return_value) {
+        concepts::persisted_value::report_rejection(
+            Some(&ExecutionId::Derived(execution_id.clone())),
+            Some(&ffqn),
+            concepts::persisted_value::PersistedValueClass::Stub,
+            concepts::persisted_value::PersistedValueOrigin::Rest,
+            exceeded,
+        );
+        return Err(HttpResponse {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: format!(
+                "stub result exceeds the {max_persisted_value_size_bytes}-byte persisted value limit"
+            ),
+            accept,
+        });
+    }
     storage::stub_execution(
         db_connection.as_ref(),
         execution_id,
@@ -1587,6 +1623,8 @@ pub(crate) struct CreateRequestSer {
     pub(crate) metadata: concepts::ExecutionMetadata,
     pub(crate) scheduled_by: Option<String>,
     pub(crate) paused: bool,
+    #[serde(default = "concepts::persisted_value::legacy_unlimited_persisted_value_size")]
+    pub(crate) max_persisted_value_size_bytes: u64,
 }
 
 impl From<concepts::storage::CreateRequest> for CreateRequestSer {
@@ -1613,6 +1651,7 @@ impl From<concepts::storage::CreateRequest> for CreateRequestSer {
             metadata: r.metadata,
             scheduled_by: r.scheduled_by.map(|execution_id| execution_id.to_string()),
             paused: r.paused,
+            max_persisted_value_size_bytes: r.max_persisted_value_size_bytes,
         }
     }
 }
@@ -1667,6 +1706,7 @@ impl TryFrom<CreateRequestSer> for concepts::storage::CreateRequest {
                 })
                 .transpose()?,
             paused: value.paused,
+            max_persisted_value_size_bytes: value.max_persisted_value_size_bytes,
         })
     }
 }
@@ -2244,6 +2284,8 @@ async fn execution_submit(
         payload.params,
         payload.paused,
         &component_registry_ro,
+        state.server_verified.max_persisted_value_size_bytes(),
+        concepts::persisted_value::PersistedValueOrigin::Rest,
     )
     .await
     .map_err(|err| ErrorWrapper(err, accept))?;
@@ -4568,6 +4610,11 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
                 accept,
             },
             SubmitError::FunctionNotFound => HttpResponse::not_found(accept, Some("ffqn")),
+            err @ SubmitError::ValueTooLarge { .. } => HttpResponse {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: err.to_string(),
+                accept,
+            },
             SubmitError::DbErrorWrite(db_error_write) => {
                 HttpResponse::from(ErrorWrapper(db_error_write, accept))
             }

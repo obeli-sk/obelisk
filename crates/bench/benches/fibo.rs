@@ -359,6 +359,7 @@ mod bench {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

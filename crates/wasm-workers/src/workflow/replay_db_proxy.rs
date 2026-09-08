@@ -846,6 +846,7 @@ mod tests {
                 deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -868,6 +869,7 @@ mod tests {
             deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
         let mut connection: Box<dyn WorkflowDbConnection> = match mode {
             ConnectionMode::Caching => Box::new(CachingDbConnection::new(
@@ -952,6 +954,7 @@ mod tests {
                 deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -968,6 +971,7 @@ mod tests {
                 deployment_id: concepts::prefixed_ulid::DeploymentId::generate(),
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

@@ -7,6 +7,7 @@ use crate::webhook::webhook_trigger::types::{
     GetErrorTrappable, GetStatusErrorTrappable, ScheduleJsonErrorTrappable, TryGetErrorTrappable,
 };
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
+use crate::workflow::workflow_ctx::schedule_request_error_to_wast_val;
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{
@@ -46,6 +47,7 @@ use tracing::{
     Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace, warn,
 };
 use types::obelisk::types::execution::Host as ExecutionHost;
+use types::obelisk::types::function::Host as FunctionHost;
 use types::obelisk::types::join_set::HostJoinSet;
 use types::obelisk::webhook::webhook_support::Host as WebhookSupportHost;
 use val_json::wast_val::WastVal;
@@ -68,12 +70,13 @@ pub(crate) mod types {
         path: "host-wit-webhook/",
         inline: "package any:any;
                 world bindings {
-                    import obelisk:types/time@5.0.0;
-                    import obelisk:types/execution@5.0.0;
-                    import obelisk:types/backtrace@5.0.0;
-                    import obelisk:types/join-set@5.0.0;
-                    import obelisk:webhook/webhook-support@6.0.0;
-                    import obelisk:webhook/webhook-support-backtrace@6.0.0;
+                    import obelisk:types/time@6.0.0;
+                    import obelisk:types/function@6.0.0;
+                    import obelisk:types/execution@6.0.0;
+                    import obelisk:types/backtrace@6.0.0;
+                    import obelisk:types/join-set@6.0.0;
+                    import obelisk:webhook/webhook-support@7.0.0;
+                    import obelisk:webhook/webhook-support-backtrace@7.0.0;
                 }",
         world: "any:any/bindings",
         imports: {
@@ -153,6 +156,7 @@ fn execution_failure_kind_to_wit(
         K::NondeterminismDetected => Wit::NondeterminismDetected,
         K::OutOfFuel => Wit::OutOfFuel,
         K::Cancelled => Wit::Cancelled,
+        K::ValueTooLarge => Wit::ValueTooLarge,
         K::Uncategorized => Wit::Uncategorized,
     }
 }
@@ -504,6 +508,7 @@ pub struct WebhookServerState {
     pub deployment_id: DeploymentId,
     pub router: Arc<MethodAwareRouter<WebhookEndpointInstanceLinked>>,
     pub fn_registry: Arc<dyn FunctionRegistry>,
+    pub max_persisted_value_size_bytes: u64,
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -558,6 +563,7 @@ pub async fn server(
                                     trace!(%execution_id, %deployment_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                     RequestHandler {
                                         deployment_id: state.deployment_id,
+                                        max_persisted_value_size_bytes: state.max_persisted_value_size_bytes,
                                         engine: engine.clone(),
                                         clock_fn: clock_fn.clone_box(),
                                         sleep: sleep.clone(),
@@ -630,6 +636,7 @@ pub struct WebhookEndpointJsConfig {
 struct WebhookEndpointCtx {
     component_id: ComponentId,
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
     db_pool: Arc<dyn DbPool>,
@@ -681,6 +688,8 @@ impl ExecutionHost for WebhookEndpointCtx {
         }
     }
 }
+
+impl FunctionHost for WebhookEndpointCtx {}
 
 fn wit_backtrace_to_storage(
     bt: types::obelisk::types::backtrace::WasmBacktrace,
@@ -982,6 +991,20 @@ impl WebhookEndpointCtx {
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
+        if let Err(exceeded) =
+            concepts::persisted_value::EncodedSizeLimit::new(self.max_persisted_value_size_bytes)
+                .expect("persisted value limit must be positive")
+                .validate(&params)
+        {
+            concepts::persisted_value::report_rejection(
+                Some(&ExecutionId::TopLevel(self.execution_id)),
+                Some(&ffqn),
+                concepts::persisted_value::PersistedValueClass::Params,
+                concepts::persisted_value::PersistedValueOrigin::Webhook,
+                exceeded,
+            );
+            return Err(ScheduleJsonError::ValueTooLarge(exceeded.limit).into());
+        }
 
         // Convert schedule_at
         let history_event_schedule_at = schedule_at_from_webhook(schedule_at);
@@ -1006,6 +1029,7 @@ impl WebhookEndpointCtx {
         let event = HistoryEvent::Schedule {
             execution_id: execution_id.clone(),
             schedule_at: history_event_schedule_at,
+            params_hash: Some(concepts::persisted_value::compact_json_sha256(&params)),
             result: Ok(()),
         };
         let append_req = AppendRequest {
@@ -1024,6 +1048,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
             paused: false,
+            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1160,7 +1185,7 @@ impl WebhookEndpointCtx {
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: ffqn.clone(),
-                        params: params.clone(),
+                        params: concepts::storage::PersistedParams::Inline(params.clone()),
                         result: Ok(()),
                     },
                 },
@@ -1193,6 +1218,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1387,6 +1413,8 @@ enum WebhookEndpointFunctionError {
     FinishedExecutionFailure(#[from] FinishedExecutionFailure),
     #[error("uncategorized error: {0}")]
     UncategorizedError(&'static str),
+    #[error("child execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
     #[error("connection closed")]
     ConnectionClosed,
 }
@@ -1452,6 +1480,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
         };
         let conn = self.db_pool.connection().await?;
         let version = conn.create(create_request).await?;
@@ -1556,32 +1585,63 @@ impl WebhookEndpointCtx {
                     .get_by_exported_function(&ffqn)
                     .expect("target function must be found in fn_registry");
                 let created_at = self.clock_fn.now();
+                let params = Params::from_wasmtime(Arc::from(params));
 
+                let params_hash = concepts::persisted_value::compact_json_sha256(&params);
+                let target_time = schedule_at.as_date_time(created_at).map_err(|_err| {
+                    WebhookEndpointFunctionError::UncategorizedError("schedule-at conversion error")
+                })?;
+                let (result, create_child_requests) =
+                    match concepts::persisted_value::EncodedSizeLimit::new(
+                        self.max_persisted_value_size_bytes,
+                    )
+                    .expect("persisted value limit must be positive")
+                    .validate(&params)
+                    {
+                        Ok(_) => (
+                            Ok(()),
+                            vec![CreateRequest {
+                                created_at,
+                                execution_id: new_execution_id.clone(),
+                                ffqn,
+                                params,
+                                parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
+                                metadata: ExecutionMetadata::from_linked_span(
+                                    &self.component_logger.span,
+                                ),
+                                scheduled_at: target_time,
+                                component_id: child_component_id.clone(),
+                                deployment_id: self.deployment_id,
+                                scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
+                                paused: false,
+                                max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
+                            }],
+                        ),
+                        Err(exceeded) => {
+                            concepts::persisted_value::report_rejection(
+                                Some(&ExecutionId::TopLevel(self.execution_id)),
+                                Some(&ffqn),
+                                concepts::persisted_value::PersistedValueClass::Params,
+                                concepts::persisted_value::PersistedValueOrigin::Webhook,
+                                exceeded,
+                            );
+                            (
+                                Err(concepts::storage::ScheduleRequestError::ValueTooLarge {
+                                    limit: exceeded.limit,
+                                }),
+                                vec![],
+                            )
+                        }
+                    };
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
-                    result: Ok(()),
+                    params_hash: Some(params_hash),
+                    result: result.clone(),
                 };
-                let schedule_at = schedule_at.as_date_time(created_at).map_err(|_err| {
-                    WebhookEndpointFunctionError::UncategorizedError("schedule-at conversion error")
-                })?;
                 let child_exec_req = AppendRequest {
                     event: ExecutionRequest::HistoryEvent { event },
                     created_at,
-                };
-
-                let create_child_req = CreateRequest {
-                    created_at,
-                    execution_id: new_execution_id.clone(),
-                    ffqn,
-                    params: Params::from_wasmtime(Arc::from(params)),
-                    parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
-                    scheduled_at: schedule_at,
-                    component_id: child_component_id.clone(),
-                    deployment_id: self.deployment_id,
-                    scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
-                    paused: false,
                 };
                 let db_connection = self.db_pool.connection().await?;
                 let expected_next_version = version.increment();
@@ -1598,13 +1658,20 @@ impl WebhookEndpointCtx {
                         vec![child_exec_req],
                         ExecutionId::TopLevel(self.execution_id),
                         version.clone(),
-                        vec![create_child_req],
+                        create_child_requests,
                         backtrace_info.into_iter().collect(),
                     )
                     .await?;
                 assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
                 self.version = Some(version.clone());
-                results[0] = execution_id_into_val(&new_execution_id);
+                results[0] = match result {
+                    Ok(()) => {
+                        Val::Result(Ok(Some(Box::new(execution_id_into_val(&new_execution_id)))))
+                    }
+                    Err(err) => Val::Result(Err(Some(Box::new(
+                        schedule_request_error_to_wast_val(err).as_val(),
+                    )))),
+                };
             } else {
                 error!("unrecognized `{SUFFIX_PKG_SCHEDULE}` extension function {ffqn}");
                 return Err(WebhookEndpointFunctionError::UncategorizedError(
@@ -1637,6 +1704,23 @@ impl WebhookEndpointCtx {
                 },
             };
             let params = Params::from_wasmtime(Arc::from(params));
+            if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(
+                self.max_persisted_value_size_bytes,
+            )
+            .expect("persisted value limit must be positive")
+            .validate(&params)
+            {
+                concepts::persisted_value::report_rejection(
+                    Some(&ExecutionId::TopLevel(self.execution_id)),
+                    Some(&ffqn),
+                    concepts::persisted_value::PersistedValueClass::Params,
+                    concepts::persisted_value::PersistedValueOrigin::Webhook,
+                    exceeded,
+                );
+                return Err(WebhookEndpointFunctionError::ValueTooLarge {
+                    limit: exceeded.limit,
+                });
+            }
             let req_child_exec = AppendRequest {
                 created_at,
                 event: ExecutionRequest::HistoryEvent {
@@ -1645,7 +1729,7 @@ impl WebhookEndpointCtx {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: ffqn.clone(),
-                            params: params.clone(),
+                            params: concepts::storage::PersistedParams::Inline(params.clone()),
                             result: Ok(()),
                         },
                     },
@@ -1674,6 +1758,7 @@ impl WebhookEndpointCtx {
                 deployment_id: self.deployment_id,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
             };
             let db_connection = self.db_pool.connection().await?;
             let appended = vec![req_join_set_created, req_child_exec, req_join_next];
@@ -1766,9 +1851,11 @@ impl WebhookEndpointCtx {
         // link obelisk:log
         log_activities::obelisk::log::log::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
             .map_err(|err| WasmFileError::linking_error("cannot link log activities", err))?;
-        // link obelisk:types
+        // Link type-only interfaces imported by webhook components.
         types::obelisk::types::execution::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
-            .map_err(|err| WasmFileError::linking_error("cannot link obelisk:types", err))?;
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/execution@6.0.0", err))?;
+        types::obelisk::types::function::add_to_linker::<_, WebhookEndpointCtx>(linker, |x| x)
+            .map_err(|err| WasmFileError::linking_error("obelisk:types/function@6.0.0", err))?;
         // link obelisk:webhook/webhook-support (native, no backtrace)
         types::obelisk::webhook::webhook_support::add_to_linker::<_, WebhookEndpointCtx>(
             linker,
@@ -1793,6 +1880,7 @@ impl WebhookEndpointCtx {
     #[expect(clippy::too_many_arguments)]
     fn new<'a>(
         deployment_id: DeploymentId,
+        max_persisted_value_size_bytes: u64,
         config: &Arc<WebhookEndpointConfig>,
         resolved_imports_json: Option<&'a str>,
         engine: &Engine,
@@ -1885,6 +1973,7 @@ impl WebhookEndpointCtx {
             version: None,
             component_id: config.component_id.clone(),
             deployment_id,
+            max_persisted_value_size_bytes,
             next_join_set_idx: JOIN_SET_START_IDX,
             execution_id,
             component_logger: component_logger.clone(),
@@ -2059,6 +2148,7 @@ impl WasiHttpView for WebhookEndpointCtx {
 
 struct RequestHandler {
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     engine: Arc<Engine>,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
@@ -2161,6 +2251,7 @@ impl RequestHandler {
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
                 self.deployment_id,
+                self.max_persisted_value_size_bytes,
                 &found_instance.config,
                 instance_match.handler().resolved_imports_json.as_deref(),
                 &self.engine,
@@ -2327,6 +2418,8 @@ pub(crate) mod tests {
         use tracing::info;
         use utils::sha256sum::calculate_sha256_file;
 
+        const MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 23_456;
+
         struct SetUpFiboWebhook {
             #[expect(dead_code)]
             set: tokio::task::JoinSet<Result<(), WebhookServerError>>,
@@ -2433,6 +2526,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
                 });
                 let (wh_server_state_sender, wh_server_state_watcher) =
                     watch::channel(initial_state);
@@ -2549,7 +2643,7 @@ pub(crate) mod tests {
         #[expand_enum_database]
         #[rstest]
         #[tokio::test]
-        async fn scheduling_should_work(
+        async fn scheduling_inherits_persisted_value_limit(
             db: db_tests::Database,
             #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
             locking_strategy: LockingStrategy,
@@ -2568,6 +2662,16 @@ pub(crate) mod tests {
             let conn = fibo_webhook_harness.db_pool.connection().await.unwrap();
             let create_req = conn.get_create_request(&execution_id).await.unwrap();
             assert_eq!(FIBOA_WORKFLOW_FFQN, create_req.ffqn);
+            assert_eq!(
+                MAX_PERSISTED_VALUE_SIZE_BYTES,
+                create_req.max_persisted_value_size_bytes
+            );
+            let scheduled_by = create_req.scheduled_by.unwrap();
+            let webhook_create_req = conn.get_create_request(&scheduled_by).await.unwrap();
+            assert_eq!(
+                MAX_PERSISTED_VALUE_SIZE_BYTES,
+                webhook_create_req.max_persisted_value_size_bytes
+            );
             let expected_params = Params::from_json_values_test(vec![json!(10), json!(1)]);
             assert_eq!(
                 serde_json::to_string(&expected_params).unwrap(),
@@ -2738,6 +2842,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -2915,6 +3020,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3057,6 +3163,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3222,6 +3329,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     router: Arc::new(router),
                     fn_registry,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3618,6 +3726,7 @@ pub(crate) mod tests {
                         deployment_id: DEPLOYMENT_ID_DUMMY,
                         router: Arc::new(router),
                         fn_registry,
+                        max_persisted_value_size_bytes: u64::MAX,
                     }));
                 let mut server_set = tokio::task::JoinSet::new();
                 server_set.spawn(webhook_trigger::server(

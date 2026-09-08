@@ -623,9 +623,11 @@ impl WorkflowWorker {
             tokio::sync::watch::channel(false);
         let parent = log.parent();
 
+        let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
-            metadata: ExecutionMetadata::empty(),
+            metadata: ExecutionMetadata::empty()
+                .with_max_persisted_value_size_bytes(max_persisted_value_size_bytes),
             component_digest: self.config.component_id.component_digest.clone(),
             ffqn,
             params,
@@ -765,6 +767,9 @@ impl WorkflowWorker {
         };
         let workflow_ctx = WorkflowCtx::new(
             view.deployment_id,
+            ctx.metadata
+                .max_persisted_value_size_bytes()
+                .unwrap_or(u64::MAX),
             db_connection,
             ctx.version,
             ctx.event_history,
@@ -995,6 +1000,10 @@ impl WorkflowWorker {
 
         match worker_result_refactored {
             WorkerResultRefactored::Ok(retval, mut workflow_ctx) => {
+                let retval = concepts::persisted_value::enforce_return_value_limit(
+                    retval,
+                    workflow_ctx.max_persisted_value_size_bytes(),
+                );
                 match Self::close_join_sets(&mut workflow_ctx).await {
                     Ok(Either::Left(CloseJoinSetOk::Ok)) => Ok((
                         Either::Left(WorkerResultOk::RunFinished(RunFinished {
@@ -1181,6 +1190,11 @@ impl WorkflowWorker {
             Err(ApplyError::ConstraintViolation(reason)) => Err(JoinSetCloseError::FatalError {
                 err: FatalError::ConstraintViolation { reason },
             }),
+            Err(ApplyError::PersistedValueTooLarge { value_kind, limit }) => {
+                Err(JoinSetCloseError::FatalError {
+                    err: FatalError::PersistedValueTooLarge { value_kind, limit },
+                })
+            }
             Err(ApplyError::Interrupt(kind)) => Err(JoinSetCloseError::Interrupt(
                 workflow_ctx.version().clone(),
                 kind,
@@ -2256,6 +2270,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -2385,6 +2400,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -2501,6 +2517,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -2568,6 +2585,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -2634,6 +2652,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -2710,6 +2729,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -2772,6 +2792,8 @@ pub(crate) mod tests {
     }
 
     async fn test_schedule_json_inner(db_pool: Arc<dyn DbPool>, sim_clock: SimClock) {
+        const MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 12_345;
+
         test_utils::set_up();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
@@ -2808,6 +2830,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
             })
             .await
             .unwrap();
@@ -2845,6 +2868,10 @@ pub(crate) mod tests {
         assert_eq!(
             create_request.ffqn,
             FunctionFqn::new_static("testing:fibo/fibo", "fibo")
+        );
+        assert_eq!(
+            create_request.max_persisted_value_size_bytes,
+            MAX_PERSISTED_VALUE_SIZE_BYTES
         );
     }
 
@@ -2979,6 +3006,7 @@ pub(crate) mod tests {
                     component_id: worker.config.component_id.clone(),
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 })
                 .await
                 .unwrap();
@@ -3107,6 +3135,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 })
                 .await
                 .unwrap();
@@ -3278,6 +3307,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3387,6 +3417,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3491,6 +3522,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3590,6 +3622,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3716,6 +3749,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3803,6 +3837,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4020,6 +4055,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4306,6 +4342,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 })
                 .await
                 .unwrap();
@@ -4386,6 +4423,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: true,
+                    max_persisted_value_size_bytes: u64::MAX,
                 })
                 .await
                 .unwrap();
@@ -4478,6 +4516,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4644,6 +4683,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4877,6 +4917,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4997,6 +5038,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5078,6 +5120,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5424,6 +5467,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5585,6 +5629,7 @@ pub(crate) mod tests {
                     metadata: ExecutionMetadata::empty(),
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }],
                 backtraces: vec![],
             }],
@@ -5607,6 +5652,7 @@ pub(crate) mod tests {
                     metadata: ExecutionMetadata::empty(),
                     scheduled_by: None,
                     paused: true,
+                    max_persisted_value_size_bytes: u64::MAX,
                 }],
                 backtraces: vec![],
             }],
@@ -5617,6 +5663,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn advance_paused_workflow_can_pause_new_child_execution() {
+        const MAX_PERSISTED_VALUE_SIZE_BYTES: u64 = 54_321;
+
         test_utils::set_up();
 
         let sim_clock = SimClock::epoch();
@@ -5650,6 +5698,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
             })
             .await
             .unwrap();
@@ -5673,6 +5722,12 @@ pub(crate) mod tests {
 
         let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
+        assert!(requested.captured_writes.iter().any(|write| matches!(
+            write,
+            CapturedDbWrite::AppendBatchCreateNewExecution { child_req, .. }
+                if child_req.iter().all(|child| child.max_persisted_value_size_bytes
+                    == MAX_PERSISTED_VALUE_SIZE_BYTES)
+        )));
         let replayed_child_created_at = requested
             .captured_writes
             .iter()
@@ -5729,9 +5784,18 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(create_event.created_at, sim_clock.now());
-        let ExecutionRequest::Created { scheduled_at, .. } = create_event.event else {
+        let ExecutionRequest::Created {
+            scheduled_at,
+            max_persisted_value_size_bytes,
+            ..
+        } = create_event.event
+        else {
             panic!("child execution log must start with Created");
         };
         assert_eq!(scheduled_at, sim_clock.now());
+        assert_eq!(
+            max_persisted_value_size_bytes,
+            MAX_PERSISTED_VALUE_SIZE_BYTES
+        );
     }
 }

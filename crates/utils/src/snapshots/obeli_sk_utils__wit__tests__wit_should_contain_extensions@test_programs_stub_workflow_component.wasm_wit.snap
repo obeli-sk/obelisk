@@ -5,13 +5,14 @@ expression: wit
 package root:component;
 
 world root {
-    import obelisk:types/execution@5.0.0;
-    import obelisk:types/join-set@5.0.0;
+    import obelisk:types/function@6.0.0;
+    import obelisk:types/execution@6.0.0;
+    import obelisk:types/join-set@6.0.0;
     import testing:stub-activity-obelisk-ext/activity;
     import testing:stub-activity-obelisk-stub/activity;
     import testing:stub-activity/activity;
-    import obelisk:types/time@5.0.0;
-    import obelisk:workflow/workflow-support@6.0.0;
+    import obelisk:types/time@6.0.0;
+    import obelisk:workflow/workflow-support@7.0.0;
     import obelisk:log/log@1.0.0;
 
     export testing:stub-workflow/workflow;
@@ -25,7 +26,7 @@ package obelisk:log@1.0.0 {
 }
 
 
-package obelisk:types@5.0.0 {
+package obelisk:types@6.0.0 {
     @since(version = 3.0.0)
     interface time {
         @since(version = 3.0.0)
@@ -52,8 +53,20 @@ package obelisk:types@5.0.0 {
             in(duration),
         }
     }
+    @since(version = 6.0.0)
+    interface function {
+        @since(version = 3.0.0)
+        record function {
+            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+            interface-name: string,
+            /// must not contain dot (`.`)
+            function-name: string,
+        }
+    }
     @since(version = 4.0.0)
     interface execution {
+        use function.{function};
+
         @since(version = 3.0.0)
         record execution-id {
             id: string,
@@ -62,14 +75,6 @@ package obelisk:types@5.0.0 {
         @since(version = 3.0.0)
         record delay-id {
             id: string,
-        }
-
-        @since(version = 3.0.0)
-        record function {
-            /// `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
-            interface-name: string,
-            /// must not contain dot (`.`)
-            function-name: string,
         }
 
         @since(version = 3.0.0)
@@ -96,6 +101,7 @@ package obelisk:types@5.0.0 {
             nondeterminism-detected,
             out-of-fuel,
             cancelled,
+            value-too-large,
             uncategorized,
         }
 
@@ -131,6 +137,7 @@ package obelisk:types@5.0.0 {
             /// Conflict can happen when a second writer attempts to stub a value, while the
             /// value is not equal to the already stubbed value.
             conflict,
+            value-too-large(u64),
         }
 
         @since(version = 4.2.0)
@@ -139,6 +146,13 @@ package obelisk:types@5.0.0 {
             ffqn-parsing-error(string),
             function-not-found,
             type-check-error(string),
+            value-too-large(u64),
+        }
+
+        variant child-execution-request-error {
+            function-not-found,
+            type-check-error(string),
+            value-too-large(u64),
         }
     }
     @since(version = 4.2.0)
@@ -188,11 +202,11 @@ package obelisk:types@5.0.0 {
 }
 
 
-package obelisk:workflow@6.0.0 {
+package obelisk:workflow@7.0.0 {
     interface workflow-support {
-        use obelisk:types/join-set@5.0.0.{join-set};
-        use obelisk:types/time@5.0.0.{schedule-at};
-        use obelisk:types/execution@5.0.0.{delay-id};
+        use obelisk:types/join-set@6.0.0.{join-set};
+        use obelisk:types/time@6.0.0.{schedule-at};
+        use obelisk:types/execution@6.0.0.{delay-id};
 
         variant join-set-create-error {
             conflict,
@@ -218,10 +232,10 @@ package obelisk:workflow@6.0.0 {
 
 package testing:stub-activity-obelisk-ext {
     interface activity {
-        use obelisk:types/join-set@5.0.0.{join-set};
-        use obelisk:types/execution@5.0.0.{execution-id, await-next-extension-error, get-extension-error};
+        use obelisk:types/join-set@6.0.0.{join-set};
+        use obelisk:types/execution@6.0.0.{execution-id, child-execution-request-error, await-next-extension-error, get-extension-error};
 
-        foo-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
+        foo-submit: func(join-set: borrow<join-set>, arg: string) -> result<execution-id, child-execution-request-error>;
 
         foo-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
 
@@ -232,7 +246,7 @@ package testing:stub-activity-obelisk-ext {
 
 package testing:stub-activity-obelisk-stub {
     interface activity {
-        use obelisk:types/execution@5.0.0.{execution-id, stub-error};
+        use obelisk:types/execution@6.0.0.{execution-id, stub-error};
 
         foo-stub: func(execution-id: execution-id, execution-result: result<string>) -> result<_, stub-error>;
     }
@@ -250,7 +264,7 @@ package testing:stub-activity {
 
 package testing:stub-workflow {
     interface workflow {
-        use obelisk:types/execution@5.0.0.{execution-id};
+        use obelisk:types/execution@6.0.0.{execution-id};
 
         submit-stub-await: func(arg: string) -> result<string>;
 
@@ -283,83 +297,83 @@ package testing:stub-workflow {
 
 package testing:stub-workflow-obelisk-ext {
     interface workflow {
-        use obelisk:types/execution@5.0.0.{execution-id};
-        use obelisk:types/join-set@5.0.0.{join-set};
-        use obelisk:types/execution@5.0.0.{await-next-extension-error, get-extension-error};
+        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/join-set@6.0.0.{join-set};
+        use obelisk:types/execution@6.0.0.{await-next-extension-error, get-extension-error, child-execution-request-error};
 
-        submit-stub-await-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
+        submit-stub-await-submit: func(join-set: borrow<join-set>, arg: string) -> result<execution-id, child-execution-request-error>;
 
         submit-stub-await-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
 
         submit-stub-await-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-        submit-await-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
+        submit-await-submit: func(join-set: borrow<join-set>, arg: string) -> result<execution-id, child-execution-request-error>;
 
         submit-await-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
 
         submit-await-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-        submit-await-next-submit: func(join-set: borrow<join-set>, arg: string) -> execution-id;
+        submit-await-next-submit: func(join-set: borrow<join-set>, arg: string) -> result<execution-id, child-execution-request-error>;
 
         submit-await-next-await-next: func(join-set: borrow<join-set>) -> result<result<string>, await-next-extension-error>;
 
         submit-await-next-get: func(execution-id: execution-id) -> result<result<string>, get-extension-error>;
 
-        noret-submit-await-submit: func(join-set: borrow<join-set>) -> execution-id;
+        noret-submit-await-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         noret-submit-await-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         noret-submit-await-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        submit-race-join-next-stub-submit: func(join-set: borrow<join-set>) -> execution-id;
+        submit-race-join-next-stub-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         submit-race-join-next-stub-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         submit-race-join-next-stub-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        submit-race-join-next-stub-error-submit: func(join-set: borrow<join-set>) -> execution-id;
+        submit-race-join-next-stub-error-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         submit-race-join-next-stub-error-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         submit-race-join-next-stub-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        submit-race-join-next-delay-submit: func(join-set: borrow<join-set>) -> execution-id;
+        submit-race-join-next-delay-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         submit-race-join-next-delay-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         submit-race-join-next-delay-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        stub-subworkflow-submit: func(join-set: borrow<join-set>, execution-id: execution-id, retval: string) -> execution-id;
+        stub-subworkflow-submit: func(join-set: borrow<join-set>, execution-id: execution-id, retval: string) -> result<execution-id, child-execution-request-error>;
 
         stub-subworkflow-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         stub-subworkflow-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        await-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> execution-id;
+        await-next-produces-all-processed-error-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         await-next-produces-all-processed-error-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         await-next-produces-all-processed-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        join-next-in-scope-submit: func(join-set: borrow<join-set>) -> execution-id;
+        join-next-in-scope-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         join-next-in-scope-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         join-next-in-scope-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        join-set-close-cancellation-order-submit: func(join-set: borrow<join-set>) -> execution-id;
+        join-set-close-cancellation-order-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         join-set-close-cancellation-order-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         join-set-close-cancellation-order-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        invoke-expect-execution-error-submit: func(join-set: borrow<join-set>) -> execution-id;
+        invoke-expect-execution-error-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         invoke-expect-execution-error-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
         invoke-expect-execution-error-get: func(execution-id: execution-id) -> result<result, get-extension-error>;
 
-        stub-not-found-submit: func(join-set: borrow<join-set>) -> execution-id;
+        stub-not-found-submit: func(join-set: borrow<join-set>) -> result<execution-id, child-execution-request-error>;
 
         stub-not-found-await-next: func(join-set: borrow<join-set>) -> result<result, await-next-extension-error>;
 
@@ -370,33 +384,34 @@ package testing:stub-workflow-obelisk-ext {
 
 package testing:stub-workflow-obelisk-schedule {
     interface workflow {
-        use obelisk:types/execution@5.0.0.{execution-id};
-        use obelisk:types/time@5.0.0.{schedule-at};
+        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/time@6.0.0.{schedule-at};
+        use obelisk:types/execution@6.0.0.{schedule-json-error};
 
-        submit-stub-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
+        submit-stub-await-schedule: func(schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-json-error>;
 
-        submit-await-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
+        submit-await-schedule: func(schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-json-error>;
 
-        submit-await-next-schedule: func(schedule-at: schedule-at, arg: string) -> execution-id;
+        submit-await-next-schedule: func(schedule-at: schedule-at, arg: string) -> result<execution-id, schedule-json-error>;
 
-        noret-submit-await-schedule: func(schedule-at: schedule-at) -> execution-id;
+        noret-submit-await-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        submit-race-join-next-stub-schedule: func(schedule-at: schedule-at) -> execution-id;
+        submit-race-join-next-stub-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        submit-race-join-next-stub-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+        submit-race-join-next-stub-error-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        submit-race-join-next-delay-schedule: func(schedule-at: schedule-at) -> execution-id;
+        submit-race-join-next-delay-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        stub-subworkflow-schedule: func(schedule-at: schedule-at, execution-id: execution-id, retval: string) -> execution-id;
+        stub-subworkflow-schedule: func(schedule-at: schedule-at, execution-id: execution-id, retval: string) -> result<execution-id, schedule-json-error>;
 
-        await-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+        await-next-produces-all-processed-error-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        join-next-in-scope-schedule: func(schedule-at: schedule-at) -> execution-id;
+        join-next-in-scope-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        join-set-close-cancellation-order-schedule: func(schedule-at: schedule-at) -> execution-id;
+        join-set-close-cancellation-order-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        invoke-expect-execution-error-schedule: func(schedule-at: schedule-at) -> execution-id;
+        invoke-expect-execution-error-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
 
-        stub-not-found-schedule: func(schedule-at: schedule-at) -> execution-id;
+        stub-not-found-schedule: func(schedule-at: schedule-at) -> result<execution-id, schedule-json-error>;
     }
 }

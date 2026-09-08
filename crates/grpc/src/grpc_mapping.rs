@@ -494,6 +494,7 @@ impl From<&ExecutionFailureKind> for grpc_gen::ExecutionFailureKind {
             }
             ExecutionFailureKind::OutOfFuel => grpc_gen::ExecutionFailureKind::OutOfFuel,
             ExecutionFailureKind::Cancelled => grpc_gen::ExecutionFailureKind::Cancelled,
+            ExecutionFailureKind::ValueTooLarge => grpc_gen::ExecutionFailureKind::ValueTooLarge,
             ExecutionFailureKind::Uncategorized => grpc_gen::ExecutionFailureKind::Uncategorized,
         }
     }
@@ -512,6 +513,10 @@ impl TryFrom<grpc_gen::ExecutionFailureKind> for ExecutionFailureKind {
             grpc_gen::ExecutionFailureKind::OutOfFuel => Ok(ExecutionFailureKind::OutOfFuel),
 
             grpc_gen::ExecutionFailureKind::Cancelled => Ok(ExecutionFailureKind::Cancelled),
+
+            grpc_gen::ExecutionFailureKind::ValueTooLarge => {
+                Ok(ExecutionFailureKind::ValueTooLarge)
+            }
 
             grpc_gen::ExecutionFailureKind::Uncategorized => {
                 Ok(ExecutionFailureKind::Uncategorized)
@@ -938,6 +943,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                 deployment_id,
                 metadata,
                 scheduled_by,
+                max_persisted_value_size_bytes,
             } => grpc_gen::execution_event::Event::Created(grpc_gen::execution_event::Created {
                 params: Some(
                     to_any(params, format!("urn:obelisk:json:params:{ffqn}"))
@@ -953,6 +959,7 @@ pub fn from_execution_event_to_grpc(event: ExecutionEvent) -> grpc_gen::Executio
                 parent_join_set_id: parent.map(|(_, js)| js.into()),
                 metadata: metadata_to_grpc_map(&metadata),
                 scheduled_by: scheduled_by.map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
+                max_persisted_value_size_bytes,
             }),
             ExecutionRequest::Locked(Locked {
                 component_id,
@@ -1114,6 +1121,7 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                         .try_into()?,
                     metadata: metadata_from_grpc_map(created.metadata)?,
                     scheduled_by: created.scheduled_by.map(TryInto::try_into).transpose()?,
+                    max_persisted_value_size_bytes: if created.max_persisted_value_size_bytes == 0 { u64::MAX } else { created.max_persisted_value_size_bytes },
                 }
             }
             grpc_gen::execution_event::Event::Locked(locked) => ExecutionRequest::Locked(Locked {
@@ -1287,13 +1295,38 @@ fn history_event_from_grpc(
                             ))
                         }
                     };
+                    let params = match (child.params, child.rejected_params) {
+                        (Some(params), None) => concepts::storage::PersistedParams::Inline(
+                            from_any(&params, "Params")?,
+                        ),
+                        (None, Some(rejected)) => concepts::storage::PersistedParams::Rejected {
+                            rejected: concepts::storage::RejectedParams {
+                                sha256: rejected.sha256.parse().map_err(|_| {
+                                    tonic::Status::invalid_argument(
+                                        "invalid child_execution_request.rejected_params.sha256",
+                                    )
+                                })?,
+                                encoded_size_at_least: rejected.encoded_size_at_least,
+                            },
+                        },
+                        (Some(_), Some(_)) => {
+                            return Err(tonic::Status::invalid_argument(
+                                "child execution request has both inline and rejected params",
+                            ));
+                        }
+                        (None, None) => {
+                            return Err(tonic::Status::invalid_argument(
+                                "child execution request params are missing",
+                            ));
+                        }
+                    };
                     JoinSetRequest::ChildExecutionRequest {
                         child_execution_id,
                         target_ffqn: child
                             .function_name
                             .argument_must_exist("function_name")?
                             .try_into()?,
-                        params: from_any(&child.params.argument_must_exist("params")?, "Params")?,
+                        params,
                         result: match child.result.argument_must_exist("result")? {
                             grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Ok(_) => Ok(()),
                             grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Error(err) => Err(match grpc_gen::execution_event::history_event::join_set_request::child_execution_request::error::Kind::try_from(err.kind).map_err(|_| tonic::Status::invalid_argument("invalid child_execution_request.error.kind"))? {
@@ -1301,6 +1334,9 @@ fn history_event_from_grpc(
                                 grpc_gen::execution_event::history_event::join_set_request::child_execution_request::error::Kind::TypeCheckError => ChildExecutionRequestError::TypeCheckError(
                                     err.detail.ok_or_else(|| tonic::Status::invalid_argument("missing child_execution_request.error.detail"))?,
                                 ),
+                                grpc_gen::execution_event::history_event::join_set_request::child_execution_request::error::Kind::ValueTooLarge => ChildExecutionRequestError::ValueTooLarge {
+                                    limit: err.detail.ok_or_else(|| tonic::Status::invalid_argument("missing child_execution_request.error.detail"))?.parse().map_err(|_| tonic::Status::invalid_argument("invalid child_execution_request value limit"))?,
+                                },
                                 grpc_gen::execution_event::history_event::join_set_request::child_execution_request::error::Kind::Unspecified => {
                                     return Err(tonic::Status::invalid_argument("invalid child_execution_request.error.kind"))
                                 }
@@ -1344,6 +1380,11 @@ fn history_event_from_grpc(
             schedule_at: schedule_at_from_grpc(
                 schedule.scheduled_at.argument_must_exist("scheduled_at")?,
             )?,
+            params_hash: schedule
+                .params_hash
+                .map(|hash| hash.parse())
+                .transpose()
+                .map_err(|_| tonic::Status::invalid_argument("invalid schedule.params_hash"))?,
             result: match schedule.result.argument_must_exist("result")? {
                 grpc_gen::execution_event::history_event::schedule::Result::Ok(_) => Ok(()),
                 grpc_gen::execution_event::history_event::schedule::Result::Error(err) => Err(
@@ -1358,6 +1399,9 @@ fn history_event_from_grpc(
                                 err.detail.ok_or_else(|| tonic::Status::invalid_argument("missing schedule.error.detail"))?,
                             )
                         }
+                        grpc_gen::execution_event::history_event::schedule::error::Kind::ValueTooLarge => ScheduleRequestError::ValueTooLarge {
+                            limit: err.detail.ok_or_else(|| tonic::Status::invalid_argument("missing schedule.error.detail"))?.parse().map_err(|_| tonic::Status::invalid_argument("invalid schedule value limit"))?,
+                        },
                         grpc_gen::execution_event::history_event::schedule::error::Kind::Unspecified => {
                             return Err(tonic::Status::invalid_argument("invalid schedule.error.kind"))
                         }
@@ -1398,6 +1442,9 @@ fn history_event_from_grpc(
                         grpc_gen::execution_event::history_event::stub::error::Kind::Conflict => {
                             StubError::Conflict
                         }
+                        grpc_gen::execution_event::history_event::stub::error::Kind::ValueTooLarge => StubError::ValueTooLarge {
+                            limit: err.detail.ok_or_else(|| tonic::Status::invalid_argument("missing stub.error.detail"))?.parse().map_err(|_| tonic::Status::invalid_argument("invalid stub value limit"))?,
+                        },
                         grpc_gen::execution_event::history_event::stub::error::Kind::Unspecified => {
                             return Err(tonic::Status::invalid_argument("invalid stub.error.kind"))
                         }
@@ -1499,14 +1546,17 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                                     id: child_execution_id.to_string(),
                                 }),
                                 function_name: Some(grpc_gen::FunctionName::from(target_ffqn)),
-                                params: Some(
-                                    to_any(
-                                        params,
-                                        "urn:obelisk:json:params:child-execution-request"
-                                            .to_string(),
-                                    )
-                                    .expect("Params must be JSON-serializable"),
-                                ),
+                                params: match &params {
+                                    concepts::storage::PersistedParams::Inline(params) => Some(
+                                        to_any(
+                                            params,
+                                            "urn:obelisk:json:params:child-execution-request"
+                                                .to_string(),
+                                        )
+                                        .expect("Params must be JSON-serializable"),
+                                    ),
+                                    concepts::storage::PersistedParams::Rejected { .. } => None,
+                                },
                                 result: Some(match result {
                                     Ok(()) => grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Ok(
                                         grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Ok {},
@@ -1523,7 +1573,22 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                                             detail: Some(err),
                                         },
                                     ),
+                                    Err(ChildExecutionRequestError::ValueTooLarge { limit }) => grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Error(
+                                        grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Error {
+                                            kind: grpc_gen::execution_event::history_event::join_set_request::child_execution_request::error::Kind::ValueTooLarge.into(),
+                                            detail: Some(limit.to_string()),
+                                        },
+                                    ),
                                 }),
+                                rejected_params: match params {
+                                    concepts::storage::PersistedParams::Inline(_) => None,
+                                    concepts::storage::PersistedParams::Rejected { rejected } => Some(
+                                        history_event::join_set_request::child_execution_request::RejectedParams {
+                                            sha256: rejected.sha256.to_string(),
+                                            encoded_size_at_least: rejected.encoded_size_at_least,
+                                        },
+                                    ),
+                                },
                             },
                         ),
                     ),
@@ -1570,6 +1635,7 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
             HistoryEvent::Schedule {
                 execution_id,
                 schedule_at: scheduled_at,
+                params_hash,
                 result,
             } => history_event::Event::Schedule(history_event::Schedule {
                 execution_id: Some(grpc_gen::ExecutionId {
@@ -1596,7 +1662,16 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                             },
                         )
                     }
+                    Err(ScheduleRequestError::ValueTooLarge { limit }) => {
+                        grpc_gen::execution_event::history_event::schedule::Result::Error(
+                            grpc_gen::execution_event::history_event::schedule::Error {
+                                kind: grpc_gen::execution_event::history_event::schedule::error::Kind::ValueTooLarge.into(),
+                                detail: Some(limit.to_string()),
+                            },
+                        )
+                    }
                 }),
+                params_hash: params_hash.map(|hash| hash.to_string()),
             }),
             HistoryEvent::Stub {
                 target_execution_id,
@@ -1630,6 +1705,14 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                             grpc_gen::execution_event::history_event::stub::Error {
                                 kind: grpc_gen::execution_event::history_event::stub::error::Kind::Conflict.into(),
                                 detail: None,
+                            },
+                        )
+                    }
+                    Err(StubError::ValueTooLarge { limit }) => {
+                        grpc_gen::execution_event::history_event::stub::Result::Error(
+                            grpc_gen::execution_event::history_event::stub::Error {
+                                kind: grpc_gen::execution_event::history_event::stub::error::Kind::ValueTooLarge.into(),
+                                detail: Some(limit.to_string()),
                             },
                         )
                     }
@@ -1973,6 +2056,7 @@ fn create_request_to_grpc(
         scheduled_by: req
             .scheduled_by
             .map(|id| grpc_gen::ExecutionId { id: id.to_string() }),
+        max_persisted_value_size_bytes: req.max_persisted_value_size_bytes,
     }
 }
 
@@ -2023,6 +2107,11 @@ impl TryFrom<grpc_gen::CreateExecutionRequest> for CreateRequest {
             metadata: metadata_from_grpc_map(value.metadata)?,
             scheduled_by: value.scheduled_by.map(TryInto::try_into).transpose()?,
             paused: value.paused,
+            max_persisted_value_size_bytes: if value.max_persisted_value_size_bytes == 0 {
+                u64::MAX
+            } else {
+                value.max_persisted_value_size_bytes
+            },
         })
     }
 }
@@ -2331,5 +2420,46 @@ pub fn captured_write_from_grpc(
                 parent,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concepts::Params;
+
+    #[test]
+    fn legacy_grpc_created_event_with_zero_limit_is_unlimited() {
+        let event = ExecutionEvent {
+            created_at: DateTime::UNIX_EPOCH,
+            event: ExecutionRequest::Created {
+                ffqn: FunctionFqn::new_static("ns:pkg/ifc", "fn"),
+                params: Params::empty(),
+                parent: None,
+                scheduled_at: DateTime::UNIX_EPOCH,
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DeploymentId::from_parts(0, 0),
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_by: None,
+                max_persisted_value_size_bytes: 64,
+            },
+            backtrace_id: None,
+            version: Version::new(0),
+        };
+        let mut grpc = from_execution_event_to_grpc(event);
+        let Some(grpc_gen::execution_event::Event::Created(created)) = grpc.event.as_mut() else {
+            panic!("expected created event")
+        };
+        created.max_persisted_value_size_bytes = 0;
+
+        let decoded = ExecutionEvent::try_from(grpc).unwrap();
+        let ExecutionRequest::Created {
+            max_persisted_value_size_bytes,
+            ..
+        } = decoded.event
+        else {
+            panic!("expected created event")
+        };
+        assert_eq!(u64::MAX, max_persisted_value_size_bytes);
     }
 }

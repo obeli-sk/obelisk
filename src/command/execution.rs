@@ -537,19 +537,24 @@ fn print_retval(result: &RetValWire, json: bool) -> anyhow::Result<()> {
                 return Err(AlreadyPrintedError.into());
             }
             RetValWire::ExecutionFailed(failure) => {
-                let mut message = format!("Execution failure ({})", failure.kind);
-                if let Some(reason) = &failure.reason {
-                    write!(&mut message, ": `{reason}`").expect("writing to string");
-                }
-                if let Some(detail) = &failure.detail {
-                    write!(&mut message, "\n{detail}").expect("writing to string");
-                }
+                let message = format_execution_failure(failure);
                 println!("Execution finished: {message}");
                 return Err(AlreadyPrintedError.into());
             }
         }
     }
     Ok(())
+}
+
+fn format_execution_failure(failure: &concepts::FinishedExecutionFailure) -> String {
+    let mut message = format!("Execution failure ({})", failure.kind);
+    if let Some(reason) = &failure.reason {
+        write!(&mut message, ": `{reason}`").expect("writing to string");
+    }
+    if let Some(detail) = &failure.detail {
+        write!(&mut message, "\n{detail}").expect("writing to string");
+    }
+    message
 }
 
 async fn replay(
@@ -783,10 +788,24 @@ async fn advance(
 
 #[cfg(test)]
 mod tests {
-    use super::{pause_delays_in_replay, pause_submitted_in_replay};
+    use super::{format_execution_failure, pause_delays_in_replay, pause_submitted_in_replay};
     use crate::server::web_api_server::{AdvanceRequestSer, CapturedWriteSer};
     use chrono::{DateTime, Utc};
     use serde_json::json;
+
+    #[test]
+    fn value_too_large_failure_names_kind_and_limit() {
+        let failure = concepts::FinishedExecutionFailure {
+            kind: concepts::ExecutionFailureKind::ValueTooLarge,
+            reason: Some("workflow result exceeds the 1048576-byte persisted value limit".into()),
+            detail: None,
+        };
+
+        assert_eq!(
+            format_execution_failure(&failure),
+            "Execution failure (ValueTooLarge): `workflow result exceeds the 1048576-byte persisted value limit`"
+        );
+    }
 
     #[test]
     fn pause_submitted_marks_only_new_child_requests_as_paused() {
@@ -896,7 +915,9 @@ mod tests {
                                 request: concepts::storage::JoinSetRequest::ChildExecutionRequest {
                                     child_execution_id,
                                     target_ffqn: "testing:fibo/fibo.fibo".parse().unwrap(),
-                                    params: concepts::Params::empty(),
+                                    params: concepts::storage::PersistedParams::Inline(
+                                        concepts::Params::empty(),
+                                    ),
                                     result: Ok(()),
                                 },
                             },

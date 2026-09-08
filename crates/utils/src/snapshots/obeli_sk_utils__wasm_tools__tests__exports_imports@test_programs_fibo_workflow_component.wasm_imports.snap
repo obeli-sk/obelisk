@@ -3,8 +3,8 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:types/join-set@5.0.0.[method]join-set.last-id": {
-    "ffqn": "obelisk:types/join-set@5.0.0.[method]join-set.last-id",
+  "obelisk:types/join-set@6.0.0.[method]join-set.last-id": {
+    "ffqn": "obelisk:types/join-set@6.0.0.[method]join-set.last-id",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -21,8 +21,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@6.0.0.execution-id-generate": {
-    "ffqn": "obelisk:workflow/workflow-support@6.0.0.execution-id-generate",
+  "obelisk:workflow/workflow-support@7.0.0.execution-id-generate": {
+    "ffqn": "obelisk:workflow/workflow-support@7.0.0.execution-id-generate",
     "parameter_types": [],
     "return_type": {
       "non_extendable": {
@@ -33,8 +33,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@6.0.0.get-result-json": {
-    "ffqn": "obelisk:workflow/workflow-support@6.0.0.get-result-json",
+  "obelisk:workflow/workflow-support@7.0.0.get-result-json": {
+    "ffqn": "obelisk:workflow/workflow-support@7.0.0.get-result-json",
     "parameter_types": [
       {
         "type_wrapper": "record { id: string }",
@@ -51,8 +51,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@6.0.0.join-next": {
-    "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-next",
+  "obelisk:workflow/workflow-support@7.0.0.join-next": {
+    "ffqn": "obelisk:workflow/workflow-support@7.0.0.join-next",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -69,8 +69,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@6.0.0.join-set-create": {
-    "ffqn": "obelisk:workflow/workflow-support@6.0.0.join-set-create",
+  "obelisk:workflow/workflow-support@7.0.0.join-set-create": {
+    "ffqn": "obelisk:workflow/workflow-support@7.0.0.join-set-create",
     "parameter_types": [],
     "return_type": {
       "non_extendable": {
@@ -81,8 +81,8 @@ expression: imports
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@6.0.0.schedule-json": {
-    "ffqn": "obelisk:workflow/workflow-support@6.0.0.schedule-json",
+  "obelisk:workflow/workflow-support@7.0.0.schedule-json": {
+    "ffqn": "obelisk:workflow/workflow-support@7.0.0.schedule-json",
     "parameter_types": [
       {
         "type_wrapper": "record { id: string }",
@@ -107,15 +107,15 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<_, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string) }>",
+        "type_wrapper": "result<_, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
         "wit_type": "result<_, schedule-json-error>"
       }
     },
     "extension": null,
     "submittable": false
   },
-  "obelisk:workflow/workflow-support@6.0.0.submit-json": {
-    "ffqn": "obelisk:workflow/workflow-support@6.0.0.submit-json",
+  "obelisk:workflow/workflow-support@7.0.0.submit-json": {
+    "ffqn": "obelisk:workflow/workflow-support@7.0.0.submit-json",
     "parameter_types": [
       {
         "type_wrapper": "borrow",
@@ -135,7 +135,7 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string) }>",
+        "type_wrapper": "result<record { id: string }, variant { ffqn-parsing-error(string), function-not-found, type-check-error(string), value-too-large(u64) }>",
         "wit_type": "result<execution-id, submit-json-error>"
       }
     },
@@ -176,8 +176,8 @@ expression: imports
     ],
     "return_type": {
       "non_extendable": {
-        "type_wrapper": "record { id: string }",
-        "wit_type": "execution-id"
+        "type_wrapper": "result<record { id: string }, variant { function-not-found, type-check-error(string), value-too-large(u64) }>",
+        "wit_type": "result<execution-id, child-execution-request-error>"
       }
     },
     "extension": "submit",

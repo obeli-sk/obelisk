@@ -117,6 +117,25 @@ nix run github:obeli-sk/obelisk/latest
 
 For more options see [Installation](https://obeli.sk/install/).
 
+### Persisted value limit
+
+The server defaults to a 1 MiB compact JSON-encoded limit for each newly
+persisted execution parameter array, result, stub result, persisted history
+value, or failure diagnostic. Self-hosted operators can set a positive value in
+`server.toml`:
+
+```toml
+[limits]
+max_persisted_value_size_bytes = 1048576
+```
+
+Each top-level execution snapshots the effective limit. Child and scheduled
+executions inherit it, so a configuration change applies only to new execution
+trees and cannot change replay behavior. Existing databases require no schema
+migration: executions created by older releases retain their legacy unlimited
+contract. `MAX_GRPC_MESSAGE_SIZE` is a separate, larger transport safeguard and
+does not relax the persisted-value limit.
+
 ## Getting Started
 
 Check out the [Getting Started Guide](https://obeli.sk/docs/latest/js/getting-started/) for details.

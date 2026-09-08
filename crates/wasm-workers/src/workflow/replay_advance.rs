@@ -372,6 +372,7 @@ fn normalize_create_request_for_matching(req: CreateRequest) -> CreateRequest {
         metadata,
         scheduled_by,
         paused: _, // Ignore for comparison, user's flag will make it to the database in `merge_requested_overrides_into_fresh_write`
+        max_persisted_value_size_bytes,
     } = req;
     CreateRequest {
         created_at: DateTime::UNIX_EPOCH,
@@ -385,6 +386,7 @@ fn normalize_create_request_for_matching(req: CreateRequest) -> CreateRequest {
         metadata,
         scheduled_by,
         paused: false,
+        max_persisted_value_size_bytes,
     }
 }
 
@@ -399,6 +401,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             deployment_id,
             metadata,
             scheduled_by,
+            max_persisted_value_size_bytes,
         } => ExecutionRequest::Created {
             ffqn,
             params,
@@ -408,6 +411,7 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
             deployment_id,
             metadata,
             scheduled_by,
+            max_persisted_value_size_bytes,
         },
         ExecutionRequest::Locked(mut locked) => {
             locked.lock_expires_at = DateTime::UNIX_EPOCH;
@@ -499,10 +503,12 @@ fn normalize_history_event_for_matching(event: HistoryEvent) -> HistoryEvent {
         HistoryEvent::Schedule {
             execution_id,
             schedule_at,
+            params_hash,
             result,
         } => HistoryEvent::Schedule {
             execution_id,
             schedule_at: normalize_schedule_at_for_matching(schedule_at),
+            params_hash,
             result,
         },
         HistoryEvent::Stub {

@@ -41,7 +41,8 @@ impl GuestNesting for Component {
         };
         let join_set = join_set_create();
         for _ in 0..fiboas {
-            fiboa_concurrent_submit(&join_set, n, iterations_per_fiboa);
+            fiboa_concurrent_submit(&join_set, n, iterations_per_fiboa)
+                .expect("submit must succeed");
         }
         let mut last = 0;
         for _ in 0..fiboas {

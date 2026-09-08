@@ -581,6 +581,7 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
+        let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         let already_finished_result = log.as_finished_result();
         let (ffqn, params) = Self::boa_invocation(
             log.params(),
@@ -616,6 +617,10 @@ impl WorkflowJsWorker {
                     } => {
                         let (retval, fatal_error_from_wit) =
                             transform_to_append_finished(retval, &version, &self.user_return_type);
+                        let retval = concepts::persisted_value::enforce_return_value_limit(
+                            retval,
+                            max_persisted_value_size_bytes,
+                        );
                         if fatal_error_from_wit.is_some() {
                             // TODO: can both fatal errors be present?
                             fatal_error = fatal_error_from_wit;
@@ -662,6 +667,7 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
+        let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         if requested.captured_writes.is_empty() {
             return Err(AdvanceError::NoWrites);
         }
@@ -708,7 +714,10 @@ impl WorkflowJsWorker {
         {
             let (retval_transformed, _fatal_error_from_wit) =
                 transform_to_append_finished(retval.clone(), version, &self.user_return_type);
-            *retval = retval_transformed;
+            *retval = concepts::persisted_value::enforce_return_value_limit(
+                retval_transformed,
+                max_persisted_value_size_bytes,
+            );
         }
         Ok(WorkflowWorker::advance_from_log(
             db_conn.as_ref(),
@@ -1722,6 +1731,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -1948,6 +1958,24 @@ mod tests {
             .await
         }
 
+        async fn with_stub_activity_and_limit(
+            db_pool: Arc<dyn DbPool>,
+            js_source: &str,
+            fn_name: &'static str,
+            max_persisted_value_size_bytes: u64,
+        ) -> Self {
+            Self::new_with_return_type(
+                db_pool,
+                js_source,
+                fn_name,
+                TestActivities::Stub,
+                JoinNextBlockingStrategy::Interrupt,
+                default_return_type(),
+                max_persisted_value_size_bytes,
+            )
+            .await
+        }
+
         /// Create harness with stub activity registered and a given blocking strategy.
         async fn with_stub_activity_strategy(
             db_pool: Arc<dyn DbPool>,
@@ -1995,6 +2023,7 @@ mod tests {
                 activities,
                 join_next_blocking_strategy,
                 default_return_type(),
+                u64::MAX,
             )
             .await
         }
@@ -2006,6 +2035,7 @@ mod tests {
             activities: TestActivities,
             join_next_blocking_strategy: JoinNextBlockingStrategy,
             return_type: ReturnTypeExtendable,
+            max_persisted_value_size_bytes: u64,
         ) -> Self {
             use crate::activity::activity_worker::test::compile_activity_stub;
 
@@ -2088,6 +2118,7 @@ mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes,
                 })
                 .await
                 .unwrap();
@@ -2295,6 +2326,7 @@ mod tests {
             TestActivities::ChildErrorProjections,
             JoinNextBlockingStrategy::Interrupt,
             projection.parent_return_type(),
+            u64::MAX,
         )
         .await;
 
@@ -2400,6 +2432,63 @@ mod tests {
             "lastId should be a child execution id, got {result}"
         );
         assert_eq!(json!("stubbed-result-42"), result["result"]);
+        drop(harness);
+        db_close.close().await;
+    }
+
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_rejects_oversized_stub_without_persisting_value(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = r"
+        export default function test_stub_limit(params) {
+            const js = obelisk.createJoinSet();
+            const execId = js.submit('testing:stub-activity/activity.foo', ['test-param']);
+            try {
+                obelisk.stub(execId, {'ok': 'sensitive-' + 'x'.repeat(2048)});
+                return JSON.stringify({ rejected: false });
+            } catch (e) {
+                return JSON.stringify({ rejected: true, message: e.message });
+            }
+        }";
+
+        let harness = JsWorkflowTestHarness::with_stub_activity_and_limit(
+            db_pool,
+            js_source,
+            "test-stub-limit",
+            512,
+        )
+        .await;
+        harness.tick().await;
+        harness.tick().await;
+
+        let result = harness.get_result_json().await;
+        assert_eq!(json!(true), result["rejected"]);
+        assert!(result["message"].as_str().unwrap().contains("512"));
+
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        assert!(log.events.iter().any(|event| matches!(
+            &event.event,
+            ExecutionRequest::HistoryEvent {
+                event: HistoryEvent::Stub {
+                    result: Err(concepts::storage::StubError::ValueTooLarge { limit: 512 }),
+                    ..
+                }
+            }
+        )));
+        assert!(
+            !serde_json::to_string(&log.events)
+                .unwrap()
+                .contains("sensitive-")
+        );
+
         drop(harness);
         db_close.close().await;
     }
@@ -2666,6 +2755,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -2859,6 +2949,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3413,6 +3504,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3513,6 +3605,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3602,6 +3695,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -3995,6 +4089,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4284,6 +4379,7 @@ mod tests {
                 deployment_id: original_deployment_id,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4422,6 +4518,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4554,6 +4651,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4721,6 +4819,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4845,6 +4944,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4948,6 +5048,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5038,6 +5139,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5165,6 +5267,7 @@ mod tests {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: true,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         let execution_id = ExecutionId::from_parts(0, execution_idx.into());
@@ -5264,6 +5367,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5376,6 +5480,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5468,6 +5573,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5568,6 +5674,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5823,6 +5930,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -5964,6 +6072,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

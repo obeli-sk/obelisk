@@ -705,6 +705,33 @@ impl TestServer {
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
 
+    async fn start_with_server_lines_and_component(
+        ip: String,
+        server_toml_lines: &str,
+        section: &str,
+        component_name: &str,
+    ) -> Self {
+        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, server_toml_lines);
+        let mut deployment_doc = std::fs::read_to_string(&deployment_path)
+            .unwrap()
+            .parse::<DocumentMut>()
+            .unwrap();
+        deployment_doc
+            .as_table_mut()
+            .retain(|key, _| key == section);
+        deployment_doc[section]
+            .as_array_of_tables_mut()
+            .unwrap()
+            .retain(|table| {
+                ["name", "ffqn"].into_iter().any(|key| {
+                    table.get(key).and_then(toml_edit::Item::as_str) == Some(component_name)
+                })
+            });
+        std::fs::write(&deployment_path, deployment_doc.to_string()).unwrap();
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
     /// Start a server with an empty deployment (no components, no CAS blobs), so a later
     /// `deployment apply` exercises the upload-then-submit path from a clean store.
     async fn start_empty(ip: String) -> Self {
@@ -862,6 +889,30 @@ impl TestServer {
         } = self;
         drop(termination_sender); // signals shutdown
         let _ = server_handle.await;
+    }
+
+    async fn restart_with_persisted_value_limit(self, limit: i64) -> Self {
+        let Self {
+            ip,
+            termination_sender,
+            server_handle,
+            _tmp_dir: tmp_dir,
+            ..
+        } = self;
+        drop(termination_sender);
+        let _ = server_handle.await;
+
+        let server_path = tmp_dir.path().join("server.toml");
+        let mut server_doc = std::fs::read_to_string(&server_path)
+            .unwrap()
+            .parse::<DocumentMut>()
+            .unwrap();
+        server_doc["limits"]["max_persisted_value_size_bytes"] = value(limit);
+        std::fs::write(&server_path, server_doc.to_string()).unwrap();
+
+        let deployment_path = tmp_dir.path().join("deployment.toml");
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
 
     // ---- helper methods ------------------------------------------------
@@ -1506,6 +1557,7 @@ fn grpc_result_to_json(value: grpc::grpc_gen::SupportedFunctionResult) -> serde_
                 }
                 grpc::grpc_gen::ExecutionFailureKind::OutOfFuel => "out_of_fuel",
                 grpc::grpc_gen::ExecutionFailureKind::Cancelled => "cancelled",
+                grpc::grpc_gen::ExecutionFailureKind::ValueTooLarge => "value_too_large",
                 grpc::grpc_gen::ExecutionFailureKind::Uncategorized => "uncategorized",
             }
             .to_string();
@@ -1765,6 +1817,7 @@ impl TestServer {
             metadata: ExecutionMetadata::empty(),
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         let parent_id = ExecutionId::generate();
@@ -1800,7 +1853,7 @@ impl TestServer {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_id.clone(),
                             target_ffqn: CHILD_FFQN,
-                            params: Params::empty(),
+                            params: concepts::storage::PersistedParams::Inline(Params::empty()),
                             result: Ok(()),
                         },
                     },
@@ -3823,6 +3876,109 @@ async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
     .await;
 }
 
+async fn replay_and_advance_oversized_result(client: TestExecutionClient, addr: String) {
+    let server = TestServer::start_with_server_lines_and_component(
+        addr,
+        "limits.max_persisted_value_size_bytes = 256",
+        "workflow_js",
+        "test_make_record_workflow",
+    )
+    .await;
+    let stepped = client
+        .step_execution_until_finished(
+            &server,
+            "testing:integration/workflow-make-record.make-record",
+            vec![json!("x".repeat(240))],
+        )
+        .await;
+    assert_eq!(stepped.steps, 1);
+    let failure_key = match client {
+        TestExecutionClient::Grpc => "execution_failure",
+        TestExecutionClient::WebApi => "execution_failed",
+    };
+    assert_eq!(
+        stepped.retval,
+        serde_json::Value::Object(serde_json::Map::from_iter([(
+            failure_key.to_string(),
+            json!({
+                "kind": "value_too_large",
+                "reason": "function result exceeds the persisted value limit",
+                "detail": "limit: 256 bytes"
+            }),
+        )]))
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn replay_and_advance_oversized_result_grpc() {
+    replay_and_advance_oversized_result(TestExecutionClient::Grpc, test_addr!(126)).await;
+}
+
+#[tokio::test]
+async fn replay_and_advance_oversized_result_webapi() {
+    replay_and_advance_oversized_result(TestExecutionClient::WebApi, test_addr!(127)).await;
+}
+
+#[tokio::test]
+async fn replay_after_restart_uses_original_persisted_value_limit() {
+    let server = TestServer::start_with_server_lines_and_component(
+        test_addr!(128),
+        "limits.max_persisted_value_size_bytes = 256",
+        "workflow_js",
+        "test_make_record_workflow",
+    )
+    .await;
+    let execution_id = server.generate_execution_id().await;
+    let submit = server
+        .submit_paused_webapi(
+            &execution_id,
+            "testing:integration/workflow-make-record.make-record",
+            vec![json!("x".repeat(240))],
+        )
+        .await;
+    assert_eq!(submit.status(), reqwest::StatusCode::CREATED);
+
+    let server = server.restart_with_persisted_value_limit(1024).await;
+    let replay = server.replay(&execution_id).await;
+    assert_eq!(replay.status(), reqwest::StatusCode::OK);
+    let replay: Value = replay.json().await.unwrap();
+    assert_eq!(replay["type"], "advanceable");
+    let captured_writes = replay["captured_writes"].clone();
+    assert!(!captured_writes.as_array().unwrap().is_empty());
+
+    let advance = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{execution_id}/advance",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .json(&json!({
+            "captured_writes": captured_writes,
+            "persist_backtrace": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(advance.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        advance.json::<Value>().await.unwrap(),
+        json!({
+            "type": "finished",
+            "value": {
+                "execution_failed": {
+                    "kind": "value_too_large",
+                    "reason": "function result exceeds the persisted value limit",
+                    "detail": "limit: 256 bytes"
+                }
+            }
+        })
+    );
+
+    server.shutdown().await;
+}
+
 // ---- Workflow: replay failed (type mismatch) with advance --force ----
 
 const REPLAY_FAILED_FFQN: &str = "testing:integration/workflow-return-wrong-type.return-wrong-type";
@@ -4101,6 +4257,103 @@ async fn submit_nonexistent_function_returns_404() {
 }
 
 #[tokio::test]
+async fn grpc_submit_enforces_exact_persisted_value_boundary() {
+    let server = TestServer::start_with_server_lines_and_component(
+        test_addr!(124),
+        "limits.max_persisted_value_size_bytes = 16",
+        "activity_exec",
+        "testing:integration/exec-greet.greet-inline",
+    )
+    .await;
+    let mut grpc_client =
+        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap();
+    let ffqn = "testing:integration/exec-greet.greet-inline";
+
+    let accepted_id = server.generate_execution_id().await;
+    let accepted = grpc_client
+        .submit(SubmitRequest {
+            execution_id: Some(GrpcExecutionId { id: accepted_id }),
+            function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
+            params: Some(
+                grpc::grpc_mapping::to_any(
+                    vec![json!("secretmarker")],
+                    format!("urn:obelisk:json:params:{ffqn}"),
+                )
+                .unwrap(),
+            ),
+            paused: true,
+        })
+        .await
+        .expect("a 16-byte compact JSON parameter array must be accepted")
+        .into_inner();
+    assert_eq!(
+        accepted.outcome(),
+        grpc::grpc_gen::submit_response::Outcome::Created
+    );
+
+    let rejected_id = server.generate_execution_id().await;
+    let error = grpc_client
+        .submit(SubmitRequest {
+            execution_id: Some(GrpcExecutionId { id: rejected_id }),
+            function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
+            params: Some(
+                grpc::grpc_mapping::to_any(
+                    vec![json!("secretmarkerx")],
+                    format!("urn:obelisk:json:params:{ffqn}"),
+                )
+                .unwrap(),
+            ),
+            paused: true,
+        })
+        .await
+        .expect_err("a 17-byte compact JSON parameter array must be rejected");
+    assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+    assert_eq!(
+        error.message(),
+        "execution parameters exceed the 16-byte persisted value limit"
+    );
+    assert!(!error.message().contains("secretmarkerx"));
+    assert_eq!(server.list_executions().await.as_array().unwrap().len(), 1);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_submit_enforces_exact_persisted_value_boundary() {
+    let server = TestServer::start_with_server_lines_and_component(
+        test_addr!(125),
+        "limits.max_persisted_value_size_bytes = 16",
+        "activity_exec",
+        "testing:integration/exec-greet.greet-inline",
+    )
+    .await;
+    let ffqn = "testing:integration/exec-greet.greet-inline";
+
+    let accepted_id = server.generate_execution_id().await;
+    let accepted = server
+        .submit_paused_webapi(&accepted_id, ffqn, vec![json!("secretmarker")])
+        .await;
+    assert_eq!(accepted.status(), reqwest::StatusCode::CREATED);
+
+    let rejected_id = server.generate_execution_id().await;
+    let rejected = server
+        .submit_paused_webapi(&rejected_id, ffqn, vec![json!("secretmarkerx")])
+        .await;
+    assert_eq!(rejected.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    let error = rejected.json::<Value>().await.unwrap();
+    assert_eq!(
+        error,
+        json!({ "err": "execution parameters exceed the 16-byte persisted value limit" })
+    );
+    assert!(!error.to_string().contains("secretmarkerx"));
+    assert_eq!(server.list_executions().await.as_array().unwrap().len(), 1);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn replay_nonexistent_execution_returns_404() {
     let server = TestServer::start(test_addr!(14)).await;
     let resp = server.replay("E_01AAAAAAAAAAAAAAAAAAAAAAAA").await;
@@ -4183,6 +4436,7 @@ async fn webhook_js_get_status_cancelling() {
             metadata: ExecutionMetadata::empty(),
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         let parent_id = ExecutionId::generate();
@@ -4218,7 +4472,7 @@ async fn webhook_js_get_status_cancelling() {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_id.clone(),
                             target_ffqn: CHILD_FFQN,
-                            params: Params::empty(),
+                            params: concepts::storage::PersistedParams::Inline(Params::empty()),
                             result: Ok(()),
                         },
                     },

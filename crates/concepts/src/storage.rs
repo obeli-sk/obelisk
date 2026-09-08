@@ -124,10 +124,11 @@ impl ExecutionLog {
     pub fn get_create_request(&self) -> CreateRequest {
         assert_matches!(self.events.first().cloned(), Some(ExecutionEvent {
             event:ExecutionRequest::Created{
-                ffqn,params,parent,scheduled_at,component_id,deployment_id,metadata,scheduled_by},
+                ffqn,params,parent,scheduled_at,component_id,deployment_id,metadata,scheduled_by,max_persisted_value_size_bytes},
                 created_at, .. }) => CreateRequest { created_at, execution_id:
                     self.execution_id.clone(), ffqn, params, parent, scheduled_at,
-                    component_id, deployment_id, metadata, scheduled_by, paused: false })
+                    component_id, deployment_id, metadata, scheduled_by, paused: false,
+                    max_persisted_value_size_bytes })
     }
 
     #[must_use]
@@ -144,6 +145,17 @@ impl ExecutionLog {
             event: ExecutionRequest::Created { params, .. },
             ..
         }) => params)
+    }
+
+    #[must_use]
+    pub fn max_persisted_value_size_bytes(&self) -> u64 {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionRequest::Created {
+                max_persisted_value_size_bytes,
+                ..
+            },
+            ..
+        }) => *max_persisted_value_size_bytes)
     }
 
     #[must_use]
@@ -390,6 +402,7 @@ pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created {
     deployment_id: DeploymentId::from_parts(0, 0),
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
+    max_persisted_value_size_bytes: u64::MAX,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent {
     event: HistoryEvent::JoinSetCreate {
@@ -427,6 +440,8 @@ pub enum ExecutionRequest {
         #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
+        #[serde(default = "crate::persisted_value::legacy_unlimited_persisted_value_size")]
+        max_persisted_value_size_bytes: u64,
     },
     Locked(Locked),
     /// Releases a lock.
@@ -496,6 +511,163 @@ pub enum ExecutionRequest {
     /// - [`PendingState::Finished`] is rejected (already terminal).
     #[display("CancellationRequested")]
     CancellationRequested,
+}
+
+impl ExecutionRequest {
+    #[must_use]
+    pub const fn persisted_value_class(
+        &self,
+    ) -> Option<crate::persisted_value::PersistedValueClass> {
+        use crate::persisted_value::PersistedValueClass;
+
+        match self {
+            Self::Created { .. }
+            | Self::HistoryEvent {
+                event:
+                    HistoryEvent::JoinSetRequest {
+                        request: JoinSetRequest::ChildExecutionRequest { .. },
+                        ..
+                    },
+            } => Some(PersistedValueClass::Params),
+            Self::Finished { .. } => Some(PersistedValueClass::Result),
+            Self::HistoryEvent {
+                event: HistoryEvent::Persist { .. },
+            } => Some(PersistedValueClass::Persist),
+            Self::TemporarilyFailed { .. } => Some(PersistedValueClass::FailureDetail),
+            _ => None,
+        }
+    }
+
+    pub fn validate_persisted_values(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        match self {
+            Self::Created { params, .. } => {
+                validate_logical_value(params, max_persisted_value_size_bytes)
+            }
+            Self::TemporarilyFailed { reason, detail, .. } => {
+                crate::persisted_value::validate_failure_diagnostics(
+                    &Some(reason.to_string()),
+                    detail,
+                    max_persisted_value_size_bytes,
+                )
+                .map(|_| ())
+                .map_err(|_| persisted_value_validation_failed())
+            }
+            Self::Finished { retval, .. } => {
+                validate_logical_value(retval, max_persisted_value_size_bytes)
+            }
+            Self::HistoryEvent {
+                event: HistoryEvent::Persist { value, .. },
+            } => validate_logical_value(value, max_persisted_value_size_bytes),
+            Self::HistoryEvent {
+                event:
+                    HistoryEvent::JoinSetRequest {
+                        request:
+                            JoinSetRequest::ChildExecutionRequest {
+                                params: PersistedParams::Inline(params),
+                                ..
+                            },
+                        ..
+                    },
+            } => validate_logical_value(params, max_persisted_value_size_bytes),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn validate_persisted_event_envelope(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        let event_limit = max_persisted_value_size_bytes
+            .saturating_add(crate::persisted_value::PERSISTED_EVENT_OVERHEAD_BYTES);
+        crate::persisted_value::EncodedSizeLimit::new(event_limit)
+            .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+            .validate(self)
+            .map(|_| ())
+            .map_err(|_| {
+                DbErrorWriteNonRetriable::ValidationFailed(StrVariant::Static(
+                    "execution event exceeds persisted event size limit",
+                ))
+            })
+    }
+
+    pub fn validate_for_persistence(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        self.validate_persisted_values(max_persisted_value_size_bytes)?;
+        self.validate_persisted_event_envelope(max_persisted_value_size_bytes)
+    }
+
+    /// Drops optional HTTP client traces only when doing so makes an otherwise
+    /// valid execution event fit its persisted envelope.
+    pub fn drop_http_client_traces_to_fit(&mut self, max_persisted_value_size_bytes: u64) -> bool {
+        if self
+            .validate_for_persistence(max_persisted_value_size_bytes)
+            .is_ok()
+            || self
+                .validate_persisted_values(max_persisted_value_size_bytes)
+                .is_err()
+        {
+            return false;
+        }
+
+        let traces = match self {
+            Self::TemporarilyFailed {
+                http_client_traces, ..
+            }
+            | Self::TemporarilyTimedOut {
+                http_client_traces, ..
+            }
+            | Self::Finished {
+                http_client_traces, ..
+            } => http_client_traces.take(),
+            _ => None,
+        };
+        let Some(traces) = traces else {
+            return false;
+        };
+
+        if self
+            .validate_persisted_event_envelope(max_persisted_value_size_bytes)
+            .is_ok()
+        {
+            true
+        } else {
+            match self {
+                Self::TemporarilyFailed {
+                    http_client_traces, ..
+                }
+                | Self::TemporarilyTimedOut {
+                    http_client_traces, ..
+                }
+                | Self::Finished {
+                    http_client_traces, ..
+                } => *http_client_traces = Some(traces),
+                _ => unreachable!("only trace-bearing events can reach restoration"),
+            }
+            false
+        }
+    }
+}
+
+fn persisted_value_validation_failed() -> DbErrorWriteNonRetriable {
+    DbErrorWriteNonRetriable::ValidationFailed(StrVariant::Static(
+        "execution value exceeds persisted value limit",
+    ))
+}
+
+fn validate_logical_value<T: Serialize + ?Sized>(
+    value: &T,
+    max_persisted_value_size_bytes: u64,
+) -> Result<(), DbErrorWriteNonRetriable> {
+    crate::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+        .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+        .validate(value)
+        .map(|_| ())
+        .map_err(|_| persisted_value_validation_failed())
 }
 
 /// Reason for auditing only
@@ -704,6 +876,10 @@ pub enum HistoryEvent {
     Schedule {
         execution_id: ExecutionId,
         schedule_at: HistoryEventScheduleAt, // Stores intention to schedule an execution at a date/offset
+        // backcompat: 0.41 schedule events did not fingerprint parameters.
+        #[serde(default)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
+        params_hash: Option<crate::component_id::Digest>,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
         result: Result<(), ScheduleRequestError>,
     },
@@ -824,6 +1000,8 @@ pub enum StubError {
     TypeCheckError(String),
     #[error("conflict")]
     Conflict,
+    #[error("stub result exceeds the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
 }
 
 /// Error from the `schedule-json` function. Persisted in history for determinism.
@@ -836,6 +1014,8 @@ pub enum ScheduleRequestError {
     FunctionNotFound,
     #[error("params parsing error: {0}")]
     TypeCheckError(String),
+    #[error("execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
 }
 
 /// Error from the `submit-json` function. Persisted in history for determinism.
@@ -848,6 +1028,8 @@ pub enum ChildExecutionRequestError {
     FunctionNotFound,
     #[error("params parsing error: {0}")]
     TypeCheckError(String),
+    #[error("execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
 }
 
 #[derive(
@@ -953,11 +1135,43 @@ pub enum JoinSetRequest {
     ChildExecutionRequest {
         child_execution_id: ExecutionIdDerived,
         target_ffqn: FunctionFqn,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
-        params: Params,
+        // backcompat: 0.41 child requests stored raw Params at this field.
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = PersistedParams::Inline(Params::empty())))]
+        params: PersistedParams,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
         result: Result<(), ChildExecutionRequestError>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum PersistedParams {
+    Rejected { rejected: RejectedParams },
+    Inline(Params),
+}
+
+impl Display for PersistedParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RejectedParams {
+    pub sha256: crate::component_id::Digest,
+    pub encoded_size_at_least: u64,
+}
+
+impl PersistedParams {
+    #[must_use]
+    pub fn matches(&self, params: &Params) -> bool {
+        match self {
+            Self::Inline(stored) => stored == params,
+            Self::Rejected { rejected } => {
+                crate::persisted_value::compact_json_sha256(params) == rejected.sha256
+            }
+        }
+    }
 }
 
 /// Error that is not specific to an execution.
@@ -1079,6 +1293,7 @@ pub struct LockedExecution {
     pub responses: Vec<ResponseWithCursor>,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,
+    pub max_persisted_value_size_bytes: u64,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -1089,6 +1304,16 @@ pub type AppendBatchResponse = Version;
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionRequest,
+}
+
+impl AppendRequest {
+    pub fn validate_for_persistence(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        self.event
+            .validate_for_persistence(max_persisted_value_size_bytes)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1105,6 +1330,44 @@ pub struct CreateRequest {
     pub metadata: ExecutionMetadata,
     pub scheduled_by: Option<ExecutionId>,
     pub paused: bool,
+    pub max_persisted_value_size_bytes: u64,
+}
+
+impl CreateRequest {
+    pub fn validate_persisted_values(&self) -> Result<(), DbErrorWriteNonRetriable> {
+        ExecutionRequest::from(self.clone())
+            .validate_for_persistence(self.max_persisted_value_size_bytes)
+    }
+
+    pub fn validate_for_storage(&self) -> Result<(), DbErrorWriteNonRetriable> {
+        let result = self.validate_persisted_values();
+        if result.is_err() {
+            let limit = self.max_persisted_value_size_bytes;
+            let size_limit = crate::persisted_value::EncodedSizeLimit::new(limit)
+                .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
+            if let Err(exceeded) = size_limit.validate(&self.params) {
+                crate::persisted_value::report_rejection(
+                    Some(&self.execution_id),
+                    Some(&self.ffqn),
+                    crate::persisted_value::PersistedValueClass::Params,
+                    crate::persisted_value::PersistedValueOrigin::StorageGuard,
+                    exceeded,
+                );
+            } else {
+                tracing::warn!(
+                    execution_id = %self.execution_id,
+                    ffqn = %self.ffqn,
+                    origin = "storage_guard",
+                    limit,
+                    encoded_size_at_least = limit
+                        .saturating_add(crate::persisted_value::PERSISTED_EVENT_OVERHEAD_BYTES)
+                        .saturating_add(1),
+                    "Rejected oversized persisted event envelope"
+                );
+            }
+        }
+        result
+    }
 }
 
 impl From<CreateRequest> for ExecutionRequest {
@@ -1118,6 +1381,7 @@ impl From<CreateRequest> for ExecutionRequest {
             deployment_id: value.deployment_id,
             metadata: value.metadata,
             scheduled_by: value.scheduled_by,
+            max_persisted_value_size_bytes: value.max_persisted_value_size_bytes,
         }
     }
 }
@@ -1161,6 +1425,15 @@ pub struct AppendResponseToExecution {
     pub child_execution_id: ExecutionIdDerived,
     pub finished_version: Version,
     pub result: SupportedFunctionReturnValue,
+}
+
+impl AppendResponseToExecution {
+    pub fn validate_for_persistence(
+        &self,
+        max_persisted_value_size_bytes: u64,
+    ) -> Result<(), DbErrorWriteNonRetriable> {
+        validate_logical_value(&self.result, max_persisted_value_size_bytes)
+    }
 }
 
 /// A captured database write operation with all arguments needed to replay it
@@ -2113,6 +2386,7 @@ pub trait DbConnection: DbExecutor {
             deployment_id,
             metadata,
             scheduled_by,
+            max_persisted_value_size_bytes,
         } = execution_event.event
         {
             Ok(CreateRequest {
@@ -2127,6 +2401,7 @@ pub trait DbConnection: DbExecutor {
                 metadata,
                 scheduled_by,
                 paused: false,
+                max_persisted_value_size_bytes,
             })
         } else {
             Err(DbErrorRead::Generic(DbErrorGeneric::Uncategorized {
@@ -3065,6 +3340,7 @@ mod tests {
     use super::PendingStateFinishedResultKind;
     use crate::ExecutionFailureKind;
     use crate::JoinSetId;
+    use crate::Params;
     use crate::SupportedFunctionReturnValue;
     use chrono::DateTime;
     use chrono::Datelike;
@@ -3074,6 +3350,61 @@ mod tests {
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::WastVal;
     use val_json::wast_val::WastValWithType;
+
+    #[test]
+    fn legacy_child_params_deserialize_as_inline() {
+        let params: super::PersistedParams = serde_json::from_str("[]").unwrap();
+        assert_eq!(super::PersistedParams::Inline(Params::empty()), params);
+    }
+
+    #[test]
+    fn legacy_created_event_without_value_limit_is_unlimited() {
+        let created = super::ExecutionRequest::Created {
+            ffqn: crate::FunctionFqn::new_static("ns:pkg/ifc", "fn"),
+            params: Params::empty(),
+            parent: None,
+            scheduled_at: DateTime::UNIX_EPOCH,
+            component_id: crate::ComponentId::dummy_activity(),
+            deployment_id: crate::prefixed_ulid::DeploymentId::from_parts(0, 0),
+            metadata: crate::ExecutionMetadata::empty(),
+            scheduled_by: None,
+            max_persisted_value_size_bytes: 64,
+        };
+        let mut json = serde_json::to_value(created).unwrap();
+        json.get_mut("created")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("max_persisted_value_size_bytes");
+
+        let event: super::ExecutionRequest = serde_json::from_value(json).unwrap();
+        assert_matches::assert_matches!(
+            event,
+            super::ExecutionRequest::Created {
+                max_persisted_value_size_bytes: u64::MAX,
+                ..
+            }
+        );
+    }
+
+    #[test]
+    fn rejected_child_params_store_only_digest_and_size() {
+        let params = Params::from_json_values_test(vec![serde_json::json!("secret-value")]);
+        let rejected = super::PersistedParams::Rejected {
+            rejected: super::RejectedParams {
+                sha256: crate::persisted_value::compact_json_sha256(&params),
+                encoded_size_at_least: 5,
+            },
+        };
+        let json = serde_json::to_string(&rejected).unwrap();
+        assert!(!json.contains("secret-value"));
+        assert!(rejected.matches(&params));
+        assert!(
+            !rejected.matches(&Params::from_json_values_test(vec![serde_json::json!(
+                "different-value"
+            ),]))
+        );
+    }
 
     #[rstest(expected => [
         PendingStateFinishedResultKind::Ok,

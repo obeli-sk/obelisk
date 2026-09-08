@@ -371,6 +371,7 @@ enum ExecutionFailureKind {
     // Applicable to activities
     EXECUTION_FAILURE_KIND_CANCELLED = 4;
     EXECUTION_FAILURE_KIND_UNCATEGORIZED = 5;
+    EXECUTION_FAILURE_KIND_VALUE_TOO_LARGE = 6;
 }
 
 message SupportedFunctionResult {
@@ -418,6 +419,7 @@ message ExecutionEvent {
         optional ExecutionId parent_execution_id = 7;
         optional JoinSetId parent_join_set_id = 8;
         map<string, string> metadata = 9;
+        uint64 max_persisted_value_size_bytes = 10;
     }
 
     message Locked {
@@ -540,6 +542,10 @@ message ExecutionEvent {
             }
 
             message ChildExecutionRequest {
+                message RejectedParams {
+                    string sha256 = 1;
+                    uint64 encoded_size_at_least = 2;
+                }
                 message Ok {
                 }
                 message Error {
@@ -547,6 +553,7 @@ message ExecutionEvent {
                         KIND_UNSPECIFIED = 0;
                         KIND_FUNCTION_NOT_FOUND = 1;
                         KIND_TYPE_CHECK_ERROR = 2;
+                        KIND_VALUE_TOO_LARGE = 3;
                     }
                     Kind kind = 1;
                     optional string detail = 2;
@@ -558,6 +565,7 @@ message ExecutionEvent {
                     Ok ok = 4;
                     Error error = 5;
                 }
+                RejectedParams rejected_params = 6;
             }
 
             JoinSetId join_set_id = 1;
@@ -598,6 +606,7 @@ message ExecutionEvent {
                     KIND_UNSPECIFIED = 0;
                     KIND_FUNCTION_NOT_FOUND = 1;
                     KIND_TYPE_CHECK_ERROR = 2;
+                    KIND_VALUE_TOO_LARGE = 3;
                 }
                 Kind kind = 1;
                 optional string detail = 2;
@@ -625,6 +634,7 @@ message ExecutionEvent {
                 Ok ok = 3;
                 Error error = 4;
             }
+            optional string params_hash = 5;
         }
 
         message Stub {
@@ -636,6 +646,7 @@ message ExecutionEvent {
                     KIND_EXECUTION_NOT_FOUND = 1;
                     KIND_TYPE_CHECK_ERROR = 2;
                     KIND_CONFLICT = 3;
+                    KIND_VALUE_TOO_LARGE = 4;
                 }
                 Kind kind = 1;
                 optional string detail = 2;
@@ -927,6 +938,7 @@ message CreateExecutionRequest {
   map<string, string> metadata = 10;
   bool paused = 11;
   optional ExecutionId scheduled_by = 12;
+  uint64 max_persisted_value_size_bytes = 13;
 }
 
 message ReplayExecutionResponse {

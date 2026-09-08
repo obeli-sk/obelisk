@@ -430,6 +430,7 @@ mod tests {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         // Cancellable parent blocked on a join set holding a cancellable child.
@@ -464,7 +465,7 @@ mod tests {
                             request: JoinSetRequest::ChildExecutionRequest {
                                 child_execution_id: child_id.clone(),
                                 target_ffqn: CANCELLABLE_FFQN,
-                                params: Params::empty(),
+                                params: concepts::storage::PersistedParams::Inline(Params::empty()),
                                 result: Ok(()),
                             },
                         },
@@ -557,6 +558,7 @@ mod tests {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         // Parent with two cancellable children in one join set, awaiting only the
@@ -596,7 +598,9 @@ mod tests {
                                 request: JoinSetRequest::ChildExecutionRequest {
                                     child_execution_id: child_id.clone(),
                                     target_ffqn: CANCELLABLE_FFQN,
-                                    params: Params::empty(),
+                                    params: concepts::storage::PersistedParams::Inline(
+                                        Params::empty(),
+                                    ),
                                     result: Ok(()),
                                 },
                             },
@@ -699,6 +703,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

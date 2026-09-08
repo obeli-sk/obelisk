@@ -46,7 +46,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug, error, info, instrument, trace, warn};
-use val_json::wast_val::WastVal;
+use val_json::wast_val::{ValKey, WastVal};
 use wasmtime::component::{Linker, Resource, ResourceType, Val};
 use wasmtime_wasi::{
     ResourceTable, ResourceTableError, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView,
@@ -67,6 +67,11 @@ pub(crate) enum WorkflowFunctionError {
     },
     #[error("constraint violation: {0}")]
     ConstraintViolation(StrVariant),
+    #[error("{value_kind} exceeds the {limit}-byte persisted value limit")]
+    PersistedValueTooLarge {
+        value_kind: &'static str,
+        limit: u64,
+    },
     // retriable errors:
     #[error("interrupt, db updated")]
     InterruptDbUpdated,
@@ -118,6 +123,12 @@ impl WorkflowFunctionError {
             WorkflowFunctionError::ConstraintViolation(reason) => {
                 WorkerPartialResult::FatalError(FatalError::ConstraintViolation { reason }, version)
             }
+            WorkflowFunctionError::PersistedValueTooLarge { value_kind, limit } => {
+                WorkerPartialResult::FatalError(
+                    FatalError::PersistedValueTooLarge { value_kind, limit },
+                    version,
+                )
+            }
             WorkflowFunctionError::LockExpired => WorkerPartialResult::LockExpired,
             WorkflowFunctionError::Interrupt(kind) => WorkerPartialResult::Interrupt(kind),
             WorkflowFunctionError::ReplayInterrupt => WorkerPartialResult::ReplayWaitingForResponse,
@@ -135,6 +146,9 @@ impl From<ApplyError> for WorkflowFunctionError {
             ApplyError::DbError(db_error) => WorkflowFunctionError::DbError(db_error),
             ApplyError::ConstraintViolation(reason) => {
                 WorkflowFunctionError::ConstraintViolation(reason)
+            }
+            ApplyError::PersistedValueTooLarge { value_kind, limit } => {
+                WorkflowFunctionError::PersistedValueTooLarge { value_kind, limit }
             }
             ApplyError::Interrupt(kind) => WorkflowFunctionError::Interrupt(kind),
             ApplyError::ReplayInterrupt => WorkflowFunctionError::ReplayInterrupt,
@@ -154,6 +168,12 @@ pub(crate) struct WorkflowCtx {
     backtrace_capture: BacktraceCapture,
     wasi_ctx: WasiCtx,
     is_replay: Option<ReplayKind>,
+}
+
+impl WorkflowCtx {
+    pub(crate) fn max_persisted_value_size_bytes(&self) -> u64 {
+        self.event_history.max_persisted_value_size_bytes()
+    }
 }
 
 #[derive(derive_more::Debug)]
@@ -186,10 +206,30 @@ impl DirectFnCall<'_> {
             params,
             wasm_backtrace,
         } = self;
+        let params = Params::from_wasmtime(Arc::from(params));
+        if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(
+            ctx.event_history.max_persisted_value_size_bytes(),
+        )
+        .expect("persisted value limit must be positive")
+        .validate(&params)
+        {
+            concepts::persisted_value::report_rejection(
+                Some(ctx.db_connection.execution_id()),
+                Some(&ffqn),
+                concepts::persisted_value::PersistedValueClass::Params,
+                concepts::persisted_value::PersistedValueOrigin::Workflow,
+                exceeded,
+            );
+            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn,
+                reason: "child execution parameters exceed the persisted value limit".into(),
+                detail: Some(format!("limit: {} bytes", exceeded.limit)),
+            });
+        }
         OneOffChildExecutionRequest::apply(
             ffqn,
             fn_component_id,
-            Params::from_wasmtime(Arc::from(params)),
+            params,
             wasm_backtrace,
             &mut ctx.event_history,
             &mut ctx.event_call_cursor,
@@ -286,14 +326,16 @@ impl ScheduleFnCall<'_> {
             }
         })?;
         let execution_id_val = execution_id_into_wast_val(&execution_id).as_val();
-        Ok(Schedule {
+        let params = Params::from_wasmtime(Arc::from(target_params));
+        let result = Schedule {
             schedule_at,
             scheduled_at_if_new,
             execution_id,
             ffqn: target_ffqn,
+            params_hash: concepts::persisted_value::compact_json_sha256(&params),
             intent: ScheduleIntent::Ok {
                 fn_component_id: target_component_id,
-                params: Params::from_wasmtime(Arc::from(target_params)),
+                params,
             },
             wasm_backtrace,
         }
@@ -303,9 +345,13 @@ impl ScheduleFnCall<'_> {
             &mut *ctx.db_connection,
             called_at,
         )
-        .await?
-        .map(|()| execution_id_val)
-        .expect("Ok intent cannot produce ScheduleRequestError"))
+        .await?;
+        Ok(match result {
+            Ok(()) => wasmtime::component::Val::Result(Ok(Some(Box::new(execution_id_val)))),
+            Err(err) => wasmtime::component::Val::Result(Err(Some(Box::new(
+                schedule_request_error_to_wast_val(err).as_val(),
+            )))),
+        })
     }
 }
 
@@ -360,7 +406,7 @@ impl SubmitExecutionFnCall<'_> {
         let child_execution_id = ctx.next_child_id(&join_set_id);
         let child_execution_id_val =
             execution_id_derived_into_wast_val(&child_execution_id).as_val();
-        Ok(SubmitChildExecution {
+        let result = SubmitChildExecution {
             target_ffqn: target_ffqn.clone(),
             join_set_id,
             intent: SubmitChildIntent::Ok {
@@ -376,9 +422,45 @@ impl SubmitExecutionFnCall<'_> {
             &mut *ctx.db_connection,
             called_at,
         )
-        .await?
-        .map(|()| child_execution_id_val)
-        .expect("Ok intent cannot produce ChildExecutionRequestError"))
+        .await?;
+        Ok(match result {
+            Ok(()) => wasmtime::component::Val::Result(Ok(Some(Box::new(child_execution_id_val)))),
+            Err(err) => wasmtime::component::Val::Result(Err(Some(Box::new(
+                child_request_error_to_wast_val(err).as_val(),
+            )))),
+        })
+    }
+}
+
+fn child_request_error_to_wast_val(err: storage::ChildExecutionRequestError) -> WastVal {
+    match err {
+        storage::ChildExecutionRequestError::FunctionNotFound => {
+            WastVal::Variant(ValKey::from_kebab("function-not-found"), None)
+        }
+        storage::ChildExecutionRequestError::TypeCheckError(detail) => WastVal::Variant(
+            ValKey::from_kebab("type-check-error"),
+            Some(Box::new(WastVal::String(detail))),
+        ),
+        storage::ChildExecutionRequestError::ValueTooLarge { limit } => WastVal::Variant(
+            ValKey::from_kebab("value-too-large"),
+            Some(Box::new(WastVal::U64(limit))),
+        ),
+    }
+}
+
+pub(crate) fn schedule_request_error_to_wast_val(err: storage::ScheduleRequestError) -> WastVal {
+    match err {
+        storage::ScheduleRequestError::FunctionNotFound => {
+            WastVal::Variant(ValKey::from_kebab("function-not-found"), None)
+        }
+        storage::ScheduleRequestError::TypeCheckError(detail) => WastVal::Variant(
+            ValKey::from_kebab("type-check-error"),
+            Some(Box::new(WastVal::String(detail))),
+        ),
+        storage::ScheduleRequestError::ValueTooLarge { limit } => WastVal::Variant(
+            ValKey::from_kebab("value-too-large"),
+            Some(Box::new(WastVal::U64(limit))),
+        ),
     }
 }
 
@@ -523,7 +605,25 @@ impl StubFnCall<'_> {
                 // Otherwise, we assume the parent workflow and this stub writer share the
                 // same WIT definition, meaning type checking is done at server startup.
                 // `stub-json` must do its own type checking before this call.
-                Ok(StubIntent::StubTypeChecked(retval))
+                let limit = ctx
+                    .max_persisted_value_size_bytes()
+                    .min(create_req.max_persisted_value_size_bytes);
+                match concepts::persisted_value::EncodedSizeLimit::new(limit)
+                    .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                    .validate(&retval)
+                {
+                    Ok(_) => Ok(StubIntent::StubTypeChecked(retval)),
+                    Err(exceeded) => {
+                        concepts::persisted_value::report_rejection(
+                            Some(ctx.db_connection.execution_id()),
+                            Some(target_ffqn),
+                            concepts::persisted_value::PersistedValueClass::Stub,
+                            concepts::persisted_value::PersistedValueOrigin::Workflow,
+                            exceeded,
+                        );
+                        Ok(StubIntent::Err(StubIntentErr::ValueTooLarge { limit }))
+                    }
+                }
             }
             Ok(create_req) => Ok(StubIntent::Err(StubIntentErr::TypeCheckError(format!(
                 "ffqn mismatch, code stubs {target_ffqn}, but execution was created with {}",
@@ -864,9 +964,9 @@ impl WasiView for WorkflowCtx {
     }
 }
 
-const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@6.0.0";
+const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@7.0.0";
 const IFC_FQN_WORKFLOW_SUPPORT_BACKTRACE: &str =
-    "obelisk:workflow/workflow-support-backtrace@6.0.0";
+    "obelisk:workflow/workflow-support-backtrace@7.0.0";
 
 #[derive(Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum ReplayKind {
@@ -900,6 +1000,7 @@ impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
+        max_persisted_value_size_bytes: u64,
         db_connection: Box<dyn WorkflowDbConnection>,
         version: Version,
         event_history: Vec<(HistoryEvent, Version)>,
@@ -934,6 +1035,7 @@ impl WorkflowCtx {
             db_connection,
             event_history: EventHistory::new(
                 deployment_id,
+                max_persisted_value_size_bytes,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -1078,10 +1180,14 @@ impl WorkflowCtx {
             |state: &mut Self| state,
         )
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk::log", err))?;
-        // link obelisk:types/execution@4.2.0 (has no host functions, just type definitions)
+        // Link type-only interfaces imported by workflow components.
         typesTypes::execution::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
             .map_err(|err| {
-                WasmFileError::linking_error("cannot link obelisk:types/execution@4.2.0", err)
+                WasmFileError::linking_error("cannot link obelisk:types/execution@6.0.0", err)
+            })?;
+        typesTypes::function::add_to_linker::<_, WorkflowCtx>(linker, |state: &mut Self| state)
+            .map_err(|err| {
+                WasmFileError::linking_error("cannot link obelisk:types/function@6.0.0", err)
             })?;
 
         // link obelisk:workflow/workflow-support interface (native, no backtrace)
@@ -1100,7 +1206,7 @@ impl WorkflowCtx {
     }
 
     fn add_to_linker_join_set(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@5.0.0";
+        const IFC_FQN_JOIN_SET: &str = "obelisk:types/join-set@6.0.0";
         let mut inst_join_set_ifc = linker
             .instance(IFC_FQN_JOIN_SET)
             .map_err(|err| WasmFileError::linking_error(IFC_FQN_JOIN_SET, err))?;
@@ -1333,7 +1439,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function, params): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                 )| {
                     Box::new(async move {
@@ -1470,7 +1576,7 @@ impl WorkflowCtx {
                       (execution_id, schedule_at, function, params): (
                     typesTypes::execution::ExecutionId,
                     ScheduleAtTypes,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                 )| {
                     let schedule_at = HistoryEventScheduleAt::from(schedule_at);
@@ -1511,7 +1617,7 @@ impl WorkflowCtx {
             .func_wrap_async(
                 "call-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
-                      (function, params): (typesTypes::execution::Function, String)| {
+                      (function, params): (typesTypes::function::Function, String)| {
                     Box::new(async move {
                         let (host, backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller, None);
@@ -1603,7 +1709,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                 )| {
                     Box::new(async move {
                         let (host, backtrace) =
@@ -1805,7 +1911,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function, params, wit_backtrace): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
@@ -1862,7 +1968,7 @@ impl WorkflowCtx {
                       (execution_id, schedule_at, function, params, wit_backtrace): (
                     typesTypes::execution::ExecutionId,
                     ScheduleAtTypes,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
@@ -1905,7 +2011,7 @@ impl WorkflowCtx {
                 "call-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (function, params, wit_backtrace): (
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     String,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
@@ -2008,7 +2114,7 @@ impl WorkflowCtx {
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                       (join_set_resource, function, wit_backtrace): (
                     Resource<JoinSetId>,
-                    typesTypes::execution::Function,
+                    typesTypes::function::Function,
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
@@ -2123,6 +2229,7 @@ pub(crate) mod workflow_support {
         ScheduleIntent, StubIntent, StubIntentErr, StubParams, SubmitDelay,
     };
     use crate::workflow::host_exports::latest::obelisk::types::execution::Host as ExecutionIfcHost;
+    use crate::workflow::host_exports::latest::obelisk::types::function::Host as FunctionIfcHost;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextTryError as WitJoinNextTryError;
     use crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::{
         JoinNextError, JoinNextForError,
@@ -2142,6 +2249,7 @@ pub(crate) mod workflow_support {
     use wasmtime::component::Resource;
 
     impl ExecutionIfcHost for WorkflowCtx {}
+    impl FunctionIfcHost for WorkflowCtx {}
 
     pub(crate) fn execution_failure_kind_to_wit(
         kind: concepts::ExecutionFailureKind,
@@ -2153,6 +2261,7 @@ pub(crate) mod workflow_support {
             K::NondeterminismDetected => Wit::NondeterminismDetected,
             K::OutOfFuel => Wit::OutOfFuel,
             K::Cancelled => Wit::Cancelled,
+            K::ValueTooLarge => Wit::ValueTooLarge,
             K::Uncategorized => Wit::Uncategorized,
         }
     }
@@ -2634,6 +2743,9 @@ pub(crate) mod workflow_support {
                 Err(ChildExecutionRequestError::TypeCheckError(msg)) => {
                     Ok(Err(SubmitJsonError::TypeCheckError(msg)))
                 }
+                Err(ChildExecutionRequestError::ValueTooLarge { limit }) => {
+                    Ok(Err(SubmitJsonError::ValueTooLarge(limit)))
+                }
             }
         }
 
@@ -2714,6 +2826,7 @@ pub(crate) mod workflow_support {
                 }
             };
 
+            let params_hash = concepts::persisted_value::compact_json_sha256(&params_json);
             // Compute intent from fn_registry lookup
             let intent = self.get_schedule_intent(&target_ffqn, params_json);
 
@@ -2722,6 +2835,7 @@ pub(crate) mod workflow_support {
                 scheduled_at_if_new,
                 execution_id,
                 ffqn: target_ffqn,
+                params_hash,
                 intent,
                 wasm_backtrace,
             }
@@ -2745,6 +2859,9 @@ pub(crate) mod workflow_support {
                     self.error(format!("schedule-json: type check error: {msg}"))
                         .await;
                     Ok(Err(ScheduleJsonError::TypeCheckError(msg)))
+                }
+                Err(ScheduleRequestError::ValueTooLarge { limit }) => {
+                    Ok(Err(ScheduleJsonError::ValueTooLarge(limit)))
                 }
             }
         }
@@ -2796,12 +2913,12 @@ pub(crate) mod workflow_support {
             retval: String,
         ) -> Result<(StubIntent, StubParams), DbErrorRead> {
             // Look up the target function's FFQN
-            let target_ffqn = match self
+            let target_create_request = match self
                 .db_connection
                 .get_stub_create_request(&ExecutionId::Derived(target_execution_id.clone()))
                 .await
             {
-                Ok(create_req) => create_req.ffqn.clone(),
+                Ok(create_req) => create_req,
                 Err(DbErrorRead::NotFound) => {
                     return Ok((
                         StubIntent::Err(StubIntentErr::ExecutionNotFound),
@@ -2815,6 +2932,10 @@ pub(crate) mod workflow_support {
                     return Err(db_err); // intermittent error
                 }
             };
+            let target_ffqn = target_create_request.ffqn;
+            let limit = self
+                .max_persisted_value_size_bytes()
+                .min(target_create_request.max_persisted_value_size_bytes);
 
             // Get the function metadata to determine the return type
             let Some((fn_metadata, fn_component_id)) = self
@@ -2878,6 +2999,25 @@ pub(crate) mod workflow_support {
                         ));
                     }
                 };
+                if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(limit)
+                    .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                    .validate(&retval_parsed)
+                {
+                    concepts::persisted_value::report_rejection(
+                        Some(self.db_connection.execution_id()),
+                        Some(&target_ffqn),
+                        concepts::persisted_value::PersistedValueClass::Stub,
+                        concepts::persisted_value::PersistedValueOrigin::Workflow,
+                        exceeded,
+                    );
+                    return Ok((
+                        StubIntent::Err(StubIntentErr::ValueTooLarge { limit }),
+                        StubParams {
+                            target_execution_id,
+                            retval_hash: StubRetVal::Untyped(retval).hash(),
+                        },
+                    ));
+                }
                 let type_wrapper = TypeWrapper::from(return_type.type_wrapper_tl);
                 let retval_parsed = match deserialize_value(&retval_parsed, type_wrapper) {
                     Ok(ok) => ok,
@@ -2896,6 +3036,25 @@ pub(crate) mod workflow_support {
                 SupportedFunctionReturnValue::from_wast_val_with_type(retval_parsed)
                     .expect("checked that ffqn is no-ext, return type must be compatible")
             };
+            if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(limit)
+                .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                .validate(&retval_parsed)
+            {
+                concepts::persisted_value::report_rejection(
+                    Some(self.db_connection.execution_id()),
+                    Some(&target_ffqn),
+                    concepts::persisted_value::PersistedValueClass::Stub,
+                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                    exceeded,
+                );
+                return Ok((
+                    StubIntent::Err(StubIntentErr::ValueTooLarge { limit }),
+                    StubParams {
+                        target_execution_id,
+                        retval_hash: StubRetVal::Typed(retval_parsed).hash(),
+                    },
+                ));
+            }
             // Keep stub hashes language-independent by hashing the type-checked value.
             Ok((
                 StubIntent::StubTypeChecked(retval_parsed.clone()),
@@ -3011,7 +3170,25 @@ pub(crate) mod workflow_support {
                         .await;
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
                 }
+                SubmitChildIntent::Err(ChildExecutionRequestError::ValueTooLarge { limit }) => {
+                    return Ok(Err(ScheduleJsonError::ValueTooLarge(limit)));
+                }
             };
+            if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(
+                self.event_history.max_persisted_value_size_bytes(),
+            )
+            .expect("persisted value limit must be positive")
+            .validate(&params)
+            {
+                concepts::persisted_value::report_rejection(
+                    Some(self.db_connection.execution_id()),
+                    Some(&target_ffqn),
+                    concepts::persisted_value::PersistedValueClass::Params,
+                    concepts::persisted_value::PersistedValueOrigin::Workflow,
+                    exceeded,
+                );
+                return Ok(Err(ScheduleJsonError::ValueTooLarge(exceeded.limit)));
+            }
 
             // Pre-compute the child execution ID using the same logic as OneOffChildExecutionRequest::apply,
             // so we can look up the result afterwards.
@@ -3361,6 +3538,9 @@ pub(crate) mod tests {
             let cancel_registry = CancelRegistry::new();
             let mut workflow_ctx = WorkflowCtx::new(
                 DEPLOYMENT_ID_DUMMY,
+                ctx.metadata
+                    .max_persisted_value_size_bytes()
+                    .unwrap_or(u64::MAX),
                 Box::new(caching_db_connection),
                 ctx.version,
                 ctx.event_history,
@@ -3618,6 +3798,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 })
                 .await
                 .unwrap();
@@ -3869,6 +4050,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4191,6 +4373,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

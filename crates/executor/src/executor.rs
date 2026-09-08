@@ -598,9 +598,14 @@ impl ExecTask {
             );
         let parent = locked_execution.parent.clone();
         let execution_id = locked_execution.execution_id.clone();
+        let ffqn = locked_execution.ffqn.clone();
+        let max_persisted_value_size_bytes = locked_execution.max_persisted_value_size_bytes;
+        let mut metadata = locked_execution.metadata;
+        metadata
+            .set_max_persisted_value_size_bytes(locked_execution.max_persisted_value_size_bytes);
         let ctx = WorkerContext {
             execution_id: locked_execution.execution_id.clone(),
-            metadata: locked_execution.metadata,
+            metadata,
             component_digest: locked_execution.component_digest,
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
@@ -613,7 +618,13 @@ impl ExecTask {
             worker_span,
             execution_interrupt_watcher,
         };
-        let worker_result = worker.run(ctx).await;
+        let worker_result = Self::enforce_worker_result_limit(
+            worker.run(ctx).await,
+            max_persisted_value_size_bytes,
+            &execution_id,
+            &ffqn,
+            component_type,
+        );
         debug!("Worker::run finished {worker_result:?}");
         let result_obtained_at = clock_fn.now();
         if component_type == ComponentType::Activity
@@ -644,7 +655,12 @@ impl ExecTask {
             can_be_retried,
             unlock_expiry_on_limit_reached,
         )? {
-            Some(append) => {
+            Some(mut append) => {
+                append.enforce_failure_diagnostic_limit(
+                    max_persisted_value_size_bytes,
+                    &ffqn,
+                    component_type,
+                );
                 debug!("Appending {append:?}");
                 let db_exec = db_pool.db_exec_conn().await?;
                 append.append(db_exec.as_ref()).await
@@ -698,6 +714,48 @@ impl ExecTask {
             version: log.next_version,
             child_finished,
         }))
+    }
+
+    fn enforce_worker_result_limit(
+        worker_result: WorkerResult,
+        max_persisted_value_size_bytes: u64,
+        execution_id: &ExecutionId,
+        ffqn: &FunctionFqn,
+        component_type: ComponentType,
+    ) -> WorkerResult {
+        worker_result.map(|worker_result| match worker_result {
+            WorkerResultOk::RunFinished(mut finished) => {
+                if let Err(exceeded) =
+                    concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+                        .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                        .validate(&finished.retval)
+                {
+                    let value_class = if matches!(
+                        finished.retval,
+                        SupportedFunctionReturnValue::ExecutionFailure(_)
+                    ) {
+                        concepts::persisted_value::PersistedValueClass::FailureDetail
+                    } else {
+                        concepts::persisted_value::PersistedValueClass::Result
+                    };
+                    concepts::persisted_value::report_rejection(
+                        Some(execution_id),
+                        Some(ffqn),
+                        value_class,
+                        persisted_value_origin(component_type),
+                        exceeded,
+                    );
+                }
+                finished.retval = concepts::persisted_value::enforce_return_value_limit(
+                    finished.retval,
+                    max_persisted_value_size_bytes,
+                );
+                WorkerResultOk::RunFinished(finished)
+            }
+            WorkerResultOk::DbUpdatedByWorkerOrWatcher => {
+                WorkerResultOk::DbUpdatedByWorkerOrWatcher
+            }
+        })
     }
 
     /// Map the `WorkerError` to an optional append event
@@ -968,7 +1026,73 @@ pub(crate) struct Append {
     pub(crate) child_finished: Option<ChildFinishedResponse>,
 }
 
+const fn persisted_value_origin(
+    component_type: ComponentType,
+) -> concepts::persisted_value::PersistedValueOrigin {
+    match component_type {
+        ComponentType::Activity | ComponentType::ActivityStub => {
+            concepts::persisted_value::PersistedValueOrigin::Activity
+        }
+        ComponentType::WebhookEndpoint => concepts::persisted_value::PersistedValueOrigin::Webhook,
+        ComponentType::Workflow | ComponentType::Cron => {
+            concepts::persisted_value::PersistedValueOrigin::Workflow
+        }
+    }
+}
+
 impl Append {
+    fn enforce_failure_diagnostic_limit(
+        &mut self,
+        limit: u64,
+        ffqn: &FunctionFqn,
+        component_type: ComponentType,
+    ) {
+        match &mut self.primary_event.event {
+            ExecutionRequest::TemporarilyFailed { reason, detail, .. } => {
+                let mut bounded_reason = Some(reason.to_string());
+                if let Err(exceeded) = concepts::persisted_value::validate_failure_diagnostics(
+                    &bounded_reason,
+                    detail,
+                    limit,
+                ) {
+                    concepts::persisted_value::report_rejection(
+                        Some(&self.execution_id),
+                        Some(ffqn),
+                        concepts::persisted_value::PersistedValueClass::FailureDetail,
+                        persisted_value_origin(component_type),
+                        exceeded,
+                    );
+                }
+                concepts::persisted_value::truncate_failure_diagnostics(
+                    &mut bounded_reason,
+                    detail,
+                    limit,
+                );
+                *reason = StrVariant::from(bounded_reason.unwrap_or_default());
+            }
+            ExecutionRequest::Finished { retval, .. } => {
+                if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(limit)
+                    .unwrap_or(concepts::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED)
+                    .validate(retval)
+                {
+                    concepts::persisted_value::report_rejection(
+                        Some(&self.execution_id),
+                        Some(ffqn),
+                        concepts::persisted_value::PersistedValueClass::FailureDetail,
+                        persisted_value_origin(component_type),
+                        exceeded,
+                    );
+                }
+                *retval =
+                    concepts::persisted_value::enforce_return_value_limit(retval.clone(), limit);
+                if let Some(child_finished) = &mut self.child_finished {
+                    child_finished.result = retval.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) async fn append(self, db_exec: &dyn DbExecutor) -> Result<(), DbErrorWrite> {
         if let Some(child_finished) = self.child_finished {
             assert_matches!(
@@ -1148,8 +1272,115 @@ mod tests {
     use test_db_macro::expand_enum_database;
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
+    use val_json::{
+        type_wrapper::TypeWrapper,
+        wast_val::{WastVal, WastValWithType},
+    };
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn-child");
+
+    #[test]
+    fn oversized_activity_result_is_a_permanent_failure() {
+        let execution_id = ExecutionId::generate();
+        let result = SupportedFunctionReturnValue::Err(Some(WastValWithType {
+            value: WastVal::String("secret-result".to_owned()),
+            r#type: TypeWrapper::String,
+        }));
+
+        let worker_result = ExecTask::enforce_worker_result_limit(
+            Ok(WorkerResultOk::RunFinished(RunFinished {
+                retval: result,
+                version: Version::new(2),
+                http_client_traces: None,
+            })),
+            20,
+            &execution_id,
+            &FFQN_CHILD,
+            ComponentType::Activity,
+        );
+        let append = ExecTask::worker_result_to_execution_event(
+            ComponentType::Activity,
+            execution_id.clone(),
+            worker_result,
+            DateTime::UNIX_EPOCH,
+            None,
+            Some(Duration::from_secs(1)),
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(append.execution_id, execution_id);
+        assert_matches!(
+            append.primary_event.event,
+            ExecutionRequest::Finished {
+                retval: SupportedFunctionReturnValue::ExecutionFailure(
+                    FinishedExecutionFailure {
+                        kind: ExecutionFailureKind::ValueTooLarge,
+                        reason: Some(reason),
+                        detail: Some(detail),
+                    }
+                ),
+                ..
+            } => {
+                assert_eq!(reason, "function result exceeds the persisted value limit");
+                assert_eq!(detail, "limit: 20 bytes");
+            }
+        );
+    }
+
+    #[test]
+    fn oversized_persist_error_is_a_compact_permanent_failure() {
+        let failure = FinishedExecutionFailure::from(FatalError::PersistedValueTooLarge {
+            value_kind: "persisted history value",
+            limit: 512,
+        });
+
+        assert_eq!(failure.kind, ExecutionFailureKind::ValueTooLarge);
+        assert_eq!(
+            failure.reason.as_deref(),
+            Some("persisted history value exceeds the persisted value limit")
+        );
+        assert_eq!(failure.detail.as_deref(), Some("limit: 512 bytes"));
+    }
+
+    #[test]
+    fn temporary_failure_diagnostics_are_utf8_safely_bounded() {
+        let mut append = ExecTask::worker_result_to_execution_event(
+            ComponentType::Activity,
+            ExecutionId::generate(),
+            Err(WorkerError::ActivityTrap {
+                reason: "😀".repeat(100),
+                trap_kind: TrapKind::Trap,
+                detail: Some("secret-detail".repeat(100)),
+                version: Version::new(2),
+                http_client_traces: None,
+            }),
+            DateTime::UNIX_EPOCH,
+            None,
+            Some(Duration::from_secs(1)),
+            Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap();
+        append.enforce_failure_diagnostic_limit(128, &FFQN_CHILD, ComponentType::Activity);
+
+        let (reason, detail) = assert_matches!(
+            append.primary_event.event,
+            ExecutionRequest::TemporarilyFailed { reason, detail, .. } => (reason, detail)
+        );
+        let reason = reason.to_string();
+        assert!(
+            concepts::persisted_value::validate_failure_diagnostics(
+                &Some(reason.clone()),
+                &detail,
+                128,
+            )
+            .is_ok()
+        );
+        assert!(reason.contains("...[truncated; original UTF-8 bytes:"));
+        assert!(detail.is_none());
+    }
 
     async fn tick_fn<W: Worker + Debug>(
         config: ExecConfig,
@@ -1335,6 +1566,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -1661,6 +1893,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -1701,6 +1934,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             };
             let current_time = sim_clock.now();
             let join_set = AppendRequest {
@@ -1719,7 +1953,7 @@ mod tests {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: FFQN_CHILD,
-                            params,
+                            params: concepts::storage::PersistedParams::Inline(params),
                             result: Ok(()),
                         },
                     },
@@ -1923,6 +2157,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

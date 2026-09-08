@@ -2161,6 +2161,11 @@
           "ffqn": {
             "type": "string"
           },
+          "max_persisted_value_size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
           "metadata": {
             "type": "object"
           },

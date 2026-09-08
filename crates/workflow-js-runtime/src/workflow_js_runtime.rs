@@ -131,9 +131,8 @@ use crate::generated::exports::obelisk_workflow::workflow_js_runtime::execute::{
 };
 use crate::generated::obelisk::log::log as obelisk_log;
 use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBacktrace};
-use crate::generated::obelisk::types::execution::{
-    ExecutionFailureKind, ExecutionId, Function, ResponseId,
-};
+use crate::generated::obelisk::types::execution::{ExecutionFailureKind, ExecutionId, ResponseId};
+use crate::generated::obelisk::types::function::Function;
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
 use crate::generated::obelisk::workflow::workflow_support::{
@@ -536,6 +535,7 @@ fn exec_failure_kind_str(kind: ExecutionFailureKind) -> &'static str {
         ExecutionFailureKind::NondeterminismDetected => "nondeterminism-detected",
         ExecutionFailureKind::OutOfFuel => "out-of-fuel",
         ExecutionFailureKind::Cancelled => "cancelled",
+        ExecutionFailureKind::ValueTooLarge => "value-too-large",
         ExecutionFailureKind::Uncategorized => "uncategorized",
     }
 }

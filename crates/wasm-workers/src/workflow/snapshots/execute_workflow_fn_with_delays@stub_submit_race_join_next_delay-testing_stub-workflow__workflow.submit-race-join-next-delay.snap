@@ -1,6 +1,5 @@
 ---
 source: crates/wasm-workers/src/workflow/workflow_worker.rs
-assertion_line: 4101
 expression: "ExecutionLogSanitized::from(execution_log.clone())"
 ---
 {
@@ -21,7 +20,8 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
           },
           "deployment_id": "Dep_00000000000000000000000000",
           "metadata": {},
-          "scheduled_by": null
+          "scheduled_by": null,
+          "max_persisted_value_size_bytes": 18446744073709551615
         }
       },
       "version": 0

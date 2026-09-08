@@ -898,6 +898,7 @@ impl SqlitePool {
             deployment_id,
             metadata,
             scheduled_by,
+            max_persisted_value_size_bytes,
         } = event
         {
             Ok(CreateRequest {
@@ -912,11 +913,73 @@ impl SqlitePool {
                 metadata,
                 scheduled_by,
                 paused: false,
+                max_persisted_value_size_bytes,
             })
         } else {
             error!("Row with version=0 must be a `Created` event - {event:?}");
             Err(consistency_db_err("expected `Created` event").into())
         }
+    }
+
+    fn persisted_value_limit(
+        conn: &Connection,
+        execution_id: &ExecutionId,
+    ) -> Result<u64, DbErrorWrite> {
+        Self::fetch_created_event(conn, execution_id)
+            .map(|request| request.max_persisted_value_size_bytes)
+            .map_err(|error| match error {
+                DbErrorRead::NotFound => DbErrorWrite::NotFound,
+                DbErrorRead::Generic(error) => DbErrorWrite::Generic(error),
+            })
+    }
+
+    fn validate_append_requests(
+        conn: &Connection,
+        execution_id: &ExecutionId,
+        requests: &mut [AppendRequest],
+    ) -> Result<u64, DbErrorWrite> {
+        let limit = Self::persisted_value_limit(conn, execution_id)?;
+        for request in requests {
+            if request.event.drop_http_client_traces_to_fit(limit) {
+                warn!(
+                    %execution_id,
+                    event = request.event.variant(),
+                    max_persisted_value_size_bytes = limit,
+                    "Dropping HTTP client traces to fit persisted event envelope"
+                );
+            }
+            if let Err(error) = request.validate_for_persistence(limit) {
+                let logical_value_rejected =
+                    request.event.validate_persisted_values(limit).is_err();
+                if logical_value_rejected {
+                    if let Some(value_class) = request.event.persisted_value_class() {
+                        concepts::persisted_value::report_rejection(
+                            Some(execution_id),
+                            None,
+                            value_class,
+                            concepts::persisted_value::PersistedValueOrigin::StorageGuard,
+                            concepts::persisted_value::EncodedSizeExceeded {
+                                limit,
+                                encoded_size_at_least: limit.saturating_add(1),
+                            },
+                        );
+                    }
+                } else {
+                    warn!(
+                        %execution_id,
+                        event = request.event.variant(),
+                        origin = "storage_guard",
+                        limit,
+                        encoded_size_at_least = limit
+                            .saturating_add(concepts::persisted_value::PERSISTED_EVENT_OVERHEAD_BYTES)
+                            .saturating_add(1),
+                        "Rejected oversized persisted event envelope"
+                    );
+                }
+                return Err(error.into());
+            }
+        }
+        Ok(limit)
     }
 
     fn check_expected_next_and_appending_version(
@@ -2039,6 +2102,7 @@ impl SqlitePool {
             params,
             parent,
             metadata,
+            max_persisted_value_size_bytes,
             ..
         }) = events.pop_front().map(|outer| outer.event)
         else {
@@ -2070,6 +2134,7 @@ impl SqlitePool {
             parent,
             intermittent_event_count,
             locked_event,
+            max_persisted_value_size_bytes,
         })
     }
 
@@ -4349,7 +4414,15 @@ impl DbExecutor for SqlitePool {
         let created_at = req.created_at;
         let (version, notifier) = self
             .transaction(
-                move |tx| Self::append(tx, &execution_id, req.clone(), version.clone()),
+                move |tx| {
+                    let mut req = req.clone();
+                    Self::validate_append_requests(
+                        tx,
+                        &execution_id,
+                        std::slice::from_mut(&mut req),
+                    )?;
+                    Self::append(tx, &execution_id, req, version.clone())
+                },
                 TxType::MultipleWrites, // insert + update t_state
                 "append",
             )
@@ -4384,6 +4457,13 @@ impl DbExecutor for SqlitePool {
         let (version, notifiers) = {
             self.transaction(
                 move |tx| {
+                    let mut events = events.clone();
+                    let limit = Self::validate_append_requests(
+                        tx,
+                        &events.execution_id,
+                        &mut events.batch,
+                    )?;
+                    response.validate_for_persistence(limit)?;
                     let mut version = events.version.clone();
                     let mut notifier_of_child = None;
                     for append_request in &events.batch {
@@ -5342,6 +5422,7 @@ impl DbConnection for SqlitePool {
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         debug!("create");
         trace!(?req, "create");
+        req.validate_for_storage()?;
         let created_at = req.created_at;
         let (version, notifier) = self
             .transaction(
@@ -5415,6 +5496,8 @@ impl DbConnection for SqlitePool {
         let (version, notifier) = self
             .transaction(
                 move |tx| {
+                    let mut batch = batch.clone();
+                    Self::validate_append_requests(tx, &execution_id, &mut batch)?;
                     let mut version = version.clone();
                     let mut notifier = None;
                     for append_request in &batch {
@@ -5454,6 +5537,8 @@ impl DbConnection for SqlitePool {
         let (version, notifiers) = self
             .transaction(
                 move |tx| {
+                    let mut batch = batch.clone();
+                    Self::validate_append_requests(tx, &execution_id, &mut batch)?;
                     let mut version = version.clone();
                     let mut notifier = None;
                     for append_request in &batch {
@@ -5509,9 +5594,15 @@ impl DbConnection for SqlitePool {
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
         assert!(!batch.is_empty(), "Empty batch request");
 
+        for request in &child_req {
+            request.validate_for_storage()?;
+        }
+
         let (version, notifiers) = self
             .transaction(
                 move |tx| {
+                    let mut batch = batch.clone();
+                    Self::validate_append_requests(tx, &execution_id, &mut batch)?;
                     let mut notifier = None;
                     let mut version = version.clone();
                     for append_request in &batch {
@@ -5928,8 +6019,18 @@ impl DbConnection for SqlitePool {
         let notifiers = self
             .transaction(
                 move |tx| {
+                    let mut req = req.clone();
+                    let limit = Self::validate_append_requests(
+                        tx,
+                        &execution_id,
+                        std::slice::from_mut(&mut req),
+                    )
+                    .map_err(DbErrorStubResponse::Write)?;
+                    response
+                        .validate_for_persistence(limit)
+                        .map_err(|error| DbErrorStubResponse::Write(error.into()))?;
                     let version_raw = version.0;
-                    match Self::append(tx, &execution_id, req.clone(), version.clone()) {
+                    match Self::append(tx, &execution_id, req, version.clone()) {
                         Ok((_next_version, notifier_of_child)) => {
                             let pending_at_parent = Self::append_response(
                                 tx,
@@ -6081,6 +6182,7 @@ mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 };
                 SqlitePool::create_inner(tx, req)?;
                 SqlitePool::pause_execution(tx, &EXECUTION_ID_DUMMY, created_at)?;
