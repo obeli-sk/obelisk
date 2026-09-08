@@ -584,6 +584,7 @@ async fn fetch_created_event(
         deployment_id,
         metadata,
         scheduled_by,
+        max_persisted_value_size_bytes,
     } = event
     {
         Ok(CreateRequest {
@@ -598,6 +599,7 @@ async fn fetch_created_event(
             metadata,
             scheduled_by,
             paused: false,
+            max_persisted_value_size_bytes,
         })
     } else {
         error!("Row with version=0 must be a `Created` event - {event:?}");
@@ -2317,6 +2319,7 @@ async fn lock_single_execution(
         params,
         parent,
         metadata,
+        max_persisted_value_size_bytes,
         ..
     }) = events.pop_front().map(|outer| outer.event)
     else {
@@ -2350,6 +2353,7 @@ async fn lock_single_execution(
         parent,
         intermittent_event_count,
         locked_event,
+        max_persisted_value_size_bytes,
     })
 }
 
@@ -4145,6 +4149,7 @@ impl DbConnection for PostgresConnection {
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         debug!("create");
         trace!(?req, "create");
+        req.validate_persisted_values()?;
         let created_at = req.created_at;
 
         let mut client_guard = self.client.lock().await;

@@ -2153,6 +2153,7 @@ pub(crate) mod workflow_support {
             K::NondeterminismDetected => Wit::NondeterminismDetected,
             K::OutOfFuel => Wit::OutOfFuel,
             K::Cancelled => Wit::Cancelled,
+            K::ValueTooLarge => Wit::ValueTooLarge,
             K::Uncategorized => Wit::Uncategorized,
         }
     }
@@ -2634,6 +2635,9 @@ pub(crate) mod workflow_support {
                 Err(ChildExecutionRequestError::TypeCheckError(msg)) => {
                     Ok(Err(SubmitJsonError::TypeCheckError(msg)))
                 }
+                Err(ChildExecutionRequestError::ValueTooLarge { limit }) => {
+                    Ok(Err(SubmitJsonError::ValueTooLarge(limit)))
+                }
             }
         }
 
@@ -2745,6 +2749,9 @@ pub(crate) mod workflow_support {
                     self.error(format!("schedule-json: type check error: {msg}"))
                         .await;
                     Ok(Err(ScheduleJsonError::TypeCheckError(msg)))
+                }
+                Err(ScheduleRequestError::ValueTooLarge { limit }) => {
+                    Ok(Err(ScheduleJsonError::ValueTooLarge(limit)))
                 }
             }
         }
@@ -3010,6 +3017,9 @@ pub(crate) mod workflow_support {
                     self.error(format!("call-json: type check error: {msg}"))
                         .await;
                     return Ok(Err(ScheduleJsonError::TypeCheckError(msg)));
+                }
+                SubmitChildIntent::Err(ChildExecutionRequestError::ValueTooLarge { limit }) => {
+                    return Ok(Err(ScheduleJsonError::ValueTooLarge(limit)));
                 }
             };
 

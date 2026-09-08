@@ -1528,6 +1528,7 @@ impl EventHistory {
                             deployment_id: self.deployment_id,
                             scheduled_by: None,
                             paused: false,
+                            max_persisted_value_size_bytes: u64::MAX,
                         };
                         (Ok(()), params, Some(child_req))
                     }
@@ -1654,6 +1655,7 @@ impl EventHistory {
                             deployment_id: self.deployment_id,
                             scheduled_by: Some(db_connection.execution_id().clone()),
                             paused: false,
+                            max_persisted_value_size_bytes: u64::MAX,
                         };
                         (Ok(()), Some(child_req))
                     }
@@ -2069,6 +2071,7 @@ impl EventHistory {
                     deployment_id: self.deployment_id,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 };
 
                 db_connection

@@ -153,6 +153,7 @@ fn execution_failure_kind_to_wit(
         K::NondeterminismDetected => Wit::NondeterminismDetected,
         K::OutOfFuel => Wit::OutOfFuel,
         K::Cancelled => Wit::Cancelled,
+        K::ValueTooLarge => Wit::ValueTooLarge,
         K::Uncategorized => Wit::Uncategorized,
     }
 }
@@ -1024,6 +1025,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1193,6 +1195,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         let db_connection = match self.db_pool.connection().await {
@@ -1452,6 +1455,7 @@ impl WebhookEndpointCtx {
             deployment_id: self.deployment_id,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
         let conn = self.db_pool.connection().await?;
         let version = conn.create(create_request).await?;
@@ -1582,6 +1586,7 @@ impl WebhookEndpointCtx {
                     deployment_id: self.deployment_id,
                     scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 };
                 let db_connection = self.db_pool.connection().await?;
                 let expected_next_version = version.increment();
@@ -1674,6 +1679,7 @@ impl WebhookEndpointCtx {
                 deployment_id: self.deployment_id,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             };
             let db_connection = self.db_pool.connection().await?;
             let appended = vec![req_join_set_created, req_child_exec, req_join_next];

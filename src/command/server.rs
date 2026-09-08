@@ -419,6 +419,8 @@ pub(crate) enum SubmitError {
     FunctionNotFound,
     #[error("{0}")]
     ParamsInvalid(String),
+    #[error("execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
     #[error("execution already exists with the same id and different parameters")]
     Conflict,
     #[error(transparent)]
@@ -438,6 +440,7 @@ pub(crate) async fn submit(
     mut params: Vec<serde_json::Value>,
     paused: bool,
     component_registry_ro: &ComponentConfigRegistryRO,
+    max_persisted_value_size_bytes: u64,
 ) -> Result<SubmitOutcome, SubmitError> {
     let span = Span::current();
     span.record("execution_id", tracing::field::display(&execution_id));
@@ -532,6 +535,12 @@ pub(crate) async fn submit(
             .map(|ParameterType { type_wrapper, .. }| type_wrapper),
     )
     .map_err(|err| SubmitError::ParamsInvalid(format!("argument `params` invalid - {err}")))?;
+    concepts::persisted_value::EncodedSizeLimit::new(max_persisted_value_size_bytes)
+        .expect("verified server value limit is positive")
+        .validate(&params)
+        .map_err(|_| SubmitError::ValueTooLarge {
+            limit: max_persisted_value_size_bytes,
+        })?;
 
     // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
     let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
@@ -548,6 +557,7 @@ pub(crate) async fn submit(
             deployment_id,
             scheduled_by: None,
             paused,
+            max_persisted_value_size_bytes,
         })
         .await;
     match res {
@@ -1984,6 +1994,7 @@ pub(crate) struct ServerVerified {
     workflows_response_refresh_interval: usize,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
+    max_persisted_value_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
@@ -2011,6 +2022,10 @@ struct ServerVerifiedLaunch {
 }
 
 impl ServerVerified {
+    pub(crate) const fn max_persisted_value_size_bytes(&self) -> u64 {
+        self.max_persisted_value_size_bytes
+    }
+
     #[instrument(name = "ServerVerified::new", skip_all)]
     async fn new(
         engines: Engines,
@@ -2057,6 +2072,9 @@ impl ServerVerified {
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
+        }
+        if config.limits.max_persisted_value_size_bytes == 0 {
+            bail!("`limits.max_persisted_value_size_bytes` must be greater than zero");
         }
         let workflows_response_refresh_interval =
             config.workflows_global_config.response_refresh_interval;
@@ -2112,6 +2130,7 @@ impl ServerVerified {
                 None
             },
             max_deployment_file_bytes: config.max_deployment_file_bytes.0,
+            max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
             global_http_config,
             server_outbound_allowed_hosts,
             source_path,
@@ -3187,6 +3206,8 @@ async fn create_missing_cron_seeds(
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes:
+                    concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
             })
             .await
             .map_err(|e| {

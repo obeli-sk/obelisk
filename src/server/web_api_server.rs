@@ -1587,6 +1587,8 @@ pub(crate) struct CreateRequestSer {
     pub(crate) metadata: concepts::ExecutionMetadata,
     pub(crate) scheduled_by: Option<String>,
     pub(crate) paused: bool,
+    #[serde(default = "concepts::persisted_value::legacy_unlimited_persisted_value_size")]
+    pub(crate) max_persisted_value_size_bytes: u64,
 }
 
 impl From<concepts::storage::CreateRequest> for CreateRequestSer {
@@ -1613,6 +1615,7 @@ impl From<concepts::storage::CreateRequest> for CreateRequestSer {
             metadata: r.metadata,
             scheduled_by: r.scheduled_by.map(|execution_id| execution_id.to_string()),
             paused: r.paused,
+            max_persisted_value_size_bytes: r.max_persisted_value_size_bytes,
         }
     }
 }
@@ -1667,6 +1670,7 @@ impl TryFrom<CreateRequestSer> for concepts::storage::CreateRequest {
                 })
                 .transpose()?,
             paused: value.paused,
+            max_persisted_value_size_bytes: value.max_persisted_value_size_bytes,
         })
     }
 }
@@ -2244,6 +2248,7 @@ async fn execution_submit(
         payload.params,
         payload.paused,
         &component_registry_ro,
+        state.server_verified.max_persisted_value_size_bytes(),
     )
     .await
     .map_err(|err| ErrorWrapper(err, accept))?;
@@ -4568,6 +4573,11 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
                 accept,
             },
             SubmitError::FunctionNotFound => HttpResponse::not_found(accept, Some("ffqn")),
+            err @ SubmitError::ValueTooLarge { .. } => HttpResponse {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: err.to_string(),
+                accept,
+            },
             SubmitError::DbErrorWrite(db_error_write) => {
                 HttpResponse::from(ErrorWrapper(db_error_write, accept))
             }

@@ -11,6 +11,7 @@ use crate::config::env_var::{interpolate_env_vars_plaintext, interpolate_env_var
 use crate::config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
 use concepts::ContentDigest;
 use concepts::component_id::Digest;
+use concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES;
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use schemars::JsonSchema;
@@ -51,6 +52,8 @@ pub(crate) struct ServerConfigToml {
     #[serde(default)]
     pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
     #[serde(default)]
+    pub(crate) limits: LimitsToml,
+    #[serde(default)]
     pub(crate) api: ApiConfig,
     #[serde(default)]
     pub(crate) database: DatabaseConfigToml,
@@ -73,6 +76,25 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LimitsToml {
+    #[serde(default = "default_max_persisted_value_size_bytes")]
+    pub(crate) max_persisted_value_size_bytes: u64,
+}
+
+impl Default for LimitsToml {
+    fn default() -> Self {
+        Self {
+            max_persisted_value_size_bytes: DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
+        }
+    }
+}
+
+const fn default_max_persisted_value_size_bytes() -> u64 {
+    DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]

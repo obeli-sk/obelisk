@@ -183,3 +183,6 @@
 
 ## Appendix: Environment variable interpolation
 # Keys that support environment variable interpolation can use `${SOME}` to get the value of environment variable `SOME`.
+# Maximum compact JSON-encoded size of one durable execution value. Must be positive.
+[limits]
+max_persisted_value_size_bytes = 1048576

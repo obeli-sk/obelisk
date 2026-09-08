@@ -5,6 +5,7 @@ pub mod component_id;
 pub mod env_var;
 mod error_conversions;
 pub mod naming;
+pub mod persisted_value;
 #[cfg(feature = "postgres")]
 mod postgres_ext;
 #[cfg(feature = "rusqlite")]
@@ -81,6 +82,7 @@ pub enum ExecutionFailureKind {
     OutOfFuel,
     /// Applicable to activities
     Cancelled,
+    ValueTooLarge,
     Uncategorized,
 }
 

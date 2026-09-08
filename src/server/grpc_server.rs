@@ -246,6 +246,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             params,
             request.paused,
             &component_registry_ro,
+            self.server_verified.max_persisted_value_size_bytes(),
         )
         .await?;
 
@@ -1710,6 +1711,9 @@ impl From<SubmitError> for tonic::Status {
             ),
             SubmitError::FunctionNotFound => tonic::Status::not_found("function not found"),
             SubmitError::ParamsInvalid(reason) => tonic::Status::invalid_argument(reason),
+            err @ SubmitError::ValueTooLarge { .. } => {
+                tonic::Status::resource_exhausted(err.to_string())
+            }
             err @ SubmitError::Conflict => tonic::Status::already_exists(err.to_string()),
             SubmitError::DbErrorWrite(db_err) => db_error_write_to_status(&db_err),
         }

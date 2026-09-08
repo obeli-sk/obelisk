@@ -898,6 +898,7 @@ impl SqlitePool {
             deployment_id,
             metadata,
             scheduled_by,
+            max_persisted_value_size_bytes,
         } = event
         {
             Ok(CreateRequest {
@@ -912,6 +913,7 @@ impl SqlitePool {
                 metadata,
                 scheduled_by,
                 paused: false,
+                max_persisted_value_size_bytes,
             })
         } else {
             error!("Row with version=0 must be a `Created` event - {event:?}");
@@ -2039,6 +2041,7 @@ impl SqlitePool {
             params,
             parent,
             metadata,
+            max_persisted_value_size_bytes,
             ..
         }) = events.pop_front().map(|outer| outer.event)
         else {
@@ -2070,6 +2073,7 @@ impl SqlitePool {
             parent,
             intermittent_event_count,
             locked_event,
+            max_persisted_value_size_bytes,
         })
     }
 
@@ -5342,6 +5346,7 @@ impl DbConnection for SqlitePool {
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbErrorWrite> {
         debug!("create");
         trace!(?req, "create");
+        req.validate_persisted_values()?;
         let created_at = req.created_at;
         let (version, notifier) = self
             .transaction(
@@ -6081,6 +6086,7 @@ mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 };
                 SqlitePool::create_inner(tx, req)?;
                 SqlitePool::pause_execution(tx, &EXECUTION_ID_DUMMY, created_at)?;

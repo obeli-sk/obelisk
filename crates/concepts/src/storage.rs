@@ -124,10 +124,11 @@ impl ExecutionLog {
     pub fn get_create_request(&self) -> CreateRequest {
         assert_matches!(self.events.first().cloned(), Some(ExecutionEvent {
             event:ExecutionRequest::Created{
-                ffqn,params,parent,scheduled_at,component_id,deployment_id,metadata,scheduled_by},
+                ffqn,params,parent,scheduled_at,component_id,deployment_id,metadata,scheduled_by,max_persisted_value_size_bytes},
                 created_at, .. }) => CreateRequest { created_at, execution_id:
                     self.execution_id.clone(), ffqn, params, parent, scheduled_at,
-                    component_id, deployment_id, metadata, scheduled_by, paused: false })
+                    component_id, deployment_id, metadata, scheduled_by, paused: false,
+                    max_persisted_value_size_bytes })
     }
 
     #[must_use]
@@ -390,6 +391,7 @@ pub const DUMMY_CREATED: ExecutionRequest = ExecutionRequest::Created {
     deployment_id: DeploymentId::from_parts(0, 0),
     metadata: ExecutionMetadata::empty(),
     scheduled_by: None,
+    max_persisted_value_size_bytes: u64::MAX,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionRequest = ExecutionRequest::HistoryEvent {
     event: HistoryEvent::JoinSetCreate {
@@ -427,6 +429,8 @@ pub enum ExecutionRequest {
         #[cfg_attr(any(test, feature = "test"), arbitrary(default))]
         metadata: ExecutionMetadata,
         scheduled_by: Option<ExecutionId>,
+        #[serde(default = "crate::persisted_value::legacy_unlimited_persisted_value_size")]
+        max_persisted_value_size_bytes: u64,
     },
     Locked(Locked),
     /// Releases a lock.
@@ -824,6 +828,8 @@ pub enum StubError {
     TypeCheckError(String),
     #[error("conflict")]
     Conflict,
+    #[error("stub result exceeds the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
 }
 
 /// Error from the `schedule-json` function. Persisted in history for determinism.
@@ -836,6 +842,8 @@ pub enum ScheduleRequestError {
     FunctionNotFound,
     #[error("params parsing error: {0}")]
     TypeCheckError(String),
+    #[error("execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
 }
 
 /// Error from the `submit-json` function. Persisted in history for determinism.
@@ -848,6 +856,8 @@ pub enum ChildExecutionRequestError {
     FunctionNotFound,
     #[error("params parsing error: {0}")]
     TypeCheckError(String),
+    #[error("execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
 }
 
 #[derive(
@@ -1079,6 +1089,7 @@ pub struct LockedExecution {
     pub responses: Vec<ResponseWithCursor>,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,
+    pub max_persisted_value_size_bytes: u64,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -1105,6 +1116,20 @@ pub struct CreateRequest {
     pub metadata: ExecutionMetadata,
     pub scheduled_by: Option<ExecutionId>,
     pub paused: bool,
+    pub max_persisted_value_size_bytes: u64,
+}
+
+impl CreateRequest {
+    pub fn validate_persisted_values(&self) -> Result<(), DbErrorWriteNonRetriable> {
+        let limit =
+            crate::persisted_value::EncodedSizeLimit::new(self.max_persisted_value_size_bytes)
+                .unwrap_or(crate::persisted_value::EncodedSizeLimit::LEGACY_UNLIMITED);
+        limit.validate(&self.params).map(|_| ()).map_err(|_| {
+            DbErrorWriteNonRetriable::ValidationFailed(StrVariant::Static(
+                "execution parameters exceed persisted value limit",
+            ))
+        })
+    }
 }
 
 impl From<CreateRequest> for ExecutionRequest {
@@ -1118,6 +1143,7 @@ impl From<CreateRequest> for ExecutionRequest {
             deployment_id: value.deployment_id,
             metadata: value.metadata,
             scheduled_by: value.scheduled_by,
+            max_persisted_value_size_bytes: value.max_persisted_value_size_bytes,
         }
     }
 }
@@ -2113,6 +2139,7 @@ pub trait DbConnection: DbExecutor {
             deployment_id,
             metadata,
             scheduled_by,
+            max_persisted_value_size_bytes,
         } = execution_event.event
         {
             Ok(CreateRequest {
@@ -2127,6 +2154,7 @@ pub trait DbConnection: DbExecutor {
                 metadata,
                 scheduled_by,
                 paused: false,
+                max_persisted_value_size_bytes,
             })
         } else {
             Err(DbErrorRead::Generic(DbErrorGeneric::Uncategorized {

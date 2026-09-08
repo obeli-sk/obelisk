@@ -70,6 +70,7 @@ interface execution {
         nondeterminism-detected,
         out-of-fuel,
         cancelled,
+        value-too-large,
         uncategorized,
     }
 
@@ -105,6 +106,7 @@ interface execution {
         /// Conflict can happen when a second writer attempts to stub a value, while the
         /// value is not equal to the already stubbed value.
         conflict,
+        value-too-large(u64),
     }
 
     @since(version = 4.2.0)
@@ -113,7 +115,9 @@ interface execution {
         ffqn-parsing-error(string),
         function-not-found,
         type-check-error(string),
+        value-too-large(u64),
     }
+
 }
 
 @since(version = 4.2.0)

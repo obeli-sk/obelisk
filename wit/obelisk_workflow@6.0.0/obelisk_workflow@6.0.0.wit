@@ -30,6 +30,7 @@ interface workflow-support {
         ffqn-parsing-error(string),
         function-not-found,
         type-check-error(string),
+        value-too-large(u64),
     }
 
     /// Error variants that may occur when calling `join-next` function.
@@ -69,6 +70,7 @@ interface workflow-support {
         type-check-error(string),
         /// Write conflict — a different result was already stubbed.
         conflict,
+        value-too-large(u64),
     }
 
     /// Get the execution ID of the current workflow invocation.

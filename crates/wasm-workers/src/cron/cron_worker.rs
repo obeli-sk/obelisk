@@ -109,6 +109,7 @@ impl Worker for CronWorker {
             metadata: ExecutionMetadata::empty(),
             scheduled_by: Some(current_execution_id.clone()),
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         // Build the history event for the schedule

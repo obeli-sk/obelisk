@@ -325,6 +325,7 @@ impl From<StubError> for StubJsonError {
             StubError::ExecutionNotFound => StubJsonError::ExecutionNotFound,
             StubError::TypeCheckError(reason) => StubJsonError::TypeCheckError(reason),
             StubError::Conflict => StubJsonError::Conflict,
+            StubError::ValueTooLarge { limit } => StubJsonError::ValueTooLarge(limit),
         }
     }
 }
@@ -338,6 +339,9 @@ pub(crate) fn stub_result_to_wast_val(stub_result: Result<(), StubError>) -> Was
                 StubError::Conflict => ("conflict", None),
                 StubError::TypeCheckError(reason) => {
                     ("type-check-error", Some(Box::new(WastVal::String(reason))))
+                }
+                StubError::ValueTooLarge { limit } => {
+                    ("value-too-large", Some(Box::new(WastVal::U64(limit))))
                 }
             };
             WastVal::Result(Err(Some(Box::new(WastVal::Variant(
