@@ -1802,7 +1802,7 @@ impl TestServer {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_id.clone(),
                             target_ffqn: CHILD_FFQN,
-                            params: Params::empty(),
+                            params: concepts::storage::PersistedParams::Inline(Params::empty()),
                             result: Ok(()),
                         },
                     },
@@ -4221,7 +4221,7 @@ async fn webhook_js_get_status_cancelling() {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_id.clone(),
                             target_ffqn: CHILD_FFQN,
-                            params: Params::empty(),
+                            params: concepts::storage::PersistedParams::Inline(Params::empty()),
                             result: Ok(()),
                         },
                     },

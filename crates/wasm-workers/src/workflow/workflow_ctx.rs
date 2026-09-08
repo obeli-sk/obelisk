@@ -186,10 +186,23 @@ impl DirectFnCall<'_> {
             params,
             wasm_backtrace,
         } = self;
+        let params = Params::from_wasmtime(Arc::from(params));
+        if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(
+            ctx.event_history.max_persisted_value_size_bytes(),
+        )
+        .expect("persisted value limit must be positive")
+        .validate(&params)
+        {
+            return Err(WorkflowFunctionError::ImportedFunctionCallError {
+                ffqn,
+                reason: "child execution parameters exceed the persisted value limit".into(),
+                detail: Some(format!("limit: {} bytes", exceeded.limit)),
+            });
+        }
         OneOffChildExecutionRequest::apply(
             ffqn,
             fn_component_id,
-            Params::from_wasmtime(Arc::from(params)),
+            params,
             wasm_backtrace,
             &mut ctx.event_history,
             &mut ctx.event_call_cursor,
@@ -408,7 +421,7 @@ fn child_request_error_to_wast_val(err: storage::ChildExecutionRequestError) -> 
     }
 }
 
-fn schedule_request_error_to_wast_val(err: storage::ScheduleRequestError) -> WastVal {
+pub(crate) fn schedule_request_error_to_wast_val(err: storage::ScheduleRequestError) -> WastVal {
     match err {
         storage::ScheduleRequestError::FunctionNotFound => {
             WastVal::Variant(ValKey::from_kebab("function-not-found"), None)
@@ -3074,6 +3087,14 @@ pub(crate) mod workflow_support {
                     return Ok(Err(ScheduleJsonError::ValueTooLarge(limit)));
                 }
             };
+            if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(
+                self.event_history.max_persisted_value_size_bytes(),
+            )
+            .expect("persisted value limit must be positive")
+            .validate(&params)
+            {
+                return Ok(Err(ScheduleJsonError::ValueTooLarge(exceeded.limit)));
+            }
 
             // Pre-compute the child execution ID using the same logic as OneOffChildExecutionRequest::apply,
             // so we can look up the result afterwards.

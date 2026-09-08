@@ -7,6 +7,7 @@ use crate::webhook::webhook_trigger::types::{
     GetErrorTrappable, GetStatusErrorTrappable, ScheduleJsonErrorTrappable, TryGetErrorTrappable,
 };
 use crate::workflow::host_exports::{SUFFIX_FN_SCHEDULE, history_event_schedule_at_from_wast_val};
+use crate::workflow::workflow_ctx::schedule_request_error_to_wast_val;
 use crate::{RunnableComponent, WasmFileError};
 use assert_matches::assert_matches;
 use concepts::prefixed_ulid::{
@@ -990,6 +991,13 @@ impl WebhookEndpointCtx {
                 return Err(ScheduleJsonError::TypeCheckError(msg).into());
             }
         };
+        if let Err(exceeded) =
+            concepts::persisted_value::EncodedSizeLimit::new(self.max_persisted_value_size_bytes)
+                .expect("persisted value limit must be positive")
+                .validate(&params)
+        {
+            return Err(ScheduleJsonError::ValueTooLarge(exceeded.limit).into());
+        }
 
         // Convert schedule_at
         let history_event_schedule_at = schedule_at_from_webhook(schedule_at);
@@ -1170,7 +1178,7 @@ impl WebhookEndpointCtx {
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: ffqn.clone(),
-                        params: params.clone(),
+                        params: concepts::storage::PersistedParams::Inline(params.clone()),
                         result: Ok(()),
                     },
                 },
@@ -1398,6 +1406,8 @@ enum WebhookEndpointFunctionError {
     FinishedExecutionFailure(#[from] FinishedExecutionFailure),
     #[error("uncategorized error: {0}")]
     UncategorizedError(&'static str),
+    #[error("child execution parameters exceed the {limit}-byte persisted value limit")]
+    ValueTooLarge { limit: u64 },
     #[error("connection closed")]
     ConnectionClosed,
 }
@@ -1570,33 +1580,52 @@ impl WebhookEndpointCtx {
                 let created_at = self.clock_fn.now();
                 let params = Params::from_wasmtime(Arc::from(params));
 
+                let params_hash = concepts::persisted_value::compact_json_sha256(&params);
+                let target_time = schedule_at.as_date_time(created_at).map_err(|_err| {
+                    WebhookEndpointFunctionError::UncategorizedError("schedule-at conversion error")
+                })?;
+                let (result, create_child_requests) =
+                    match concepts::persisted_value::EncodedSizeLimit::new(
+                        self.max_persisted_value_size_bytes,
+                    )
+                    .expect("persisted value limit must be positive")
+                    .validate(&params)
+                    {
+                        Ok(_) => (
+                            Ok(()),
+                            vec![CreateRequest {
+                                created_at,
+                                execution_id: new_execution_id.clone(),
+                                ffqn,
+                                params,
+                                parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
+                                metadata: ExecutionMetadata::from_linked_span(
+                                    &self.component_logger.span,
+                                ),
+                                scheduled_at: target_time,
+                                component_id: child_component_id.clone(),
+                                deployment_id: self.deployment_id,
+                                scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
+                                paused: false,
+                                max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
+                            }],
+                        ),
+                        Err(exceeded) => (
+                            Err(concepts::storage::ScheduleRequestError::ValueTooLarge {
+                                limit: exceeded.limit,
+                            }),
+                            vec![],
+                        ),
+                    };
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id.clone(),
                     schedule_at,
-                    params_hash: Some(concepts::persisted_value::compact_json_sha256(&params)),
-                    result: Ok(()),
+                    params_hash: Some(params_hash),
+                    result: result.clone(),
                 };
-                let schedule_at = schedule_at.as_date_time(created_at).map_err(|_err| {
-                    WebhookEndpointFunctionError::UncategorizedError("schedule-at conversion error")
-                })?;
                 let child_exec_req = AppendRequest {
                     event: ExecutionRequest::HistoryEvent { event },
                     created_at,
-                };
-
-                let create_child_req = CreateRequest {
-                    created_at,
-                    execution_id: new_execution_id.clone(),
-                    ffqn,
-                    params,
-                    parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
-                    scheduled_at: schedule_at,
-                    component_id: child_component_id.clone(),
-                    deployment_id: self.deployment_id,
-                    scheduled_by: Some(ExecutionId::TopLevel(self.execution_id)),
-                    paused: false,
-                    max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
                 };
                 let db_connection = self.db_pool.connection().await?;
                 let expected_next_version = version.increment();
@@ -1613,13 +1642,20 @@ impl WebhookEndpointCtx {
                         vec![child_exec_req],
                         ExecutionId::TopLevel(self.execution_id),
                         version.clone(),
-                        vec![create_child_req],
+                        create_child_requests,
                         backtrace_info.into_iter().collect(),
                     )
                     .await?;
                 assert_eq!(version, expected_next_version); // Expected for backtrace's version_max_excluding
                 self.version = Some(version.clone());
-                results[0] = execution_id_into_val(&new_execution_id);
+                results[0] = match result {
+                    Ok(()) => {
+                        Val::Result(Ok(Some(Box::new(execution_id_into_val(&new_execution_id)))))
+                    }
+                    Err(err) => Val::Result(Err(Some(Box::new(
+                        schedule_request_error_to_wast_val(err).as_val(),
+                    )))),
+                };
             } else {
                 error!("unrecognized `{SUFFIX_PKG_SCHEDULE}` extension function {ffqn}");
                 return Err(WebhookEndpointFunctionError::UncategorizedError(
@@ -1652,6 +1688,16 @@ impl WebhookEndpointCtx {
                 },
             };
             let params = Params::from_wasmtime(Arc::from(params));
+            if let Err(exceeded) = concepts::persisted_value::EncodedSizeLimit::new(
+                self.max_persisted_value_size_bytes,
+            )
+            .expect("persisted value limit must be positive")
+            .validate(&params)
+            {
+                return Err(WebhookEndpointFunctionError::ValueTooLarge {
+                    limit: exceeded.limit,
+                });
+            }
             let req_child_exec = AppendRequest {
                 created_at,
                 event: ExecutionRequest::HistoryEvent {
@@ -1660,7 +1706,7 @@ impl WebhookEndpointCtx {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: ffqn.clone(),
-                            params: params.clone(),
+                            params: concepts::storage::PersistedParams::Inline(params.clone()),
                             result: Ok(()),
                         },
                     },

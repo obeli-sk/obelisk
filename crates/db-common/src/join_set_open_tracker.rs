@@ -440,7 +440,7 @@ mod tests {
                     request: JoinSetRequest::ChildExecutionRequest {
                         child_execution_id: child_id.clone(),
                         target_ffqn: ffqn.clone(),
-                        params: Params::empty(),
+                        params: concepts::storage::PersistedParams::Inline(Params::empty()),
                         result: Ok(()),
                     },
                 },
@@ -538,7 +538,7 @@ mod tests {
                 request: JoinSetRequest::ChildExecutionRequest {
                     child_execution_id: awaited.clone(),
                     target_ffqn: ffqn.clone(),
-                    params: Params::empty(),
+                    params: concepts::storage::PersistedParams::Inline(Params::empty()),
                     result: Ok(()),
                 },
             },
@@ -547,7 +547,7 @@ mod tests {
                 request: JoinSetRequest::ChildExecutionRequest {
                     child_execution_id: running.clone(),
                     target_ffqn: ffqn.clone(),
-                    params: Params::empty(),
+                    params: concepts::storage::PersistedParams::Inline(Params::empty()),
                     result: Ok(()),
                 },
             },
@@ -687,7 +687,7 @@ mod tests {
                             request: JoinSetRequest::ChildExecutionRequest {
                                 child_execution_id: cid.clone(),
                                 target_ffqn: ffqn.clone(),
-                                params: Params::empty(),
+                                params: concepts::storage::PersistedParams::Inline(Params::empty()),
                                 result: Ok(()),
                             },
                         });

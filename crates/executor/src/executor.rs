@@ -1725,7 +1725,7 @@ mod tests {
                         request: JoinSetRequest::ChildExecutionRequest {
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: FFQN_CHILD,
-                            params,
+                            params: concepts::storage::PersistedParams::Inline(params),
                             result: Ok(()),
                         },
                     },

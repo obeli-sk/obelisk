@@ -27,7 +27,14 @@ pub fn compact_json_sha256<T: Serialize + ?Sized>(value: &T) -> Digest {
     Digest(writer.0.finalize().into())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EncodedSizeAndDigest {
+    pub encoded_size: Result<u64, EncodedSizeExceeded>,
+    pub sha256: Digest,
+}
+
 // backcompat: 0.41 created events without a limit remain unlimited during replay.
+#[must_use]
 pub const fn legacy_unlimited_persisted_value_size() -> u64 {
     u64::MAX
 }
@@ -38,10 +45,12 @@ pub struct EncodedSizeLimit(u64);
 impl EncodedSizeLimit {
     pub const LEGACY_UNLIMITED: Self = Self(u64::MAX);
 
+    #[must_use]
     pub const fn new(limit: u64) -> Option<Self> {
         if limit == 0 { None } else { Some(Self(limit)) }
     }
 
+    #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
@@ -55,6 +64,55 @@ impl EncodedSizeLimit {
                 encoded_size_at_least: self.0.saturating_add(1),
             }),
             Err(err) => panic!("persisted value serialization failed: {err}"),
+        }
+    }
+
+    pub fn validate_and_hash<T: Serialize + ?Sized>(self, value: &T) -> EncodedSizeAndDigest {
+        struct Writer {
+            limit: u64,
+            written: u64,
+            exceeded: bool,
+            hasher: Sha256,
+        }
+
+        impl io::Write for Writer {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.hasher.update(buf);
+                if !self.exceeded {
+                    let next = self.written.saturating_add(buf.len() as u64);
+                    if next > self.limit {
+                        self.written = self.limit.saturating_add(1);
+                        self.exceeded = true;
+                    } else {
+                        self.written = next;
+                    }
+                }
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = Writer {
+            limit: self.0,
+            written: 0,
+            exceeded: false,
+            hasher: Sha256::new(),
+        };
+        serde_json::to_writer(&mut writer, value)
+            .unwrap_or_else(|err| panic!("persisted value serialization failed: {err}"));
+        EncodedSizeAndDigest {
+            encoded_size: if writer.exceeded {
+                Err(EncodedSizeExceeded {
+                    limit: self.0,
+                    encoded_size_at_least: writer.written,
+                })
+            } else {
+                Ok(writer.written)
+            },
+            sha256: Digest(writer.hasher.finalize().into()),
         }
     }
 }
@@ -123,5 +181,21 @@ mod tests {
         let value = serde_json::json!(["a", 1]);
         let expected = Sha256::digest(br#"["a",1]"#);
         assert_eq!(compact_json_sha256(&value), Digest(expected.into()));
+    }
+
+    #[test]
+    fn validates_and_hashes_complete_oversized_value() {
+        let first = serde_json::json!(["abcdef"]);
+        let second = serde_json::json!(["abcdeg"]);
+        let first_result = EncodedSizeLimit::new(4).unwrap().validate_and_hash(&first);
+        let second_result = EncodedSizeLimit::new(4).unwrap().validate_and_hash(&second);
+        assert_eq!(
+            first_result.encoded_size,
+            Err(EncodedSizeExceeded {
+                limit: 4,
+                encoded_size_at_least: 5,
+            })
+        );
+        assert_ne!(first_result.sha256, second_result.sha256);
     }
 }

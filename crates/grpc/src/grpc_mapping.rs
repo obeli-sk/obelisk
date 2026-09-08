@@ -1295,13 +1295,38 @@ fn history_event_from_grpc(
                             ))
                         }
                     };
+                    let params = match (child.params, child.rejected_params) {
+                        (Some(params), None) => concepts::storage::PersistedParams::Inline(
+                            from_any(&params, "Params")?,
+                        ),
+                        (None, Some(rejected)) => concepts::storage::PersistedParams::Rejected {
+                            rejected: concepts::storage::RejectedParams {
+                                sha256: rejected.sha256.parse().map_err(|_| {
+                                    tonic::Status::invalid_argument(
+                                        "invalid child_execution_request.rejected_params.sha256",
+                                    )
+                                })?,
+                                encoded_size_at_least: rejected.encoded_size_at_least,
+                            },
+                        },
+                        (Some(_), Some(_)) => {
+                            return Err(tonic::Status::invalid_argument(
+                                "child execution request has both inline and rejected params",
+                            ));
+                        }
+                        (None, None) => {
+                            return Err(tonic::Status::invalid_argument(
+                                "child execution request params are missing",
+                            ));
+                        }
+                    };
                     JoinSetRequest::ChildExecutionRequest {
                         child_execution_id,
                         target_ffqn: child
                             .function_name
                             .argument_must_exist("function_name")?
                             .try_into()?,
-                        params: from_any(&child.params.argument_must_exist("params")?, "Params")?,
+                        params,
                         result: match child.result.argument_must_exist("result")? {
                             grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Ok(_) => Ok(()),
                             grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Error(err) => Err(match grpc_gen::execution_event::history_event::join_set_request::child_execution_request::error::Kind::try_from(err.kind).map_err(|_| tonic::Status::invalid_argument("invalid child_execution_request.error.kind"))? {
@@ -1521,14 +1546,17 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                                     id: child_execution_id.to_string(),
                                 }),
                                 function_name: Some(grpc_gen::FunctionName::from(target_ffqn)),
-                                params: Some(
-                                    to_any(
-                                        params,
-                                        "urn:obelisk:json:params:child-execution-request"
-                                            .to_string(),
-                                    )
-                                    .expect("Params must be JSON-serializable"),
-                                ),
+                                params: match &params {
+                                    concepts::storage::PersistedParams::Inline(params) => Some(
+                                        to_any(
+                                            params,
+                                            "urn:obelisk:json:params:child-execution-request"
+                                                .to_string(),
+                                        )
+                                        .expect("Params must be JSON-serializable"),
+                                    ),
+                                    concepts::storage::PersistedParams::Rejected { .. } => None,
+                                },
                                 result: Some(match result {
                                     Ok(()) => grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Ok(
                                         grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Ok {},
@@ -1552,6 +1580,15 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                                         },
                                     ),
                                 }),
+                                rejected_params: match params {
+                                    concepts::storage::PersistedParams::Inline(_) => None,
+                                    concepts::storage::PersistedParams::Rejected { rejected } => Some(
+                                        history_event::join_set_request::child_execution_request::RejectedParams {
+                                            sha256: rejected.sha256.to_string(),
+                                            encoded_size_at_least: rejected.encoded_size_at_least,
+                                        },
+                                    ),
+                                },
                             },
                         ),
                     ),

@@ -896,7 +896,9 @@ mod tests {
                                 request: concepts::storage::JoinSetRequest::ChildExecutionRequest {
                                     child_execution_id,
                                     target_ffqn: "testing:fibo/fibo.fibo".parse().unwrap(),
-                                    params: concepts::Params::empty(),
+                                    params: concepts::storage::PersistedParams::Inline(
+                                        concepts::Params::empty(),
+                                    ),
                                     result: Ok(()),
                                 },
                             },

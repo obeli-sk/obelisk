@@ -978,11 +978,43 @@ pub enum JoinSetRequest {
     ChildExecutionRequest {
         child_execution_id: ExecutionIdDerived,
         target_ffqn: FunctionFqn,
-        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Params::empty()))]
-        params: Params,
+        // backcompat: 0.41 child requests stored raw Params at this field.
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = PersistedParams::Inline(Params::empty())))]
+        params: PersistedParams,
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = Ok(())))]
         result: Result<(), ChildExecutionRequestError>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum PersistedParams {
+    Rejected { rejected: RejectedParams },
+    Inline(Params),
+}
+
+impl Display for PersistedParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RejectedParams {
+    pub sha256: crate::component_id::Digest,
+    pub encoded_size_at_least: u64,
+}
+
+impl PersistedParams {
+    #[must_use]
+    pub fn matches(&self, params: &Params) -> bool {
+        match self {
+            Self::Inline(stored) => stored == params,
+            Self::Rejected { rejected } => {
+                crate::persisted_value::compact_json_sha256(params) == rejected.sha256
+            }
+        }
+    }
 }
 
 /// Error that is not specific to an execution.
@@ -3108,6 +3140,7 @@ mod tests {
     use super::PendingStateFinishedResultKind;
     use crate::ExecutionFailureKind;
     use crate::JoinSetId;
+    use crate::Params;
     use crate::SupportedFunctionReturnValue;
     use chrono::DateTime;
     use chrono::Datelike;
@@ -3117,6 +3150,31 @@ mod tests {
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::WastVal;
     use val_json::wast_val::WastValWithType;
+
+    #[test]
+    fn legacy_child_params_deserialize_as_inline() {
+        let params: super::PersistedParams = serde_json::from_str("[]").unwrap();
+        assert_eq!(super::PersistedParams::Inline(Params::empty()), params);
+    }
+
+    #[test]
+    fn rejected_child_params_store_only_digest_and_size() {
+        let params = Params::from_json_values_test(vec![serde_json::json!("secret-value")]);
+        let rejected = super::PersistedParams::Rejected {
+            rejected: super::RejectedParams {
+                sha256: crate::persisted_value::compact_json_sha256(&params),
+                encoded_size_at_least: 5,
+            },
+        };
+        let json = serde_json::to_string(&rejected).unwrap();
+        assert!(!json.contains("secret-value"));
+        assert!(rejected.matches(&params));
+        assert!(
+            !rejected.matches(&Params::from_json_values_test(vec![serde_json::json!(
+                "different-value"
+            ),]))
+        );
+    }
 
     #[rstest(expected => [
         PendingStateFinishedResultKind::Ok,
