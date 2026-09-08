@@ -271,6 +271,7 @@ mod tests {
             metadata: ExecutionMetadata::empty(),
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();

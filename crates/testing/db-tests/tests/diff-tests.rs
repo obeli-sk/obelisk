@@ -61,6 +61,7 @@ async fn diff_proptest_inner(seed: u64) {
         deployment_id: DEPLOYMENT_ID_DUMMY,
         scheduled_by: None,
         paused: false,
+        max_persisted_value_size_bytes: u64::MAX,
     };
     let mut append_requests = vec![];
     while append_requests.is_empty() {
@@ -177,6 +178,7 @@ fn normalize_timestamps(
             deployment_id: _,
             metadata: _,
             scheduled_by: _,
+            max_persisted_value_size_bytes: _,
         } => {
             *scheduled_at = arbitrary_valid_datetime(unstructured)?;
         }
@@ -356,6 +358,7 @@ async fn persist_finished_event(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();

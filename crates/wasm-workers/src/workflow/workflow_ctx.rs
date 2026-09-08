@@ -940,6 +940,7 @@ impl WorkflowCtx {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
+        max_persisted_value_size_bytes: u64,
         db_connection: Box<dyn WorkflowDbConnection>,
         version: Version,
         event_history: Vec<(HistoryEvent, Version)>,
@@ -974,6 +975,7 @@ impl WorkflowCtx {
             db_connection,
             event_history: EventHistory::new(
                 deployment_id,
+                max_persisted_value_size_bytes,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -3417,6 +3419,9 @@ pub(crate) mod tests {
             let cancel_registry = CancelRegistry::new();
             let mut workflow_ctx = WorkflowCtx::new(
                 DEPLOYMENT_ID_DUMMY,
+                ctx.metadata
+                    .max_persisted_value_size_bytes()
+                    .unwrap_or(u64::MAX),
                 Box::new(caching_db_connection),
                 ctx.version,
                 ctx.event_history,
@@ -3674,6 +3679,7 @@ pub(crate) mod tests {
                     deployment_id: DEPLOYMENT_ID_DUMMY,
                     scheduled_by: None,
                     paused: false,
+                    max_persisted_value_size_bytes: u64::MAX,
                 })
                 .await
                 .unwrap();
@@ -3925,6 +3931,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4247,6 +4254,7 @@ pub(crate) mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

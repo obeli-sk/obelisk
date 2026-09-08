@@ -598,9 +598,12 @@ impl ExecTask {
             );
         let parent = locked_execution.parent.clone();
         let execution_id = locked_execution.execution_id.clone();
+        let mut metadata = locked_execution.metadata;
+        metadata
+            .set_max_persisted_value_size_bytes(locked_execution.max_persisted_value_size_bytes);
         let ctx = WorkerContext {
             execution_id: locked_execution.execution_id.clone(),
-            metadata: locked_execution.metadata,
+            metadata,
             component_digest: locked_execution.component_digest,
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
@@ -1335,6 +1338,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -1661,6 +1665,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -1701,6 +1706,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             };
             let current_time = sim_clock.now();
             let join_set = AppendRequest {
@@ -1923,6 +1929,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();

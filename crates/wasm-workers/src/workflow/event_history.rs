@@ -145,6 +145,7 @@ pub(crate) enum UpsertStubOrReplayInterrupt {
 pub(crate) struct EventHistory {
     replaying_unfinished_execution: bool,
     deployment_id: DeploymentId,
+    max_persisted_value_size_bytes: u64,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     // Contains requests (events produced by the workflow)
     event_history: Vec<(HistoryEvent, ProcessingStatus, Version)>,
@@ -221,6 +222,7 @@ impl EventHistory {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         deployment_id: DeploymentId,
+        max_persisted_value_size_bytes: u64,
         event_history: Vec<(HistoryEvent, Version)>,
         responses: Vec<ResponseWithCursor>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -239,6 +241,7 @@ impl EventHistory {
         EventHistory {
             replaying_unfinished_execution,
             deployment_id,
+            max_persisted_value_size_bytes,
             index_child_exe_to_processed_response_idx: HashMap::default(),
             index_child_exe_to_ffqn: HashMap::default(),
             index_delay_id_to_expires_at: IndexMap::default(),
@@ -1529,7 +1532,7 @@ impl EventHistory {
                             deployment_id: self.deployment_id,
                             scheduled_by: None,
                             paused: false,
-                            max_persisted_value_size_bytes: u64::MAX,
+                            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
                         };
                         (Ok(()), params, Some(child_req))
                     }
@@ -1656,7 +1659,7 @@ impl EventHistory {
                             deployment_id: self.deployment_id,
                             scheduled_by: Some(db_connection.execution_id().clone()),
                             paused: false,
-                            max_persisted_value_size_bytes: u64::MAX,
+                            max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
                         };
                         (Ok(()), Some(child_req))
                     }
@@ -2072,7 +2075,7 @@ impl EventHistory {
                     deployment_id: self.deployment_id,
                     scheduled_by: None,
                     paused: false,
-                    max_persisted_value_size_bytes: u64::MAX,
+                    max_persisted_value_size_bytes: self.max_persisted_value_size_bytes,
                 };
 
                 db_connection
@@ -4610,6 +4613,7 @@ mod tests {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4672,6 +4676,7 @@ mod tests {
         let cancel_registry = CancelRegistry::new();
         let event_history = EventHistory::new(
             DEPLOYMENT_ID_DUMMY,
+            exec_log.max_persisted_value_size_bytes(),
             history_events,
             exec_log.responses,
             join_next_blocking_strategy,

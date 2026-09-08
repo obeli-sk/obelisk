@@ -1854,7 +1854,8 @@ type MetadataMap = hashbrown::HashMap<String, String, BuildHasherDefault<Default
 )]
 #[schemars(with = "std::collections::HashMap<String, String>")]
 #[display("{_0:?}")]
-pub struct ExecutionMetadata(MetadataMap);
+#[serde(transparent)]
+pub struct ExecutionMetadata(MetadataMap, #[serde(skip)] Option<u64>);
 
 impl ExecutionMetadata {
     const LINKED_KEY: &str = "obelisk-tracing-linked";
@@ -1863,7 +1864,22 @@ impl ExecutionMetadata {
 
     #[must_use]
     pub const fn empty() -> Self {
-        Self(Self::EMPTY_MAP)
+        Self(Self::EMPTY_MAP, None)
+    }
+
+    #[must_use]
+    pub const fn with_max_persisted_value_size_bytes(mut self, limit: u64) -> Self {
+        self.1 = Some(limit);
+        self
+    }
+
+    pub fn set_max_persisted_value_size_bytes(&mut self, limit: u64) {
+        self.1 = Some(limit);
+    }
+
+    #[must_use]
+    pub const fn max_persisted_value_size_bytes(&self) -> Option<u64> {
+        self.1
     }
 
     #[must_use]
@@ -1883,7 +1899,7 @@ impl ExecutionMetadata {
     #[must_use]
     fn create(span: &Span, link_marker: bool) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let mut metadata = Self(hashbrown::HashMap::default());
+        let mut metadata = Self(hashbrown::HashMap::default(), None);
         let mut metadata_view = ExecutionMetadataInjectorView {
             metadata: &mut metadata,
         };
@@ -1965,9 +1981,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
-        JoinSetKind, StrVariant, SupportedFunctionReturnValue, TypeWrapperTopLevel,
-        prefixed_ulid::ExecutorId,
+        ExecutionFailureKind, ExecutionId, ExecutionMetadata, FinishedExecutionFailure,
+        FunctionFqn, JoinSetId, JoinSetKind, StrVariant, SupportedFunctionReturnValue,
+        TypeWrapperTopLevel, prefixed_ulid::ExecutorId,
     };
     use std::{
         hash::{DefaultHasher, Hash, Hasher},
@@ -1975,6 +1991,16 @@ mod tests {
         sync::Arc,
     };
     use val_json::{type_wrapper::TypeWrapper, wast_val::WastVal};
+
+    #[test]
+    fn persisted_value_limit_in_execution_metadata_is_transient() {
+        let metadata = ExecutionMetadata::empty().with_max_persisted_value_size_bytes(12_345);
+        let json = serde_json::to_value(&metadata).unwrap();
+        assert_eq!(json, serde_json::json!({}));
+
+        let decoded: ExecutionMetadata = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.max_persisted_value_size_bytes(), None);
+    }
 
     #[test]
     fn execution_failure_projects_to_snake_case_string() {

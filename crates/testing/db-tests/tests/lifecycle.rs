@@ -187,6 +187,7 @@ async fn append_after_finish_should_not_be_possible(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -335,6 +336,7 @@ async fn locking_in_unlock_backoff_should_not_be_possible(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -495,6 +497,7 @@ async fn lock_and_attept_to_extend(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -581,6 +584,7 @@ async fn locking_in_timeout_backoff_should_not_be_possible(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -748,6 +752,7 @@ async fn creating_execution_twice_should_fail(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -766,6 +771,7 @@ async fn creating_execution_twice_should_fail(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap_err();
@@ -809,6 +815,7 @@ async fn lock_pending_while_expired_lock_should_return_nothing_inner(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -892,6 +899,7 @@ pub async fn expired_lock_should_be_found(db_connection: &dyn DbConnection, sim_
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -957,6 +965,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1002,6 +1011,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -1085,6 +1095,7 @@ async fn append_batch_respond_to_parent(db_connection: &dyn DbConnectionTest, si
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -1198,6 +1209,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1217,6 +1229,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1236,6 +1249,7 @@ async fn lock_pending_should_sort_by_scheduled_at(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1304,6 +1318,7 @@ async fn test_lock_inner(db_connection: &dyn DbConnection, sim_clock: SimClock) 
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1395,6 +1410,7 @@ async fn get_expired_lock(db_connection: &dyn DbConnection, sim_clock: SimClock)
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1458,6 +1474,7 @@ async fn get_expired_delay(db_connection: &dyn DbConnection, sim_clock: SimClock
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1573,6 +1590,7 @@ async fn get_expired_times_with_execution_that_made_progress(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1675,6 +1693,7 @@ async fn append_same_delay_id_twice_should_fail(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1795,6 +1814,7 @@ async fn append_unlocked_to_blocked_execution_updates_lock_expiry(database: Data
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -1936,6 +1956,7 @@ async fn cannot_append_unlocked_to_paused_execution(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2067,6 +2088,7 @@ async fn append_response_with_same_id_twice_should_fail(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2160,6 +2182,7 @@ async fn delay_cancellation_should_be_idempotent(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2245,6 +2268,7 @@ async fn pause_and_unpause_should_work(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2348,6 +2372,7 @@ async fn pause_finished_execution_should_fail(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2416,6 +2441,7 @@ async fn pause_and_unpause_locked_workflow_should_return_to_pending_at(#[case] d
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2502,6 +2528,7 @@ async fn cannot_pause_running_activity(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2558,6 +2585,7 @@ async fn cannot_append_paused_to_locked_execution(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2613,6 +2641,7 @@ async fn create_at(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2696,6 +2725,7 @@ async fn cancellation_requested_on_locked_workflow_should_keep_underlying_state(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2856,6 +2886,7 @@ async fn cancellation_requested_on_paused_workflow_should_keep_underlying_state(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -2974,6 +3005,7 @@ async fn create_cancellable_at(
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -3249,6 +3281,7 @@ async fn cannot_lock_paused_execution(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -3441,6 +3474,7 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -3599,6 +3633,7 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -3761,6 +3796,7 @@ async fn pause_with_pending_delay_then_response_then_unpause_should_be_pending(d
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -3925,6 +3961,7 @@ async fn test_backtrace(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -4110,6 +4147,7 @@ async fn wait_for_finished_result_should_fetch_before_racing_with_timeout(databa
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -4170,6 +4208,7 @@ async fn list_responses_empty_should_return_empty_list(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -4248,6 +4287,7 @@ async fn test_list_responses(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -4411,6 +4451,7 @@ async fn test_list_responses_filters_exact_named_join_set_in_database(database: 
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -4574,6 +4615,7 @@ async fn test_list_responses_per_execution_cursor(database: Database) {
                 deployment_id: DEPLOYMENT_ID_DUMMY,
                 scheduled_by: None,
                 paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
             })
             .await
             .unwrap();
@@ -4665,6 +4707,7 @@ async fn test_list_responses_pagination_direction(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -4845,6 +4888,7 @@ async fn test_list_execution_events_pagination_direction(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5413,6 +5457,7 @@ async fn list_logs_with_show_derived(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5447,6 +5492,7 @@ async fn list_logs_with_show_derived(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5480,6 +5526,7 @@ async fn list_logs_with_show_derived(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5623,6 +5670,7 @@ async fn list_logs_paginates_equal_timestamps(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5723,6 +5771,7 @@ async fn create_paused_workflow(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: true,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5804,6 +5853,7 @@ async fn list_executions_filters_by_versioned_package_name(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5824,6 +5874,7 @@ async fn list_executions_filters_by_versioned_package_name(database: Database) {
             deployment_id: DEPLOYMENT_ID_DUMMY,
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         })
         .await
         .unwrap();
@@ -5879,6 +5930,7 @@ async fn list_executions_filters_by_state(database: Database) {
         deployment_id: DEPLOYMENT_ID_DUMMY,
         scheduled_by: None,
         paused: false,
+        max_persisted_value_size_bytes: u64::MAX,
     };
 
     let pending_id = ExecutionId::generate();

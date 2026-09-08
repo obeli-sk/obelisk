@@ -148,6 +148,17 @@ impl ExecutionLog {
     }
 
     #[must_use]
+    pub fn max_persisted_value_size_bytes(&self) -> u64 {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionRequest::Created {
+                max_persisted_value_size_bytes,
+                ..
+            },
+            ..
+        }) => *max_persisted_value_size_bytes)
+    }
+
+    #[must_use]
     pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionRequest::Created { parent, .. },

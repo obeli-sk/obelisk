@@ -1506,6 +1506,7 @@ fn grpc_result_to_json(value: grpc::grpc_gen::SupportedFunctionResult) -> serde_
                 }
                 grpc::grpc_gen::ExecutionFailureKind::OutOfFuel => "out_of_fuel",
                 grpc::grpc_gen::ExecutionFailureKind::Cancelled => "cancelled",
+                grpc::grpc_gen::ExecutionFailureKind::ValueTooLarge => "value_too_large",
                 grpc::grpc_gen::ExecutionFailureKind::Uncategorized => "uncategorized",
             }
             .to_string();
@@ -1765,6 +1766,7 @@ impl TestServer {
             metadata: ExecutionMetadata::empty(),
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         let parent_id = ExecutionId::generate();
@@ -4183,6 +4185,7 @@ async fn webhook_js_get_status_cancelling() {
             metadata: ExecutionMetadata::empty(),
             scheduled_by: None,
             paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
         };
 
         let parent_id = ExecutionId::generate();
