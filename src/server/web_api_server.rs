@@ -3541,7 +3541,7 @@ pub(crate) mod deployment {
         pub status: DeploymentStatusSer,
         pub created_at: DateTime<Utc>,
         pub last_active_at: Option<DateTime<Utc>>,
-        /// Verbatim deployment manifest (`deployment.toml`)
+        /// Processed deployment manifest (`deployment.toml`), stored byte-for-byte
         pub deployment_toml: String,
         /// Files the manifest references.
         pub files: Vec<FileRefSer>,
@@ -3653,7 +3653,7 @@ pub(crate) mod deployment {
     /// Request payload for submitting a new deployment
     #[derive(Serialize, Deserialize, ToSchema)]
     pub struct DeploymentSubmitPayload {
-        /// Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must
+        /// Processed deployment manifest (`deployment.toml`). Referenced file blobs must
         /// be uploaded separately after the server returns `missing_digests`.
         pub deployment_toml: String,
         /// Optional human-readable deployment description

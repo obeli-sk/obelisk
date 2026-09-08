@@ -2264,7 +2264,7 @@
           },
           "deployment_toml": {
             "type": "string",
-            "description": "Verbatim deployment manifest (`deployment.toml`)"
+            "description": "Processed deployment manifest (`deployment.toml`), stored byte-for-byte"
           },
           "description": {
             "type": [
@@ -2435,7 +2435,7 @@
           },
           "deployment_toml": {
             "type": "string",
-            "description": "Verbatim deployment manifest (`deployment.toml`). Referenced file blobs must\nbe uploaded separately after the server returns `missing_digests`."
+            "description": "Processed deployment manifest (`deployment.toml`). Referenced file blobs must\nbe uploaded separately after the server returns `missing_digests`."
           },
           "description": {
             "type": [

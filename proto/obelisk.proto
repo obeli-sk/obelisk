@@ -1212,7 +1212,7 @@ message SwitchDeploymentResponse {
 }
 
 message SubmitDeploymentRequest {
-    // Verbatim deployment manifest (`deployment.toml`), stored byte-for-byte.
+    // Processed deployment manifest (`deployment.toml`), stored byte-for-byte.
     // Every deployment-owned relative `location =` must carry a `content_digest`.
     string deployment_toml = 1;
     optional string created_by = 2;
