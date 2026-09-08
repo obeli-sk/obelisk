@@ -226,8 +226,8 @@ fn strip_generated_deployment_metadata_from_doc(doc: &mut DocumentMut) -> anyhow
 /// stored TOML depends on. See `meta/designs/deployment-submit-package-state-pipeline.md`.
 #[derive(Debug, Clone)]
 pub(crate) struct DeploymentManifest {
-    #[allow(dead_code)] // consumed by submit/storage paths in later phases
     pub(crate) deployment_toml: String,
+    pub(crate) digest: ContentDigest,
     pub(crate) files: Vec<DeploymentFileRef>,
     pub(crate) component_files: Vec<DeploymentComponentFileRef>,
 }
@@ -410,6 +410,7 @@ impl DeploymentManifest {
         deduplicate_component_files(&mut component_files)?;
         Ok(Self {
             deployment_toml: deployment_toml.to_string(),
+            digest: compute_manifest_digest(deployment_toml),
             files,
             component_files,
         })

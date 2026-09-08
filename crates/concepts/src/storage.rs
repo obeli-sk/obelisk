@@ -1718,7 +1718,7 @@ pub struct DeploymentState {
     pub finished_ok: u32,
     pub finished_error: u32,
     pub finished_execution_failure: u32,
-    /// Verbatim deployment manifest. None if not requested from db.
+    /// Processed deployment manifest, stored byte-for-byte. None if not requested from db.
     pub deployment_toml: Option<String>,
     pub created_at: DateTime<Utc>,
     /// Set when the deployment becomes Active; None if it has never been active.

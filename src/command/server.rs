@@ -2447,10 +2447,15 @@ impl SubmitPackageError {
 
 /// Submit failure: either a structured file-set error (no deployment stored) or any
 /// other error (parse/idempotency/storage).
+#[derive(Debug, derive_more::Display)]
 pub(crate) enum SubmitDeploymentError {
+    #[display("another deployment submit or switch is already running")]
     Busy,
+    #[display("deployment ID conflicts with an existing deployment")]
     Conflict(anyhow::Error),
+    #[display("deployment package validation failed")]
     Package(SubmitPackageError),
+    #[display("deployment processing failed")]
     Other(anyhow::Error),
 }
 
@@ -2586,14 +2591,60 @@ pub(crate) async fn submit_deployment(
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
 
-    let _submit_permit = deployment_switch_manager.try_acquire_submit_permit()?;
+    let result = match deployment_switch_manager.try_acquire_submit_permit() {
+        Ok(_submit_permit) => {
+            match DeploymentManifest::try_from_toml(deployment_toml, &cas_deployment_dir())
+                .context("cannot read deployment file references from manifest")
+            {
+                Ok(manifest) => {
+                    submit_deployment_manifest(
+                        server_verified,
+                        manifest,
+                        runtime_config_availability,
+                        created_by,
+                        description,
+                        deployment_id,
+                        prepared_dirs,
+                        supplied_files,
+                        db_pool,
+                        termination_watcher,
+                        deployment_switch_manager,
+                    )
+                    .await
+                }
+                Err(err) => Err(SubmitDeploymentError::Other(err)),
+            }
+        }
+        Err(err) => Err(err),
+    };
 
-    // FIXME: Verbatim manifest? It is not stored!!
+    match &result {
+        Ok(_) => info!(outcome = "success", "Deployment submission finished"),
+        Err(err) => {
+            info!(outcome = "error", error = %err, "Deployment submission finished");
+            debug!(error = ?err, "Deployment submission error details");
+        }
+    }
+    result
+}
 
-    // The deployment digest is the hash of the verbatim manifest; it transitively covers
-    // every referenced file because the manifest embeds each file's content digest. It is
-    // used only for idempotency, not returned (the client already has the manifest).
-    let digest = DeploymentRecord::compute_digest(deployment_toml);
+#[expect(clippy::too_many_arguments)]
+async fn submit_deployment_manifest(
+    server_verified: ServerVerified,
+    manifest: DeploymentManifest,
+    runtime_config_availability: RuntimeConfigAvailability,
+    created_by: Option<String>,
+    description: Option<String>,
+    deployment_id: DeploymentId,
+    prepared_dirs: &PreparedDirs,
+    supplied_files: Vec<SuppliedFile>,
+    db_pool: Arc<dyn DbPool>,
+    termination_watcher: &mut watch::Receiver<()>,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
+) -> Result<DeploymentId, SubmitDeploymentError> {
+    // The deployment digest is the hash of the processed manifest stored with the deployment;
+    // it covers every referenced file because the manifest embeds each file's content digest.
+    let digest = manifest.digest.clone();
 
     let conn = db_pool
         .external_api_conn()
@@ -2616,9 +2667,6 @@ pub(crate) async fn submit_deployment(
             existing.digest
         )));
     }
-
-    let manifest = DeploymentManifest::try_from_toml(deployment_toml, &cas_deployment_dir())
-        .context("cannot read deployment file references from manifest")?;
 
     // A referenced digest already in the CAS need not be attached to the request.
     let cas = db_pool.cas_conn().await.map_err(anyhow::Error::from)?;
@@ -2669,7 +2717,7 @@ pub(crate) async fn submit_deployment(
         let digest_ref = &digest;
         async move {
             let deployment_resolved =
-                deployment_resolved_from_manifest(db_pool_ref, deployment_toml)
+                deployment_resolved_from_manifest(db_pool_ref, &manifest_ref.deployment_toml)
                     .await
                     .map_err(SubmitDeploymentError::Other)?;
             let cas_arc: Arc<dyn Cas> = db_pool_ref
@@ -2727,7 +2775,7 @@ pub(crate) async fn submit_deployment(
                         status: DeploymentStatus::Inactive,
                         obelisk_version: crate::args::shadow::PKG_VERSION.to_string(),
                         created_by,
-                        deployment_toml: deployment_toml.to_string(),
+                        deployment_toml: manifest_ref.deployment_toml.clone(),
                         files: manifest_ref.file_records(),
                     },
                     component_metadata,
@@ -2774,7 +2822,6 @@ pub(crate) async fn submit_deployment(
             .await;
     }
 
-    info!(%deployment_id, "Deployment submitted");
     Ok(deployment_id)
 }
 
