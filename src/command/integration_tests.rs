@@ -705,6 +705,27 @@ impl TestServer {
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
 
+    async fn start_with_server_lines_and_exec_only(ip: String, server_toml_lines: &str) -> Self {
+        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, server_toml_lines);
+        let mut deployment_doc = std::fs::read_to_string(&deployment_path)
+            .unwrap()
+            .parse::<DocumentMut>()
+            .unwrap();
+        deployment_doc
+            .as_table_mut()
+            .retain(|key, _| key == "activity_exec");
+        deployment_doc["activity_exec"]
+            .as_array_of_tables_mut()
+            .unwrap()
+            .retain(|table| {
+                table.get("ffqn").and_then(toml_edit::Item::as_str)
+                    == Some("testing:integration/exec-greet.greet-inline")
+            });
+        std::fs::write(&deployment_path, deployment_doc.to_string()).unwrap();
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
     /// Start a server with an empty deployment (no components, no CAS blobs), so a later
     /// `deployment apply` exercises the upload-then-submit path from a clean store.
     async fn start_empty(ip: String) -> Self {
@@ -4099,6 +4120,99 @@ async fn submit_nonexistent_function_returns_404() {
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 404);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn grpc_submit_enforces_exact_persisted_value_boundary() {
+    let server = TestServer::start_with_server_lines_and_exec_only(
+        test_addr!(124),
+        "limits.max_persisted_value_size_bytes = 16",
+    )
+    .await;
+    let mut grpc_client =
+        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap();
+    let ffqn = "testing:integration/exec-greet.greet-inline";
+
+    let accepted_id = server.generate_execution_id().await;
+    let accepted = grpc_client
+        .submit(SubmitRequest {
+            execution_id: Some(GrpcExecutionId { id: accepted_id }),
+            function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
+            params: Some(
+                grpc::grpc_mapping::to_any(
+                    vec![json!("secretmarker")],
+                    format!("urn:obelisk:json:params:{ffqn}"),
+                )
+                .unwrap(),
+            ),
+            paused: true,
+        })
+        .await
+        .expect("a 16-byte compact JSON parameter array must be accepted")
+        .into_inner();
+    assert_eq!(
+        accepted.outcome(),
+        grpc::grpc_gen::submit_response::Outcome::Created
+    );
+
+    let rejected_id = server.generate_execution_id().await;
+    let error = grpc_client
+        .submit(SubmitRequest {
+            execution_id: Some(GrpcExecutionId { id: rejected_id }),
+            function_name: Some(ffqn.parse::<FunctionFqn>().unwrap().into()),
+            params: Some(
+                grpc::grpc_mapping::to_any(
+                    vec![json!("secretmarkerx")],
+                    format!("urn:obelisk:json:params:{ffqn}"),
+                )
+                .unwrap(),
+            ),
+            paused: true,
+        })
+        .await
+        .expect_err("a 17-byte compact JSON parameter array must be rejected");
+    assert_eq!(error.code(), tonic::Code::ResourceExhausted);
+    assert_eq!(
+        error.message(),
+        "execution parameters exceed the 16-byte persisted value limit"
+    );
+    assert!(!error.message().contains("secretmarkerx"));
+    assert_eq!(server.list_executions().await.as_array().unwrap().len(), 1);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn rest_submit_enforces_exact_persisted_value_boundary() {
+    let server = TestServer::start_with_server_lines_and_exec_only(
+        test_addr!(125),
+        "limits.max_persisted_value_size_bytes = 16",
+    )
+    .await;
+    let ffqn = "testing:integration/exec-greet.greet-inline";
+
+    let accepted_id = server.generate_execution_id().await;
+    let accepted = server
+        .submit_paused_webapi(&accepted_id, ffqn, vec![json!("secretmarker")])
+        .await;
+    assert_eq!(accepted.status(), reqwest::StatusCode::CREATED);
+
+    let rejected_id = server.generate_execution_id().await;
+    let rejected = server
+        .submit_paused_webapi(&rejected_id, ffqn, vec![json!("secretmarkerx")])
+        .await;
+    assert_eq!(rejected.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    let error = rejected.json::<Value>().await.unwrap();
+    assert_eq!(
+        error,
+        json!({ "err": "execution parameters exceed the 16-byte persisted value limit" })
+    );
+    assert!(!error.to_string().contains("secretmarkerx"));
+    assert_eq!(server.list_executions().await.as_array().unwrap().len(), 1);
+
     server.shutdown().await;
 }
 
