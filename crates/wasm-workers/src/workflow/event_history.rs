@@ -176,6 +176,7 @@ pub(crate) struct EventHistory {
     max_replay_captured_writes: Option<usize>,
     max_events_per_run: Option<usize>,
     written_events_this_run: usize,
+    written_events_since_lock_extension: usize,
     response_refresh_interval: Option<usize>,
     events_since_response_refresh: usize,
 }
@@ -263,6 +264,7 @@ impl EventHistory {
             max_replay_captured_writes,
             max_events_per_run,
             written_events_this_run: 0,
+            written_events_since_lock_extension: 0,
             response_refresh_interval,
             events_since_response_refresh: 0,
         }
@@ -390,9 +392,13 @@ impl EventHistory {
             }
         }
 
-        if self.deadline_tracker.close_to_expired() && self.lock_extension > Duration::ZERO {
+        if self.deadline_tracker.close_to_expired()
+            && self.lock_extension > Duration::ZERO
+            && self.written_events_since_lock_extension > 0
+        {
             self.extend_lock(event_call_cursor, db_connection, called_at)
                 .await?;
+            self.written_events_since_lock_extension = 0;
         }
 
         let event_call = event_call_cursor.next(event_call_kind);
@@ -509,6 +515,7 @@ impl EventHistory {
         }?;
         let written_events = self.event_history.len() - event_history_len_before;
         self.written_events_this_run += written_events;
+        self.written_events_since_lock_extension += written_events;
         if written_events > 0
             && self
                 .max_events_per_run
