@@ -186,10 +186,12 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
 
     let older = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
     clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    let middle = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
+    clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
     let newer = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
     let result = admin.retain_executions(1, 1, false).await.unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
-    assert!(!result.has_more);
+    assert!(result.has_more);
     assert!(
         db_pool
             .connection()
@@ -204,9 +206,30 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .connection()
             .await
             .unwrap()
+            .get(&middle)
+            .await
+            .is_ok()
+    );
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
             .get(&newer)
             .await
             .is_ok()
+    );
+    let result = admin.retain_executions(1, 1, false).await.unwrap();
+    assert_eq!(result.deleted_execution_trees, 1);
+    assert!(!result.has_more);
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&middle)
+            .await
+            .is_err()
     );
     assert_eq!(
         admin.delete_execution_tree(&older, false).await.unwrap(),
@@ -353,8 +376,28 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
     let admin = db_pool.admin_conn().await.unwrap();
     let first = admin.retain_deployments(0, 1, false, false).await.unwrap();
     assert_eq!(first.deleted_deployments, 1);
-    assert_eq!(first.blocked_by_execution_reference, 1);
+    assert_eq!(first.blocked_by_execution_reference, 0);
     assert!(first.has_more);
+    assert!(
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .get_deployment(oldest)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .get_deployment(older)
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     let second = admin.retain_deployments(0, 1, false, false).await.unwrap();
     assert_eq!(second.deleted_deployments, 1);

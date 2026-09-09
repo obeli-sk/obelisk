@@ -5553,22 +5553,38 @@ impl DbAdmin for SqlitePool {
             move |tx| {
                 let mut ids = tx
                     .prepare(
-                        "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' \
-                         ORDER BY created_at DESC, execution_id DESC LIMIT ?1 OFFSET ?2",
+                        "SELECT execution_id FROM (\
+                             SELECT execution_id, created_at FROM t_state \
+                             WHERE is_top_level = true AND state = 'finished' \
+                             ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2\
+                         ) ORDER BY created_at ASC, execution_id ASC LIMIT ?1",
                     )?
-                    .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(retain_count)], |row| row.get::<_, ExecutionId>(0))?
+                    .query_map(
+                        rusqlite::params![i64::from(batch_size) + 1, i64::from(retain_count)],
+                        |row| row.get::<_, ExecutionId>(0),
+                    )?
                     .collect::<Result<Vec<_>, _>>()?;
                 let has_more = ids.len() > batch_size as usize;
                 ids.truncate(batch_size as usize);
-                let mut result = CleanupResult { retained: u64::from(retain_count), has_more, ..Default::default() };
+                let mut result = CleanupResult {
+                    retained: u64::from(retain_count),
+                    has_more,
+                    ..Default::default()
+                };
                 for id in ids {
                     if dry_run {
                         result.deleted_execution_trees += 1;
                     } else {
                         match Self::delete_execution_tree_tx(tx, &id, false)? {
-                            DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
-                            DeleteExecutionTreeResult::NonTerminal => result.blocked_non_terminal += 1,
-                            DeleteExecutionTreeResult::ActiveDeployment => unreachable!("force is disabled"),
+                            DeleteExecutionTreeResult::Deleted => {
+                                result.deleted_execution_trees += 1;
+                            }
+                            DeleteExecutionTreeResult::NonTerminal => {
+                                result.blocked_non_terminal += 1;
+                            }
+                            DeleteExecutionTreeResult::ActiveDeployment => {
+                                unreachable!("force is disabled")
+                            }
                             DeleteExecutionTreeResult::AlreadyDeleted => {}
                         }
                     }
@@ -5609,8 +5625,11 @@ impl DbAdmin for SqlitePool {
             move |tx| {
                 let ids = tx
                     .prepare(
-                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' \
-                         ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1",
+                        "SELECT deployment_id FROM (\
+                             SELECT deployment_id, created_at FROM t_deployment \
+                             WHERE status = 'inactive' \
+                             ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1\
+                         ) ORDER BY created_at ASC, deployment_id ASC",
                     )?
                     .query_map([i64::from(retain_count)], |row| {
                         row.get::<_, DeploymentId>(0)
