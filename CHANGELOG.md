@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `call` and `schedule` operations are available separately from the corresponding
   `obelisk:workflow-dynamic@1.0.0` and `obelisk:webhook-dynamic@1.0.0` modules. The unversioned
   global `obelisk` object has been removed.
+- **Breaking:** *(wit)* Runtime-selected dispatch functions now use the dedicated
+  `workflow-dynamic-support` and `webhook-dynamic-support` interfaces, with separate backtrace
+  variants for interpreted runtimes. Workflow `submit-json` and its error type move alongside
+  `call-json` and `schedule-json`, allowing dynamic dispatch to be granted independently from
+  other workflow and webhook support capabilities.
 - **Breaking:** *(executor)* The default execution lock expiry is now 30 seconds instead of 1
   second, and workflow lock extension starts 15 seconds before expiry instead of 100 milliseconds.
   A workflow extends its lock only after persisting progress since the previous extension, avoiding

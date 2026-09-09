@@ -5,6 +5,7 @@ use generated::obelisk::log::log;
 use generated::obelisk::types::execution::ResponseId;
 use generated::obelisk::types::time::Duration as DurationEnum;
 use generated::obelisk::types::time::ScheduleAt;
+use generated::obelisk::workflow::workflow_dynamic_support;
 use generated::obelisk::workflow::workflow_support::{self, JoinNextError, JoinNextTryError};
 use generated::testing::sleep::sleep as sleep_activity;
 use generated::testing::sleep_obelisk_ext::sleep as sleep_activity_ext;
@@ -34,7 +35,7 @@ impl Guest for Component {
         let params = format!(r#"[{{"seconds":{}}}]"#, duration_secs);
         for _ in 0..n {
             let exe = workflow_support::execution_id_generate();
-            workflow_support::schedule_json(
+            workflow_dynamic_support::schedule_json(
                 &exe,
                 schedule_at,
                 &generated::obelisk::types::function::Function {

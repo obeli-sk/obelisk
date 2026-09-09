@@ -73,21 +73,6 @@ interface webhook-support {
     execution-id-current: func() -> execution-id;
 
 
-    /// Call a function and wait for the result.
-    /// Creates a child execution, waits for it to complete, and returns the result.
-    /// Parameters are serialized as a JSON array.
-    /// Returns Ok(Some(json)) for successful result with value,
-    /// Ok(None) for successful result with no value,
-    /// Err(Some(json)) for error result with value,
-    /// Err(None) for error result with no value.
-    @since(version = 5.0.0)
-    call-json: func(function: function, params: string) -> result<result<option<string>, option<string>>, schedule-json-error>;
-
-    /// Schedule a new top-level execution with its parameters serialized as JSON array.
-    /// Use the execution ID returned by `execution-id-generate`.
-    @since(version = 5.0.0)
-    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string) -> result<_, schedule-json-error>;
-
     /// Get the current status of an execution.
     /// Reports the `cancelling` state for cancellable workflows.
     @since(version = 6.0.0)
@@ -125,21 +110,34 @@ interface webhook-support {
     try-get: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, try-get-error>;
 }
 
-/// Backtrace-carrying variants of the event-persisting `webhook-support` functions.
-/// Only interpreted runtimes (the JS runtime) supply a source-level `backtrace`;
-/// native components import the plain `webhook-support` interface instead.
-@since(version = 6.0.0)
-interface webhook-support-backtrace {
+/// Dynamically dispatch functions selected at runtime.
+@since(version = 7.0.0)
+interface webhook-dynamic-support {
+    use obelisk:types/time@6.0.0.{schedule-at};
+    use obelisk:types/function@6.0.0.{function};
+    use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error};
+
+    /// Call a function and wait for the result.
+    /// Creates a child execution, waits for it to complete, and returns the result.
+    /// Parameters are serialized as a JSON array.
+    call-json: func(function: function, params: string) -> result<result<option<string>, option<string>>, schedule-json-error>;
+
+    /// Schedule a new top-level execution with its parameters serialized as JSON array.
+    /// Use the execution ID returned by `execution-id-generate`.
+    schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string) -> result<_, schedule-json-error>;
+}
+
+/// Backtrace-carrying variants of `webhook-dynamic-support`.
+@since(version = 7.0.0)
+interface webhook-dynamic-support-backtrace {
     use obelisk:types/time@6.0.0.{schedule-at};
     use obelisk:types/function@6.0.0.{function};
     use obelisk:types/execution@6.0.0.{execution-id, schedule-json-error};
     use obelisk:types/backtrace@6.0.0.{wasm-backtrace};
 
-    /// See `webhook-support.call-json`.
-    @since(version = 6.0.0)
+    /// See `webhook-dynamic-support.call-json`.
     call-json: func(function: function, params: string, backtrace: option<wasm-backtrace>) -> result<result<option<string>, option<string>>, schedule-json-error>;
 
-    /// See `webhook-support.schedule-json`.
-    @since(version = 6.0.0)
+    /// See `webhook-dynamic-support.schedule-json`.
     schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string, backtrace: option<wasm-backtrace>) -> result<_, schedule-json-error>;
 }

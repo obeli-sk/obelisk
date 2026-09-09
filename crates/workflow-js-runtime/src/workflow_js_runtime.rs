@@ -135,14 +135,17 @@ use crate::generated::obelisk::types::execution::{ExecutionFailureKind, Executio
 use crate::generated::obelisk::types::function::Function;
 use crate::generated::obelisk::types::join_set::JoinSet;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
+use crate::generated::obelisk::workflow::workflow_dynamic_support_backtrace::{
+    call_json, schedule_json, submit_json,
+};
 use crate::generated::obelisk::workflow::workflow_support::{
     self, JoinNextForError, JoinNextTryError, get_execution_failure_kind, get_result_json,
     last_direct_call_id,
 };
 use crate::generated::obelisk::workflow::workflow_support_backtrace::{
-    call_json, execution_id_generate, join_next, join_next_for, join_next_try, join_set_close,
-    join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive,
-    schedule_json, sleep, stub_json, submit_delay, submit_json,
+    execution_id_generate, join_next, join_next_for, join_next_try, join_set_close,
+    join_set_create, join_set_create_named, random_string, random_u64, random_u64_inclusive, sleep,
+    stub_json, submit_delay,
 };
 use boa_common::child_error::{ChildError, ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};

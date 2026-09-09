@@ -105,10 +105,10 @@ use crate::generated::obelisk::types::backtrace::{FrameInfo, FrameSymbol, WasmBa
 use crate::generated::obelisk::types::execution::{ExecutionFailureKind, ExecutionId};
 use crate::generated::obelisk::types::function::Function;
 use crate::generated::obelisk::types::time::{Datetime, Duration, ScheduleAt};
+use crate::generated::obelisk::webhook::webhook_dynamic_support_backtrace;
 use crate::generated::obelisk::webhook::webhook_support::{
     self, ExecutionStatus, ExecutionStatusFinished,
 };
-use crate::generated::obelisk::webhook::webhook_support_backtrace;
 use boa_common::child_error::{ChildErrorParts, make_child_error};
 use boa_common::console::{ObeliskLogger, json_stringify, setup_console};
 use boa_common::crypto::setup_crypto;
@@ -262,7 +262,11 @@ fn create_direct_call_proxy(
             let params_json = json_stringify(&array.into(), ctx)?;
 
             let backtrace = capture_backtrace(ctx);
-            match webhook_support_backtrace::call_json(&function, &params_json, Some(&backtrace)) {
+            match webhook_dynamic_support_backtrace::call_json(
+                &function,
+                &params_json,
+                Some(&backtrace),
+            ) {
                 Ok(Ok(Some(json_str))) => ctx.eval(Source::from_bytes(&format!("({})", json_str))),
                 Ok(Ok(None)) => Ok(JsValue::null()),
                 Ok(Err(payload)) => {
@@ -313,7 +317,7 @@ fn create_schedule_proxy(
             let backtrace = capture_backtrace(ctx);
             let exec_id = webhook_support::execution_id_generate();
 
-            match webhook_support_backtrace::schedule_json(
+            match webhook_dynamic_support_backtrace::schedule_json(
                 &exec_id,
                 schedule,
                 &function,
@@ -651,7 +655,7 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         };
 
         let backtrace = capture_backtrace(ctx);
-        match webhook_support_backtrace::schedule_json(
+        match webhook_dynamic_support_backtrace::schedule_json(
             &exec_id,
             schedule,
             &function,
@@ -827,7 +831,11 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         let params_json = json_stringify(params_val, ctx)?;
 
         // Call child execution and wait for result
-        match webhook_support_backtrace::call_json(&function, &params_json, Some(&backtrace)) {
+        match webhook_dynamic_support_backtrace::call_json(
+            &function,
+            &params_json,
+            Some(&backtrace),
+        ) {
             Ok(Ok(Some(json_str))) => {
                 let parsed = ctx.eval(Source::from_bytes(&format!("({})", json_str)))?;
                 Ok(parsed)

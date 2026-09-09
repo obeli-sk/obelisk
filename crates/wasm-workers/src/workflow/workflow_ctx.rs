@@ -967,6 +967,9 @@ impl WasiView for WorkflowCtx {
 const IFC_FQN_WORKFLOW_SUPPORT: &str = "obelisk:workflow/workflow-support@7.0.0";
 const IFC_FQN_WORKFLOW_SUPPORT_BACKTRACE: &str =
     "obelisk:workflow/workflow-support-backtrace@7.0.0";
+const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT: &str = "obelisk:workflow/workflow-dynamic-support@7.0.0";
+const IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT_BACKTRACE: &str =
+    "obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0";
 
 #[derive(Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum ReplayKind {
@@ -1297,7 +1300,6 @@ impl WorkflowCtx {
         let mut inst_workflow_support = linker
             .instance(ifc_fqn)
             .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
-
         inst_workflow_support
             .func_wrap_async(
                 "execution-id-current",
@@ -1433,7 +1435,12 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function join-set-close", err))?;
 
         // submit-json: func(join-set, function, params) -> result<execution-id, submit-json-error>
-        inst_workflow_support
+        let mut inst_workflow_dynamic_support = linker
+            .instance(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT)
+            .map_err(|err| {
+            WasmFileError::linking_error(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT, err)
+        })?;
+        inst_workflow_dynamic_support
             .func_wrap_async(
                 "submit-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
@@ -1443,7 +1450,7 @@ impl WorkflowCtx {
                     String,
                 )| {
                     Box::new(async move {
-                        use latest::obelisk::workflow::workflow_support::SubmitJsonError;
+                        use latest::obelisk::workflow::workflow_dynamic_support::SubmitJsonError;
                         let (host, backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller, None);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
@@ -1468,6 +1475,9 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function submit-json", err))?;
 
         // get-result-json: func(execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>
+        let mut inst_workflow_support = linker
+            .instance(ifc_fqn)
+            .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
         inst_workflow_support
             .func_wrap(
                 "get-result-json",
@@ -1569,7 +1579,12 @@ impl WorkflowCtx {
             })?;
 
         // schedule-json: func(execution-id, schedule-at, function, params) -> result<_, schedule-json-error>
-        inst_workflow_support
+        let mut inst_workflow_dynamic_support = linker
+            .instance(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT)
+            .map_err(|err| {
+            WasmFileError::linking_error(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT, err)
+        })?;
+        inst_workflow_dynamic_support
             .func_wrap_async(
                 "schedule-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
@@ -1613,7 +1628,7 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function schedule-json", err))?;
 
         // call-json: func(function, params) -> result<result<option<string>, option<string>>, schedule-json-error>
-        inst_workflow_support
+        inst_workflow_dynamic_support
             .func_wrap_async(
                 "call-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
@@ -1641,6 +1656,9 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function call-json", err))?;
 
         // stub-json: func(execution-id, result-json) -> result<_, stub-json-error>
+        let mut inst_workflow_support = linker
+            .instance(ifc_fqn)
+            .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
         inst_workflow_support
             .func_wrap_async(
                 "stub-json",
@@ -1764,7 +1782,6 @@ impl WorkflowCtx {
         let mut inst_workflow_support = linker
             .instance(ifc_fqn)
             .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
-
         inst_workflow_support
             .func_wrap_async(
                 "random-u64",
@@ -1905,7 +1922,12 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function join-set-close", err))?;
 
         // submit-json: func(join-set, function, params, backtrace) -> result<execution-id, submit-json-error>
-        inst_workflow_support
+        let mut inst_workflow_dynamic_support = linker
+            .instance(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT_BACKTRACE)
+            .map_err(|err| {
+                WasmFileError::linking_error(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT_BACKTRACE, err)
+            })?;
+        inst_workflow_dynamic_support
             .func_wrap_async(
                 "submit-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
@@ -1916,7 +1938,7 @@ impl WorkflowCtx {
                     Option<typesTypes::backtrace::WasmBacktrace>,
                 )| {
                     Box::new(async move {
-                        use latest::obelisk::workflow::workflow_support::SubmitJsonError;
+                        use latest::obelisk::workflow::workflow_dynamic_support::SubmitJsonError;
                         let (host, backtrace) =
                             Self::get_host_maybe_capture_backtrace(&mut caller, wit_backtrace);
                         let join_set_id = host.resource_to_join_set_id(&join_set_resource)?.clone();
@@ -1941,6 +1963,9 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function submit-json", err))?;
 
         // execution-id-generate: func(backtrace: option<wasm-backtrace>) -> execution-id
+        let mut inst_workflow_support = linker
+            .instance(ifc_fqn)
+            .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
         inst_workflow_support
             .func_wrap_async(
                 "execution-id-generate",
@@ -1961,7 +1986,12 @@ impl WorkflowCtx {
             })?;
 
         // schedule-json: func(execution-id, schedule-at, function, params, backtrace) -> result<_, schedule-json-error>
-        inst_workflow_support
+        let mut inst_workflow_dynamic_support = linker
+            .instance(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT_BACKTRACE)
+            .map_err(|err| {
+                WasmFileError::linking_error(IFC_FQN_WORKFLOW_DYNAMIC_SUPPORT_BACKTRACE, err)
+            })?;
+        inst_workflow_dynamic_support
             .func_wrap_async(
                 "schedule-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
@@ -2006,7 +2036,7 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function schedule-json", err))?;
 
         // call-json: func(function, params, backtrace) -> result<result<option<string>, option<string>>, schedule-json-error>
-        inst_workflow_support
+        inst_workflow_dynamic_support
             .func_wrap_async(
                 "call-json",
                 move |mut caller: wasmtime::StoreContextMut<'_, WorkflowCtx>,
@@ -2038,6 +2068,9 @@ impl WorkflowCtx {
             .map_err(|err| WasmFileError::linking_error("linking function call-json", err))?;
 
         // stub-json: func(execution-id, result-json, backtrace) -> result<_, stub-json-error>
+        let mut inst_workflow_support = linker
+            .instance(ifc_fqn)
+            .map_err(|err| WasmFileError::linking_error(ifc_fqn, err))?;
         inst_workflow_support
             .func_wrap_async(
                 "stub-json",
@@ -2685,11 +2718,11 @@ pub(crate) mod workflow_support {
         ) -> wasmtime::Result<
             Result<
                 typesTypes::execution::ExecutionId,
-                latest::obelisk::workflow::workflow_support::SubmitJsonError,
+                latest::obelisk::workflow::workflow_dynamic_support::SubmitJsonError,
             >,
         > {
             use concepts::storage::ChildExecutionRequestError;
-            use latest::obelisk::workflow::workflow_support::SubmitJsonError;
+            use latest::obelisk::workflow::workflow_dynamic_support::SubmitJsonError;
 
             // Return errors that do not depend on state directly without persisting
             let params_json = match serde_json::from_str(&params_json) {
