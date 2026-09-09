@@ -3,9 +3,12 @@ use generated::export;
 use generated::exports::testing::fibo_workflow::workflow::Guest;
 use generated::obelisk::types::function::Function;
 use generated::obelisk::types::time::ScheduleAt;
+use generated::obelisk::workflow::workflow_dynamic_support::{
+    SubmitJsonError, schedule_json, submit_json,
+};
 use generated::obelisk::workflow::workflow_support::{
-    GetResultJsonError, ScheduleJsonError, SubmitJsonError, execution_id_generate, get_result_json,
-    join_next, join_set_create, schedule_json, submit_json,
+    GetResultJsonError, ScheduleJsonError, execution_id_generate, get_result_json, join_next,
+    join_set_create,
 };
 use generated::testing::{
     fibo::fibo::fibo as fibo_activity,

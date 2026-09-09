@@ -5,5 +5,7 @@ world any {
 
     import obelisk:workflow/workflow-support@7.0.0;
     import obelisk:workflow/workflow-support-backtrace@7.0.0;
+    import obelisk:workflow/workflow-dynamic-support@7.0.0;
+    import obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0;
     import obelisk:log/log@1.0.0;
 }

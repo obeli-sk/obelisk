@@ -46,6 +46,8 @@ pub(crate) mod latest {
         world bindings {
             import obelisk:workflow/workflow-support@7.0.0;
             import obelisk:workflow/workflow-support-backtrace@7.0.0;
+            import obelisk:workflow/workflow-dynamic-support@7.0.0;
+            import obelisk:workflow/workflow-dynamic-support-backtrace@7.0.0;
             }",
         world: "any:any/bindings",
         with: {

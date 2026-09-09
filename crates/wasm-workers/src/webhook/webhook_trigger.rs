@@ -76,13 +76,15 @@ pub(crate) mod types {
                     import obelisk:types/backtrace@6.0.0;
                     import obelisk:types/join-set@6.0.0;
                     import obelisk:webhook/webhook-support@7.0.0;
-                    import obelisk:webhook/webhook-support-backtrace@7.0.0;
+                    import obelisk:webhook/webhook-dynamic-support@7.0.0;
+                    import obelisk:webhook/webhook-dynamic-support-backtrace@7.0.0;
                 }",
         world: "any:any/bindings",
         imports: {
             // Make webhook-support functions async and trappable for infrastructure errors
             "obelisk:webhook/webhook-support": async | trappable,
-            "obelisk:webhook/webhook-support-backtrace": async | trappable,
+            "obelisk:webhook/webhook-dynamic-support": async | trappable,
+            "obelisk:webhook/webhook-dynamic-support-backtrace": async | trappable,
         },
         with: {
             "obelisk:types/join-set.join-set": concepts::JoinSetId,
@@ -766,25 +768,6 @@ impl WebhookSupportHost for WebhookEndpointCtx {
         }
     }
 
-    async fn schedule_json(
-        &mut self,
-        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
-        schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
-        function: types::obelisk::webhook::webhook_support::Function,
-        params: String,
-    ) -> Result<(), ScheduleJsonErrorTrappable> {
-        self.schedule_json_inner(execution_id, schedule_at, function, params, None)
-            .await
-    }
-
-    async fn call_json(
-        &mut self,
-        function: types::obelisk::webhook::webhook_support::Function,
-        params: String,
-    ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
-        self.call_json_inner(function, params, None).await
-    }
-
     async fn get_status(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
@@ -888,12 +871,33 @@ impl WebhookSupportHost for WebhookEndpointCtx {
     }
 }
 
-impl types::obelisk::webhook::webhook_support_backtrace::Host for WebhookEndpointCtx {
+impl types::obelisk::webhook::webhook_dynamic_support::Host for WebhookEndpointCtx {
     async fn schedule_json(
         &mut self,
-        execution_id: types::obelisk::webhook::webhook_support_backtrace::ExecutionId,
-        schedule_at: types::obelisk::webhook::webhook_support_backtrace::ScheduleAt,
-        function: types::obelisk::webhook::webhook_support_backtrace::Function,
+        execution_id: types::obelisk::webhook::webhook_dynamic_support::ExecutionId,
+        schedule_at: types::obelisk::webhook::webhook_dynamic_support::ScheduleAt,
+        function: types::obelisk::webhook::webhook_dynamic_support::Function,
+        params: String,
+    ) -> Result<(), ScheduleJsonErrorTrappable> {
+        self.schedule_json_inner(execution_id, schedule_at, function, params, None)
+            .await
+    }
+
+    async fn call_json(
+        &mut self,
+        function: types::obelisk::webhook::webhook_dynamic_support::Function,
+        params: String,
+    ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
+        self.call_json_inner(function, params, None).await
+    }
+}
+
+impl types::obelisk::webhook::webhook_dynamic_support_backtrace::Host for WebhookEndpointCtx {
+    async fn schedule_json(
+        &mut self,
+        execution_id: types::obelisk::webhook::webhook_dynamic_support_backtrace::ExecutionId,
+        schedule_at: types::obelisk::webhook::webhook_dynamic_support_backtrace::ScheduleAt,
+        function: types::obelisk::webhook::webhook_dynamic_support_backtrace::Function,
         params: String,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<(), ScheduleJsonErrorTrappable> {
@@ -908,7 +912,7 @@ impl types::obelisk::webhook::webhook_support_backtrace::Host for WebhookEndpoin
 
     async fn call_json(
         &mut self,
-        function: types::obelisk::webhook::webhook_support_backtrace::Function,
+        function: types::obelisk::webhook::webhook_dynamic_support_backtrace::Function,
         params: String,
         backtrace: Option<types::obelisk::types::backtrace::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
@@ -924,9 +928,9 @@ impl types::obelisk::webhook::webhook_support_backtrace::Host for WebhookEndpoin
 impl WebhookEndpointCtx {
     async fn schedule_json_inner(
         &mut self,
-        execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
-        schedule_at: types::obelisk::webhook::webhook_support::ScheduleAt,
-        function: types::obelisk::webhook::webhook_support::Function,
+        execution_id: types::obelisk::webhook::webhook_dynamic_support::ExecutionId,
+        schedule_at: types::obelisk::webhook::webhook_dynamic_support::ScheduleAt,
+        function: types::obelisk::webhook::webhook_dynamic_support::Function,
         params: String,
         wasm_backtrace: Option<concepts::storage::WasmBacktrace>,
     ) -> Result<(), ScheduleJsonErrorTrappable> {
@@ -1092,7 +1096,7 @@ impl WebhookEndpointCtx {
 
     async fn call_json_inner(
         &mut self,
-        function: types::obelisk::webhook::webhook_support::Function,
+        function: types::obelisk::webhook::webhook_dynamic_support::Function,
         params: String,
         wasm_backtrace: Option<concepts::storage::WasmBacktrace>,
     ) -> Result<Result<Option<String>, Option<String>>, ScheduleJsonErrorTrappable> {
@@ -1866,14 +1870,21 @@ impl WebhookEndpointCtx {
             |x| x,
         )
         .map_err(|err| WasmFileError::linking_error("cannot link obelisk:webhook", err))?;
-        // link obelisk:webhook/webhook-support-backtrace (JS runtime)
-        types::obelisk::webhook::webhook_support_backtrace::add_to_linker::<_, WebhookEndpointCtx>(
+        types::obelisk::webhook::webhook_dynamic_support::add_to_linker::<_, WebhookEndpointCtx>(
             linker,
             |x| x,
         )
         .map_err(|err| {
+            WasmFileError::linking_error("cannot link obelisk:webhook/webhook-dynamic-support", err)
+        })?;
+        // link backtraces for interpreted (JS) runtime dynamic dispatch
+        types::obelisk::webhook::webhook_dynamic_support_backtrace::add_to_linker::<
+            _,
+            WebhookEndpointCtx,
+        >(linker, |x| x)
+        .map_err(|err| {
             WasmFileError::linking_error(
-                "cannot link obelisk:webhook/webhook-support-backtrace",
+                "cannot link obelisk:webhook/webhook-dynamic-support-backtrace",
                 err,
             )
         })?;
