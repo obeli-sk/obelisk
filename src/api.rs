@@ -3,8 +3,9 @@ use rand::Rng as _;
 use sha2::{Digest as _, Sha256};
 use std::fmt::Write as _;
 
-/// Maximum encoded gRPC message size for deployment repository requests and responses.
-pub(crate) const MAX_GRPC_MESSAGE_SIZE: usize = 512 * 1024 * 1024;
+/// Default cap on a single API transport message: gRPC encoded message size and the
+/// equivalent REST request body limit. Overridable via `[limits] max_transport_message_size_bytes`.
+pub(crate) const DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES: usize = 512 * 1024 * 1024;
 pub(crate) const MIN_API_TOKEN_CHAR_LENGTH: usize = 32;
 const GENERATED_API_TOKEN_BYTES: usize = 32;
 

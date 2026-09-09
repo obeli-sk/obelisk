@@ -1238,8 +1238,8 @@ impl TestServer {
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap()
-                .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-                .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+                .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+                .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
 
         let deployment_id = DeploymentId::generate();
         let submit = async |files| {
@@ -1294,8 +1294,8 @@ impl TestServer {
             DeploymentRepositoryClient::connect(format!("http://{}", self.api_addr()))
                 .await
                 .unwrap()
-                .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-                .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+                .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+                .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
         let resp = grpc_client
             .switch_deployment(SwitchDeploymentRequest {
                 deployment_id: Some(GrpcDeploymentId {
@@ -1473,8 +1473,12 @@ impl TestDeployClient {
                     DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
                         .await
                         .unwrap()
-                        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-                        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+                        .max_encoding_message_size(
+                            crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES,
+                        )
+                        .max_decoding_message_size(
+                            crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES,
+                        );
                 let deployment_id = DeploymentId::generate();
                 grpc_client
                     .submit_deployment(SubmitDeploymentRequest {
@@ -2420,8 +2424,8 @@ ffqn = "testing:integration/deferred.run"
         DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
             .await
             .unwrap()
-            .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-            .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+            .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+            .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
     let submit = |files, id| {
         let mut client = grpc_client.clone();
         let toml = prepared.deployment_toml.clone();
@@ -2561,8 +2565,8 @@ routes = [{ methods = ["GET"], route = "/broken-import" }]
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
 
     let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
         let mut client = grpc_client.clone();
@@ -2679,8 +2683,8 @@ routes = [{ methods = ["GET"], route = "/" }]
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
 
     let submit = |check: RuntimeConfigCheck, id: GrpcDeploymentId| {
         let mut client = grpc_client.clone();
@@ -2817,8 +2821,8 @@ routes = [{ methods = ["GET"], route = "/" }]
     let status = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
+        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
         .submit_deployment(SubmitDeploymentRequest {
             deployment_toml: broken_toml,
             created_by: Some("test".to_string()),
@@ -2898,8 +2902,8 @@ routes = [{ methods = ["GET"], route = "/" }]
         DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
             .await
             .unwrap()
-            .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-            .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+            .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+            .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
     grpc_client
         .submit_deployment(SubmitDeploymentRequest {
             deployment_toml: prepared.deployment_toml.clone(),
@@ -2950,8 +2954,8 @@ env_vars = ["OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
 
     let deployment_id = DeploymentId::generate();
 
@@ -3175,8 +3179,8 @@ async fn gc_orphan_files_grpc() {
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
         .await
         .unwrap()
-        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE);
+        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
+        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
 
     // A valid deployment: its blob is referenced and must survive GC.
     let good_dir = tempfile::tempdir().unwrap();

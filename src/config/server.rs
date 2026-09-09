@@ -48,9 +48,6 @@ pub(crate) struct ServerConfigToml {
     /// An empty allowlist denies every outbound request.
     #[serde(default)]
     pub(crate) outbound_http: OutboundHttpToml,
-    /// Per-file size limit for deployment-owned blobs attached to a submit request.
-    #[serde(default)]
-    pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
     #[serde(default)]
     pub(crate) limits: LimitsToml,
     #[serde(default)]
@@ -80,6 +77,7 @@ pub(crate) struct ServerConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
+#[expect(clippy::struct_field_names)]
 pub(crate) struct LimitsToml {
     /// Maximum compact JSON-encoded size of one newly persisted execution
     /// value. Each execution snapshots the effective positive value so config
@@ -87,18 +85,33 @@ pub(crate) struct LimitsToml {
     /// setting was persisted retain their legacy unlimited contract.
     #[serde(default = "default_max_persisted_value_size_bytes")]
     pub(crate) max_persisted_value_size_bytes: u64,
+    /// Per-file size limit for deployment-owned blobs attached to a submit request.
+    #[serde(default)]
+    pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
+    /// Maximum size of a single API transport message: the gRPC encoded message
+    /// size and the equivalent REST request body limit. Must be positive; the
+    /// default is 512 MiB. This is a transport bound and is distinct from
+    /// `max_persisted_value_size_bytes`.
+    #[serde(default = "default_max_transport_message_size_bytes")]
+    pub(crate) max_transport_message_size_bytes: u64,
 }
 
 impl Default for LimitsToml {
     fn default() -> Self {
         Self {
             max_persisted_value_size_bytes: DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
+            max_deployment_file_bytes: MaxDeploymentFileBytes::default(),
+            max_transport_message_size_bytes: default_max_transport_message_size_bytes(),
         }
     }
 }
 
 const fn default_max_persisted_value_size_bytes() -> u64 {
     DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES
+}
+
+const fn default_max_transport_message_size_bytes() -> u64 {
+    crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES as u64
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]

@@ -133,8 +133,9 @@ Each top-level execution snapshots the effective limit. Child and scheduled
 executions inherit it, so a configuration change applies only to new execution
 trees and cannot change replay behavior. Existing databases require no schema
 migration: executions created by older releases retain their legacy unlimited
-contract. `MAX_GRPC_MESSAGE_SIZE` is a separate, larger transport safeguard and
-does not relax the persisted-value limit.
+contract. `max_transport_message_size_bytes` (also under `[limits]`, defaulting to
+512 MiB) is a separate, larger transport safeguard bounding a single gRPC message
+or REST request body, and does not relax the persisted-value limit.
 
 ## Getting Started
 

@@ -188,13 +188,14 @@ fn deprecated_text_response(response: impl IntoResponse) -> Response {
 }
 
 pub(crate) fn app_router(state: WebApiState) -> Router {
+    let max_transport_message_size_bytes = state.server_verified.max_transport_message_size_bytes();
     Router::new()
         .route("/openapi.json", routing::get(openapi_json))
-        .nest("/v1", v1_router())
+        .nest("/v1", v1_router(max_transport_message_size_bytes))
         .with_state(Arc::new(state))
 }
 
-fn v1_router() -> Router<Arc<WebApiState>> {
+fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>> {
     Router::new()
         .route("/components", routing::get(components_list))
         .route("/components/{digest}/wit", routing::get(component_wit))
@@ -263,16 +264,10 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             routing::put(execution_upgrade),
         )
         .route("/deployments", routing::get(deployment::list))
-        .route(
-            "/deployments",
-            routing::post(deployment::submit_post)
-                .layer(DefaultBodyLimit::max(crate::api::MAX_GRPC_MESSAGE_SIZE)),
-        )
+        .route("/deployments", routing::post(deployment::submit_post))
         .route(
             "/deployments/{deployment-id}",
-            routing::get(deployment::get)
-                .put(deployment::submit_put)
-                .layer(DefaultBodyLimit::max(crate::api::MAX_GRPC_MESSAGE_SIZE)),
+            routing::get(deployment::get).put(deployment::submit_put),
         )
         .route(
             "/files/orphans",
@@ -292,6 +287,7 @@ fn v1_router() -> Router<Arc<WebApiState>> {
             "/executions/{execution-id}/backtrace/source",
             routing::get(execution_backtrace_source),
         )
+        .layer(DefaultBodyLimit::max(max_transport_message_size_bytes))
 }
 
 /// Generate a new execution ID
