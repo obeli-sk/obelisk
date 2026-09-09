@@ -2231,6 +2231,7 @@ async fn test_append_response_with_same_child_id_twice_should_fail(database: Dat
         child_execution_id: child_execution_id.clone(),
         target_ffqn: SOME_FFQN,
         params: concepts::storage::PersistedParams::Inline(Params::empty()),
+        params_hash: None,
         result: Ok(()),
     };
     let response = JoinSetResponse::ChildExecutionFinished {
@@ -3700,6 +3701,7 @@ async fn pause_then_join_next_then_unpause_should_restore_blocked_by_join_set(da
                             child_execution_id,
                             target_ffqn: SOME_FFQN,
                             params: concepts::storage::PersistedParams::Inline(Params::empty()),
+                            params_hash: None,
                             result: Ok(()),
                         },
                     },
@@ -3862,6 +3864,7 @@ async fn pause_with_pending_child_then_response_then_unpause_should_be_pending(d
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: SOME_FFQN,
                             params: concepts::storage::PersistedParams::Inline(Params::empty()),
+                            params_hash: None,
                             result: Ok(()),
                         },
                     },

@@ -229,12 +229,7 @@ fn normalize_history_event_timestamps(
                 *expires_at = arbitrary_valid_datetime(unstructured)?;
                 normalize_schedule_at(schedule_at, unstructured)?;
             }
-            JoinSetRequest::ChildExecutionRequest {
-                child_execution_id: _,
-                target_ffqn: _,
-                params: _,
-                result: _,
-            } => {}
+            JoinSetRequest::ChildExecutionRequest { .. } => {}
         },
         HistoryEvent::JoinNext {
             join_set_id: _,

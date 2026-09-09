@@ -1186,6 +1186,7 @@ impl WebhookEndpointCtx {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: ffqn.clone(),
                         params: concepts::storage::PersistedParams::Inline(params.clone()),
+                        params_hash: Some(concepts::persisted_value::compact_json_sha256(&params)),
                         result: Ok(()),
                     },
                 },
@@ -1730,6 +1731,9 @@ impl WebhookEndpointCtx {
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: ffqn.clone(),
                             params: concepts::storage::PersistedParams::Inline(params.clone()),
+                            params_hash: Some(concepts::persisted_value::compact_json_sha256(
+                                &params,
+                            )),
                             result: Ok(()),
                         },
                     },

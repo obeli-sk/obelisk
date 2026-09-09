@@ -37,6 +37,7 @@ expression: "redact_component_digest(serde_json::to_value(&replay).unwrap())"
                     "type": "child_execution_request",
                     "child_execution_id": "E_0000000000000000000000000B.g:1_1",
                     "target_ffqn": "testing:fibo/fibo.fibo",
+                    "params_hash": "sha256:41164c427f4cf681cc1b50eaf1a175e3574a1d015c6c90fbdaf77aea39d24086",
                     "params": [
                       10
                     ],

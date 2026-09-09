@@ -1301,11 +1301,6 @@ fn history_event_from_grpc(
                         ),
                         (None, Some(rejected)) => concepts::storage::PersistedParams::Rejected {
                             rejected: concepts::storage::RejectedParams {
-                                sha256: rejected.sha256.parse().map_err(|_| {
-                                    tonic::Status::invalid_argument(
-                                        "invalid child_execution_request.rejected_params.sha256",
-                                    )
-                                })?,
                                 encoded_size_at_least: rejected.encoded_size_at_least,
                             },
                         },
@@ -1327,6 +1322,15 @@ fn history_event_from_grpc(
                             .argument_must_exist("function_name")?
                             .try_into()?,
                         params,
+                        params_hash: if child.params_hash.is_empty() {
+                            None
+                        } else {
+                            Some(child.params_hash.parse().map_err(|_| {
+                                tonic::Status::invalid_argument(
+                                    "invalid child_execution_request.params_hash",
+                                )
+                            })?)
+                        },
                         result: match child.result.argument_must_exist("result")? {
                             grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Ok(_) => Ok(()),
                             grpc_gen::execution_event::history_event::join_set_request::child_execution_request::Result::Error(err) => Err(match grpc_gen::execution_event::history_event::join_set_request::child_execution_request::error::Kind::try_from(err.kind).map_err(|_| tonic::Status::invalid_argument("invalid child_execution_request.error.kind"))? {
@@ -1537,6 +1541,7 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                     JoinSetRequest::ChildExecutionRequest {
                         child_execution_id,
                         params,
+                        params_hash,
                         target_ffqn,
                         result,
                     } => Some(
@@ -1584,11 +1589,11 @@ pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::
                                     concepts::storage::PersistedParams::Inline(_) => None,
                                     concepts::storage::PersistedParams::Rejected { rejected } => Some(
                                         history_event::join_set_request::child_execution_request::RejectedParams {
-                                            sha256: rejected.sha256.to_string(),
                                             encoded_size_at_least: rejected.encoded_size_at_least,
                                         },
                                     ),
                                 },
+                                params_hash: params_hash.map_or_else(String::new, |hash| hash.to_string()),
                             },
                         ),
                     ),

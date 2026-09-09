@@ -540,11 +540,13 @@ fn normalize_join_set_request_for_matching(request: JoinSetRequest) -> JoinSetRe
             child_execution_id,
             target_ffqn,
             params,
+            params_hash,
             result,
         } => JoinSetRequest::ChildExecutionRequest {
             child_execution_id,
             target_ffqn,
             params,
+            params_hash,
             result,
         },
     }

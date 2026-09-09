@@ -918,6 +918,7 @@ mod tests {
                                     params: concepts::storage::PersistedParams::Inline(
                                         concepts::Params::empty(),
                                     ),
+                                    params_hash: None,
                                     result: Ok(()),
                                 },
                             },

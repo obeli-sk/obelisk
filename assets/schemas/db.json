@@ -1370,6 +1370,13 @@
             "target_ffqn": {
               "type": "string"
             },
+            "params_hash": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
             "params": {
               "$ref": "#/$defs/PersistedParams"
             },
@@ -1452,9 +1459,6 @@
     "RejectedParams": {
       "type": "object",
       "properties": {
-        "sha256": {
-          "type": "string"
-        },
         "encoded_size_at_least": {
           "type": "integer",
           "format": "uint64",
@@ -1462,7 +1466,6 @@
         }
       },
       "required": [
-        "sha256",
         "encoded_size_at_least"
       ]
     },

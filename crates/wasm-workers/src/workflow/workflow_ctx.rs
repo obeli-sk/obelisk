@@ -406,12 +406,14 @@ impl SubmitExecutionFnCall<'_> {
         let child_execution_id = ctx.next_child_id(&join_set_id);
         let child_execution_id_val =
             execution_id_derived_into_wast_val(&child_execution_id).as_val();
+        let params = Params::from_wasmtime(Arc::from(target_params));
         let result = SubmitChildExecution {
             target_ffqn: target_ffqn.clone(),
             join_set_id,
+            params_hash: concepts::persisted_value::compact_json_sha256(&params),
             intent: SubmitChildIntent::Ok {
                 fn_component_id: target_component_id,
-                params: Params::from_wasmtime(Arc::from(target_params)),
+                params,
             },
             child_execution_id,
             wasm_backtrace,
@@ -2706,6 +2708,7 @@ pub(crate) mod workflow_support {
                 }
             };
 
+            let params_hash = concepts::persisted_value::compact_json_sha256(&params_json);
             // Compute intent from fn_registry lookup
             let intent = self.get_submit_child_intent(&target_ffqn, params_json);
 
@@ -2718,6 +2721,7 @@ pub(crate) mod workflow_support {
                 target_ffqn,
                 join_set_id,
                 child_execution_id: child_execution_id.clone(),
+                params_hash,
                 intent,
                 wasm_backtrace,
             };
@@ -4446,6 +4450,7 @@ pub(crate) mod tests {
                         target_ffqn: _,
                         params: _,
                         result,
+                        ..
                     } => {
                         debug!("Got ChildExecutionRequest, executing child");
                         result.expect("must never end with type check error or fn not found");

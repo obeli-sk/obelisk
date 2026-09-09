@@ -73,6 +73,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.g:1_1",
               "target_ffqn": "testing:stub-activity/activity.foo",
+              "params_hash": "sha256:7b21cdd3966f1bed0092d4198e5b7984763a37d932435ada5e703291072c66b3",
               "params": [
                 "some param"
               ],

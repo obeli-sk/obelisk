@@ -56,6 +56,7 @@ expression: "ExecutionLogSanitized::from(log)"
               "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.g:1_1",
               "target_ffqn": "testing:stub-activity/activity.foo",
+              "params_hash": "sha256:21a041d81e9674b5b8fba167170fdb0375220aa2325070ab8b91400197fb8b87",
               "params": [
                 "test-input"
               ],
