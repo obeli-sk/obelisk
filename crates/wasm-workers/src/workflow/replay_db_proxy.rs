@@ -894,7 +894,8 @@ mod tests {
                     created_at,
                     event: concepts::storage::ExecutionRequest::HistoryEvent {
                         event: concepts::storage::HistoryEvent::Persist {
-                            value: vec![1],
+                            value: Some(vec![1]),
+                            value_hash: None,
                             kind: concepts::storage::PersistKind::ExecutionId,
                         },
                     },

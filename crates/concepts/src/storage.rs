@@ -534,7 +534,9 @@ impl ExecutionRequest {
             }
             Self::HistoryEvent {
                 event: HistoryEvent::Persist { value, .. },
-            } => validate_logical_value(value, max_persisted_value_size_bytes),
+            } => value.as_ref().map_or(Ok(()), |value| {
+                validate_logical_value(value, max_persisted_value_size_bytes)
+            }),
             Self::HistoryEvent {
                 event:
                     HistoryEvent::JoinSetRequest {
@@ -850,7 +852,13 @@ pub enum HistoryEvent {
     #[display("Persist")]
     Persist {
         #[debug(skip)]
-        value: Vec<u8>, // Only stored for nondeterminism checks. TODO: Consider using a hashed value or just the intention.
+        // backcompat: 0.41 persist events stored the generated value instead of its hash.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
+        value: Option<Vec<u8>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = Some(crate::component_id::DIGEST_DUMMY)))]
+        value_hash: Option<crate::component_id::Digest>,
         kind: PersistKind,
     },
     #[display("JoinSetCreate({join_set_id})")]
@@ -3336,6 +3344,22 @@ mod tests {
     fn legacy_child_params_deserialize_as_inline() {
         let params: super::PersistedParams = serde_json::from_str("[]").unwrap();
         assert_eq!(super::PersistedParams::Inline(Params::empty()), params);
+    }
+
+    #[test]
+    fn legacy_persist_event_deserializes_with_value() {
+        let event: HistoryEvent = serde_json::from_str(
+            r#"{"type":"persist","value":[1,2],"kind":{"type":"execution_id"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            HistoryEvent::Persist {
+                value: Some(vec![1, 2]),
+                value_hash: None,
+                kind: super::PersistKind::ExecutionId,
+            },
+            event
+        );
     }
 
     #[test]

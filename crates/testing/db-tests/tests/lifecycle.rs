@@ -124,7 +124,8 @@ async fn persisted_value_guard_rejects_single_and_mixed_batch_atomically(databas
         created_at: sim_clock.now(),
         event: ExecutionRequest::HistoryEvent {
             event: HistoryEvent::Persist {
-                value: vec![1; 100],
+                value: Some(vec![1; 100]),
+                value_hash: None,
                 kind: storage::PersistKind::ExecutionId,
             },
         },
@@ -190,7 +191,8 @@ async fn persisted_value_guard_rejects_single_and_mixed_batch_atomically(databas
                 created_at: sim_clock.now(),
                 event: ExecutionRequest::HistoryEvent {
                     event: HistoryEvent::Persist {
-                        value: vec![1; 100],
+                        value: Some(vec![1; 100]),
+                        value_hash: None,
                         kind: storage::PersistKind::ExecutionId,
                     },
                 },
