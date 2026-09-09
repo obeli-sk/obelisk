@@ -1,6 +1,7 @@
 use chrono::Duration;
 use concepts::{
-    ComponentId, ExecutionId, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+    ComponentId, ExecutionId, JoinSetId, JoinSetKind, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY,
+    StrVariant,
     prefixed_ulid::DeploymentId,
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
@@ -109,6 +110,46 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
     assert_eq!(
         admin.delete_execution_tree(&non_terminal).await.unwrap(),
         DeleteExecutionTreeResult::NonTerminal
+    );
+
+    let finished_root =
+        create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
+    let pending_child = ExecutionId::Derived(
+        finished_root
+            .next_level(&JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap()),
+    );
+    db_pool
+        .connection()
+        .await
+        .unwrap()
+        .create(CreateRequest {
+            created_at: clock.now(),
+            execution_id: pending_child.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: DeploymentId::generate(),
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        admin.delete_execution_tree(&finished_root).await.unwrap(),
+        DeleteExecutionTreeResult::Deleted
+    );
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&pending_child)
+            .await
+            .is_err()
     );
 
     let older = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;

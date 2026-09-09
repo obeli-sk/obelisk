@@ -5669,15 +5669,14 @@ impl DbExternalApi for PostgresConnection {
     }
 }
 
-async fn execution_tree_is_non_terminal_tx(
+async fn execution_is_non_terminal_tx(
     tx: &tokio_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
 ) -> Result<bool, DbErrorWrite> {
-    let root = execution_id.to_string();
     Ok(tx
         .query_one(
-            "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = $1 OR execution_id LIKE $2) AND state != 'finished')",
-            &[&root, &format!("{root}.%")],
+            "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id = $1 AND state != 'finished')",
+            &[&execution_id.to_string()],
         )
         .await?
         .get(0))
@@ -5699,7 +5698,7 @@ async fn delete_execution_tree_tx(
     if !exists {
         return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
     }
-    let non_terminal = execution_tree_is_non_terminal_tx(tx, execution_id).await?;
+    let non_terminal = execution_is_non_terminal_tx(tx, execution_id).await?;
     if non_terminal {
         return Ok(DeleteExecutionTreeResult::NonTerminal);
     }
@@ -5782,7 +5781,7 @@ async fn delete_deployment_tx(
     }
     if delete_executions {
         for root in &roots {
-            if execution_tree_is_non_terminal_tx(tx, root).await? {
+            if execution_is_non_terminal_tx(tx, root).await? {
                 return Ok(DeleteDeploymentResult::ReferencedByNonTerminal {
                     execution_trees: roots.len() as u64,
                 });
@@ -5921,8 +5920,7 @@ impl DbAdmin for PostgresConnection {
                 let mut blocked_non_terminal = false;
                 if delete_executions {
                     for root in &roots {
-                        blocked_non_terminal |=
-                            execution_tree_is_non_terminal_tx(&tx, root).await?;
+                        blocked_non_terminal |= execution_is_non_terminal_tx(&tx, root).await?;
                     }
                 }
                 if blocked_non_terminal {

@@ -530,14 +530,13 @@ struct PendingAfterEventUpdate {
 }
 
 impl SqlitePool {
-    fn execution_tree_is_non_terminal_tx(
+    fn execution_is_non_terminal_tx(
         tx: &Transaction<'_>,
         execution_id: &ExecutionId,
     ) -> Result<bool, RusqliteError> {
-        let root = execution_id.to_string();
         tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = ?1 OR execution_id LIKE ?2) AND state != 'finished')",
-            rusqlite::params![root, format!("{root}.%")],
+            "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id = ?1 AND state != 'finished')",
+            [execution_id.to_string()],
             |row| row.get::<_, bool>(0),
         )
         .map_err(RusqliteError::from)
@@ -5378,7 +5377,7 @@ impl SqlitePool {
         if !exists {
             return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
         }
-        if Self::execution_tree_is_non_terminal_tx(tx, execution_id)? {
+        if Self::execution_is_non_terminal_tx(tx, execution_id)? {
             return Ok(DeleteExecutionTreeResult::NonTerminal);
         }
         for (table, column) in [
@@ -5449,7 +5448,7 @@ impl SqlitePool {
         if delete_executions {
             if roots
                 .iter()
-                .map(|root| Self::execution_tree_is_non_terminal_tx(tx, root))
+                .map(|root| Self::execution_is_non_terminal_tx(tx, root))
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .any(|non_terminal| non_terminal)
@@ -5588,7 +5587,7 @@ impl DbAdmin for SqlitePool {
                     } else if delete_executions
                         && roots
                             .iter()
-                            .map(|root| Self::execution_tree_is_non_terminal_tx(tx, root))
+                            .map(|root| Self::execution_is_non_terminal_tx(tx, root))
                             .collect::<Result<Vec<_>, _>>()?
                             .into_iter()
                             .any(|blocked| blocked)
