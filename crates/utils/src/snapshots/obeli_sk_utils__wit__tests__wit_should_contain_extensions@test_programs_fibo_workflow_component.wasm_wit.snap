@@ -10,6 +10,7 @@ world root {
     import obelisk:types/execution@6.0.0;
     import obelisk:types/join-set@6.0.0;
     import obelisk:workflow/workflow-support@7.0.0;
+    import obelisk:workflow/workflow-dynamic-support@7.0.0;
     import testing:fibo/fibo;
     import testing:fibo-obelisk-ext/fibo;
 
@@ -195,6 +196,27 @@ package obelisk:types@6.0.0 {
 
 package obelisk:workflow@7.0.0 {
     interface workflow-support {
+        use obelisk:types/execution@6.0.0.{execution-id};
+        use obelisk:types/join-set@6.0.0.{join-set};
+
+        variant get-result-json-error {
+            execution-id-parsing-error(string),
+            not-found-in-processed-responses,
+        }
+
+        variant join-next-error {
+            all-processed,
+        }
+
+        join-set-create: func() -> join-set;
+
+        get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
+
+        join-next: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-error>;
+
+        execution-id-generate: func() -> execution-id;
+    }
+    interface workflow-dynamic-support {
         use obelisk:types/join-set@6.0.0.{join-set};
         use obelisk:types/function@6.0.0.{function};
         use obelisk:types/execution@6.0.0.{execution-id};
@@ -208,24 +230,7 @@ package obelisk:workflow@7.0.0 {
             value-too-large(u64),
         }
 
-        variant get-result-json-error {
-            execution-id-parsing-error(string),
-            not-found-in-processed-responses,
-        }
-
-        variant join-next-error {
-            all-processed,
-        }
-
-        join-set-create: func() -> join-set;
-
         submit-json: func(join-set: borrow<join-set>, function: function, params: string) -> result<execution-id, submit-json-error>;
-
-        get-result-json: func(execution-id: execution-id) -> result<result<option<string>, option<string>>, get-result-json-error>;
-
-        join-next: func(join-set: borrow<join-set>) -> result<result<option<string>, option<string>>, join-next-error>;
-
-        execution-id-generate: func() -> execution-id;
 
         schedule-json: func(execution-id: execution-id, schedule-at: schedule-at, function: function, params: string) -> result<_, schedule-json-error>;
     }
