@@ -639,7 +639,7 @@ message ExecutionEvent {
                 Ok ok = 3;
                 Error error = 4;
             }
-            optional string params_hash = 5;
+            string params_hash = 5;
         }
 
         message Stub {
