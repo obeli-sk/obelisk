@@ -107,6 +107,8 @@ pub(crate) enum Subcommand {
     Component(ComponentArgs),
     /// Manage deployments.
     Deployment(DeploymentArgs),
+    /// Perform operator-only destructive maintenance.
+    Admin(AdminArgs),
     /// Generate configuration files and WIT artifacts.
     #[command(subcommand)]
     Generate(Generate),
@@ -134,6 +136,122 @@ pub(crate) struct DeploymentArgs {
     pub(crate) command: Deployment,
     #[command(flatten)]
     pub(crate) token: ClientToken,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct AdminArgs {
+    #[command(subcommand)]
+    pub(crate) command: Admin,
+    #[command(flatten)]
+    pub(crate) token: ClientToken,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum Admin {
+    #[command(subcommand)]
+    Execution(AdminExecution),
+    #[command(subcommand)]
+    Executions(AdminExecutions),
+    #[command(subcommand)]
+    Deployment(AdminDeployment),
+    #[command(subcommand)]
+    Deployments(AdminDeployments),
+    /// Delete unreferenced content-addressed blobs.
+    CasGc {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum AdminExecution {
+    /// Delete a terminal top-level execution and its derived tree.
+    Delete {
+        execution_id: ExecutionId,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum AdminExecutions {
+    /// Keep the newest completed top-level execution trees.
+    Retain {
+        #[arg(long)]
+        count: u32,
+        #[arg(long, default_value_t = 100)]
+        batch_size: u32,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum AdminDeployment {
+    /// Delete an inactive deployment.
+    Delete {
+        deployment_id: DeploymentId,
+        #[arg(long)]
+        delete_executions: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum AdminDeployments {
+    /// Keep the newest inactive deployments in addition to active and enqueued deployments.
+    Retain {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        delete_executions: bool,
+        #[arg(long, default_value_t = 100)]
+        batch_size: u32,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -241,20 +359,6 @@ pub(crate) enum Deployment {
     },
     /// List recent deployments.
     List {
-        /// Address of the obelisk server
-        #[arg(
-            short,
-            long,
-            env = "OBELISK_API_URL",
-            default_value = "http://127.0.0.1:5005"
-        )]
-        api_url: String,
-    },
-    /// Delete content-addressed file blobs not referenced by any stored deployment.
-    ///
-    /// Such orphans are left behind when a submit writes blobs to the store and then
-    /// fails verification before persisting the deployment.
-    Gc {
         /// Address of the obelisk server
         #[arg(
             short,

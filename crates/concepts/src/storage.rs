@@ -1410,13 +1410,86 @@ pub trait DbPool: Send + Sync {
 
     async fn external_api_conn(&self) -> Result<Box<dyn DbExternalApi>, DbErrorGeneric>;
 
+    async fn admin_conn(&self) -> Result<Box<dyn DbAdmin>, DbErrorGeneric>;
+
     /// Content-addressed blob store for deployment files. Separate from the metadata
     /// connections so the bytes can move to an object store (S3) in future while the
     /// referencing metadata stays in the database.
     async fn cas_conn(&self) -> Result<Box<dyn crate::cas::Cas>, DbErrorGeneric>;
 
+    async fn cas_gc_conn(&self) -> Result<Box<dyn CasGc>, DbErrorGeneric>;
+
     #[cfg(feature = "test")]
     async fn connection_test(&self) -> Result<Box<dyn DbConnectionTest>, DbErrorGeneric>;
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CleanupResult {
+    pub deleted_execution_trees: u64,
+    pub deleted_deployments: u64,
+    pub retained: u64,
+    pub blocked_non_terminal: u64,
+    pub blocked_by_execution_reference: u64,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteExecutionTreeResult {
+    Deleted,
+    AlreadyDeleted,
+    NonTerminal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteDeploymentResult {
+    Deleted { deleted_execution_trees: u64 },
+    AlreadyDeleted,
+    Active,
+    Enqueued,
+    Referenced { execution_trees: u64 },
+    ReferencedByNonTerminal { execution_trees: u64 },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CasGcResult {
+    pub referenced_blobs: u64,
+    pub orphan_blobs: u64,
+    pub deleted_blobs: u64,
+    pub deleted_bytes: u64,
+}
+
+#[async_trait]
+pub trait CasGc: Send + Sync {
+    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite>;
+}
+
+#[async_trait]
+pub trait DbAdmin: Send + Sync {
+    async fn delete_execution_tree(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<DeleteExecutionTreeResult, DbErrorWrite>;
+
+    async fn retain_executions(
+        &self,
+        retain_count: u32,
+        batch_size: u32,
+        dry_run: bool,
+    ) -> Result<CleanupResult, DbErrorWrite>;
+
+    async fn delete_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        delete_executions: bool,
+    ) -> Result<DeleteDeploymentResult, DbErrorWrite>;
+
+    async fn retain_deployments(
+        &self,
+        retain_count: u32,
+        batch_size: u32,
+        delete_executions: bool,
+        dry_run: bool,
+    ) -> Result<CleanupResult, DbErrorWrite>;
 }
 
 #[async_trait]
@@ -1913,11 +1986,6 @@ pub trait DbExternalApi: DbConnection {
         &self,
         deployment_id: DeploymentId,
     ) -> Result<Vec<DeploymentFileRecord>, DbErrorRead>;
-
-    /// Delete content-addressed file blobs not referenced by any stored deployment,
-    /// returning the number deleted. Such orphans are left behind when a submit writes
-    /// blobs to the store and then fails verification before persisting the deployment.
-    async fn gc_orphan_files(&self) -> Result<u64, DbErrorWrite>;
 
     async fn activate_deployment(
         &self,

@@ -297,6 +297,21 @@ impl DeploymentSwitchManagerHandle {
         }
     }
 
+    pub(crate) async fn gc_cas(
+        &self,
+        dry_run: bool,
+    ) -> Result<concepts::storage::CasGcResult, SubmitDeploymentError> {
+        let _permit = self.try_acquire_submit_permit()?;
+        self.inner
+            .db_pool
+            .cas_gc_conn()
+            .await
+            .map_err(|err| SubmitDeploymentError::Other(err.into()))?
+            .gc_cas(dry_run)
+            .await
+            .map_err(|err| SubmitDeploymentError::Other(err.into()))
+    }
+
     async fn take_latest_prepared(
         &self,
         deployment_id: DeploymentId,
@@ -1912,6 +1927,15 @@ pub(crate) async fn run_internal(
         .max_encoding_message_size(max_transport_message_size_bytes),
     )
     .add_service(
+        grpc_gen::admin_repository_server::AdminRepositoryServer::from_arc(grpc_server.clone())
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
+            .send_compressed(CompressionEncoding::Gzip)
+            .accept_compressed(CompressionEncoding::Gzip)
+            .max_decoding_message_size(max_transport_message_size_bytes)
+            .max_encoding_message_size(max_transport_message_size_bytes),
+    )
+    .add_service(
         grpc_gen::execution_repository_server::ExecutionRepositoryServer::from_arc(
             grpc_server.clone(),
         )
@@ -2887,7 +2911,11 @@ async fn submit_deployment_manifest(
             // blobs would be swept too; delete exactly this submit's `to_write` digests instead.
             // Keep the original rejection reason regardless of the sweep's outcome.
             const { assert!(DEFAULT_SUBMIT_CONCURRENCY == 1) };
-            if let Err(gc_err) = conn.gc_orphan_files().await {
+            let gc_result = match db_pool.cas_gc_conn().await {
+                Ok(gc) => gc.gc_cas(false).await.map_err(anyhow::Error::from),
+                Err(err) => Err(anyhow::Error::from(err)),
+            };
+            if let Err(gc_err) = gc_result {
                 warn!(%deployment_id, "orphan blob GC after a rejected submit failed: {gc_err}");
             }
             return Err(err);

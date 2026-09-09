@@ -785,17 +785,6 @@
           ]
         },
         {
-          "name": "gc",
-          "about": "Delete content-addressed file blobs not referenced by any stored deployment",
-          "options": [
-            {
-              "name": "--api-url",
-              "short": "a",
-              "help": "Address of the obelisk server"
-            }
-          ]
-        },
-        {
           "name": "active",
           "about": "Print the ID of the currently active deployment",
           "options": [
@@ -911,6 +900,144 @@
             {
               "name": "--fix",
               "help": "Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "admin",
+      "about": "Perform operator-only destructive maintenance",
+      "options": [
+        {
+          "name": "--api-token",
+          "help": "API token presented to the server as `Authorization: Bearer <token>`. Falls back to `$OBELISK_API_TOKEN`; `$OBELISK__API__TOKEN` is deprecated"
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "execution",
+          "subcommands": [
+            {
+              "name": "delete",
+              "about": "Delete a terminal top-level execution and its derived tree",
+              "options": [
+                {
+                  "name": "--json"
+                },
+                {
+                  "name": "--api-url",
+                  "short": "a"
+                }
+              ],
+              "positionals": [
+                {
+                  "name": "execution_id",
+                  "required": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "executions",
+          "subcommands": [
+            {
+              "name": "retain",
+              "about": "Keep the newest completed top-level execution trees",
+              "options": [
+                {
+                  "name": "--count",
+                  "required": true
+                },
+                {
+                  "name": "--batch-size"
+                },
+                {
+                  "name": "--dry-run"
+                },
+                {
+                  "name": "--json"
+                },
+                {
+                  "name": "--api-url",
+                  "short": "a"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "deployment",
+          "subcommands": [
+            {
+              "name": "delete",
+              "about": "Delete an inactive deployment",
+              "options": [
+                {
+                  "name": "--delete-executions"
+                },
+                {
+                  "name": "--json"
+                },
+                {
+                  "name": "--api-url",
+                  "short": "a"
+                }
+              ],
+              "positionals": [
+                {
+                  "name": "deployment_id",
+                  "required": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "deployments",
+          "subcommands": [
+            {
+              "name": "retain",
+              "about": "Keep the newest inactive deployments in addition to active and enqueued deployments",
+              "options": [
+                {
+                  "name": "--count",
+                  "required": true
+                },
+                {
+                  "name": "--delete-executions"
+                },
+                {
+                  "name": "--batch-size"
+                },
+                {
+                  "name": "--dry-run"
+                },
+                {
+                  "name": "--json"
+                },
+                {
+                  "name": "--api-url",
+                  "short": "a"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "cas-gc",
+          "about": "Delete unreferenced content-addressed blobs",
+          "options": [
+            {
+              "name": "--dry-run"
+            },
+            {
+              "name": "--json"
+            },
+            {
+              "name": "--api-url",
+              "short": "a"
             }
           ]
         }

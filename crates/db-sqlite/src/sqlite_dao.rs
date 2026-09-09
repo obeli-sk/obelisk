@@ -10,14 +10,15 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
-        ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
-        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
-        DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse,
-        DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
-        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
-        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        CasGc, CasGcResult, CleanupResult, ComponentFileRole, ComponentMetadataRecord,
+        ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeleteDeploymentResult,
+        DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
+        DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
+        DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
@@ -37,7 +38,7 @@ use db_common::{
     AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
     PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Row, ToSql, Transaction,
     TransactionBehavior, named_params,
@@ -389,7 +390,19 @@ impl DbPool for SqlitePool {
         }
         Ok(Box::new(self.clone()))
     }
+    async fn admin_conn(&self) -> Result<Box<dyn DbAdmin>, DbErrorGeneric> {
+        if self.0.shutdown_requested.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(self.clone()))
+    }
     async fn cas_conn(&self) -> Result<Box<dyn Cas>, DbErrorGeneric> {
+        if self.0.shutdown_requested.load(Ordering::Acquire) {
+            return Err(DbErrorGeneric::Close);
+        }
+        Ok(Box::new(self.clone()))
+    }
+    async fn cas_gc_conn(&self) -> Result<Box<dyn CasGc>, DbErrorGeneric> {
         if self.0.shutdown_requested.load(Ordering::Acquire) {
             return Err(DbErrorGeneric::Close);
         }
@@ -517,6 +530,19 @@ struct PendingAfterEventUpdate {
 }
 
 impl SqlitePool {
+    fn execution_tree_is_non_terminal_tx(
+        tx: &Transaction<'_>,
+        execution_id: &ExecutionId,
+    ) -> Result<bool, RusqliteError> {
+        let root = execution_id.to_string();
+        tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = ?1 OR execution_id LIKE ?2) AND state != 'finished')",
+            rusqlite::params![root, format!("{root}.%")],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(RusqliteError::from)
+    }
+
     fn init_thread(
         path: &Path,
         mut pragma_override: HashMap<String, String>,
@@ -5167,26 +5193,6 @@ impl DbExternalApi for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn gc_orphan_files(&self) -> Result<u64, DbErrorWrite> {
-        self.transaction(
-            move |tx| {
-                let deleted = tx
-                    .execute(
-                        "DELETE FROM t_file WHERE digest NOT IN \
-                         (SELECT digest FROM t_deployment_file \
-                          UNION SELECT digest FROM t_component_source)",
-                        [],
-                    )
-                    .map_err(RusqliteError::from)?;
-                Ok(deleted as u64)
-            },
-            TxType::MultipleWrites,
-            "gc_orphan_files",
-        )
-        .await
-    }
-
-    #[instrument(skip(self))]
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,
@@ -5352,6 +5358,328 @@ impl DbExternalApi for SqlitePool {
             },
             TxType::Other,
             "unpause_delay",
+        )
+        .await
+    }
+}
+
+impl SqlitePool {
+    fn delete_execution_tree_tx(
+        tx: &Transaction<'_>,
+        execution_id: &ExecutionId,
+    ) -> Result<DeleteExecutionTreeResult, RusqliteError> {
+        let root = execution_id.to_string();
+        let pattern = format!("{root}.%");
+        let exists = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id = ?1)",
+            [&root],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
+        }
+        if Self::execution_tree_is_non_terminal_tx(tx, execution_id)? {
+            return Ok(DeleteExecutionTreeResult::NonTerminal);
+        }
+        for (table, column) in [
+            ("t_join_set_response", "execution_id"),
+            ("t_delay", "execution_id"),
+            ("t_execution_backtrace", "execution_id"),
+            ("t_log", "execution_id"),
+            ("t_execution_log", "execution_id"),
+            ("t_state", "execution_id"),
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE {column} = ?1 OR {column} LIKE ?2"),
+                rusqlite::params![root, pattern],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM t_join_set_response WHERE child_execution_id = ?1 OR child_execution_id LIKE ?2",
+            rusqlite::params![root, pattern],
+        )?;
+        tx.execute(
+            "DELETE FROM t_wasm_backtrace WHERE backtrace_hash NOT IN (SELECT backtrace_hash FROM t_execution_backtrace)",
+            [],
+        )?;
+        Ok(DeleteExecutionTreeResult::Deleted)
+    }
+
+    fn deployment_execution_roots_tx(
+        tx: &Transaction<'_>,
+        deployment_id: DeploymentId,
+    ) -> Result<HashSet<ExecutionId>, RusqliteError> {
+        tx.prepare("SELECT execution_id FROM t_state WHERE deployment_id = ?1")?
+            .query_map([deployment_id.to_string()], |row| {
+                row.get::<_, ExecutionId>(0)
+            })?
+            .map(|result| {
+                result
+                    .map(|id| ExecutionId::TopLevel(id.get_top_level()))
+                    .map_err(RusqliteError::from)
+            })
+            .collect()
+    }
+
+    fn delete_deployment_tx(
+        tx: &Transaction<'_>,
+        deployment_id: DeploymentId,
+        delete_executions: bool,
+    ) -> Result<DeleteDeploymentResult, RusqliteError> {
+        let status = tx
+            .query_row(
+                "SELECT status FROM t_deployment WHERE deployment_id = ?1",
+                [deployment_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        match status.as_deref() {
+            None => return Ok(DeleteDeploymentResult::AlreadyDeleted),
+            Some("active") => return Ok(DeleteDeploymentResult::Active),
+            Some("enqueued") => return Ok(DeleteDeploymentResult::Enqueued),
+            Some("inactive") => {}
+            Some(other) => unreachable!("unknown deployment status {other}"),
+        }
+        let roots = Self::deployment_execution_roots_tx(tx, deployment_id)?;
+        if !roots.is_empty() && !delete_executions {
+            return Ok(DeleteDeploymentResult::Referenced {
+                execution_trees: roots.len() as u64,
+            });
+        }
+        if delete_executions {
+            if roots
+                .iter()
+                .map(|root| Self::execution_tree_is_non_terminal_tx(tx, root))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .any(|non_terminal| non_terminal)
+            {
+                return Ok(DeleteDeploymentResult::ReferencedByNonTerminal {
+                    execution_trees: roots.len() as u64,
+                });
+            }
+            for root in &roots {
+                let outcome = Self::delete_execution_tree_tx(tx, root)?;
+                debug_assert_eq!(outcome, DeleteExecutionTreeResult::Deleted);
+            }
+        }
+        let id = deployment_id.to_string();
+        tx.execute(
+            "DELETE FROM t_deployment_component_file WHERE deployment_id = ?1",
+            [&id],
+        )?;
+        tx.execute(
+            "DELETE FROM t_deployment_file WHERE deployment_id = ?1",
+            [&id],
+        )?;
+        tx.execute(
+            "DELETE FROM t_deployment_component WHERE deployment_id = ?1",
+            [&id],
+        )?;
+        tx.execute("DELETE FROM t_deployment WHERE deployment_id = ?1", [&id])?;
+        tx.execute(
+            "DELETE FROM t_component_source WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM t_component_metadata WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
+            [],
+        )?;
+        Ok(DeleteDeploymentResult::Deleted {
+            deleted_execution_trees: roots.len() as u64,
+        })
+    }
+}
+
+#[async_trait]
+impl DbAdmin for SqlitePool {
+    async fn delete_execution_tree(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
+        let execution_id = execution_id.clone();
+        self.transaction(
+            move |tx| Self::delete_execution_tree_tx(tx, &execution_id).map_err(DbErrorWrite::from),
+            TxType::MultipleWrites,
+            "delete_execution_tree",
+        )
+        .await
+    }
+
+    async fn retain_executions(
+        &self,
+        retain_count: u32,
+        batch_size: u32,
+        dry_run: bool,
+    ) -> Result<CleanupResult, DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let mut ids = tx
+                    .prepare(
+                        "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' \
+                         ORDER BY created_at DESC, execution_id DESC LIMIT ?1 OFFSET ?2",
+                    )?
+                    .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(retain_count)], |row| row.get::<_, ExecutionId>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let has_more = ids.len() > batch_size as usize;
+                ids.truncate(batch_size as usize);
+                let mut result = CleanupResult { retained: u64::from(retain_count), has_more, ..Default::default() };
+                for id in ids {
+                    if dry_run {
+                        result.deleted_execution_trees += 1;
+                    } else {
+                        match Self::delete_execution_tree_tx(tx, &id)? {
+                            DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
+                            DeleteExecutionTreeResult::NonTerminal => result.blocked_non_terminal += 1,
+                            DeleteExecutionTreeResult::AlreadyDeleted => {}
+                        }
+                    }
+                }
+                Ok(result)
+            },
+            TxType::MultipleWrites,
+            "retain_executions",
+        )
+        .await
+    }
+
+    async fn delete_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        delete_executions: bool,
+    ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                Self::delete_deployment_tx(tx, deployment_id, delete_executions)
+                    .map_err(DbErrorWrite::from)
+            },
+            TxType::MultipleWrites,
+            "delete_deployment",
+        )
+        .await
+    }
+
+    async fn retain_deployments(
+        &self,
+        retain_count: u32,
+        batch_size: u32,
+        delete_executions: bool,
+        dry_run: bool,
+    ) -> Result<CleanupResult, DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let mut ids = tx
+                    .prepare(
+                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' \
+                         ORDER BY created_at DESC, deployment_id DESC LIMIT ?1 OFFSET ?2",
+                    )?
+                    .query_map(
+                        rusqlite::params![i64::from(batch_size) + 1, i64::from(retain_count)],
+                        |row| row.get::<_, DeploymentId>(0),
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let has_more = ids.len() > batch_size as usize;
+                ids.truncate(batch_size as usize);
+                let mut result = CleanupResult {
+                    retained: u64::from(retain_count),
+                    has_more,
+                    ..Default::default()
+                };
+                for id in ids {
+                    let outcome = if dry_run {
+                        let roots = Self::deployment_execution_roots_tx(tx, id)?;
+                        let blocked_non_terminal = delete_executions
+                            && roots
+                                .iter()
+                                .map(|root| Self::execution_tree_is_non_terminal_tx(tx, root))
+                                .collect::<Result<Vec<_>, _>>()?
+                                .into_iter()
+                                .any(|blocked| blocked);
+                        if blocked_non_terminal {
+                            DeleteDeploymentResult::ReferencedByNonTerminal {
+                                execution_trees: roots.len() as u64,
+                            }
+                        } else if roots.is_empty() || delete_executions {
+                            DeleteDeploymentResult::Deleted {
+                                deleted_execution_trees: roots.len() as u64,
+                            }
+                        } else {
+                            DeleteDeploymentResult::Referenced {
+                                execution_trees: roots.len() as u64,
+                            }
+                        }
+                    } else {
+                        Self::delete_deployment_tx(tx, id, delete_executions)?
+                    };
+                    match outcome {
+                        DeleteDeploymentResult::Deleted {
+                            deleted_execution_trees,
+                        } => {
+                            result.deleted_deployments += 1;
+                            result.deleted_execution_trees += deleted_execution_trees;
+                        }
+                        DeleteDeploymentResult::Referenced { .. } => {
+                            result.blocked_by_execution_reference += 1;
+                        }
+                        DeleteDeploymentResult::ReferencedByNonTerminal { .. } => {
+                            result.blocked_non_terminal += 1;
+                        }
+                        DeleteDeploymentResult::AlreadyDeleted
+                        | DeleteDeploymentResult::Active
+                        | DeleteDeploymentResult::Enqueued => {}
+                    }
+                }
+                Ok(result)
+            },
+            TxType::MultipleWrites,
+            "retain_deployments",
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl CasGc for SqlitePool {
+    #[instrument(skip(self))]
+    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let (referenced_blobs, orphan_blobs, deleted_bytes) = tx
+                    .query_row(
+                        "SELECT \
+                         COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
+                         COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
+                         COALESCE(SUM(size) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), 0) \
+                         FROM t_file",
+                        [],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?.cast_unsigned(),
+                                row.get::<_, i64>(1)?.cast_unsigned(),
+                                row.get::<_, i64>(2)?.cast_unsigned(),
+                            ))
+                        },
+                    )
+                    .map_err(RusqliteError::from)?;
+                let deleted_blobs = if dry_run {
+                    0
+                } else {
+                    tx.execute(
+                        "DELETE FROM t_file WHERE digest NOT IN \
+                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)",
+                        [],
+                    )
+                    .map_err(RusqliteError::from)? as u64
+                };
+                Ok(CasGcResult {
+                    referenced_blobs,
+                    orphan_blobs,
+                    deleted_blobs,
+                    deleted_bytes: if dry_run || deleted_blobs > 0 { deleted_bytes } else { 0 },
+                })
+            },
+            TxType::MultipleWrites,
+            "gc_cas",
         )
         .await
     }

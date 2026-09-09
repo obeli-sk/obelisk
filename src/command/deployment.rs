@@ -6,8 +6,7 @@ use crate::config::deployment::{
 };
 use crate::server::web_api_server::deployment::{
     DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
-    DeploymentSwitchPayload, GcOrphanFilesResponseSer, SubmitPackageErrorBody,
-    UnregisteredSecretsErrorBody,
+    DeploymentSwitchPayload, SubmitPackageErrorBody, UnregisteredSecretsErrorBody,
 };
 use anyhow::{Context as _, bail};
 use concepts::prefixed_ulid::DeploymentId;
@@ -120,18 +119,6 @@ impl args::Deployment {
                         dep.description.unwrap_or_default()
                     );
                 }
-                Ok(())
-            }
-
-            args::Deployment::Gc { api_url } => {
-                let client = client_startup.web_api_client()?;
-                let resp: GcOrphanFilesResponseSer = send_json(
-                    client
-                        .delete(format!("{api_url}/v1/files/orphans"))
-                        .header(ACCEPT, "application/json"),
-                )
-                .await?;
-                println!("Deleted {} orphan file blob(s).", resp.deleted_count);
                 Ok(())
             }
 

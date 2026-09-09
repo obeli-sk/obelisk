@@ -51,9 +51,14 @@ service DeploymentRepository {
     rpc GetDeployment(GetDeploymentRequest) returns (GetDeploymentResponse);
     // Fetch a deployment file blob by content digest.
     rpc GetFile(GetFileRequest) returns (GetFileResponse);
-    // Delete content-addressed file blobs not referenced by any stored deployment
-    // (e.g. orphans left by a submit that failed verification after writing blobs).
-    rpc GcOrphanFiles(GcOrphanFilesRequest) returns (GcOrphanFilesResponse);
+}
+
+service AdminRepository {
+    rpc DeleteExecutionTree(DeleteExecutionTreeRequest) returns (DeleteExecutionTreeResponse);
+    rpc RetainExecutions(RetainExecutionsRequest) returns (CleanupResponse);
+    rpc DeleteDeployment(DeleteDeploymentRequest) returns (DeleteDeploymentResponse);
+    rpc RetainDeployments(RetainDeploymentsRequest) returns (CleanupResponse);
+    rpc GcCas(GcCasRequest) returns (GcCasResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -1309,11 +1314,49 @@ message GetFileResponse {
     bytes content = 1;
 }
 
-message GcOrphanFilesRequest {
+message DeleteExecutionTreeRequest {
+    ExecutionId execution_id = 1;
 }
-message GcOrphanFilesResponse {
-    // Number of orphan file blobs deleted from the content-addressed store.
-    uint64 deleted_count = 1;
+message DeleteExecutionTreeResponse {
+    bool deleted = 1;
+    bool already_deleted = 2;
+}
+message RetainExecutionsRequest {
+    uint32 retain_count = 1;
+    uint32 batch_size = 2;
+    bool dry_run = 3;
+}
+message DeleteDeploymentRequest {
+    DeploymentId deployment_id = 1;
+    bool delete_executions = 2;
+}
+message DeleteDeploymentResponse {
+    bool deleted = 1;
+    bool already_deleted = 2;
+    uint64 deleted_execution_trees = 3;
+}
+message RetainDeploymentsRequest {
+    uint32 retain_count = 1;
+    uint32 batch_size = 2;
+    bool delete_executions = 3;
+    bool dry_run = 4;
+}
+message CleanupResponse {
+    uint64 deleted_execution_trees = 1;
+    uint64 deleted_deployments = 2;
+    uint64 retained = 3;
+    uint64 blocked_non_terminal = 4;
+    uint64 blocked_by_execution_reference = 5;
+    bool has_more = 6;
+}
+message GcCasRequest {
+    bool dry_run = 1;
+}
+message GcCasResponse {
+    uint64 referenced_blobs = 1;
+    uint64 orphan_blobs = 2;
+    uint64 deleted_blobs = 3;
+    uint64 deleted_bytes = 4;
 }
 
 message GetDeploymentRequest {

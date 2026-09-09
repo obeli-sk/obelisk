@@ -10,14 +10,15 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
-        ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
-        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
-        DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout, DbErrorStubResponse,
-        DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi, DbPool, DbPoolCloseable,
-        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
-        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
-        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
-        ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        CasGc, CasGcResult, CleanupResult, ComponentFileRole, ComponentMetadataRecord,
+        ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead,
+        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
+        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeleteDeploymentResult,
+        DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
+        DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
+        DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
+        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
         ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
         HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
@@ -37,7 +38,7 @@ use db_common::{
     PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
 use deadpool_postgres::{Client, ManagerConfig, Pool, RecyclingMethod};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use secrecy::{ExposeSecret as _, SecretString};
 use sha2::{Digest as _, Sha256};
 use std::{collections::VecDeque, pin::Pin, str::FromStr as _, sync::Arc, time::Duration};
@@ -212,9 +213,29 @@ impl DbPool for PostgresPool {
         }))
     }
 
+    async fn admin_conn(&self) -> Result<Box<dyn DbAdmin>, DbErrorGeneric> {
+        let client = self.pool.get().await?;
+        Ok(Box::new(PostgresConnection {
+            client: tokio::sync::Mutex::new(client),
+            response_subscribers: self.response_subscribers.clone(),
+            pending_subscribers: self.pending_subscribers.clone(),
+            execution_finished_subscribers: self.execution_finished_subscribers.clone(),
+        }))
+    }
+
     async fn cas_conn(&self) -> Result<Box<dyn Cas>, DbErrorGeneric> {
         let client = self.pool.get().await?;
 
+        Ok(Box::new(PostgresConnection {
+            client: tokio::sync::Mutex::new(client),
+            response_subscribers: self.response_subscribers.clone(),
+            pending_subscribers: self.pending_subscribers.clone(),
+            execution_finished_subscribers: self.execution_finished_subscribers.clone(),
+        }))
+    }
+
+    async fn cas_gc_conn(&self) -> Result<Box<dyn CasGc>, DbErrorGeneric> {
+        let client = self.pool.get().await?;
         Ok(Box::new(PostgresConnection {
             client: tokio::sync::Mutex::new(client),
             response_subscribers: self.response_subscribers.clone(),
@@ -5304,22 +5325,6 @@ impl DbExternalApi for PostgresConnection {
     }
 
     #[instrument(skip(self))]
-    async fn gc_orphan_files(&self) -> Result<u64, DbErrorWrite> {
-        let mut client_guard = self.client.lock().await;
-        let tx = client_guard.transaction().await?;
-        let deleted = tx
-            .execute(
-                "DELETE FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file \
-                  UNION SELECT digest FROM t_component_source)",
-                &[],
-            )
-            .await?;
-        tx.commit().await?;
-        Ok(deleted)
-    }
-
-    #[instrument(skip(self))]
     async fn activate_deployment(
         &self,
         deployment_id: DeploymentId,
@@ -5661,6 +5666,344 @@ impl DbExternalApi for PostgresConnection {
             return Err(DbErrorWrite::NotFound);
         }
         Ok(())
+    }
+}
+
+async fn execution_tree_is_non_terminal_tx(
+    tx: &tokio_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<bool, DbErrorWrite> {
+    let root = execution_id.to_string();
+    Ok(tx
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = $1 OR execution_id LIKE $2) AND state != 'finished')",
+            &[&root, &format!("{root}.%")],
+        )
+        .await?
+        .get(0))
+}
+
+async fn delete_execution_tree_tx(
+    tx: &tokio_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
+    let root = execution_id.to_string();
+    let pattern = format!("{root}.%");
+    let exists = tx
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id = $1)",
+            &[&root],
+        )
+        .await?
+        .get::<_, bool>(0);
+    if !exists {
+        return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
+    }
+    let non_terminal = execution_tree_is_non_terminal_tx(tx, execution_id).await?;
+    if non_terminal {
+        return Ok(DeleteExecutionTreeResult::NonTerminal);
+    }
+    for (table, column) in [
+        ("t_join_set_response", "execution_id"),
+        ("t_delay", "execution_id"),
+        ("t_execution_backtrace", "execution_id"),
+        ("t_log", "execution_id"),
+        ("t_execution_log", "execution_id"),
+        ("t_state", "execution_id"),
+    ] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE {column} = $1 OR {column} LIKE $2"),
+            &[&root, &pattern],
+        )
+        .await?;
+    }
+    tx.execute(
+        "DELETE FROM t_join_set_response WHERE child_execution_id = $1 OR child_execution_id LIKE $2",
+        &[&root, &pattern],
+    )
+    .await?;
+    tx.execute(
+        "DELETE FROM t_wasm_backtrace WHERE backtrace_hash NOT IN (SELECT backtrace_hash FROM t_execution_backtrace)",
+        &[],
+    )
+    .await?;
+    Ok(DeleteExecutionTreeResult::Deleted)
+}
+
+async fn deployment_execution_roots_tx(
+    tx: &tokio_postgres::Transaction<'_>,
+    deployment_id: DeploymentId,
+) -> Result<HashSet<ExecutionId>, DbErrorWrite> {
+    Ok(tx
+        .query(
+            "SELECT execution_id FROM t_state WHERE deployment_id = $1",
+            &[&deployment_id.to_string()],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let id = row
+                .get::<_, String>(0)
+                .parse::<ExecutionId>()
+                .expect("database execution id must be valid");
+            ExecutionId::TopLevel(id.get_top_level())
+        })
+        .collect())
+}
+
+async fn delete_deployment_tx(
+    tx: &tokio_postgres::Transaction<'_>,
+    deployment_id: DeploymentId,
+    delete_executions: bool,
+) -> Result<DeleteDeploymentResult, DbErrorWrite> {
+    let status = tx
+        .query_opt(
+            "SELECT status FROM t_deployment WHERE deployment_id = $1",
+            &[&deployment_id.to_string()],
+        )
+        .await?
+        .map(|row| row.get::<_, String>(0));
+    match status.as_deref() {
+        None => return Ok(DeleteDeploymentResult::AlreadyDeleted),
+        Some("active") => return Ok(DeleteDeploymentResult::Active),
+        Some("enqueued") => return Ok(DeleteDeploymentResult::Enqueued),
+        Some("inactive") => {}
+        Some(_) => {
+            return Err(DbErrorWrite::NonRetriable(
+                DbErrorWriteNonRetriable::Conflict,
+            ));
+        }
+    }
+    let roots = deployment_execution_roots_tx(tx, deployment_id).await?;
+    if !roots.is_empty() && !delete_executions {
+        return Ok(DeleteDeploymentResult::Referenced {
+            execution_trees: roots.len() as u64,
+        });
+    }
+    if delete_executions {
+        for root in &roots {
+            if execution_tree_is_non_terminal_tx(tx, root).await? {
+                return Ok(DeleteDeploymentResult::ReferencedByNonTerminal {
+                    execution_trees: roots.len() as u64,
+                });
+            }
+        }
+        for root in &roots {
+            let outcome = delete_execution_tree_tx(tx, root).await?;
+            debug_assert_eq!(outcome, DeleteExecutionTreeResult::Deleted);
+        }
+    }
+    let id = deployment_id.to_string();
+    tx.execute(
+        "DELETE FROM t_deployment_component_file WHERE deployment_id = $1",
+        &[&id],
+    )
+    .await?;
+    tx.execute(
+        "DELETE FROM t_deployment_file WHERE deployment_id = $1",
+        &[&id],
+    )
+    .await?;
+    tx.execute(
+        "DELETE FROM t_deployment_component WHERE deployment_id = $1",
+        &[&id],
+    )
+    .await?;
+    tx.execute("DELETE FROM t_deployment WHERE deployment_id = $1", &[&id])
+        .await?;
+    tx.execute(
+        "DELETE FROM t_component_source WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
+        &[],
+    ).await?;
+    tx.execute(
+        "DELETE FROM t_component_metadata WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
+        &[],
+    ).await?;
+    Ok(DeleteDeploymentResult::Deleted {
+        deleted_execution_trees: roots.len() as u64,
+    })
+}
+
+#[async_trait]
+impl DbAdmin for PostgresConnection {
+    async fn delete_execution_tree(
+        &self,
+        execution_id: &ExecutionId,
+    ) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let result = delete_execution_tree_tx(&tx, execution_id).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    async fn retain_executions(
+        &self,
+        retain_count: u32,
+        batch_size: u32,
+        dry_run: bool,
+    ) -> Result<CleanupResult, DbErrorWrite> {
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let rows = tx
+            .query(
+                "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' \
+             ORDER BY created_at DESC, execution_id DESC LIMIT $1 OFFSET $2",
+                &[&(i64::from(batch_size) + 1), &i64::from(retain_count)],
+            )
+            .await?;
+        let has_more = rows.len() > batch_size as usize;
+        let mut result = CleanupResult {
+            retained: u64::from(retain_count),
+            has_more,
+            ..Default::default()
+        };
+        for row in rows.into_iter().take(batch_size as usize) {
+            if dry_run {
+                result.deleted_execution_trees += 1;
+            } else {
+                let id = row
+                    .get::<_, String>(0)
+                    .parse::<ExecutionId>()
+                    .expect("database execution id must be valid");
+                match delete_execution_tree_tx(&tx, &id).await? {
+                    DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
+                    DeleteExecutionTreeResult::NonTerminal => result.blocked_non_terminal += 1,
+                    DeleteExecutionTreeResult::AlreadyDeleted => {}
+                }
+            }
+        }
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    async fn delete_deployment(
+        &self,
+        deployment_id: DeploymentId,
+        delete_executions: bool,
+    ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let result = delete_deployment_tx(&tx, deployment_id, delete_executions).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    async fn retain_deployments(
+        &self,
+        retain_count: u32,
+        batch_size: u32,
+        delete_executions: bool,
+        dry_run: bool,
+    ) -> Result<CleanupResult, DbErrorWrite> {
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let rows = tx
+            .query(
+                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' \
+             ORDER BY created_at DESC, deployment_id DESC LIMIT $1 OFFSET $2",
+                &[&(i64::from(batch_size) + 1), &i64::from(retain_count)],
+            )
+            .await?;
+        let has_more = rows.len() > batch_size as usize;
+        let mut result = CleanupResult {
+            retained: u64::from(retain_count),
+            has_more,
+            ..Default::default()
+        };
+        for row in rows.into_iter().take(batch_size as usize) {
+            let id = row
+                .get::<_, String>(0)
+                .parse::<DeploymentId>()
+                .expect("database deployment id must be valid");
+            let outcome = if dry_run {
+                let roots = deployment_execution_roots_tx(&tx, id).await?;
+                let mut blocked_non_terminal = false;
+                if delete_executions {
+                    for root in &roots {
+                        blocked_non_terminal |=
+                            execution_tree_is_non_terminal_tx(&tx, root).await?;
+                    }
+                }
+                if blocked_non_terminal {
+                    DeleteDeploymentResult::ReferencedByNonTerminal {
+                        execution_trees: roots.len() as u64,
+                    }
+                } else if roots.is_empty() || delete_executions {
+                    DeleteDeploymentResult::Deleted {
+                        deleted_execution_trees: roots.len() as u64,
+                    }
+                } else {
+                    DeleteDeploymentResult::Referenced {
+                        execution_trees: roots.len() as u64,
+                    }
+                }
+            } else {
+                delete_deployment_tx(&tx, id, delete_executions).await?
+            };
+            match outcome {
+                DeleteDeploymentResult::Deleted {
+                    deleted_execution_trees,
+                } => {
+                    result.deleted_deployments += 1;
+                    result.deleted_execution_trees += deleted_execution_trees;
+                }
+                DeleteDeploymentResult::Referenced { .. } => {
+                    result.blocked_by_execution_reference += 1;
+                }
+                DeleteDeploymentResult::ReferencedByNonTerminal { .. } => {
+                    result.blocked_non_terminal += 1;
+                }
+                DeleteDeploymentResult::AlreadyDeleted
+                | DeleteDeploymentResult::Active
+                | DeleteDeploymentResult::Enqueued => {}
+            }
+        }
+        tx.commit().await?;
+        Ok(result)
+    }
+}
+
+#[async_trait]
+impl CasGc for PostgresConnection {
+    #[instrument(skip(self))]
+    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite> {
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        let row = tx
+            .query_one(
+                "SELECT \
+                 COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
+                 COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
+                 COALESCE(SUM(size) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), 0) \
+                 FROM t_file",
+                &[],
+            )
+            .await?;
+        let referenced_blobs = row.get::<_, i64>(0).cast_unsigned();
+        let orphan_blobs = row.get::<_, i64>(1).cast_unsigned();
+        let deleted_bytes = row.get::<_, i64>(2).cast_unsigned();
+        let deleted_blobs = if dry_run {
+            0
+        } else {
+            tx.execute(
+                "DELETE FROM t_file WHERE digest NOT IN \
+                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)",
+                &[],
+            )
+            .await?
+        };
+        tx.commit().await?;
+        Ok(CasGcResult {
+            referenced_blobs,
+            orphan_blobs,
+            deleted_blobs,
+            deleted_bytes: if dry_run || deleted_blobs > 0 {
+                deleted_bytes
+            } else {
+                0
+            },
+        })
     }
 }
 
