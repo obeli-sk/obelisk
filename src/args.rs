@@ -149,11 +149,7 @@ pub(crate) struct AdminArgs {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Admin {
     #[command(subcommand)]
-    Execution(AdminExecution),
-    #[command(subcommand)]
     Executions(AdminExecutions),
-    #[command(subcommand)]
-    Deployment(AdminDeployment),
     #[command(subcommand)]
     Deployments(AdminDeployments),
     /// Delete unreferenced content-addressed blobs.
@@ -173,10 +169,11 @@ pub(crate) enum Admin {
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum AdminExecution {
-    /// Delete a terminal top-level execution and its derived tree.
+pub(crate) enum AdminExecutions {
+    /// Delete one or more terminal top-level executions and their derived trees.
     Delete {
-        execution_id: ExecutionId,
+        #[arg(required = true, num_args = 1..)]
+        execution_ids: Vec<ExecutionId>,
         #[arg(long)]
         json: bool,
         #[arg(
@@ -187,10 +184,6 @@ pub(crate) enum AdminExecution {
         )]
         api_url: String,
     },
-}
-
-#[derive(Debug, clap::Subcommand)]
-pub(crate) enum AdminExecutions {
     /// Keep the newest completed top-level execution trees.
     Retain {
         #[arg(long)]
@@ -212,10 +205,11 @@ pub(crate) enum AdminExecutions {
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum AdminDeployment {
-    /// Delete an inactive deployment.
+pub(crate) enum AdminDeployments {
+    /// Delete one or more inactive deployments.
     Delete {
-        deployment_id: DeploymentId,
+        #[arg(required = true, num_args = 1..)]
+        deployment_ids: Vec<DeploymentId>,
         #[arg(long)]
         delete_executions: bool,
         #[arg(long)]
@@ -228,10 +222,6 @@ pub(crate) enum AdminDeployment {
         )]
         api_url: String,
     },
-}
-
-#[derive(Debug, clap::Subcommand)]
-pub(crate) enum AdminDeployments {
     /// Keep the newest inactive deployments in addition to active and enqueued deployments.
     Retain {
         #[arg(long)]
@@ -1244,5 +1234,70 @@ mod tests {
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
         assert!(err.to_string().contains("API token must not be empty"));
+    }
+
+    #[test]
+    fn admin_plural_delete_accepts_multiple_ids() {
+        let first = ExecutionId::generate();
+        let second = ExecutionId::generate();
+        let args = Args::try_parse_from([
+            "obelisk".to_owned(),
+            "admin".to_owned(),
+            "executions".to_owned(),
+            "delete".to_owned(),
+            first.to_string(),
+            second.to_string(),
+        ])
+        .unwrap();
+
+        let Subcommand::Admin(AdminArgs {
+            command: Admin::Executions(AdminExecutions::Delete { execution_ids, .. }),
+            ..
+        }) = args.command
+        else {
+            panic!("expected plural admin execution deletion");
+        };
+        assert_eq!(execution_ids, [first, second]);
+
+        let first = DeploymentId::generate();
+        let second = DeploymentId::generate();
+        let args = Args::try_parse_from([
+            "obelisk".to_owned(),
+            "admin".to_owned(),
+            "deployments".to_owned(),
+            "delete".to_owned(),
+            first.to_string(),
+            second.to_string(),
+            "--delete-executions".to_owned(),
+        ])
+        .unwrap();
+        let Subcommand::Admin(AdminArgs {
+            command:
+                Admin::Deployments(AdminDeployments::Delete {
+                    deployment_ids,
+                    delete_executions,
+                    ..
+                }),
+            ..
+        }) = args.command
+        else {
+            panic!("expected plural admin deployment deletion");
+        };
+        assert_eq!(deployment_ids, [first, second]);
+        assert!(delete_executions);
+    }
+
+    #[test]
+    fn admin_singular_resource_group_is_rejected() {
+        let err = Args::try_parse_from([
+            "obelisk",
+            "admin",
+            "execution",
+            "delete",
+            &ExecutionId::generate().to_string(),
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 }
