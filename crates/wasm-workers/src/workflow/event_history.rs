@@ -1062,6 +1062,7 @@ impl EventHistory {
                         child_execution_id: execution_id,
                         target_ffqn,
                         params,
+                        params_hash,
                     },
                     HistoryEvent::JoinSetRequest {
                         join_set_id: found_join_set_id,
@@ -1070,13 +1071,17 @@ impl EventHistory {
                                 child_execution_id,
                                 target_ffqn: stored_target_ffqn,
                                 params: stored_params,
+                                params_hash: found_params_hash,
                                 result: found_result,
                             },
                     },
                 ) if *join_set_id == *found_join_set_id
                     && *execution_id == *child_execution_id
                     && target_ffqn == stored_target_ffqn
-                    && stored_params.matches(params) =>
+                    && found_params_hash.as_ref().map_or_else(
+                        || stored_params.matches(params),
+                        |found_params_hash| found_params_hash == params_hash,
+                    ) =>
                 {
                     trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest, result: {found_result:?}");
                     let found_result = found_result.clone();
@@ -1547,6 +1552,7 @@ impl EventHistory {
                 target_ffqn,
                 join_set_id,
                 child_execution_id,
+                params_hash,
                 intent,
                 wasm_backtrace,
             }) => {
@@ -1603,7 +1609,6 @@ impl EventHistory {
                                     }),
                                     storage::PersistedParams::Rejected {
                                         rejected: storage::RejectedParams {
-                                            sha256: checked.sha256,
                                             encoded_size_at_least: exceeded.encoded_size_at_least,
                                         },
                                     },
@@ -1629,6 +1634,7 @@ impl EventHistory {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: target_ffqn.clone(),
                         params,
+                        params_hash: Some(params_hash),
                         result,
                     },
                 };
@@ -2150,6 +2156,7 @@ impl EventHistory {
                         child_execution_id: child_execution_id.clone(),
                         target_ffqn: ffqn.clone(),
                         params: storage::PersistedParams::Inline(params.clone()),
+                        params_hash: Some(concepts::persisted_value::compact_json_sha256(&params)),
                         result: Ok(()),
                     },
                 };
@@ -2859,6 +2866,7 @@ pub(crate) struct SubmitChildExecution {
     pub(crate) target_ffqn: FunctionFqn,
     pub(crate) join_set_id: JoinSetId,
     pub(crate) child_execution_id: ExecutionIdDerived,
+    pub(crate) params_hash: concepts::component_id::Digest,
     pub(crate) intent: SubmitChildIntent,
     #[debug(skip)]
     pub(crate) wasm_backtrace: Option<storage::WasmBacktrace>,
@@ -3562,6 +3570,7 @@ enum DeterministicKey {
         child_execution_id: ExecutionIdDerived,
         target_ffqn: FunctionFqn,
         params: Params,
+        params_hash: concepts::component_id::Digest,
     },
 
     #[display("DelayRequest({delay_id}, {schedule_at})")] // join_set_id is part of delay_id
@@ -3651,6 +3660,7 @@ impl EventCallBlocking {
                     child_execution_id: child_execution_id.clone(),
                     target_ffqn: ffqn.clone(),
                     params: params.clone(),
+                    params_hash: concepts::persisted_value::compact_json_sha256(params),
                 },
                 DeterministicKey::JoinNextChild {
                     join_set_id: join_set_id.clone(),
@@ -3712,6 +3722,7 @@ impl EventCallNonBlocking {
             EventCallNonBlocking::SubmitChildExecution(SubmitChildExecution {
                 join_set_id,
                 child_execution_id,
+                params_hash,
                 target_ffqn,
                 intent,
                 wasm_backtrace: _,
@@ -3726,6 +3737,7 @@ impl EventCallNonBlocking {
                     child_execution_id: child_execution_id.clone(),
                     target_ffqn: target_ffqn.clone(),
                     params,
+                    params_hash: params_hash.clone(),
                 }
             }
             EventCallNonBlocking::SubmitDelay(SubmitDelay {
@@ -4467,6 +4479,7 @@ mod tests {
             target_ffqn: MOCK_FFQN,
             join_set_id: join_set_id.clone(),
             child_execution_id: child_execution_id.clone(),
+            params_hash: concepts::persisted_value::compact_json_sha256(&params),
             intent: SubmitChildIntent::Ok {
                 fn_component_id: ComponentId::dummy_activity(),
                 params: params.clone(),
@@ -4499,12 +4512,17 @@ mod tests {
             .event_history()
             .find_map(|(event, _version)| match event {
                 HistoryEvent::JoinSetRequest {
-                    request: JoinSetRequest::ChildExecutionRequest { params, .. },
+                    request:
+                        JoinSetRequest::ChildExecutionRequest {
+                            params,
+                            params_hash,
+                            ..
+                        },
                     ..
-                } => Some(params),
+                } => Some((params, params_hash)),
                 _ => None,
             });
-        assert_matches!(rejected, Some(PersistedParams::Rejected { .. }));
+        assert_matches!(rejected, Some((PersistedParams::Rejected { .. }, Some(_))));
         assert!(
             db_connection
                 .get(&ExecutionId::Derived(child_execution_id.clone()))
@@ -4539,6 +4557,7 @@ mod tests {
             target_ffqn: MOCK_FFQN,
             join_set_id,
             child_execution_id,
+            params_hash: concepts::persisted_value::compact_json_sha256(&params),
             intent: SubmitChildIntent::Ok {
                 fn_component_id: ComponentId::dummy_activity(),
                 params,
@@ -5168,6 +5187,9 @@ mod tests {
                         target_ffqn: ffqn,
                         join_set_id,
                         child_execution_id,
+                        params_hash: concepts::persisted_value::compact_json_sha256(
+                            &Params::empty(),
+                        ),
                         intent: SubmitChildIntent::Ok {
                             fn_component_id: ComponentId::dummy_activity(),
                             params: Params::empty(),
@@ -5212,6 +5234,9 @@ mod tests {
                         target_ffqn: ffqn_b,
                         join_set_id: join_set_id.clone(),
                         child_execution_id: child_execution_id_b,
+                        params_hash: concepts::persisted_value::compact_json_sha256(
+                            &Params::empty(),
+                        ),
                         intent: SubmitChildIntent::Ok {
                             fn_component_id: ComponentId::dummy_activity(),
                             params: Params::empty(),

@@ -466,6 +466,9 @@ mod tests {
                                 child_execution_id: child_id.clone(),
                                 target_ffqn: CANCELLABLE_FFQN,
                                 params: concepts::storage::PersistedParams::Inline(Params::empty()),
+                                params_hash: Some(concepts::persisted_value::compact_json_sha256(
+                                    &Params::empty(),
+                                )),
                                 result: Ok(()),
                             },
                         },
@@ -600,6 +603,11 @@ mod tests {
                                     target_ffqn: CANCELLABLE_FFQN,
                                     params: concepts::storage::PersistedParams::Inline(
                                         Params::empty(),
+                                    ),
+                                    params_hash: Some(
+                                        concepts::persisted_value::compact_json_sha256(
+                                            &Params::empty(),
+                                        ),
                                     ),
                                     result: Ok(()),
                                 },

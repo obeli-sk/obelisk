@@ -73,6 +73,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.g:1_1",
               "target_ffqn": "testing:sleep/sleep.sleep",
+              "params_hash": "sha256:256e05047ce792831404373108d1317ec3a5d537e59cb5309814f0ae63891db6",
               "params": [
                 {
                   "days": 1

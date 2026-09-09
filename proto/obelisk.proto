@@ -543,7 +543,9 @@ message ExecutionEvent {
 
             message ChildExecutionRequest {
                 message RejectedParams {
-                    string sha256 = 1;
+                    // Reserved after unreleased versions used this for the parameters hash.
+                    reserved 1;
+                    reserved "sha256";
                     uint64 encoded_size_at_least = 2;
                 }
                 message Ok {
@@ -566,6 +568,8 @@ message ExecutionEvent {
                     Error error = 5;
                 }
                 RejectedParams rejected_params = 6;
+                // backcompat: Empty for history written by version 0.41.
+                string params_hash = 7;
             }
 
             JoinSetId join_set_id = 1;

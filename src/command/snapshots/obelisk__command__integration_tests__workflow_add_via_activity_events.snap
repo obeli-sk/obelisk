@@ -51,6 +51,7 @@ expression: events
               "type": "child_execution_request",
               "child_execution_id": "E_<REDACTED>",
               "target_ffqn": "testing:integration/activity.add",
+              "params_hash": "sha256:<REDACTED>",
               "params": [
                 7,
                 8

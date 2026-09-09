@@ -1155,6 +1155,10 @@ pub enum JoinSetRequest {
     ChildExecutionRequest {
         child_execution_id: ExecutionIdDerived,
         target_ffqn: FunctionFqn,
+        // backcompat: 0.41 child requests did not fingerprint parameters separately.
+        #[serde(default)]
+        #[cfg_attr(any(test, feature = "test"), arbitrary(value = None))]
+        params_hash: Option<crate::component_id::Digest>,
         // backcompat: 0.41 child requests stored raw Params at this field.
         #[cfg_attr(any(test, feature = "test"), arbitrary(value = PersistedParams::Inline(Params::empty())))]
         params: PersistedParams,
@@ -1178,19 +1182,13 @@ impl Display for PersistedParams {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RejectedParams {
-    pub sha256: crate::component_id::Digest,
     pub encoded_size_at_least: u64,
 }
 
 impl PersistedParams {
     #[must_use]
     pub fn matches(&self, params: &Params) -> bool {
-        match self {
-            Self::Inline(stored) => stored == params,
-            Self::Rejected { rejected } => {
-                crate::persisted_value::compact_json_sha256(params) == rejected.sha256
-            }
-        }
+        matches!(self, Self::Inline(stored) if stored == params)
     }
 }
 
@@ -3371,22 +3369,15 @@ mod tests {
     }
 
     #[test]
-    fn rejected_child_params_store_only_digest_and_size() {
-        let params = Params::from_json_values_test(vec![serde_json::json!("secret-value")]);
+    fn rejected_child_params_store_only_size() {
         let rejected = super::PersistedParams::Rejected {
             rejected: super::RejectedParams {
-                sha256: crate::persisted_value::compact_json_sha256(&params),
                 encoded_size_at_least: 5,
             },
         };
         let json = serde_json::to_string(&rejected).unwrap();
         assert!(!json.contains("secret-value"));
-        assert!(rejected.matches(&params));
-        assert!(
-            !rejected.matches(&Params::from_json_values_test(vec![serde_json::json!(
-                "different-value"
-            ),]))
-        );
+        assert_eq!(json, r#"{"rejected":{"encoded_size_at_least":5}}"#);
     }
 
     #[rstest(expected => [

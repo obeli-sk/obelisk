@@ -73,6 +73,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.n:a_1",
               "target_ffqn": "testing:stub-activity/activity.foo",
+              "params_hash": "sha256:0eb5b8d6f81bc677da8a08567cc4fa9a06a57e9ec8da85ed73a7f62727996002",
               "params": [
                 "a"
               ],
@@ -132,6 +133,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.n:b_1",
               "target_ffqn": "testing:stub-activity/activity.foo",
+              "params_hash": "sha256:a8950f05d3443e7921e7ec6fbe06c8febe40966a5db58b15f767a995d561290b",
               "params": [
                 "b"
               ],
@@ -222,6 +224,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.n:f_1",
               "target_ffqn": "testing:stub-activity/activity.foo",
+              "params_hash": "sha256:235d824e85e73458dcedfa167048ef21875624dda1c8ed5e32ae9b8c206478fa",
               "params": [
                 "f"
               ],
@@ -335,6 +338,7 @@ expression: "ExecutionLogSanitized::from(execution_log.clone())"
               "type": "child_execution_request",
               "child_execution_id": "E_00000000000000000000000000.n:c_1",
               "target_ffqn": "testing:stub-activity/activity.foo",
+              "params_hash": "sha256:fd2079a3096d5abb9bdf54cc5c80262e7b58bac10d524846455474beff760be9",
               "params": [
                 "c"
               ],

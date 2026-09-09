@@ -1954,6 +1954,7 @@ mod tests {
                             child_execution_id: child_execution_id.clone(),
                             target_ffqn: FFQN_CHILD,
                             params: concepts::storage::PersistedParams::Inline(params),
+                            params_hash: None,
                             result: Ok(()),
                         },
                     },
