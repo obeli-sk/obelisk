@@ -77,6 +77,25 @@ async fn create_execution(
     execution_id
 }
 
+async fn insert_deployment(
+    db_pool: &dyn concepts::storage::DbPool,
+    deployment_id: DeploymentId,
+    created_at: chrono::DateTime<chrono::Utc>,
+) {
+    db_pool
+        .external_api_conn()
+        .await
+        .unwrap()
+        .insert_deployment_with_components(
+            deployment_record(deployment_id, created_at, Vec::new()),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
@@ -211,5 +230,67 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
     );
     drop(admin);
     drop(cas);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_retention_skips_referenced_deployments(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+
+    let oldest = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), oldest, clock.now()).await;
+    clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    let older = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), older, clock.now()).await;
+    clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
+    let referenced = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), referenced, clock.now()).await;
+    create_execution(db_pool.as_ref(), &clock, referenced, true).await;
+
+    let admin = db_pool.admin_conn().await.unwrap();
+    let first = admin.retain_deployments(0, 1, false, false).await.unwrap();
+    assert_eq!(first.deleted_deployments, 1);
+    assert_eq!(first.blocked_by_execution_reference, 1);
+    assert!(first.has_more);
+
+    let second = admin.retain_deployments(0, 1, false, false).await.unwrap();
+    assert_eq!(second.deleted_deployments, 1);
+    assert_eq!(second.blocked_by_execution_reference, 1);
+    assert!(!second.has_more);
+    assert!(
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .get_deployment(referenced)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .get_deployment(oldest)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .get_deployment(older)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(admin);
     db_close.close().await;
 }

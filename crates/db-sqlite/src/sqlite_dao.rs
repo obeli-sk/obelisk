@@ -5568,65 +5568,45 @@ impl DbAdmin for SqlitePool {
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let mut ids = tx
+                let ids = tx
                     .prepare(
                         "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' \
-                         ORDER BY created_at DESC, deployment_id DESC LIMIT ?1 OFFSET ?2",
+                         ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1",
                     )?
-                    .query_map(
-                        rusqlite::params![i64::from(batch_size) + 1, i64::from(retain_count)],
-                        |row| row.get::<_, DeploymentId>(0),
-                    )?
+                    .query_map([i64::from(retain_count)], |row| {
+                        row.get::<_, DeploymentId>(0)
+                    })?
                     .collect::<Result<Vec<_>, _>>()?;
-                let has_more = ids.len() > batch_size as usize;
-                ids.truncate(batch_size as usize);
                 let mut result = CleanupResult {
                     retained: u64::from(retain_count),
-                    has_more,
                     ..Default::default()
                 };
                 for id in ids {
-                    let outcome = if dry_run {
-                        let roots = Self::deployment_execution_roots_tx(tx, id)?;
-                        let blocked_non_terminal = delete_executions
-                            && roots
-                                .iter()
-                                .map(|root| Self::execution_tree_is_non_terminal_tx(tx, root))
-                                .collect::<Result<Vec<_>, _>>()?
-                                .into_iter()
-                                .any(|blocked| blocked);
-                        if blocked_non_terminal {
-                            DeleteDeploymentResult::ReferencedByNonTerminal {
-                                execution_trees: roots.len() as u64,
-                            }
-                        } else if roots.is_empty() || delete_executions {
-                            DeleteDeploymentResult::Deleted {
-                                deleted_execution_trees: roots.len() as u64,
-                            }
-                        } else {
-                            DeleteDeploymentResult::Referenced {
-                                execution_trees: roots.len() as u64,
-                            }
-                        }
+                    let roots = Self::deployment_execution_roots_tx(tx, id)?;
+                    if !roots.is_empty() && !delete_executions {
+                        result.blocked_by_execution_reference += 1;
+                    } else if delete_executions
+                        && roots
+                            .iter()
+                            .map(|root| Self::execution_tree_is_non_terminal_tx(tx, root))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .any(|blocked| blocked)
+                    {
+                        result.blocked_non_terminal += 1;
+                    } else if result.deleted_deployments == u64::from(batch_size) {
+                        result.has_more = true;
+                        break;
                     } else {
-                        Self::delete_deployment_tx(tx, id, delete_executions)?
-                    };
-                    match outcome {
-                        DeleteDeploymentResult::Deleted {
-                            deleted_execution_trees,
-                        } => {
-                            result.deleted_deployments += 1;
-                            result.deleted_execution_trees += deleted_execution_trees;
+                        result.deleted_deployments += 1;
+                        result.deleted_execution_trees += roots.len() as u64;
+                        if !dry_run {
+                            let outcome = Self::delete_deployment_tx(tx, id, delete_executions)?;
+                            debug_assert!(matches!(
+                                outcome,
+                                DeleteDeploymentResult::Deleted { .. }
+                            ));
                         }
-                        DeleteDeploymentResult::Referenced { .. } => {
-                            result.blocked_by_execution_reference += 1;
-                        }
-                        DeleteDeploymentResult::ReferencedByNonTerminal { .. } => {
-                            result.blocked_non_terminal += 1;
-                        }
-                        DeleteDeploymentResult::AlreadyDeleted
-                        | DeleteDeploymentResult::Active
-                        | DeleteDeploymentResult::Enqueued => {}
                     }
                 }
                 Ok(result)

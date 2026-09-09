@@ -5901,23 +5901,23 @@ impl DbAdmin for PostgresConnection {
         let rows = tx
             .query(
                 "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' \
-             ORDER BY created_at DESC, deployment_id DESC LIMIT $1 OFFSET $2",
-                &[&(i64::from(batch_size) + 1), &i64::from(retain_count)],
+             ORDER BY created_at DESC, deployment_id DESC OFFSET $1",
+                &[&i64::from(retain_count)],
             )
             .await?;
-        let has_more = rows.len() > batch_size as usize;
         let mut result = CleanupResult {
             retained: u64::from(retain_count),
-            has_more,
             ..Default::default()
         };
-        for row in rows.into_iter().take(batch_size as usize) {
+        for row in rows {
             let id = row
                 .get::<_, String>(0)
                 .parse::<DeploymentId>()
                 .expect("database deployment id must be valid");
-            let outcome = if dry_run {
-                let roots = deployment_execution_roots_tx(&tx, id).await?;
+            let roots = deployment_execution_roots_tx(&tx, id).await?;
+            if !roots.is_empty() && !delete_executions {
+                result.blocked_by_execution_reference += 1;
+            } else {
                 let mut blocked_non_terminal = false;
                 if delete_executions {
                     for root in &roots {
@@ -5926,37 +5926,18 @@ impl DbAdmin for PostgresConnection {
                     }
                 }
                 if blocked_non_terminal {
-                    DeleteDeploymentResult::ReferencedByNonTerminal {
-                        execution_trees: roots.len() as u64,
-                    }
-                } else if roots.is_empty() || delete_executions {
-                    DeleteDeploymentResult::Deleted {
-                        deleted_execution_trees: roots.len() as u64,
-                    }
-                } else {
-                    DeleteDeploymentResult::Referenced {
-                        execution_trees: roots.len() as u64,
-                    }
-                }
-            } else {
-                delete_deployment_tx(&tx, id, delete_executions).await?
-            };
-            match outcome {
-                DeleteDeploymentResult::Deleted {
-                    deleted_execution_trees,
-                } => {
-                    result.deleted_deployments += 1;
-                    result.deleted_execution_trees += deleted_execution_trees;
-                }
-                DeleteDeploymentResult::Referenced { .. } => {
-                    result.blocked_by_execution_reference += 1;
-                }
-                DeleteDeploymentResult::ReferencedByNonTerminal { .. } => {
                     result.blocked_non_terminal += 1;
+                } else if result.deleted_deployments == u64::from(batch_size) {
+                    result.has_more = true;
+                    break;
+                } else {
+                    result.deleted_deployments += 1;
+                    result.deleted_execution_trees += roots.len() as u64;
+                    if !dry_run {
+                        let outcome = delete_deployment_tx(&tx, id, delete_executions).await?;
+                        debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
+                    }
                 }
-                DeleteDeploymentResult::AlreadyDeleted
-                | DeleteDeploymentResult::Active
-                | DeleteDeploymentResult::Enqueued => {}
             }
         }
         tx.commit().await?;

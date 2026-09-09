@@ -55,9 +55,12 @@ impl args::Admin {
                         }),
                 )
                 .await?;
+                let action = if dry_run { "would delete" } else { "deleted" };
                 let message = format!(
-                    "{} execution tree(s) selected; has_more={}",
-                    response.deleted_execution_trees, response.has_more
+                    "{} execution tree(s) {action}; {} blocked; has_more={}",
+                    response.deleted_execution_trees,
+                    response.blocked_non_terminal,
+                    response.has_more
                 );
                 print_result(json, &response, &message)
             }
@@ -108,9 +111,13 @@ impl args::Admin {
                         }),
                 )
                 .await?;
+                let action = if dry_run { "would delete" } else { "deleted" };
                 let message = format!(
-                    "{} deployment(s) selected; has_more={}",
-                    response.deleted_deployments, response.has_more
+                    "{} deployment(s) {action}; {} referenced and {} non-terminal blocked; has_more={}",
+                    response.deleted_deployments,
+                    response.blocked_by_execution_reference,
+                    response.blocked_non_terminal,
+                    response.has_more
                 );
                 print_result(json, &response, &message)
             }
