@@ -107,6 +107,11 @@ pub fn compact_json_sha256<T: Serialize + ?Sized>(value: &T) -> Digest {
     Digest(writer.0.finalize().into())
 }
 
+#[must_use]
+pub fn bytes_sha256(value: &[u8]) -> Digest {
+    Digest(Sha256::digest(value).into())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncodedSizeAndDigest {
     pub encoded_size: Result<u64, EncodedSizeExceeded>,
@@ -451,7 +456,8 @@ mod tests {
     fn storage_validator_checks_logical_values_and_event_envelope() {
         let oversized_value = crate::storage::ExecutionRequest::HistoryEvent {
             event: crate::storage::HistoryEvent::Persist {
-                value: vec![1; 100],
+                value: Some(vec![1; 100]),
+                value_hash: None,
                 kind: crate::storage::PersistKind::ExecutionId,
             },
         };

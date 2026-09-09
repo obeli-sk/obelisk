@@ -466,7 +466,15 @@ fn normalize_execution_request_for_matching(req: ExecutionRequest) -> ExecutionR
 
 fn normalize_history_event_for_matching(event: HistoryEvent) -> HistoryEvent {
     match event {
-        HistoryEvent::Persist { value, kind } => HistoryEvent::Persist { value, kind },
+        HistoryEvent::Persist {
+            value,
+            value_hash,
+            kind,
+        } => HistoryEvent::Persist {
+            value,
+            value_hash,
+            kind,
+        },
         HistoryEvent::JoinSetCreate { join_set_id } => HistoryEvent::JoinSetCreate { join_set_id },
         HistoryEvent::JoinSetRequest {
             join_set_id,

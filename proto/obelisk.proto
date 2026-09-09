@@ -509,6 +509,7 @@ message ExecutionEvent {
             }
             google.protobuf.Any data = 1;
             PersistKind kind = 2;
+            string value_hash = 3;
         }
 
         message JoinSetCreated {

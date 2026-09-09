@@ -1071,13 +1071,22 @@
           "type": "object",
           "properties": {
             "value": {
-              "type": "array",
+              "type": [
+                "array",
+                "null"
+              ],
               "items": {
                 "type": "integer",
                 "format": "uint8",
                 "minimum": 0,
                 "maximum": 255
               }
+            },
+            "value_hash": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "kind": {
               "$ref": "#/$defs/PersistKind"
@@ -1089,7 +1098,6 @@
           },
           "required": [
             "type",
-            "value",
             "kind"
           ]
         },

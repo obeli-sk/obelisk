@@ -5144,7 +5144,8 @@ pub(crate) mod tests {
                         created_at: current_time,
                         event: ExecutionRequest::HistoryEvent {
                             event: HistoryEvent::Persist {
-                                value: vec![value],
+                                value: Some(vec![value]),
+                                value_hash: None,
                                 kind: PersistKind::ExecutionId,
                             },
                         },

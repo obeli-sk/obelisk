@@ -1244,6 +1244,30 @@ fn history_event_from_grpc(
 ) -> Result<HistoryEvent, tonic::Status> {
     Ok(match value.event.argument_must_exist("event")? {
         history_event::Event::Persist(persist) => {
+            let value_hash = if persist.value_hash.is_empty() {
+                None
+            } else {
+                Some(persist.value_hash.parse().map_err(|_| {
+                    tonic::Status::invalid_argument("invalid persist.value_hash")
+                })?)
+            };
+            let (value, value_hash) = match (persist.data, value_hash) {
+                (Some(data), None) => (Some(data.value), None),
+                (None, Some(value_hash)) => (
+                    None,
+                    Some(value_hash),
+                ),
+                (Some(_), Some(_)) => {
+                    return Err(tonic::Status::invalid_argument(
+                        "persist has both data and value_hash",
+                    ));
+                }
+                (None, None) => {
+                    return Err(tonic::Status::invalid_argument(
+                        "persist data or value_hash is required",
+                    ));
+                }
+            };
             let kind = match persist.kind.argument_must_exist("kind")?.variant.argument_must_exist("kind.variant")? {
                 history_event::persist::persist_kind::Variant::RandomString(random) => {
                     PersistKind::RandomString {
@@ -1262,7 +1286,8 @@ fn history_event_from_grpc(
                 }
             };
             HistoryEvent::Persist {
-                value: persist.data.argument_must_exist("data")?.value,
+                value,
+                value_hash,
                 kind,
             }
         }
@@ -1476,12 +1501,13 @@ fn optional_http_client_traces_from_grpc(
 pub fn history_event_to_grpc(event: HistoryEvent) -> grpc_gen::execution_event::HistoryEvent {
     grpc_gen::execution_event::HistoryEvent {
         event: Some(match event {
-            HistoryEvent::Persist { value, kind } => {
+            HistoryEvent::Persist { value, value_hash, kind } => {
                 history_event::Event::Persist(history_event::Persist {
-                    data: Some(prost_wkt_types::Any {
+                    data: value.map(|value| prost_wkt_types::Any {
                         type_url: "unknown".to_string(),
                         value,
                     }),
+                    value_hash: value_hash.map_or_else(String::new, |hash| hash.to_string()),
                     kind: Some(history_event::persist::PersistKind {
                         variant: Some(match kind {
                             PersistKind::RandomU64 { min, max_inclusive } => {

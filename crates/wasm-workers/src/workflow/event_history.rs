@@ -1048,9 +1048,21 @@ impl EventHistory {
                     DeterministicKey::Persist { value, kind },
                     HistoryEvent::Persist {
                         value: found_value,
+                        value_hash: found_value_hash,
                         kind: found_kind,
                     },
-                ) if *value == *found_value && *kind == *found_kind => {
+                ) if *kind == *found_kind
+                    && found_value_hash.as_ref().map_or_else(
+                        || {
+                            found_value
+                                .as_ref()
+                                .is_some_and(|found_value| value == found_value)
+                        },
+                        |found_value_hash| {
+                            concepts::persisted_value::bytes_sha256(value) == *found_value_hash
+                        },
+                    ) =>
+                {
                     trace!("Matched Persist");
                     self.event_history[found_idx].1 = Processed;
                     Ok(FindMatchingResponse::Found(ChildReturnValue::Persist))
@@ -1525,7 +1537,11 @@ impl EventHistory {
                     });
                 }
                 // Cacheable event.
-                let event = HistoryEvent::Persist { value, kind };
+                let event = HistoryEvent::Persist {
+                    value_hash: Some(concepts::persisted_value::bytes_sha256(&value)),
+                    value: None,
+                    kind,
+                };
                 let history_event = (event.clone(), version.clone());
                 let request = AppendRequest {
                     created_at: called_at,
@@ -4437,6 +4453,128 @@ mod tests {
             !log.event_history()
                 .any(|(event, _)| matches!(event, HistoryEvent::Persist { .. }))
         );
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn persist_stores_only_value_hash() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id.clone(),
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+
+        Persist::apply_string(
+            "generated",
+            0,
+            100,
+            None,
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        event_history
+            .finalize(
+                &mut event_call_cursor,
+                &mut *caching_db_connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap();
+
+        let persist = db_connection
+            .get(&execution_id)
+            .await
+            .unwrap()
+            .event_history()
+            .find_map(|(event, _)| match event {
+                HistoryEvent::Persist {
+                    value, value_hash, ..
+                } => Some((value, value_hash)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(None, persist.0);
+        assert_eq!(
+            Some(concepts::persisted_value::bytes_sha256(b"generated")),
+            persist.1
+        );
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn legacy_persist_value_matches_on_replay() {
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = create_execution(db_connection.as_ref(), &sim_clock).await;
+        db_connection
+            .append(
+                execution_id.clone(),
+                Version::new(1),
+                AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionRequest::HistoryEvent {
+                        event: HistoryEvent::Persist {
+                            value: Some(b"generated".to_vec()),
+                            value_hash: None,
+                            kind: concepts::storage::PersistKind::RandomString {
+                                min_length: 0,
+                                max_length_exclusive: 100,
+                            },
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let (mut event_history, mut event_call_cursor, mut caching_db_connection) =
+            load_event_history(
+                db_pool.connection_test().await.unwrap(),
+                execution_id,
+                sim_clock.now(),
+                Duration::from_secs(1),
+                deadline_tracker_factory_test(&sim_clock),
+                JoinNextBlockingStrategy::Interrupt,
+                TestingFnRegistry::new_from_components(vec![]),
+            )
+            .await;
+
+        Persist::apply_string(
+            "generated",
+            0,
+            100,
+            None,
+            &mut event_history,
+            &mut event_call_cursor,
+            &mut *caching_db_connection,
+            sim_clock.now(),
+        )
+        .await
+        .unwrap();
+        event_history
+            .finalize(
+                &mut event_call_cursor,
+                &mut *caching_db_connection,
+                sim_clock.now(),
+            )
+            .await
+            .unwrap();
         db_close.close().await;
     }
 

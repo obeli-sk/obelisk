@@ -247,7 +247,11 @@ fn normalize_history_event_timestamps(
         } => {
             normalize_schedule_at(schedule_at, unstructured)?;
         }
-        HistoryEvent::Persist { value: _, kind: _ }
+        HistoryEvent::Persist {
+            value: _,
+            value_hash: _,
+            kind: _,
+        }
         | HistoryEvent::JoinSetCreate { join_set_id: _ }
         | HistoryEvent::JoinNextTry {
             join_set_id: _,
