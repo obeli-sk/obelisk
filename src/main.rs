@@ -15,7 +15,7 @@ mod wit_printer;
 use crate::command::server::{
     PrepareDirsParams, RunParams, RuntimeConfigAvailability, ServerAuth, VerifyParams, run, verify,
 };
-use crate::config::secret_registry::{API_TOKEN, API_TOKEN_LEGACY, EnvVarCleanupStrategy};
+use crate::config::secret_registry::{API_TOKEN, API_TOKEN_LEGACY, EnvVarSecretsCleanup};
 use anyhow::ensure;
 use args::{
     Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
@@ -63,7 +63,7 @@ fn main() -> Result<(), anyhow::Error> {
                 secret_registry,
             } = prepare_server_startup(
                 server_config.clone(),
-                EnvVarCleanupStrategy::Wipe,
+                EnvVarSecretsCleanup::Wipe,
                 RuntimeConfigAvailability::Strict,
             )?;
             let auth = if no_auth {
@@ -120,7 +120,7 @@ fn main() -> Result<(), anyhow::Error> {
                 secret_registry,
             } = prepare_server_startup(
                 server_config.clone(),
-                EnvVarCleanupStrategy::Noop,
+                EnvVarSecretsCleanup::Noop,
                 runtime_config_availability,
             )?;
             Box::pin(verify(
@@ -169,7 +169,7 @@ fn main() -> Result<(), anyhow::Error> {
                 secret_registry,
             } = prepare_server_startup(
                 server_config.clone(),
-                EnvVarCleanupStrategy::Noop,
+                EnvVarSecretsCleanup::Noop,
                 runtime_config_availability,
             )?;
             Box::pin(verify(
@@ -199,7 +199,7 @@ fn main() -> Result<(), anyhow::Error> {
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
                 PublicEnvToml::default(),
-                EnvVarCleanupStrategy::Noop,
+                EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
                 None,
             )?);
@@ -211,7 +211,7 @@ fn main() -> Result<(), anyhow::Error> {
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
                 PublicEnvToml::default(),
-                EnvVarCleanupStrategy::Noop,
+                EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
                 None,
             )?);
@@ -241,10 +241,10 @@ struct ServerStartup {
 /// before the runtime starts.
 fn prepare_server_startup(
     server_config: Option<PathBuf>,
-    env_var_cleanup: EnvVarCleanupStrategy,
+    env_var_cleanup: EnvVarSecretsCleanup,
     runtime_config_availability: RuntimeConfigAvailability,
 ) -> anyhow::Result<ServerStartup> {
-    if env_var_cleanup == EnvVarCleanupStrategy::Wipe {
+    if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
         assert_eq!(
             RuntimeConfigAvailability::Strict,
             runtime_config_availability,

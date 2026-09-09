@@ -48,7 +48,7 @@ pub(crate) struct SecretRegistry {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum EnvVarCleanupStrategy {
+pub(crate) enum EnvVarSecretsCleanup {
     Wipe,
     Noop,
 }
@@ -125,7 +125,7 @@ impl SecretRegistry {
     pub(crate) fn resolve(
         secrets: SecretsToml,
         public_env: PublicEnvToml,
-        env_var_cleanup: EnvVarCleanupStrategy,
+        env_var_cleanup: EnvVarSecretsCleanup,
         runtime_config_availability: RuntimeConfigAvailability,
         was_legacy_token_wiped: Option<&SecretString>,
     ) -> anyhow::Result<Self> {
@@ -160,7 +160,7 @@ impl SecretRegistry {
         {
             bail!("secrets sourced from environment variables are not set: {missing_env_vars:?}");
         }
-        if env_var_cleanup == EnvVarCleanupStrategy::Wipe {
+        if env_var_cleanup == EnvVarSecretsCleanup::Wipe {
             for src in &sensitive {
                 // SAFETY: `resolve_and_wipe` runs during single-threaded startup, before the
                 // tokio runtime is constructed, so there are no concurrent environment readers.
@@ -235,7 +235,7 @@ mod tests {
         let registry = SecretRegistry::resolve(
             secrets,
             PublicEnvToml::default(),
-            EnvVarCleanupStrategy::Wipe,
+            EnvVarSecretsCleanup::Wipe,
             RuntimeConfigAvailability::Strict,
             None,
         )
@@ -275,7 +275,7 @@ mod tests {
         let err = SecretRegistry::resolve(
             secrets,
             PublicEnvToml::default(),
-            EnvVarCleanupStrategy::Noop,
+            EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             None,
         )
@@ -297,7 +297,7 @@ mod tests {
             PublicEnvToml {
                 allowed: vec![ALLOWED.to_string()],
             },
-            EnvVarCleanupStrategy::Noop,
+            EnvVarSecretsCleanup::Noop,
             RuntimeConfigAvailability::Strict,
             None,
         )

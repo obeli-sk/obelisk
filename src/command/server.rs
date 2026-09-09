@@ -51,7 +51,7 @@ use crate::config::deployment::resolve_allowed_hosts;
 use crate::config::deployment::resolve_manifest;
 use crate::config::deployment::{AllowedHostToml, MethodsInput, MethodsInputStar};
 use crate::config::env_var::EnvVarConfig;
-use crate::config::secret_registry::EnvVarCleanupStrategy;
+use crate::config::secret_registry::EnvVarSecretsCleanup;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::AllowExecActivities;
 use crate::config::server::CancelWatcherTomlConfig;
@@ -780,7 +780,7 @@ pub(crate) async fn verify(
                 secret_registry,
             } = prepare_server_startup(
                 config_holder.config_source,
-                EnvVarCleanupStrategy::Noop,
+                EnvVarSecretsCleanup::Noop,
                 verify_params.runtime_config_availability,
             )?;
             (config_holder, config, secret_registry)
