@@ -185,10 +185,14 @@
 # this setting affects only new execution trees and does not change replay.
 # Existing database events need no schema migration. Created events written by
 # older releases have no stored limit and retain their legacy unlimited contract.
-# This is separate from MAX_GRPC_MESSAGE_SIZE, which remains a larger transport
-# bound. Increasing the transport bound does not relax this persisted-value limit.
+# This is separate from `max_transport_message_size_bytes`, which is a larger
+# transport bound. Increasing the transport bound does not relax this
+# persisted-value limit.
 [limits]
 max_persisted_value_size_bytes = 1048576
 # Per-file size limit (in bytes) for deployment-owned blobs attached to a submit
 # request. Defaults to 20 MiB.
 # max_deployment_file_bytes = 20971520
+# Maximum size of a single API transport message: the gRPC encoded message size and
+# the equivalent REST request body limit. Must be positive. Defaults to 512 MiB.
+# max_transport_message_size_bytes = 536870912

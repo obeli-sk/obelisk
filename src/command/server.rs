@@ -1894,6 +1894,10 @@ pub(crate) async fn run_internal(
         deployment_switch_manager.clone(),
     ));
 
+    let max_transport_message_size_bytes = server_init
+        .server_verified
+        .max_transport_message_size_bytes();
+
     let mut grpc = RoutesBuilder::default();
 
     grpc.add_service(
@@ -1903,7 +1907,9 @@ pub(crate) async fn run_internal(
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
         .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip),
+        .accept_compressed(CompressionEncoding::Gzip)
+        .max_decoding_message_size(max_transport_message_size_bytes)
+        .max_encoding_message_size(max_transport_message_size_bytes),
     )
     .add_service(
         grpc_gen::execution_repository_server::ExecutionRepositoryServer::from_arc(
@@ -1912,7 +1918,9 @@ pub(crate) async fn run_internal(
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
         .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip),
+        .accept_compressed(CompressionEncoding::Gzip)
+        .max_decoding_message_size(max_transport_message_size_bytes)
+        .max_encoding_message_size(max_transport_message_size_bytes),
     )
     .add_service(
         grpc_gen::deployment_repository_server::DeploymentRepositoryServer::from_arc(
@@ -1924,13 +1932,15 @@ pub(crate) async fn run_internal(
         .accept_compressed(CompressionEncoding::Gzip)
         // Submit requests inline deployment-owned blobs; raise the decode limit
         // well above tonic's 4 MiB default. `GetFile` responses are likewise large.
-        .max_decoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE)
-        .max_encoding_message_size(crate::api::MAX_GRPC_MESSAGE_SIZE),
+        .max_decoding_message_size(max_transport_message_size_bytes)
+        .max_encoding_message_size(max_transport_message_size_bytes),
     )
     .add_service(
         tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(grpc_gen::FILE_DESCRIPTOR_SET)
-            .build_v1()?,
+            .build_v1()?
+            .max_decoding_message_size(max_transport_message_size_bytes)
+            .max_encoding_message_size(max_transport_message_size_bytes),
     );
 
     let trace_layer = TraceLayer::new_for_grpc()
@@ -2025,6 +2035,7 @@ pub(crate) struct ServerVerified {
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
     max_persisted_value_size_bytes: u64,
+    max_transport_message_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
@@ -2055,6 +2066,11 @@ struct ServerVerifiedLaunch {
 impl ServerVerified {
     pub(crate) const fn max_persisted_value_size_bytes(&self) -> u64 {
         self.max_persisted_value_size_bytes
+    }
+
+    #[expect(clippy::cast_possible_truncation)]
+    pub(crate) const fn max_transport_message_size_bytes(&self) -> usize {
+        self.max_transport_message_size_bytes as usize
     }
 
     #[instrument(name = "ServerVerified::new", skip_all)]
@@ -2106,6 +2122,9 @@ impl ServerVerified {
         }
         if config.limits.max_persisted_value_size_bytes == 0 {
             bail!("`limits.max_persisted_value_size_bytes` must be greater than zero");
+        }
+        if config.limits.max_transport_message_size_bytes == 0 {
+            bail!("`limits.max_transport_message_size_bytes` must be greater than zero");
         }
         let workflows_response_refresh_interval =
             config.workflows_global_config.response_refresh_interval;
@@ -2163,6 +2182,7 @@ impl ServerVerified {
             },
             max_deployment_file_bytes: config.limits.max_deployment_file_bytes.0,
             max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
+            max_transport_message_size_bytes: config.limits.max_transport_message_size_bytes,
             global_http_config,
             server_outbound_allowed_hosts,
             source_path,
