@@ -5975,7 +5975,7 @@ impl CasGc for PostgresConnection {
                 "SELECT \
                  COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
                  COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                 COALESCE(SUM(size) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), 0) \
+                 COALESCE(SUM(size) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), 0)::bigint \
                  FROM t_file",
                 &[],
             )
