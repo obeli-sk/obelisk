@@ -2161,7 +2161,7 @@ impl ServerVerified {
             } else {
                 None
             },
-            max_deployment_file_bytes: config.max_deployment_file_bytes.0,
+            max_deployment_file_bytes: config.limits.max_deployment_file_bytes.0,
             max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
             global_http_config,
             server_outbound_allowed_hosts,

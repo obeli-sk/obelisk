@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** *(config)* `max_deployment_file_bytes` moved from the top level of `server.toml`
+  to `limits.max_deployment_file_bytes`.
 - **Breaking:** *(config)* Deployments can only read process environment variables listed in the
   server's `[public_env].allowed` allowlist. This prevents platform-provided variables, including
   sensitive Kubernetes values, from being exposed through `deployment.toml`.

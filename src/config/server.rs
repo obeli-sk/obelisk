@@ -48,9 +48,6 @@ pub(crate) struct ServerConfigToml {
     /// An empty allowlist denies every outbound request.
     #[serde(default)]
     pub(crate) outbound_http: OutboundHttpToml,
-    /// Per-file size limit for deployment-owned blobs attached to a submit request.
-    #[serde(default)]
-    pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
     #[serde(default)]
     pub(crate) limits: LimitsToml,
     #[serde(default)]
@@ -87,12 +84,16 @@ pub(crate) struct LimitsToml {
     /// setting was persisted retain their legacy unlimited contract.
     #[serde(default = "default_max_persisted_value_size_bytes")]
     pub(crate) max_persisted_value_size_bytes: u64,
+    /// Per-file size limit for deployment-owned blobs attached to a submit request.
+    #[serde(default)]
+    pub(crate) max_deployment_file_bytes: MaxDeploymentFileBytes,
 }
 
 impl Default for LimitsToml {
     fn default() -> Self {
         Self {
             max_persisted_value_size_bytes: DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
+            max_deployment_file_bytes: MaxDeploymentFileBytes::default(),
         }
     }
 }

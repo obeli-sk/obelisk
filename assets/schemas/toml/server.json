@@ -33,10 +33,6 @@
       "description": "Operator-owned allowlist for component-originated HTTP requests.\nAn empty allowlist denies every outbound request.",
       "$ref": "#/$defs/OutboundHttpToml"
     },
-    "max_deployment_file_bytes": {
-      "description": "Per-file size limit for deployment-owned blobs attached to a submit request.",
-      "$ref": "#/$defs/MaxDeploymentFileBytes"
-    },
     "limits": {
       "$ref": "#/$defs/LimitsToml"
     },
@@ -227,12 +223,6 @@
         "params"
       ]
     },
-    "MaxDeploymentFileBytes": {
-      "description": "Per-file size limit (in bytes) for deployment-owned blobs, defaulting to 20 MiB.",
-      "type": "integer",
-      "format": "uint32",
-      "minimum": 0
-    },
     "LimitsToml": {
       "type": "object",
       "properties": {
@@ -242,9 +232,19 @@
           "format": "uint64",
           "minimum": 0,
           "default": 1048576
+        },
+        "max_deployment_file_bytes": {
+          "description": "Per-file size limit for deployment-owned blobs attached to a submit request.",
+          "$ref": "#/$defs/MaxDeploymentFileBytes"
         }
       },
       "additionalProperties": false
+    },
+    "MaxDeploymentFileBytes": {
+      "description": "Per-file size limit (in bytes) for deployment-owned blobs, defaulting to 20 MiB.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
     },
     "ApiConfig": {
       "type": "object",
