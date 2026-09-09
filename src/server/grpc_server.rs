@@ -1920,6 +1920,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             Err(server::SubmitDeploymentError::Package(pkg)) => {
                 return Err(submit_package_status(&pkg));
             }
+            Err(server::SubmitDeploymentError::UnregisteredSecrets(names)) => {
+                return Err(unregistered_secrets_status(names));
+            }
         };
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
         Ok(tonic::Response::new(grpc_gen::SubmitDeploymentResponse {}))
@@ -2072,6 +2075,7 @@ fn submit_package_status(pkg: &server::SubmitPackageError) -> tonic::Status {
             .cloned()
             .map(file_issue_to_grpc)
             .collect(),
+        unregistered_secrets: Vec::new(),
     };
     let message = format!(
         "deployment package is incomplete or invalid: {} missing field(s), {} missing file(s), \
@@ -2085,6 +2089,19 @@ fn submit_package_status(pkg: &server::SubmitPackageError) -> tonic::Status {
     tonic::Status::with_details(
         tonic::Code::FailedPrecondition,
         message,
+        detail.encode_to_vec().into(),
+    )
+}
+
+fn unregistered_secrets_status(names: std::collections::BTreeSet<String>) -> tonic::Status {
+    use prost::Message as _;
+    let detail = grpc_gen::SubmitDeploymentErrorDetail {
+        unregistered_secrets: names.into_iter().collect(),
+        ..Default::default()
+    };
+    tonic::Status::with_details(
+        tonic::Code::FailedPrecondition,
+        "deployment references secrets that are not registered by the server",
         detail.encode_to_vec().into(),
     )
 }

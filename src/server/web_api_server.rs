@@ -141,7 +141,10 @@ pub(crate) struct WebApiState {
         deployment::DeploymentStateSer,
         deployment::DeploymentSubmitResponse,
         deployment::GcOrphanFilesResponseSer,
+        deployment::DeploymentSubmitErrorBody,
+        deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
+        deployment::UnregisteredSecretsErrorBody,
         deployment::FileIssue,
         deployment::DigestMismatch,
         backtrace::BacktraceInfoSer,
@@ -3741,6 +3744,24 @@ pub(crate) mod deployment {
         pub oversized_files: Vec<FileIssue>,
     }
 
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub struct UnregisteredSecretsErrorBody {
+        pub error: String,
+        pub secrets: Vec<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub struct GenericErrorBody {
+        pub err: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    #[serde(untagged)]
+    pub enum DeploymentSubmitErrorBody {
+        InvalidConfig(GenericErrorBody),
+        UnregisteredSecrets(UnregisteredSecretsErrorBody),
+    }
+
     impl From<&server::SubmitFileIssue> for FileIssue {
         fn from(issue: &server::SubmitFileIssue) -> Self {
             FileIssue {
@@ -3865,7 +3886,7 @@ pub(crate) mod deployment {
         request_body = DeploymentSubmitPayload,
         responses(
             (status = 201, description = "Deployment submitted", body = DeploymentSubmitResponse),
-            (status = 400, description = "Invalid config"),
+            (status = 400, description = "Invalid config or unregistered secrets", body = DeploymentSubmitErrorBody),
             (status = 409, description = "Incomplete or invalid package", body = SubmitPackageErrorBody)
         )
     )]
@@ -3888,7 +3909,7 @@ pub(crate) mod deployment {
         request_body = DeploymentSubmitPayload,
         responses(
             (status = 204, description = "Deployment submitted"),
-            (status = 400, description = "Invalid config"),
+            (status = 400, description = "Invalid config or unregistered secrets", body = DeploymentSubmitErrorBody),
             (status = 409, description = "Deployment ID or package conflict", body = SubmitPackageErrorBody)
         )
     )]
@@ -3972,6 +3993,26 @@ pub(crate) mod deployment {
                     status: StatusCode::CONFLICT,
                     message: format!("{err:#}"),
                     accept,
+                });
+            }
+            Err(server::SubmitDeploymentError::UnregisteredSecrets(names)) => {
+                return Ok(match accept {
+                    AcceptHeader::Json => pretty_json_response(
+                        StatusCode::BAD_REQUEST,
+                        &UnregisteredSecretsErrorBody {
+                            error: "unregistered_secrets".to_string(),
+                            secrets: names.into_iter().collect(),
+                        },
+                    ),
+                    AcceptHeader::Text => HttpResponse {
+                        status: StatusCode::BAD_REQUEST,
+                        message: format!(
+                            "deployment references unregistered server secrets: {}",
+                            names.into_iter().collect::<Vec<_>>().join(", ")
+                        ),
+                        accept,
+                    }
+                    .into_response(),
                 });
             }
             Err(server::SubmitDeploymentError::Other(err)) => {

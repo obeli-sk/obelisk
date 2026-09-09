@@ -7,11 +7,13 @@ use crate::config::deployment::{
 use crate::server::web_api_server::deployment::{
     DeploymentRecordSer, DeploymentStateSer, DeploymentStatusSer, DeploymentSubmitPayload,
     DeploymentSwitchPayload, GcOrphanFilesResponseSer, SubmitPackageErrorBody,
+    UnregisteredSecretsErrorBody,
 };
 use anyhow::{Context as _, bail};
 use concepts::prefixed_ulid::DeploymentId;
 use http::header::ACCEPT;
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 impl args::Deployment {
@@ -440,8 +442,28 @@ async fn submit_attempt(
             format_submit_detail(&detail)
         );
     }
-    let body = response.text().await.unwrap_or_default();
-    bail!("server returned {status}: {body}")
+    let body = response.bytes().await.unwrap_or_default();
+    // backcompat: 0.41 servers return generic error JSON, which falls through unchanged below.
+    if let Ok(detail) = serde_json::from_slice::<UnregisteredSecretsErrorBody>(&body)
+        && detail.error == "unregistered_secrets"
+    {
+        bail!("{}", format_unregistered_secrets(&detail.secrets));
+    }
+    bail!(
+        "server returned {status}: {}",
+        String::from_utf8_lossy(&body)
+    )
+}
+
+fn format_unregistered_secrets(names: &[String]) -> String {
+    let list = names.join("`, `");
+    let names = names.iter().cloned().collect::<BTreeSet<_>>();
+    let snippet = crate::command::server::secret_scaffold_snippet(&names);
+    format!(
+        "deployment references secret(s) `{list}` that are not registered by the server. Ask the \
+         server operator to add them to server.toml, or remove the references. The required \
+         server configuration is:\n\n{snippet}"
+    )
 }
 
 fn format_submit_detail(detail: &SubmitPackageErrorBody) -> String {
