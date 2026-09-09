@@ -174,6 +174,9 @@ pub(crate) enum AdminExecutions {
     Delete {
         #[arg(required = true, num_args = 1..)]
         execution_ids: Vec<ExecutionId>,
+        /// Delete non-terminal trees unless they reference the active deployment.
+        #[arg(long)]
+        force: bool,
         #[arg(long)]
         json: bool,
         #[arg(
@@ -212,6 +215,9 @@ pub(crate) enum AdminDeployments {
         deployment_ids: Vec<DeploymentId>,
         #[arg(long)]
         delete_executions: bool,
+        /// Delete non-terminal trees unless they reference the active deployment.
+        #[arg(long, requires = "delete_executions")]
+        force: bool,
         #[arg(long)]
         json: bool,
         #[arg(
@@ -1247,17 +1253,24 @@ mod tests {
             "delete".to_owned(),
             first.to_string(),
             second.to_string(),
+            "--force".to_owned(),
         ])
         .unwrap();
 
         let Subcommand::Admin(AdminArgs {
-            command: Admin::Executions(AdminExecutions::Delete { execution_ids, .. }),
+            command:
+                Admin::Executions(AdminExecutions::Delete {
+                    execution_ids,
+                    force,
+                    ..
+                }),
             ..
         }) = args.command
         else {
             panic!("expected plural admin execution deletion");
         };
         assert_eq!(execution_ids, [first, second]);
+        assert!(force);
 
         let first = DeploymentId::generate();
         let second = DeploymentId::generate();
@@ -1269,6 +1282,7 @@ mod tests {
             first.to_string(),
             second.to_string(),
             "--delete-executions".to_owned(),
+            "--force".to_owned(),
         ])
         .unwrap();
         let Subcommand::Admin(AdminArgs {
@@ -1276,6 +1290,7 @@ mod tests {
                 Admin::Deployments(AdminDeployments::Delete {
                     deployment_ids,
                     delete_executions,
+                    force,
                     ..
                 }),
             ..
@@ -1285,6 +1300,7 @@ mod tests {
         };
         assert_eq!(deployment_ids, [first, second]);
         assert!(delete_executions);
+        assert!(force);
     }
 
     #[test]

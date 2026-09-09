@@ -1316,6 +1316,7 @@ message GetFileResponse {
 
 message DeleteExecutionTreeRequest {
     ExecutionId execution_id = 1;
+    bool force_non_terminal = 2;
 }
 message DeleteExecutionTreeResponse {
     bool deleted = 1;
@@ -1329,6 +1330,7 @@ message RetainExecutionsRequest {
 message DeleteDeploymentRequest {
     DeploymentId deployment_id = 1;
     bool delete_executions = 2;
+    bool force_non_terminal = 3;
 }
 message DeleteDeploymentResponse {
     bool deleted = 1;

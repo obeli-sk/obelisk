@@ -542,6 +542,19 @@ impl SqlitePool {
         .map_err(RusqliteError::from)
     }
 
+    fn execution_tree_references_active_deployment_tx(
+        tx: &Transaction<'_>,
+        execution_id: &ExecutionId,
+    ) -> Result<bool, RusqliteError> {
+        let root = execution_id.to_string();
+        tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM t_state s JOIN t_deployment d ON d.deployment_id = s.deployment_id WHERE (s.execution_id = ?1 OR s.execution_id LIKE ?2) AND d.status = 'active')",
+            rusqlite::params![root, format!("{root}.%")],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(RusqliteError::from)
+    }
+
     fn init_thread(
         path: &Path,
         mut pragma_override: HashMap<String, String>,
@@ -5366,6 +5379,7 @@ impl SqlitePool {
     fn delete_execution_tree_tx(
         tx: &Transaction<'_>,
         execution_id: &ExecutionId,
+        force_non_terminal: bool,
     ) -> Result<DeleteExecutionTreeResult, RusqliteError> {
         let root = execution_id.to_string();
         let pattern = format!("{root}.%");
@@ -5378,7 +5392,12 @@ impl SqlitePool {
             return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
         }
         if Self::execution_is_non_terminal_tx(tx, execution_id)? {
-            return Ok(DeleteExecutionTreeResult::NonTerminal);
+            if !force_non_terminal {
+                return Ok(DeleteExecutionTreeResult::NonTerminal);
+            }
+            if Self::execution_tree_references_active_deployment_tx(tx, execution_id)? {
+                return Ok(DeleteExecutionTreeResult::ActiveDeployment);
+            }
         }
         for (table, column) in [
             ("t_join_set_response", "execution_id"),
@@ -5424,6 +5443,7 @@ impl SqlitePool {
         tx: &Transaction<'_>,
         deployment_id: DeploymentId,
         delete_executions: bool,
+        force_non_terminal: bool,
     ) -> Result<DeleteDeploymentResult, RusqliteError> {
         let status = tx
             .query_row(
@@ -5446,19 +5466,33 @@ impl SqlitePool {
             });
         }
         if delete_executions {
-            if roots
+            let non_terminal_roots = roots
                 .iter()
-                .map(|root| Self::execution_is_non_terminal_tx(tx, root))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .any(|non_terminal| non_terminal)
+                .map(|root| Ok((root, Self::execution_is_non_terminal_tx(tx, root)?)))
+                .collect::<Result<Vec<_>, RusqliteError>>()?;
+            if !force_non_terminal
+                && non_terminal_roots
+                    .iter()
+                    .any(|(_, non_terminal)| *non_terminal)
             {
                 return Ok(DeleteDeploymentResult::ReferencedByNonTerminal {
                     execution_trees: roots.len() as u64,
                 });
             }
+            if non_terminal_roots
+                .iter()
+                .filter(|(_, non_terminal)| *non_terminal)
+                .map(|(root, _)| Self::execution_tree_references_active_deployment_tx(tx, root))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .any(|active| active)
+            {
+                return Ok(DeleteDeploymentResult::ReferencedByActiveDeployment {
+                    execution_trees: roots.len() as u64,
+                });
+            }
             for root in &roots {
-                let outcome = Self::delete_execution_tree_tx(tx, root)?;
+                let outcome = Self::delete_execution_tree_tx(tx, root, force_non_terminal)?;
                 debug_assert_eq!(outcome, DeleteExecutionTreeResult::Deleted);
             }
         }
@@ -5495,10 +5529,14 @@ impl DbAdmin for SqlitePool {
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,
+        force_non_terminal: bool,
     ) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| Self::delete_execution_tree_tx(tx, &execution_id).map_err(DbErrorWrite::from),
+            move |tx| {
+                Self::delete_execution_tree_tx(tx, &execution_id, force_non_terminal)
+                    .map_err(DbErrorWrite::from)
+            },
             TxType::MultipleWrites,
             "delete_execution_tree",
         )
@@ -5527,9 +5565,10 @@ impl DbAdmin for SqlitePool {
                     if dry_run {
                         result.deleted_execution_trees += 1;
                     } else {
-                        match Self::delete_execution_tree_tx(tx, &id)? {
+                        match Self::delete_execution_tree_tx(tx, &id, false)? {
                             DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
                             DeleteExecutionTreeResult::NonTerminal => result.blocked_non_terminal += 1,
+                            DeleteExecutionTreeResult::ActiveDeployment => unreachable!("force is disabled"),
                             DeleteExecutionTreeResult::AlreadyDeleted => {}
                         }
                     }
@@ -5546,10 +5585,11 @@ impl DbAdmin for SqlitePool {
         &self,
         deployment_id: DeploymentId,
         delete_executions: bool,
+        force_non_terminal: bool,
     ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                Self::delete_deployment_tx(tx, deployment_id, delete_executions)
+                Self::delete_deployment_tx(tx, deployment_id, delete_executions, force_non_terminal)
                     .map_err(DbErrorWrite::from)
             },
             TxType::MultipleWrites,
@@ -5600,7 +5640,8 @@ impl DbAdmin for SqlitePool {
                         result.deleted_deployments += 1;
                         result.deleted_execution_trees += roots.len() as u64;
                         if !dry_run {
-                            let outcome = Self::delete_deployment_tx(tx, id, delete_executions)?;
+                            let outcome =
+                                Self::delete_deployment_tx(tx, id, delete_executions, false)?;
                             debug_assert!(matches!(
                                 outcome,
                                 DeleteDeploymentResult::Deleted { .. }

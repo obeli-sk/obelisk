@@ -29,15 +29,22 @@ impl args::Admin {
         match self {
             Self::Executions(args::AdminExecutions::Delete {
                 execution_ids,
+                force,
                 json,
                 api_url,
             }) => {
+                if force {
+                    eprintln!(
+                        "WARNING: forcibly deleting non-terminal execution trees that do not reference the active deployment"
+                    );
+                }
                 let mut results = Vec::with_capacity(execution_ids.len());
                 for execution_id in execution_ids {
                     eprintln!("Deleting execution tree {execution_id}");
                     let response: DeleteResponse = send_json(
                         client
                             .delete(format!("{api_url}/v1/admin/executions/{execution_id}"))
+                            .query(&[("force_non_terminal", force)])
                             .header(ACCEPT, "application/json"),
                     )
                     .await?;
@@ -94,16 +101,25 @@ impl args::Admin {
             Self::Deployments(args::AdminDeployments::Delete {
                 deployment_ids,
                 delete_executions,
+                force,
                 json,
                 api_url,
             }) => {
+                if force {
+                    eprintln!(
+                        "WARNING: forcibly deleting non-terminal execution trees that do not reference the active deployment"
+                    );
+                }
                 let mut results = Vec::with_capacity(deployment_ids.len());
                 for deployment_id in deployment_ids {
                     eprintln!("Deleting deployment {deployment_id}");
                     let response: DeleteDeploymentResponse = send_json(
                         client
                             .delete(format!("{api_url}/v1/admin/deployments/{deployment_id}"))
-                            .query(&[("delete_executions", delete_executions)])
+                            .query(&[
+                                ("delete_executions", delete_executions),
+                                ("force_non_terminal", force),
+                            ])
                             .header(ACCEPT, "application/json"),
                     )
                     .await?;

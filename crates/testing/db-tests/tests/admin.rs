@@ -108,8 +108,37 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
         create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), false).await;
     let admin = db_pool.admin_conn().await.unwrap();
     assert_eq!(
-        admin.delete_execution_tree(&non_terminal).await.unwrap(),
+        admin
+            .delete_execution_tree(&non_terminal, false)
+            .await
+            .unwrap(),
         DeleteExecutionTreeResult::NonTerminal
+    );
+    assert_eq!(
+        admin
+            .delete_execution_tree(&non_terminal, true)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::Deleted
+    );
+
+    let active_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), active_deployment, clock.now()).await;
+    db_pool
+        .external_api_conn()
+        .await
+        .unwrap()
+        .activate_deployment(active_deployment, clock.now())
+        .await
+        .unwrap();
+    let active_execution =
+        create_execution(db_pool.as_ref(), &clock, active_deployment, false).await;
+    assert_eq!(
+        admin
+            .delete_execution_tree(&active_execution, true)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::ActiveDeployment
     );
 
     let finished_root =
@@ -139,7 +168,10 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
         .await
         .unwrap();
     assert_eq!(
-        admin.delete_execution_tree(&finished_root).await.unwrap(),
+        admin
+            .delete_execution_tree(&finished_root, false)
+            .await
+            .unwrap(),
         DeleteExecutionTreeResult::Deleted
     );
     assert!(
@@ -177,7 +209,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .is_ok()
     );
     assert_eq!(
-        admin.delete_execution_tree(&older).await.unwrap(),
+        admin.delete_execution_tree(&older, false).await.unwrap(),
         DeleteExecutionTreeResult::AlreadyDeleted
     );
     drop(admin);
@@ -218,7 +250,10 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
     let execution_id = create_execution(db_pool.as_ref(), &clock, deployment_id, true).await;
     let admin = db_pool.admin_conn().await.unwrap();
     assert_eq!(
-        admin.delete_deployment(deployment_id, false).await.unwrap(),
+        admin
+            .delete_deployment(deployment_id, false, false)
+            .await
+            .unwrap(),
         DeleteDeploymentResult::Referenced { execution_trees: 1 }
     );
 
@@ -245,7 +280,10 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
     assert!(!cas.contains_blob(&orphan_digest).await.unwrap());
 
     assert_eq!(
-        admin.delete_deployment(deployment_id, true).await.unwrap(),
+        admin
+            .delete_deployment(deployment_id, true, false)
+            .await
+            .unwrap(),
         DeleteDeploymentResult::Deleted {
             deleted_execution_trees: 1
         }
@@ -268,6 +306,26 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
             .await
             .unwrap()
             .is_none()
+    );
+
+    let stuck_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), stuck_deployment, clock.now()).await;
+    create_execution(db_pool.as_ref(), &clock, stuck_deployment, false).await;
+    assert_eq!(
+        admin
+            .delete_deployment(stuck_deployment, true, false)
+            .await
+            .unwrap(),
+        DeleteDeploymentResult::ReferencedByNonTerminal { execution_trees: 1 }
+    );
+    assert_eq!(
+        admin
+            .delete_deployment(stuck_deployment, true, true)
+            .await
+            .unwrap(),
+        DeleteDeploymentResult::Deleted {
+            deleted_execution_trees: 1
+        }
     );
     drop(admin);
     drop(cas);

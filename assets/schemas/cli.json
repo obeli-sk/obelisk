@@ -916,12 +916,16 @@
       ],
       "subcommands": [
         {
-          "name": "execution",
+          "name": "executions",
           "subcommands": [
             {
               "name": "delete",
-              "about": "Delete a terminal top-level execution and its derived tree",
+              "about": "Delete one or more terminal top-level executions and their derived trees",
               "options": [
+                {
+                  "name": "--force",
+                  "help": "Delete non-terminal trees unless they reference the active deployment"
+                },
                 {
                   "name": "--json"
                 },
@@ -932,16 +936,15 @@
               ],
               "positionals": [
                 {
-                  "name": "execution_id",
-                  "required": true
+                  "name": "execution_ids",
+                  "value_name": "EXECUTION_IDS",
+                  "required": true,
+                  "accepts": {
+                    "many": true
+                  }
                 }
               ]
-            }
-          ]
-        },
-        {
-          "name": "executions",
-          "subcommands": [
+            },
             {
               "name": "retain",
               "about": "Keep the newest completed top-level execution trees",
@@ -968,14 +971,18 @@
           ]
         },
         {
-          "name": "deployment",
+          "name": "deployments",
           "subcommands": [
             {
               "name": "delete",
-              "about": "Delete an inactive deployment",
+              "about": "Delete one or more inactive deployments",
               "options": [
                 {
                   "name": "--delete-executions"
+                },
+                {
+                  "name": "--force",
+                  "help": "Delete non-terminal trees unless they reference the active deployment"
                 },
                 {
                   "name": "--json"
@@ -987,16 +994,15 @@
               ],
               "positionals": [
                 {
-                  "name": "deployment_id",
-                  "required": true
+                  "name": "deployment_ids",
+                  "value_name": "DEPLOYMENT_IDS",
+                  "required": true,
+                  "accepts": {
+                    "many": true
+                  }
                 }
               ]
-            }
-          ]
-        },
-        {
-          "name": "deployments",
-          "subcommands": [
+            },
             {
               "name": "retain",
               "about": "Keep the newest inactive deployments in addition to active and enqueued deployments",

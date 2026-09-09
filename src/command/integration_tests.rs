@@ -3472,6 +3472,17 @@ async fn admin_cleanup_webapi() {
             "{}/v1/admin/deployments/{newer_deployment}",
             server.base_url
         ))
+        .query(&[("force_non_terminal", true)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::PRECONDITION_FAILED);
+    let response = server
+        .client
+        .delete(format!(
+            "{}/v1/admin/deployments/{newer_deployment}",
+            server.base_url
+        ))
         .send()
         .await
         .unwrap();

@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(admin)* Added operator-only gRPC and `/v1/admin` APIs, plus `obelisk admin` commands, for
   deleting one or more execution trees and inactive deployments and applying bounded retention
-  policies.
+  policies. Explicit deletion can force removal of non-terminal trees after verifying that no
+  execution in the tree references the active deployment.
 - *(admin)* Added explicit CAS garbage collection with dry-run and byte/count diagnostics.
 
 - *(workflow)* `join-next-for` workflow-support function blocks until the next response arrives and

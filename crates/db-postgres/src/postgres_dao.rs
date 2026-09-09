@@ -5682,9 +5682,24 @@ async fn execution_is_non_terminal_tx(
         .get(0))
 }
 
+async fn execution_tree_references_active_deployment_tx(
+    tx: &tokio_postgres::Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<bool, DbErrorWrite> {
+    let root = execution_id.to_string();
+    let rows = tx
+        .query(
+            "SELECT d.status FROM t_state s JOIN t_deployment d ON d.deployment_id = s.deployment_id WHERE s.execution_id = $1 OR s.execution_id LIKE $2 FOR SHARE OF d",
+            &[&root, &format!("{root}.%")],
+        )
+        .await?;
+    Ok(rows.iter().any(|row| row.get::<_, &str>(0) == "active"))
+}
+
 async fn delete_execution_tree_tx(
     tx: &tokio_postgres::Transaction<'_>,
     execution_id: &ExecutionId,
+    force_non_terminal: bool,
 ) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
     let root = execution_id.to_string();
     let pattern = format!("{root}.%");
@@ -5700,7 +5715,12 @@ async fn delete_execution_tree_tx(
     }
     let non_terminal = execution_is_non_terminal_tx(tx, execution_id).await?;
     if non_terminal {
-        return Ok(DeleteExecutionTreeResult::NonTerminal);
+        if !force_non_terminal {
+            return Ok(DeleteExecutionTreeResult::NonTerminal);
+        }
+        if execution_tree_references_active_deployment_tx(tx, execution_id).await? {
+            return Ok(DeleteExecutionTreeResult::ActiveDeployment);
+        }
     }
     for (table, column) in [
         ("t_join_set_response", "execution_id"),
@@ -5754,6 +5774,7 @@ async fn delete_deployment_tx(
     tx: &tokio_postgres::Transaction<'_>,
     deployment_id: DeploymentId,
     delete_executions: bool,
+    force_non_terminal: bool,
 ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
     let status = tx
         .query_opt(
@@ -5782,13 +5803,20 @@ async fn delete_deployment_tx(
     if delete_executions {
         for root in &roots {
             if execution_is_non_terminal_tx(tx, root).await? {
-                return Ok(DeleteDeploymentResult::ReferencedByNonTerminal {
-                    execution_trees: roots.len() as u64,
-                });
+                if !force_non_terminal {
+                    return Ok(DeleteDeploymentResult::ReferencedByNonTerminal {
+                        execution_trees: roots.len() as u64,
+                    });
+                }
+                if execution_tree_references_active_deployment_tx(tx, root).await? {
+                    return Ok(DeleteDeploymentResult::ReferencedByActiveDeployment {
+                        execution_trees: roots.len() as u64,
+                    });
+                }
             }
         }
         for root in &roots {
-            let outcome = delete_execution_tree_tx(tx, root).await?;
+            let outcome = delete_execution_tree_tx(tx, root, force_non_terminal).await?;
             debug_assert_eq!(outcome, DeleteExecutionTreeResult::Deleted);
         }
     }
@@ -5828,10 +5856,11 @@ impl DbAdmin for PostgresConnection {
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,
+        force_non_terminal: bool,
     ) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let result = delete_execution_tree_tx(&tx, execution_id).await?;
+        let result = delete_execution_tree_tx(&tx, execution_id, force_non_terminal).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -5865,9 +5894,12 @@ impl DbAdmin for PostgresConnection {
                     .get::<_, String>(0)
                     .parse::<ExecutionId>()
                     .expect("database execution id must be valid");
-                match delete_execution_tree_tx(&tx, &id).await? {
+                match delete_execution_tree_tx(&tx, &id, false).await? {
                     DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
                     DeleteExecutionTreeResult::NonTerminal => result.blocked_non_terminal += 1,
+                    DeleteExecutionTreeResult::ActiveDeployment => {
+                        unreachable!("force is disabled")
+                    }
                     DeleteExecutionTreeResult::AlreadyDeleted => {}
                 }
             }
@@ -5880,10 +5912,12 @@ impl DbAdmin for PostgresConnection {
         &self,
         deployment_id: DeploymentId,
         delete_executions: bool,
+        force_non_terminal: bool,
     ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let result = delete_deployment_tx(&tx, deployment_id, delete_executions).await?;
+        let result =
+            delete_deployment_tx(&tx, deployment_id, delete_executions, force_non_terminal).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -5932,7 +5966,8 @@ impl DbAdmin for PostgresConnection {
                     result.deleted_deployments += 1;
                     result.deleted_execution_trees += roots.len() as u64;
                     if !dry_run {
-                        let outcome = delete_deployment_tx(&tx, id, delete_executions).await?;
+                        let outcome =
+                            delete_deployment_tx(&tx, id, delete_executions, false).await?;
                         debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
                     }
                 }

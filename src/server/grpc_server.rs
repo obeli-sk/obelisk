@@ -1999,8 +1999,8 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         &self,
         request: tonic::Request<grpc_gen::DeleteExecutionTreeRequest>,
     ) -> TonicRespResult<grpc_gen::DeleteExecutionTreeResponse> {
+        let request = request.into_inner();
         let execution_id: ExecutionId = request
-            .into_inner()
             .execution_id
             .argument_must_exist("execution_id")?
             .try_into()?;
@@ -2015,7 +2015,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .admin_conn()
             .await
             .map_err(map_to_status)?
-            .delete_execution_tree(&execution_id)
+            .delete_execution_tree(&execution_id, request.force_non_terminal)
             .await
             .to_status()?;
         match outcome {
@@ -2034,6 +2034,11 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             storage::DeleteExecutionTreeResult::NonTerminal => Err(
                 tonic::Status::failed_precondition("execution tree is not terminal"),
             ),
+            storage::DeleteExecutionTreeResult::ActiveDeployment => {
+                Err(tonic::Status::failed_precondition(
+                    "non-terminal execution tree references the active deployment",
+                ))
+            }
         }
     }
 
@@ -2063,12 +2068,21 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .deployment_id
             .argument_must_exist("deployment_id")?
             .try_into()?;
+        if request.force_non_terminal && !request.delete_executions {
+            return Err(tonic::Status::failed_precondition(
+                "force_non_terminal requires delete_executions",
+            ));
+        }
         let outcome = self
             .db_pool
             .admin_conn()
             .await
             .map_err(map_to_status)?
-            .delete_deployment(deployment_id, request.delete_executions)
+            .delete_deployment(
+                deployment_id,
+                request.delete_executions,
+                request.force_non_terminal,
+            )
             .await
             .to_status()?;
         match outcome {
@@ -2100,6 +2114,11 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             storage::DeleteDeploymentResult::ReferencedByNonTerminal { execution_trees } => {
                 Err(tonic::Status::failed_precondition(format!(
                     "deployment is referenced by non-terminal executions in {execution_trees} tree(s)"
+                )))
+            }
+            storage::DeleteDeploymentResult::ReferencedByActiveDeployment { execution_trees } => {
+                Err(tonic::Status::failed_precondition(format!(
+                    "non-terminal executions in {execution_trees} tree(s) reference the active deployment"
                 )))
             }
         }

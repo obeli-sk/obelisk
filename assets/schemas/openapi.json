@@ -87,6 +87,14 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "force_non_terminal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -139,6 +147,16 @@
           "admin"
         ],
         "operationId": "delete_execution_tree",
+        "parameters": [
+          {
+            "name": "force_non_terminal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",

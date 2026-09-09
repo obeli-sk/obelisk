@@ -1438,6 +1438,7 @@ pub enum DeleteExecutionTreeResult {
     Deleted,
     AlreadyDeleted,
     NonTerminal,
+    ActiveDeployment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1448,6 +1449,7 @@ pub enum DeleteDeploymentResult {
     Enqueued,
     Referenced { execution_trees: u64 },
     ReferencedByNonTerminal { execution_trees: u64 },
+    ReferencedByActiveDeployment { execution_trees: u64 },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1468,6 +1470,7 @@ pub trait DbAdmin: Send + Sync {
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,
+        force_non_terminal: bool,
     ) -> Result<DeleteExecutionTreeResult, DbErrorWrite>;
 
     async fn retain_executions(
@@ -1481,6 +1484,7 @@ pub trait DbAdmin: Send + Sync {
         &self,
         deployment_id: DeploymentId,
         delete_executions: bool,
+        force_non_terminal: bool,
     ) -> Result<DeleteDeploymentResult, DbErrorWrite>;
 
     async fn retain_deployments(

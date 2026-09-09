@@ -411,9 +411,16 @@ pub(crate) mod admin {
         }
     }
 
-    #[utoipa::path(delete, path = "/v1/admin/executions/{execution_id}", tag = "admin", responses((status = 200, body = DeleteResponse)))]
+    #[derive(Debug, Default, Deserialize, IntoParams)]
+    pub(crate) struct DeleteExecutionQuery {
+        #[serde(default)]
+        force_non_terminal: bool,
+    }
+
+    #[utoipa::path(delete, path = "/v1/admin/executions/{execution_id}", tag = "admin", params(DeleteExecutionQuery), responses((status = 200, body = DeleteResponse)))]
     pub(crate) async fn delete_execution_tree(
         Path(execution_id): Path<ExecutionId>,
+        Query(query): Query<DeleteExecutionQuery>,
         State(state): State<Arc<WebApiState>>,
     ) -> Result<Response, HttpResponse> {
         if !execution_id.is_top_level() {
@@ -427,7 +434,7 @@ pub(crate) mod admin {
             .admin_conn()
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .delete_execution_tree(&execution_id)
+            .delete_execution_tree(&execution_id, query.force_non_terminal)
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
         let response = match outcome {
@@ -441,6 +448,11 @@ pub(crate) mod admin {
             },
             DeleteExecutionTreeResult::NonTerminal => {
                 return Err(precondition("execution tree is not terminal"));
+            }
+            DeleteExecutionTreeResult::ActiveDeployment => {
+                return Err(precondition(
+                    "non-terminal execution tree references the active deployment",
+                ));
             }
         };
         Ok(pretty_json_response(StatusCode::OK, &response))
@@ -470,6 +482,8 @@ pub(crate) mod admin {
     pub(crate) struct DeleteDeploymentQuery {
         #[serde(default)]
         delete_executions: bool,
+        #[serde(default)]
+        force_non_terminal: bool,
     }
 
     #[utoipa::path(delete, path = "/v1/admin/deployments/{deployment_id}", tag = "admin", params(DeleteDeploymentQuery), responses((status = 200, body = DeleteDeploymentResponse)))]
@@ -478,12 +492,21 @@ pub(crate) mod admin {
         Query(query): Query<DeleteDeploymentQuery>,
         State(state): State<Arc<WebApiState>>,
     ) -> Result<Response, HttpResponse> {
+        if query.force_non_terminal && !query.delete_executions {
+            return Err(precondition(
+                "force_non_terminal requires delete_executions",
+            ));
+        }
         let outcome = state
             .db_pool
             .admin_conn()
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .delete_deployment(deployment_id, query.delete_executions)
+            .delete_deployment(
+                deployment_id,
+                query.delete_executions,
+                query.force_non_terminal,
+            )
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
         let response = match outcome {
@@ -513,6 +536,11 @@ pub(crate) mod admin {
             DeleteDeploymentResult::ReferencedByNonTerminal { execution_trees } => {
                 return Err(precondition(format!(
                     "deployment is referenced by non-terminal executions in {execution_trees} tree(s)"
+                )));
+            }
+            DeleteDeploymentResult::ReferencedByActiveDeployment { execution_trees } => {
+                return Err(precondition(format!(
+                    "non-terminal executions in {execution_trees} tree(s) reference the active deployment"
                 )));
             }
         };
