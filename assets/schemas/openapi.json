@@ -13,36 +13,6 @@
     "version": "1.0.0"
   },
   "paths": {
-    "/v1/admin/cas/gc": {
-      "post": {
-        "tags": [
-          "admin"
-        ],
-        "operationId": "gc_cas",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GcCasRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GcCasResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/admin/deployments/retain": {
       "post": {
         "tags": [
@@ -2207,7 +2177,6 @@
       "CleanupRequest": {
         "type": "object",
         "required": [
-          "retain_count",
           "batch_size"
         ],
         "properties": {
@@ -2219,8 +2188,22 @@
           "dry_run": {
             "type": "boolean"
           },
+          "force_non_terminal": {
+            "type": "boolean"
+          },
+          "max_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
           "retain_count": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32",
             "minimum": 0
           }
@@ -3031,45 +3014,6 @@
           }
         }
       },
-      "GcCasRequest": {
-        "type": "object",
-        "properties": {
-          "dry_run": {
-            "type": "boolean"
-          }
-        }
-      },
-      "GcCasResponse": {
-        "type": "object",
-        "required": [
-          "referenced_blobs",
-          "orphan_blobs",
-          "deleted_blobs",
-          "deleted_bytes"
-        ],
-        "properties": {
-          "deleted_blobs": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "deleted_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "orphan_blobs": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "referenced_blobs": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
       "GenericErrorBody": {
         "type": "object",
         "required": [
@@ -3387,7 +3331,6 @@
       "RetainDeploymentsRequest": {
         "type": "object",
         "required": [
-          "retain_count",
           "batch_size"
         ],
         "properties": {
@@ -3402,8 +3345,22 @@
           "dry_run": {
             "type": "boolean"
           },
+          "force_non_terminal": {
+            "type": "boolean"
+          },
+          "max_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
           "retain_count": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32",
             "minimum": 0
           }

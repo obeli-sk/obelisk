@@ -60,6 +60,9 @@
     "cancel_watcher": {
       "$ref": "#/$defs/CancelWatcherTomlConfig"
     },
+    "maintenance": {
+      "$ref": "#/$defs/MaintenanceTomlConfig"
+    },
     "otlp": {
       "anyOf": [
         {
@@ -804,6 +807,74 @@
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "seconds": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "MaintenanceTomlConfig": {
+      "type": "object",
+      "properties": {
+        "gc": {
+          "$ref": "#/$defs/GarbageCollectionTomlConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "GarbageCollectionTomlConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "interval": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 30
+          }
+        },
+        "batch_size": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1000
+        },
+        "batch_delay": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 25
+          }
+        },
+        "retention": {
+          "$ref": "#/$defs/RetentionTomlConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetentionTomlConfig": {
+      "type": "object",
+      "properties": {
+        "executions": {
+          "$ref": "#/$defs/RetentionPolicyTomlConfig"
+        },
+        "deployments": {
+          "$ref": "#/$defs/RetentionPolicyTomlConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetentionPolicyTomlConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_age": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "hours": 720
           }
         }
       },

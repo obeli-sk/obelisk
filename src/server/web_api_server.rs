@@ -117,7 +117,6 @@ pub(crate) struct WebApiState {
         admin::retain_executions,
         admin::delete_deployment,
         admin::retain_deployments,
-        admin::gc_cas,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -150,8 +149,6 @@ pub(crate) struct WebApiState {
         admin::CleanupRequest,
         admin::RetainDeploymentsRequest,
         admin::CleanupResponse,
-        admin::GcCasRequest,
-        admin::GcCasResponse,
         deployment::DeploymentSubmitErrorBody,
         deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
@@ -316,7 +313,6 @@ fn admin_router() -> Router<Arc<WebApiState>> {
             "/deployments/retain",
             routing::post(admin::retain_deployments),
         )
-        .route("/cas/gc", routing::post(admin::gc_cas))
 }
 
 pub(crate) mod admin {
@@ -338,18 +334,24 @@ pub(crate) mod admin {
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct CleanupRequest {
-        pub(crate) retain_count: u32,
+        pub(crate) retain_count: Option<u32>,
+        pub(crate) max_age_seconds: Option<u64>,
         pub(crate) batch_size: u32,
+        #[serde(default)]
+        pub(crate) force_non_terminal: bool,
         #[serde(default)]
         pub(crate) dry_run: bool,
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct RetainDeploymentsRequest {
-        pub(crate) retain_count: u32,
+        pub(crate) retain_count: Option<u32>,
+        pub(crate) max_age_seconds: Option<u64>,
         pub(crate) batch_size: u32,
         #[serde(default)]
         pub(crate) delete_executions: bool,
+        #[serde(default)]
+        pub(crate) force_non_terminal: bool,
         #[serde(default)]
         pub(crate) dry_run: bool,
     }
@@ -377,20 +379,6 @@ pub(crate) mod admin {
         }
     }
 
-    #[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct GcCasRequest {
-        #[serde(default)]
-        pub(crate) dry_run: bool,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct GcCasResponse {
-        pub(crate) referenced_blobs: u64,
-        pub(crate) orphan_blobs: u64,
-        pub(crate) deleted_blobs: u64,
-        pub(crate) deleted_bytes: u64,
-    }
-
     fn validate_batch_size(batch_size: u32) -> Result<(), HttpResponse> {
         if batch_size == 0 || batch_size > 10_000 {
             Err(HttpResponse {
@@ -408,6 +396,27 @@ pub(crate) mod admin {
             status: StatusCode::PRECONDITION_FAILED,
             message: message.into(),
             accept: AcceptHeader::Json,
+        }
+    }
+
+    fn retention_policy(
+        retain_count: Option<u32>,
+        max_age_seconds: Option<u64>,
+    ) -> Result<storage::RetentionPolicy, HttpResponse> {
+        match (retain_count, max_age_seconds) {
+            (Some(count), None) => Ok(storage::RetentionPolicy::Count(count)),
+            (None, Some(seconds)) if seconds > 0 => {
+                let age = chrono::Duration::from_std(std::time::Duration::from_secs(seconds))
+                    .map_err(|_| precondition("max_age_seconds is too large"))?;
+                let cutoff = chrono::Utc::now()
+                    .checked_sub_signed(age)
+                    .ok_or_else(|| precondition("max_age_seconds is too large"))?;
+                Ok(storage::RetentionPolicy::CreatedAtOrAfter(cutoff))
+            }
+            (None, Some(_)) => Err(precondition("max_age_seconds must be greater than zero")),
+            _ => Err(precondition(
+                "exactly one of retain_count or max_age_seconds is required",
+            )),
         }
     }
 
@@ -451,7 +460,7 @@ pub(crate) mod admin {
             }
             DeleteExecutionTreeResult::ActiveDeployment => {
                 return Err(precondition(
-                    "non-terminal execution tree references the active deployment",
+                    "non-terminal execution tree root belongs to the active deployment",
                 ));
             }
         };
@@ -464,12 +473,18 @@ pub(crate) mod admin {
         Json(request): Json<CleanupRequest>,
     ) -> Result<Response, HttpResponse> {
         validate_batch_size(request.batch_size)?;
+        let retention = retention_policy(request.retain_count, request.max_age_seconds)?;
         let result = state
             .db_pool
             .admin_conn()
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .retain_executions(request.retain_count, request.batch_size, request.dry_run)
+            .retain_executions(
+                retention,
+                request.batch_size,
+                request.force_non_terminal,
+                request.dry_run,
+            )
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
         Ok(pretty_json_response(
@@ -540,7 +555,7 @@ pub(crate) mod admin {
             }
             DeleteDeploymentResult::ReferencedByActiveDeployment { execution_trees } => {
                 return Err(precondition(format!(
-                    "non-terminal executions in {execution_trees} tree(s) reference the active deployment"
+                    "non-terminal execution roots in {execution_trees} tree(s) belong to the active deployment"
                 )));
             }
         };
@@ -553,15 +568,22 @@ pub(crate) mod admin {
         Json(request): Json<RetainDeploymentsRequest>,
     ) -> Result<Response, HttpResponse> {
         validate_batch_size(request.batch_size)?;
+        let retention = retention_policy(request.retain_count, request.max_age_seconds)?;
+        if request.force_non_terminal && !request.delete_executions {
+            return Err(precondition(
+                "force_non_terminal requires delete_executions",
+            ));
+        }
         let result = state
             .db_pool
             .admin_conn()
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
             .retain_deployments(
-                request.retain_count,
+                retention,
                 request.batch_size,
                 request.delete_executions,
+                request.force_non_terminal,
                 request.dry_run,
             )
             .await
@@ -569,27 +591,6 @@ pub(crate) mod admin {
         Ok(pretty_json_response(
             StatusCode::OK,
             &CleanupResponse::from(result),
-        ))
-    }
-
-    #[utoipa::path(post, path = "/v1/admin/cas/gc", tag = "admin", request_body = GcCasRequest, responses((status = 200, body = GcCasResponse)))]
-    pub(crate) async fn gc_cas(
-        State(state): State<Arc<WebApiState>>,
-        Json(request): Json<GcCasRequest>,
-    ) -> Result<Response, HttpResponse> {
-        let result = state
-            .deployment_switch_manager
-            .gc_cas(request.dry_run)
-            .await
-            .map_err(|err| precondition(err.to_string()))?;
-        Ok(pretty_json_response(
-            StatusCode::OK,
-            &GcCasResponse {
-                referenced_blobs: result.referenced_blobs,
-                orphan_blobs: result.orphan_blobs,
-                deleted_blobs: result.deleted_blobs,
-                deleted_bytes: result.deleted_bytes,
-            },
         ))
     }
 }

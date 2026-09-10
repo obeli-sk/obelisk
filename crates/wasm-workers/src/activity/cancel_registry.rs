@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{oneshot, watch};
-use tracing::{Instrument, debug, info, info_span};
+use tracing::{debug, info};
 
 #[derive(Clone)]
 /// All currently running activities and workflows in this process.
@@ -45,6 +45,7 @@ impl CancelRegistry {
         }
     }
 
+    #[must_use]
     pub fn spawn_cancel_watcher(&self, sleep_duration: Duration) -> AbortOnDropHandle {
         let clone = self.clone();
         AbortOnDropHandle::new(
@@ -56,7 +57,6 @@ impl CancelRegistry {
                         tokio::time::sleep(sleep_duration).await;
                     }
                 }
-                .instrument(info_span!(parent: None, "cancel_watcher"))
             })
             .abort_handle(),
         )

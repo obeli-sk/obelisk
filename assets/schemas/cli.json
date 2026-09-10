@@ -924,7 +924,7 @@
               "options": [
                 {
                   "name": "--force",
-                  "help": "Delete non-terminal trees unless they reference the active deployment"
+                  "help": "Delete non-terminal trees unless their roots belong to the active deployment"
                 },
                 {
                   "name": "--json"
@@ -947,14 +947,20 @@
             },
             {
               "name": "retain",
-              "about": "Keep the newest completed top-level execution trees",
+              "about": "Retain top-level execution trees by count or age",
               "options": [
                 {
-                  "name": "--count",
-                  "required": true
+                  "name": "--count"
+                },
+                {
+                  "name": "--max-age"
                 },
                 {
                   "name": "--batch-size"
+                },
+                {
+                  "name": "--force",
+                  "help": "Delete non-terminal trees unless their roots belong to the active deployment"
                 },
                 {
                   "name": "--dry-run"
@@ -982,7 +988,7 @@
                 },
                 {
                   "name": "--force",
-                  "help": "Delete non-terminal trees unless they reference the active deployment"
+                  "help": "Delete non-terminal trees unless their roots belong to the active deployment"
                 },
                 {
                   "name": "--json"
@@ -1005,14 +1011,20 @@
             },
             {
               "name": "retain",
-              "about": "Keep the newest inactive deployments in addition to active and enqueued deployments",
+              "about": "Retain inactive deployments by count or age; active and enqueued deployments are kept",
               "options": [
                 {
-                  "name": "--count",
-                  "required": true
+                  "name": "--count"
+                },
+                {
+                  "name": "--max-age"
                 },
                 {
                   "name": "--delete-executions"
+                },
+                {
+                  "name": "--force",
+                  "help": "Delete non-terminal trees unless their roots belong to the active deployment"
                 },
                 {
                   "name": "--batch-size"
@@ -1028,22 +1040,6 @@
                   "short": "a"
                 }
               ]
-            }
-          ]
-        },
-        {
-          "name": "cas-gc",
-          "about": "Delete unreferenced content-addressed blobs",
-          "options": [
-            {
-              "name": "--dry-run"
-            },
-            {
-              "name": "--json"
-            },
-            {
-              "name": "--api-url",
-              "short": "a"
             }
           ]
         }

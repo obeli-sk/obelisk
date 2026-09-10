@@ -58,7 +58,6 @@ service AdminRepository {
     rpc RetainExecutions(RetainExecutionsRequest) returns (CleanupResponse);
     rpc DeleteDeployment(DeleteDeploymentRequest) returns (DeleteDeploymentResponse);
     rpc RetainDeployments(RetainDeploymentsRequest) returns (CleanupResponse);
-    rpc GcCas(GcCasRequest) returns (GcCasResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -1323,9 +1322,13 @@ message DeleteExecutionTreeResponse {
     bool already_deleted = 2;
 }
 message RetainExecutionsRequest {
-    uint32 retain_count = 1;
+    oneof retention {
+        uint32 retain_count = 1;
+        google.protobuf.Duration max_age = 4;
+    }
     uint32 batch_size = 2;
     bool dry_run = 3;
+    bool force_non_terminal = 5;
 }
 message DeleteDeploymentRequest {
     DeploymentId deployment_id = 1;
@@ -1338,10 +1341,14 @@ message DeleteDeploymentResponse {
     uint64 deleted_execution_trees = 3;
 }
 message RetainDeploymentsRequest {
-    uint32 retain_count = 1;
+    oneof retention {
+        uint32 retain_count = 1;
+        google.protobuf.Duration max_age = 6;
+    }
     uint32 batch_size = 2;
     bool delete_executions = 3;
     bool dry_run = 4;
+    bool force_non_terminal = 5;
 }
 message CleanupResponse {
     uint64 deleted_execution_trees = 1;
@@ -1350,15 +1357,6 @@ message CleanupResponse {
     uint64 blocked_non_terminal = 4;
     uint64 blocked_by_execution_reference = 5;
     bool has_more = 6;
-}
-message GcCasRequest {
-    bool dry_run = 1;
-}
-message GcCasResponse {
-    uint64 referenced_blobs = 1;
-    uint64 orphan_blobs = 2;
-    uint64 deleted_blobs = 3;
-    uint64 deleted_bytes = 4;
 }
 
 message GetDeploymentRequest {

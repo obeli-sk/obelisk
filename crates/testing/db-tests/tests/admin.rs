@@ -6,7 +6,7 @@ use concepts::{
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest,
+        ExecutionRequest, RetentionPolicy,
     },
     time::ClockFn,
 };
@@ -97,6 +97,15 @@ async fn insert_deployment(
         .unwrap();
 }
 
+async fn collect_execution_garbage(admin: &dyn concepts::storage::DbAdmin) {
+    for _ in 0..100 {
+        if !admin.gc_executions(10).await.unwrap().has_more {
+            return;
+        }
+    }
+    panic!("execution garbage collection did not converge");
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
@@ -121,6 +130,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .unwrap(),
         DeleteExecutionTreeResult::Deleted
     );
+    collect_execution_garbage(admin.as_ref()).await;
 
     let active_deployment = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), active_deployment, clock.now()).await;
@@ -174,6 +184,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .unwrap(),
         DeleteExecutionTreeResult::Deleted
     );
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -189,9 +200,13 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
     let middle = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
     clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
     let newer = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
-    let result = admin.retain_executions(1, 1, false).await.unwrap();
+    let result = admin
+        .retain_executions(RetentionPolicy::Count(1), 1, false, false)
+        .await
+        .unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
     assert!(result.has_more);
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -219,9 +234,13 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .await
             .is_ok()
     );
-    let result = admin.retain_executions(1, 1, false).await.unwrap();
+    let result = admin
+        .retain_executions(RetentionPolicy::Count(1), 1, false, false)
+        .await
+        .unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
     assert!(!result.has_more);
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -249,6 +268,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
     let cas = db_pool.cas_conn().await.unwrap();
     let referenced_digest = cas.write_blob(b"referenced").await.unwrap();
     let orphan_digest = cas.write_blob(b"orphan").await.unwrap();
+    let second_orphan_digest = cas.write_blob(b"second orphan").await.unwrap();
     let deployment_id = DeploymentId::generate();
     db_pool
         .external_api_conn()
@@ -284,23 +304,37 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(true)
+        .gc_cas(true, 10)
         .await
         .unwrap();
     assert_eq!(dry_run.referenced_blobs, 1);
-    assert_eq!(dry_run.orphan_blobs, 1);
+    assert_eq!(dry_run.orphan_blobs, 2);
     assert_eq!(dry_run.deleted_blobs, 0);
     assert!(cas.contains_blob(&orphan_digest).await.unwrap());
     let collected = db_pool
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(false)
+        .gc_cas(false, 1)
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
     assert!(cas.contains_blob(&referenced_digest).await.unwrap());
+    assert_ne!(
+        cas.contains_blob(&orphan_digest).await.unwrap(),
+        cas.contains_blob(&second_orphan_digest).await.unwrap(),
+        "one CAS GC batch must delete exactly one of the two orphan blobs"
+    );
+    let collected = db_pool
+        .cas_gc_conn()
+        .await
+        .unwrap()
+        .gc_cas(false, 1)
+        .await
+        .unwrap();
+    assert_eq!(collected.deleted_blobs, 1);
     assert!(!cas.contains_blob(&orphan_digest).await.unwrap());
+    assert!(!cas.contains_blob(&second_orphan_digest).await.unwrap());
 
     assert_eq!(
         admin
@@ -311,6 +345,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
             deleted_execution_trees: 1
         }
     );
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -374,7 +409,10 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
     create_execution(db_pool.as_ref(), &clock, referenced, true).await;
 
     let admin = db_pool.admin_conn().await.unwrap();
-    let first = admin.retain_deployments(0, 1, false, false).await.unwrap();
+    let first = admin
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
+        .await
+        .unwrap();
     assert_eq!(first.deleted_deployments, 1);
     assert_eq!(first.blocked_by_execution_reference, 0);
     assert!(first.has_more);
@@ -399,7 +437,10 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
             .is_some()
     );
 
-    let second = admin.retain_deployments(0, 1, false, false).await.unwrap();
+    let second = admin
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
+        .await
+        .unwrap();
     assert_eq!(second.deleted_deployments, 1);
     assert_eq!(second.blocked_by_execution_reference, 1);
     assert!(!second.has_more);
@@ -432,6 +473,197 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
             .await
             .unwrap()
             .is_none()
+    );
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_retention_can_force_non_terminal_trees(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let deployment_id = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), deployment_id, clock.now()).await;
+    create_execution(db_pool.as_ref(), &clock, deployment_id, false).await;
+
+    let admin = db_pool.admin_conn().await.unwrap();
+    let blocked = admin
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false)
+        .await
+        .unwrap();
+    assert_eq!(blocked.deleted_deployments, 0);
+    assert_eq!(blocked.blocked_non_terminal, 1);
+
+    let forced = admin
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, true, false)
+        .await
+        .unwrap();
+    assert_eq!(forced.deleted_deployments, 1);
+    assert_eq!(forced.deleted_execution_trees, 1);
+    assert_eq!(forced.blocked_non_terminal, 0);
+
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn age_retention_uses_completion_and_inactive_times(database: Database) {
+    set_up();
+    // State transition timestamps use the database clock. Start near wall-clock time so
+    // advancing the simulated API clock also produces a meaningful retention cutoff.
+    let clock = SimClock::new(chrono::Utc::now());
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let old_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), old_deployment, clock.now()).await;
+    let old_execution = create_execution(db_pool.as_ref(), &clock, old_deployment, true).await;
+    let stale_non_terminal =
+        create_execution(db_pool.as_ref(), &clock, old_deployment, false).await;
+    clock.move_time_forward(Duration::days(31).to_std().unwrap());
+    let new_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), new_deployment, clock.now()).await;
+    db_pool
+        .external_api_conn()
+        .await
+        .unwrap()
+        .activate_deployment(old_deployment, clock.now())
+        .await
+        .unwrap();
+    db_pool
+        .external_api_conn()
+        .await
+        .unwrap()
+        .activate_deployment(new_deployment, clock.now())
+        .await
+        .unwrap();
+    let cutoff = clock.now() - Duration::days(30);
+    let admin = db_pool.admin_conn().await.unwrap();
+    let executions = admin
+        .retain_executions(RetentionPolicy::CreatedAtOrAfter(cutoff), 10, false, false)
+        .await
+        .unwrap();
+    assert_eq!(executions.deleted_execution_trees, 1);
+    assert_eq!(
+        admin
+            .delete_execution_tree(&old_execution, false)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::AlreadyDeleted
+    );
+    let forced = admin
+        .retain_executions(RetentionPolicy::CreatedAtOrAfter(cutoff), 10, true, false)
+        .await
+        .unwrap();
+    assert_eq!(forced.deleted_execution_trees, 1);
+    assert_eq!(
+        admin
+            .delete_execution_tree(&stale_non_terminal, true)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::AlreadyDeleted
+    );
+    let deployments = admin
+        .retain_deployments(
+            RetentionPolicy::CreatedAtOrAfter(cutoff),
+            10,
+            true,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(deployments.deleted_deployments, 0);
+
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_cleanup_owns_mixed_tree_by_root(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let root_deployment = DeploymentId::generate();
+    let child_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), root_deployment, clock.now()).await;
+    insert_deployment(db_pool.as_ref(), child_deployment, clock.now()).await;
+    let root = create_execution(db_pool.as_ref(), &clock, root_deployment, true).await;
+    let child = ExecutionId::Derived(
+        root.next_level(&JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap()),
+    );
+    db_pool
+        .connection()
+        .await
+        .unwrap()
+        .create(CreateRequest {
+            created_at: clock.now(),
+            execution_id: child.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: child_deployment,
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
+        })
+        .await
+        .unwrap();
+
+    let admin = db_pool.admin_conn().await.unwrap();
+    assert_eq!(
+        admin
+            .delete_deployment(child_deployment, false, false)
+            .await
+            .unwrap(),
+        DeleteDeploymentResult::Deleted {
+            deleted_execution_trees: 0
+        }
+    );
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&child)
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        admin
+            .delete_deployment(root_deployment, true, false)
+            .await
+            .unwrap(),
+        DeleteDeploymentResult::Deleted {
+            deleted_execution_trees: 1
+        }
+    );
+    collect_execution_garbage(admin.as_ref()).await;
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&root)
+            .await
+            .is_err()
+    );
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&child)
+            .await
+            .is_err()
     );
     drop(admin);
     db_close.close().await;

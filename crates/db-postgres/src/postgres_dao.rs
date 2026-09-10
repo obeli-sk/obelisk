@@ -18,9 +18,9 @@ use concepts::{
         DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
         DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
         DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
         LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
         ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
@@ -28,9 +28,9 @@ use concepts::{
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked, Version,
-        VersionType, WasmBacktrace,
+        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked,
+        Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -430,8 +430,8 @@ async fn insert_deployment_tx(
     let digest = record.digest.to_string();
     tx.execute(
         "INSERT INTO t_deployment \
-         (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+         (deployment_id, description, digest, created_at, inactive_at, status, deployment_toml, obelisk_version, created_by) \
+         VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8)",
         &[
             &record.deployment_id.to_string(), // $1
             &record.description,               // $2
@@ -1516,6 +1516,9 @@ async fn list_executions(
     }
 
     let mut qb = QueryBuilder::new();
+    qb.add_where(
+        "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%'))".to_string(),
+    );
 
     // Pagination Logic
     let (limit, limit_desc) = match pagination {
@@ -2273,6 +2276,17 @@ async fn lock_single_execution(
 ) -> Result<LockedExecution, DbErrorWrite> {
     trace!("lock_single_execution");
 
+    let tombstoned = tx
+        .query_one(
+            "SELECT tombstoned FROM t_state WHERE execution_id = $1 FOR UPDATE",
+            &[&execution_id.to_string()],
+        )
+        .await?
+        .get::<_, bool>(0);
+    if tombstoned {
+        return Err(DbErrorWrite::NotFound);
+    }
+
     // Check State
     let combined_state = get_combined_state(tx, execution_id).await?;
     let context_component_digest = if update_component_digest_and_deployment_id {
@@ -2522,6 +2536,18 @@ async fn append(
     }
 
     let combined_state = get_combined_state(tx, execution_id).await?;
+    // Manual advance is the only path that appends ordinary workflow events while the
+    // execution is paused. Recheck its root in every committing transaction so a
+    // concurrent admin tombstone stops the next captured write. Already-locked work
+    // deliberately remains allowed to finish after its root is tombstoned.
+    if matches!(
+        combined_state.execution_with_state.pending_state,
+        PendingState::Paused(_)
+    ) {
+        require_live_root(tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+    }
     if combined_state
         .execution_with_state
         .pending_state
@@ -2897,6 +2923,68 @@ async fn lock_join_set_response_append_order(
     )
     .await?;
     Ok(())
+}
+
+async fn live_ancillary_roots(
+    tx: &Transaction<'_>,
+    execution_ids: impl Iterator<Item = ExecutionId>,
+) -> Result<HashSet<ExecutionId>, DbErrorWrite> {
+    let mut roots = execution_ids
+        .map(|id| ExecutionId::TopLevel(id.get_top_level()))
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots.dedup();
+    let mut live = HashSet::new();
+    for root in roots {
+        let row = tx
+            .query_opt(
+                "SELECT tombstoned FROM t_state WHERE execution_id = $1 AND is_top_level = TRUE FOR SHARE",
+                &[&root.to_string()],
+            )
+            .await?;
+        if row.is_some_and(|row| !row.get::<_, bool>(0)) {
+            live.insert(root);
+        }
+    }
+    Ok(live)
+}
+
+async fn require_live_root(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<(), DbErrorRead> {
+    let root = ExecutionId::TopLevel(execution_id.get_top_level());
+    let live = tx
+        .query_opt(
+            "SELECT NOT tombstoned FROM t_state WHERE execution_id = $1 AND is_top_level = TRUE",
+            &[&root.to_string()],
+        )
+        .await?
+        .is_some_and(|row| row.get::<_, bool>(0));
+    if live {
+        Ok(())
+    } else {
+        Err(DbErrorRead::NotFound)
+    }
+}
+
+async fn reject_tombstoned_root(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<(), DbErrorRead> {
+    let root = ExecutionId::TopLevel(execution_id.get_top_level());
+    let tombstoned = tx
+        .query_opt(
+            "SELECT tombstoned FROM t_state WHERE execution_id = $1 AND is_top_level = TRUE",
+            &[&root.to_string()],
+        )
+        .await?
+        .is_some_and(|row| row.get::<_, bool>(0));
+    if tombstoned {
+        Err(DbErrorRead::NotFound)
+    } else {
+        Ok(())
+    }
 }
 
 async fn append_response(
@@ -3416,7 +3504,7 @@ async fn get_pending_of_single_ffqn(
                 WHERE
                 state = '{STATE_PENDING_AT}' AND
                 pending_expires_finished <= $1 AND ffqn = $2
-                AND lifecycle = 'active'
+                AND lifecycle = 'active' AND tombstoned = FALSE
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
@@ -3513,7 +3601,7 @@ async fn get_pending_by_ffqns_auto(
                     WHERE
                     state = '{STATE_PENDING_AT}' AND
                     pending_expires_finished <= $1 AND ffqn = $2
-                    AND lifecycle = 'active'
+                    AND lifecycle = 'active' AND tombstoned = FALSE
                     AND (incompatible_digest IS NULL OR incompatible_digest <> $3)
                     ORDER BY pending_expires_finished
                     {}
@@ -3572,7 +3660,7 @@ async fn get_pending_by_component_input_digest(
                 state = '{STATE_PENDING_AT}' AND
                 pending_expires_finished <= $1 AND
                 component_id_input_digest = $2
-                AND lifecycle = 'active'
+                AND lifecycle = 'active' AND tombstoned = FALSE
                 ORDER BY pending_expires_finished
                 {}
                 LIMIT $3
@@ -4192,6 +4280,9 @@ impl DbExecutor for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        require_live_root(&tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
         let combined_state = get_combined_state(&tx, execution_id).await?;
         append_activity_cancellation_requested_tx(tx, execution_id, cancelled_at, &combined_state)
             .await
@@ -4206,6 +4297,9 @@ impl DbExecutor for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        require_live_root(&tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
         cancel_workflow_tx(tx, execution_id, cancelled_at).await
     }
 }
@@ -4252,7 +4346,7 @@ impl DbConnection for PostgresConnection {
         let rows = tx
             .query(
                 &format!(
-                    "SELECT execution_id FROM t_state WHERE lifecycle = '{LIFECYCLE_CANCELLING}' \
+                    "SELECT execution_id FROM t_state WHERE lifecycle = '{LIFECYCLE_CANCELLING}' AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%')) \
                      ORDER BY created_at LIMIT $1"
                 ),
                 &[&(i64::from(batch_size))],
@@ -4610,7 +4704,10 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
-        append_backtrace(&tx, &append).await?;
+        let live = live_ancillary_roots(&tx, std::iter::once(append.execution_id.clone())).await?;
+        if live.contains(&ExecutionId::TopLevel(append.execution_id.get_top_level())) {
+            append_backtrace(&tx, &append).await?;
+        }
 
         tx.commit().await?;
         Ok(())
@@ -4625,9 +4722,14 @@ impl DbConnection for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        let live =
+            live_ancillary_roots(&tx, batch.iter().map(|append| append.execution_id.clone()))
+                .await?;
         let mut inserted = 0_u64;
         for append in batch {
-            inserted += append_backtrace(&tx, &append).await?;
+            if live.contains(&ExecutionId::TopLevel(append.execution_id.get_top_level())) {
+                inserted += append_backtrace(&tx, &append).await?;
+            }
         }
 
         tx.commit().await?;
@@ -4646,7 +4748,10 @@ impl DbConnection for PostgresConnection {
         trace!("append_log");
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        append_log(&tx, &row).await?;
+        let live = live_ancillary_roots(&tx, std::iter::once(row.execution_id.clone())).await?;
+        if live.contains(&ExecutionId::TopLevel(row.execution_id.get_top_level())) {
+            append_log(&tx, &row).await?;
+        }
         tx.commit().await?;
 
         Ok(())
@@ -4657,8 +4762,12 @@ impl DbConnection for PostgresConnection {
         trace!("append_log_batch");
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        let live =
+            live_ancillary_roots(&tx, batch.iter().map(|row| row.execution_id.clone())).await?;
         for row in batch {
-            append_log(&tx, row).await?;
+            if live.contains(&ExecutionId::TopLevel(row.execution_id.get_top_level())) {
+                append_log(&tx, row).await?;
+            }
         }
         tx.commit().await?;
         Ok(())
@@ -4676,7 +4785,7 @@ impl DbConnection for PostgresConnection {
         // Expired Delays
         let rows = tx
             .query(
-                "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= $1 AND NOT is_paused",
+                "SELECT d.execution_id, d.join_set_id, d.delay_id FROM t_delay d WHERE d.expires_at <= $1 AND NOT d.is_paused AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (d.execution_id = root.execution_id OR d.execution_id LIKE root.execution_id || '.%'))",
                 &[&at],
             )
             .await?;
@@ -4813,6 +4922,9 @@ impl DbConnection for PostgresConnection {
 
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        require_live_root(&tx, &execution_id)
+            .await
+            .map_err(|err| DbErrorStubResponse::Write(err.into()))?;
 
         let limit = validate_append_requests(&tx, &execution_id, std::slice::from_mut(&mut req))
             .await
@@ -4888,6 +5000,7 @@ impl DbExternalApi for PostgresConnection {
 
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        require_live_root(&tx, execution_id).await?;
 
         let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
 
@@ -5131,6 +5244,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<ListExecutionEventsResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        require_live_root(&tx, execution_id).await?;
 
         let events =
             list_execution_events(&tx, execution_id, pagination, include_backtrace_id).await?;
@@ -5152,6 +5266,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<ListResponsesResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        reject_tombstoned_root(&tx, execution_id).await?;
 
         let max_cursor = get_max_response_cursor(&tx, execution_id).await?;
         let responses = list_responses(&tx, execution_id, Some(pagination), join_set).await?;
@@ -5173,6 +5288,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<ExecutionWithStateRequestsResponses, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        require_live_root(&tx, execution_id).await?;
 
         let combined_state = get_combined_state(&tx, execution_id).await?;
 
@@ -5213,6 +5329,9 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<(), DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        require_live_root(&tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
 
         upgrade_execution_component(&tx, execution_id, old, new, reason).await?;
 
@@ -5230,6 +5349,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        require_live_root(&tx, execution_id).await?;
         let responses = list_logs_tx(&tx, execution_id, show_derived, &filter, &pagination).await?;
         tx.commit().await?;
         Ok(responses)
@@ -5334,14 +5454,14 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         // Demote currently active or enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status IN ('active', 'enqueued')",
-            &[],
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = $1 WHERE status IN ('active', 'enqueued')",
+            &[&now],
         )
         .await?;
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = $1 WHERE deployment_id = $2",
+                "UPDATE t_deployment SET status = 'active', last_active_at = $1, inactive_at = NULL WHERE deployment_id = $2",
                 &[&now, &deployment_id.to_string()],
             )
             .await?;
@@ -5370,7 +5490,7 @@ impl DbExternalApi for PostgresConnection {
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'enqueued'",
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = CURRENT_TIMESTAMP WHERE status = 'enqueued'",
             &[],
         )
         .await?;
@@ -5382,7 +5502,7 @@ impl DbExternalApi for PostgresConnection {
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'enqueued' WHERE deployment_id = $1",
+                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
             .await?;
@@ -5538,6 +5658,9 @@ impl DbExternalApi for PostgresConnection {
         for _ in 0..CONFLICT_RETRY_LIMIT {
             let tx = client_guard.transaction().await?;
 
+            require_live_root(&tx, execution_id)
+                .await
+                .map_err(DbErrorWrite::from)?;
             let combined_state = get_combined_state(&tx, execution_id).await?;
             let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
             debug!("Pausing with {appending_version}");
@@ -5608,6 +5731,9 @@ impl DbExternalApi for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        require_live_root(&tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
         let combined_state = get_combined_state(&tx, execution_id).await?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Unpausing with {appending_version}");
@@ -5629,8 +5755,12 @@ impl DbExternalApi for PostgresConnection {
     #[instrument(skip(self))]
     async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let (execution_id, join_set_id) = delay_id.split_to_parts();
-        let client_guard = self.client.lock().await;
-        let rows_modified = client_guard
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        require_live_root(&tx, &execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+        let rows_modified = tx
             .execute(
                 "UPDATE t_delay SET is_paused = TRUE \
                  WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3",
@@ -5644,14 +5774,19 @@ impl DbExternalApi for PostgresConnection {
         if rows_modified == 0 {
             return Err(DbErrorWrite::NotFound);
         }
+        tx.commit().await?;
         Ok(())
     }
 
     #[instrument(skip(self))]
     async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let (execution_id, join_set_id) = delay_id.split_to_parts();
-        let client_guard = self.client.lock().await;
-        let rows_modified = client_guard
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        require_live_root(&tx, &execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+        let rows_modified = tx
             .execute(
                 "UPDATE t_delay SET is_paused = FALSE \
                  WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3",
@@ -5665,6 +5800,7 @@ impl DbExternalApi for PostgresConnection {
         if rows_modified == 0 {
             return Err(DbErrorWrite::NotFound);
         }
+        tx.commit().await?;
         Ok(())
     }
 }
@@ -5687,13 +5823,13 @@ async fn execution_tree_references_active_deployment_tx(
     execution_id: &ExecutionId,
 ) -> Result<bool, DbErrorWrite> {
     let root = execution_id.to_string();
-    let rows = tx
-        .query(
-            "SELECT d.status FROM t_state s JOIN t_deployment d ON d.deployment_id = s.deployment_id WHERE s.execution_id = $1 OR s.execution_id LIKE $2 FOR SHARE OF d",
-            &[&root, &format!("{root}.%")],
+    Ok(tx
+        .query_opt(
+            "SELECT d.status FROM t_state s JOIN t_deployment d ON d.deployment_id = s.deployment_id WHERE s.execution_id = $1 AND s.is_top_level = TRUE FOR SHARE OF d",
+            &[&root],
         )
-        .await?;
-    Ok(rows.iter().any(|row| row.get::<_, &str>(0) == "active"))
+        .await?
+        .is_some_and(|row| row.get::<_, &str>(0) == "active"))
 }
 
 async fn delete_execution_tree_tx(
@@ -5702,15 +5838,16 @@ async fn delete_execution_tree_tx(
     force_non_terminal: bool,
 ) -> Result<DeleteExecutionTreeResult, DbErrorWrite> {
     let root = execution_id.to_string();
-    let pattern = format!("{root}.%");
-    let exists = tx
-        .query_one(
-            "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id = $1)",
+    let state = tx
+        .query_opt(
+            "SELECT tombstoned FROM t_state WHERE execution_id = $1 AND is_top_level = TRUE FOR UPDATE",
             &[&root],
         )
-        .await?
-        .get::<_, bool>(0);
-    if !exists {
+        .await?;
+    let Some(state) = state else {
+        return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
+    };
+    if state.get::<_, bool>(0) {
         return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
     }
     let non_terminal = execution_is_non_terminal_tx(tx, execution_id).await?;
@@ -5722,28 +5859,9 @@ async fn delete_execution_tree_tx(
             return Ok(DeleteExecutionTreeResult::ActiveDeployment);
         }
     }
-    for (table, column) in [
-        ("t_join_set_response", "execution_id"),
-        ("t_delay", "execution_id"),
-        ("t_execution_backtrace", "execution_id"),
-        ("t_log", "execution_id"),
-        ("t_execution_log", "execution_id"),
-        ("t_state", "execution_id"),
-    ] {
-        tx.execute(
-            &format!("DELETE FROM {table} WHERE {column} = $1 OR {column} LIKE $2"),
-            &[&root, &pattern],
-        )
-        .await?;
-    }
     tx.execute(
-        "DELETE FROM t_join_set_response WHERE child_execution_id = $1 OR child_execution_id LIKE $2",
-        &[&root, &pattern],
-    )
-    .await?;
-    tx.execute(
-        "DELETE FROM t_wasm_backtrace WHERE backtrace_hash NOT IN (SELECT backtrace_hash FROM t_execution_backtrace)",
-        &[],
+        "UPDATE t_state SET tombstoned = TRUE WHERE execution_id = $1 AND is_top_level = TRUE",
+        &[&root],
     )
     .await?;
     Ok(DeleteExecutionTreeResult::Deleted)
@@ -5755,17 +5873,15 @@ async fn deployment_execution_roots_tx(
 ) -> Result<HashSet<ExecutionId>, DbErrorWrite> {
     Ok(tx
         .query(
-            "SELECT execution_id FROM t_state WHERE deployment_id = $1",
+            "SELECT execution_id FROM t_state WHERE deployment_id = $1 AND is_top_level = TRUE AND tombstoned = FALSE",
             &[&deployment_id.to_string()],
         )
         .await?
         .into_iter()
         .map(|row| {
-            let id = row
-                .get::<_, String>(0)
+            row.get::<_, String>(0)
                 .parse::<ExecutionId>()
-                .expect("database execution id must be valid");
-            ExecutionId::TopLevel(id.get_top_level())
+                .expect("database execution id must be valid")
         })
         .collect())
 }
@@ -5838,14 +5954,6 @@ async fn delete_deployment_tx(
     .await?;
     tx.execute("DELETE FROM t_deployment WHERE deployment_id = $1", &[&id])
         .await?;
-    tx.execute(
-        "DELETE FROM t_component_source WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
-        &[],
-    ).await?;
-    tx.execute(
-        "DELETE FROM t_component_metadata WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
-        &[],
-    ).await?;
     Ok(DeleteDeploymentResult::Deleted {
         deleted_execution_trees: roots.len() as u64,
     })
@@ -5867,25 +5975,41 @@ impl DbAdmin for PostgresConnection {
 
     async fn retain_executions(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let rows = tx
-            .query(
+        let rows = match (retention, force_non_terminal) {
+            (RetentionPolicy::Count(count), false) => tx.query(
                 "SELECT execution_id FROM (\
                      SELECT execution_id, created_at FROM t_state \
-                     WHERE is_top_level = true AND state = 'finished' \
+                     WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
                      ORDER BY created_at DESC, execution_id DESC OFFSET $2\
                  ) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &i64::from(retain_count)],
-            )
-            .await?;
+                &[&(i64::from(batch_size) + 1), &i64::from(count)],
+            ).await?,
+            (RetentionPolicy::CreatedAtOrAfter(cutoff), false) => tx.query(
+                "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &cutoff],
+            ).await?,
+            (RetentionPolicy::Count(count), true) => tx.query(
+                "SELECT execution_id FROM (SELECT execution_id, created_at FROM t_state WHERE is_top_level = true AND tombstoned = FALSE ORDER BY created_at DESC, execution_id DESC OFFSET $2) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &i64::from(count)],
+            ).await?,
+            (RetentionPolicy::CreatedAtOrAfter(cutoff), true) => tx.query(
+                "SELECT execution_id FROM t_state WHERE is_top_level = true AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &cutoff],
+            ).await?,
+        };
         let has_more = rows.len() > batch_size as usize;
         let mut result = CleanupResult {
-            retained: u64::from(retain_count),
+            retained: match retention {
+                RetentionPolicy::Count(count) => u64::from(count),
+                RetentionPolicy::CreatedAtOrAfter(_) => 0,
+            },
             has_more,
             ..Default::default()
         };
@@ -5897,11 +6021,11 @@ impl DbAdmin for PostgresConnection {
                     .get::<_, String>(0)
                     .parse::<ExecutionId>()
                     .expect("database execution id must be valid");
-                match delete_execution_tree_tx(&tx, &id, false).await? {
+                match delete_execution_tree_tx(&tx, &id, force_non_terminal).await? {
                     DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
-                    DeleteExecutionTreeResult::NonTerminal => result.blocked_non_terminal += 1,
-                    DeleteExecutionTreeResult::ActiveDeployment => {
-                        unreachable!("force is disabled")
+                    DeleteExecutionTreeResult::NonTerminal
+                    | DeleteExecutionTreeResult::ActiveDeployment => {
+                        result.blocked_non_terminal += 1;
                     }
                     DeleteExecutionTreeResult::AlreadyDeleted => {}
                 }
@@ -5927,25 +6051,33 @@ impl DbAdmin for PostgresConnection {
 
     async fn retain_deployments(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
         delete_executions: bool,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let rows = tx
-            .query(
+        let rows = match retention {
+            RetentionPolicy::Count(count) => tx.query(
                 "SELECT deployment_id FROM (\
                      SELECT deployment_id, created_at FROM t_deployment \
                      WHERE status = 'inactive' \
                      ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
                  ) retained ORDER BY created_at ASC, deployment_id ASC",
-                &[&i64::from(retain_count)],
-            )
-            .await?;
+                &[&i64::from(count)],
+            ).await?,
+            RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
+                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC",
+                &[&cutoff],
+            ).await?,
+        };
         let mut result = CleanupResult {
-            retained: u64::from(retain_count),
+            retained: match retention {
+                RetentionPolicy::Count(count) => u64::from(count),
+                RetentionPolicy::CreatedAtOrAfter(_) => 0,
+            },
             ..Default::default()
         };
         for row in rows {
@@ -5957,13 +6089,17 @@ impl DbAdmin for PostgresConnection {
             if !roots.is_empty() && !delete_executions {
                 result.blocked_by_execution_reference += 1;
             } else {
-                let mut blocked_non_terminal = false;
+                let mut blocked = false;
                 if delete_executions {
                     for root in &roots {
-                        blocked_non_terminal |= execution_is_non_terminal_tx(&tx, root).await?;
+                        let non_terminal = execution_is_non_terminal_tx(&tx, root).await?;
+                        blocked |= non_terminal
+                            && (!force_non_terminal
+                                || execution_tree_references_active_deployment_tx(&tx, root)
+                                    .await?);
                     }
                 }
-                if blocked_non_terminal {
+                if blocked {
                     result.blocked_non_terminal += 1;
                 } else if result.deleted_deployments == u64::from(batch_size) {
                     result.has_more = true;
@@ -5973,7 +6109,8 @@ impl DbAdmin for PostgresConnection {
                     result.deleted_execution_trees += roots.len() as u64;
                     if !dry_run {
                         let outcome =
-                            delete_deployment_tx(&tx, id, delete_executions, false).await?;
+                            delete_deployment_tx(&tx, id, delete_executions, force_non_terminal)
+                                .await?;
                         debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
                     }
                 }
@@ -5982,12 +6119,169 @@ impl DbAdmin for PostgresConnection {
         tx.commit().await?;
         Ok(result)
     }
+
+    async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite> {
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let row = tx
+            .query_opt(
+                "SELECT execution_id FROM t_state WHERE is_top_level = TRUE AND tombstoned = TRUE ORDER BY execution_id FOR UPDATE SKIP LOCKED LIMIT 1",
+                &[],
+            )
+            .await?;
+        let Some(row) = row else {
+            let limit = i64::from(batch_size.max(1));
+            for (table, predicate) in [
+                (
+                    "t_wasm_backtrace",
+                    "NOT EXISTS (SELECT 1 FROM t_execution_backtrace e WHERE e.backtrace_hash = t_wasm_backtrace.backtrace_hash)",
+                ),
+                (
+                    "t_component_source",
+                    "NOT EXISTS (SELECT 1 FROM t_deployment_component d WHERE d.component_digest = t_component_source.component_digest)",
+                ),
+                (
+                    "t_component_metadata",
+                    "NOT EXISTS (SELECT 1 FROM t_deployment_component d WHERE d.component_digest = t_component_metadata.component_digest)",
+                ),
+            ] {
+                let deleted_rows = tx.execute(
+                    &format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT $1)"),
+                    &[&limit],
+                ).await?;
+                if deleted_rows > 0 {
+                    tx.commit().await?;
+                    return Ok(ExecutionGcResult {
+                        tombstoned_roots: 0,
+                        deleted_rows,
+                        has_more: true,
+                    });
+                }
+            }
+            tx.commit().await?;
+            return Ok(ExecutionGcResult {
+                tombstoned_roots: 0,
+                deleted_rows: 0,
+                has_more: false,
+            });
+        };
+        let root = row.get::<_, String>(0);
+        let pattern = format!("{root}.%");
+        let limit = i64::from(batch_size.max(1));
+        let propagated = tx
+            .execute(
+                "UPDATE t_state SET tombstoned = TRUE WHERE ctid IN (SELECT ctid FROM t_state WHERE execution_id LIKE $1 AND tombstoned = FALSE ORDER BY execution_id LIMIT $2)",
+                &[&pattern, &limit],
+            )
+            .await?;
+        if propagated > 0 {
+            tx.commit().await?;
+            return Ok(ExecutionGcResult {
+                tombstoned_roots: 1,
+                deleted_rows: propagated,
+                has_more: true,
+            });
+        }
+        let locked = tx
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = $1 OR execution_id LIKE $2) AND state = 'locked')",
+                &[&root, &pattern],
+            )
+            .await?
+            .get::<_, bool>(0);
+        if locked {
+            tx.commit().await?;
+            return Ok(ExecutionGcResult {
+                tombstoned_roots: 1,
+                deleted_rows: 0,
+                has_more: true,
+            });
+        }
+
+        let deleted_rows = tx
+            .execute(
+                "DELETE FROM t_state WHERE ctid IN (SELECT ctid FROM t_state WHERE execution_id LIKE $1 ORDER BY execution_id LIMIT $2)",
+                &[&pattern, &limit],
+            )
+            .await?;
+        if deleted_rows > 0 {
+            tx.commit().await?;
+            return Ok(ExecutionGcResult {
+                tombstoned_roots: 1,
+                deleted_rows,
+                has_more: true,
+            });
+        }
+        for (table, predicate) in [
+            (
+                "t_join_set_response",
+                "execution_id = $1 OR execution_id LIKE $2 OR child_execution_id = $1 OR child_execution_id LIKE $2",
+            ),
+            ("t_delay", "execution_id = $1 OR execution_id LIKE $2"),
+            (
+                "t_execution_backtrace",
+                "execution_id = $1 OR execution_id LIKE $2",
+            ),
+            ("t_log", "execution_id = $1 OR execution_id LIKE $2"),
+            (
+                "t_execution_log",
+                "execution_id = $1 OR execution_id LIKE $2",
+            ),
+        ] {
+            let deleted_rows = tx
+                .execute(
+                    &format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT $3)"),
+                    &[&root, &pattern, &limit],
+                )
+                .await?;
+            if deleted_rows > 0 {
+                tx.commit().await?;
+                return Ok(ExecutionGcResult {
+                    tombstoned_roots: 1,
+                    deleted_rows,
+                    has_more: true,
+                });
+            }
+        }
+        lock_join_set_response_append_order(
+            &tx,
+            &root.parse().expect("database execution id must be valid"),
+        )
+        .await?;
+        let remaining = tx
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id LIKE $1 UNION ALL SELECT 1 FROM t_join_set_response WHERE execution_id = $2 OR execution_id LIKE $1 OR child_execution_id = $2 OR child_execution_id LIKE $1 UNION ALL SELECT 1 FROM t_delay WHERE execution_id = $2 OR execution_id LIKE $1 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id = $2 OR execution_id LIKE $1 UNION ALL SELECT 1 FROM t_log WHERE execution_id = $2 OR execution_id LIKE $1 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id = $2 OR execution_id LIKE $1)",
+                &[&pattern, &root],
+            )
+            .await?
+            .get::<_, bool>(0);
+        if !remaining {
+            let deleted_rows = tx
+                .execute(
+                    "DELETE FROM t_state WHERE execution_id = $1 AND is_top_level = TRUE AND tombstoned = TRUE",
+                    &[&root],
+                )
+                .await?;
+            tx.commit().await?;
+            return Ok(ExecutionGcResult {
+                tombstoned_roots: 0,
+                deleted_rows,
+                has_more: true,
+            });
+        }
+        tx.commit().await?;
+        Ok(ExecutionGcResult {
+            tombstoned_roots: 0,
+            deleted_rows: 0,
+            has_more: false,
+        })
+    }
 }
 
 #[async_trait]
 impl CasGc for PostgresConnection {
     #[instrument(skip(self))]
-    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite> {
+    async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         let row = tx
@@ -5995,9 +6289,9 @@ impl CasGc for PostgresConnection {
                 "SELECT \
                  COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
                  COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                 COALESCE(SUM(size) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), 0)::bigint \
+                 COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT $1) candidates), 0)::bigint \
                  FROM t_file",
-                &[],
+                &[&i64::from(batch_size.max(1))],
             )
             .await?;
         let referenced_blobs = row.get::<_, i64>(0).cast_unsigned();
@@ -6007,9 +6301,9 @@ impl CasGc for PostgresConnection {
             0
         } else {
             tx.execute(
-                "DELETE FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)",
-                &[],
+                "DELETE FROM t_file WHERE ctid IN (SELECT ctid FROM t_file WHERE digest NOT IN \
+                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT $1)",
+                &[&i64::from(batch_size.max(1))],
             )
             .await?
         };

@@ -71,11 +71,9 @@ use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
-    ExecutionId as GrpcExecutionId, GcCasRequest, GetDeploymentRequest, GetFileRequest,
-    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck,
-    SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
-    admin_repository_client::AdminRepositoryClient,
-    cancel_execution_response::CancelExecutionOutcome,
+    ExecutionId as GrpcExecutionId, GetDeploymentRequest, GetStatusRequest, ListComponentsRequest,
+    ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest, SubmitRequest,
+    SwitchDeploymentRequest, cancel_execution_response::CancelExecutionOutcome,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -2919,20 +2917,20 @@ routes = [{ methods = ["GET"], route = "/" }]
         .await
         .expect_err("compile+link must reject the missing interface");
 
-    // Fresh server: the only blob that could be orphaned is the one this rejected submit
-    // wrote. The submit's own best-effort sweep must already have reclaimed it.
-    let deleted = AdminRepositoryClient::connect(format!("http://{}", server.api_addr()))
+    let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
         .await
-        .unwrap()
-        .gc_cas(GcCasRequest { dry_run: false })
-        .await
-        .unwrap()
-        .into_inner()
-        .deleted_blobs;
-    assert_eq!(
-        deleted, 0,
-        "a rejected submit must not leak orphan blobs, found {deleted}"
+        .unwrap();
+    assert!(
+        !pool
+            .cas_conn()
+            .await
+            .unwrap()
+            .contains_blob(&prepared.files[0].digest)
+            .await
+            .unwrap(),
+        "a rejected submit must not leak orphan blobs"
     );
+    pool.close().await;
 
     server.shutdown().await;
 }
@@ -3167,189 +3165,6 @@ ffqn = "testing:integration/pkg.run"
     let body: Value = resp.json().await.unwrap();
     let clean = body["deployment_toml"].as_str().unwrap();
     assert!(!clean.contains("content_digest"));
-
-    server.shutdown().await;
-}
-
-/// `GcCas` deletes CAS blobs not referenced by any stored deployment while keeping
-/// those a valid deployment still references. A rejected submit now reclaims its own blobs
-/// (see `rejected_submit_reclaims_orphan_blobs_grpc`), so the orphan here is seeded straight
-/// into the CAS to give GC something to reclaim.
-#[tokio::test]
-async fn gc_cas_grpc() {
-    let server = TestServer::start(test_addr!(81)).await;
-
-    let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap()
-        .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
-        .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
-    let mut admin_client = AdminRepositoryClient::connect(format!("http://{}", server.api_addr()))
-        .await
-        .unwrap();
-
-    // A valid deployment: its blob is referenced and must survive GC.
-    let good_dir = tempfile::tempdir().unwrap();
-    tokio::fs::write(
-        good_dir.path().join("a.js"),
-        "export function run() { return 'ok'; }",
-    )
-    .await
-    .unwrap();
-    let toml_path = good_dir.path().join("deployment.toml");
-    tokio::fs::write(
-        &toml_path,
-        r#"
-[[activity_js]]
-name = "a"
-location = "a.js"
-ffqn = "testing:integration/a.run"
-"#,
-    )
-    .await
-    .unwrap();
-    let good = crate::config::deployment::prepare_deployment_manifest_from_disk(&toml_path)
-        .await
-        .unwrap();
-    let good_digest = good.files[0].digest.to_string();
-    grpc_client
-        .clone()
-        .submit_deployment(SubmitDeploymentRequest {
-            deployment_toml: good.deployment_toml.clone(),
-            created_by: Some("test".to_string()),
-            runtime_config_check: RuntimeConfigCheck::Strict as i32,
-            description: None,
-            deployment_id: Some(GrpcDeploymentId {
-                id: DeploymentId::generate().to_string(),
-            }),
-            files: vec![grpc::grpc_gen::DeploymentFileContent {
-                path: "a.js".to_string(),
-                digest: Some(good.files[0].digest.to_string()),
-                content: good.files[0].bytes.clone(),
-            }],
-        })
-        .await
-        .expect("valid deployment must persist");
-
-    // Seed an orphan blob directly in the CAS: no deployment references it. A rejected submit
-    // sweeps its own blobs before returning, so a genuine orphan cannot be produced through
-    // the submit path anymore.
-    let orphan_digest = {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let digest = pool
-            .cas_conn()
-            .await
-            .unwrap()
-            .write_blob(b"orphan blob referenced by no deployment")
-            .await
-            .unwrap();
-        pool.close().await;
-        digest.to_string()
-    };
-
-    // Before GC: both blobs are present in the CAS.
-    grpc_client
-        .clone()
-        .get_file(GetFileRequest {
-            digest: good_digest.clone(),
-        })
-        .await
-        .expect("referenced blob present before gc");
-    grpc_client
-        .clone()
-        .get_file(GetFileRequest {
-            digest: orphan_digest.clone(),
-        })
-        .await
-        .expect("orphan blob present before gc");
-
-    // GC deletes exactly the orphan.
-    let deleted = admin_client
-        .gc_cas(GcCasRequest { dry_run: false })
-        .await
-        .unwrap()
-        .into_inner()
-        .deleted_blobs;
-    assert_eq!(deleted, 1, "exactly one orphan blob must be deleted");
-
-    // After GC: the orphan is gone, the referenced blob remains.
-    grpc_client
-        .clone()
-        .get_file(GetFileRequest {
-            digest: good_digest,
-        })
-        .await
-        .expect("referenced blob must survive gc");
-    let status = grpc_client
-        .clone()
-        .get_file(GetFileRequest {
-            digest: orphan_digest,
-        })
-        .await
-        .expect_err("orphan blob must be gone after gc");
-    assert_eq!(status.code(), tonic::Code::NotFound);
-
-    // A second GC is a no-op.
-    let deleted = admin_client
-        .gc_cas(GcCasRequest { dry_run: false })
-        .await
-        .unwrap()
-        .into_inner()
-        .deleted_blobs;
-    assert_eq!(deleted, 0, "second gc must delete nothing");
-
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn gc_cas_webapi() {
-    let server = TestServer::start(test_addr!(123)).await;
-    let orphan_digest = {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let digest = pool
-            .cas_conn()
-            .await
-            .unwrap()
-            .write_blob(b"orphan blob for REST GC")
-            .await
-            .unwrap();
-        pool.close().await;
-        digest.to_string()
-    };
-
-    let response = server
-        .client
-        .post(format!("{}/v1/admin/cas/gc", server.base_url))
-        .header("Accept", "application/json")
-        .json(&json!({ "dry_run": false }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    assert_eq!(response.json::<Value>().await.unwrap()["deleted_blobs"], 1);
-
-    let response = server
-        .client
-        .get(format!("{}/v1/files/{orphan_digest}", server.base_url))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
-
-    let response = server
-        .client
-        .post(format!("{}/v1/admin/cas/gc", server.base_url))
-        .header("Accept", "application/json")
-        .json(&json!({ "dry_run": false }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    assert_eq!(response.json::<Value>().await.unwrap()["deleted_blobs"], 0);
 
     server.shutdown().await;
 }

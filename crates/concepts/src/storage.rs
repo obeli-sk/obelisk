@@ -1434,6 +1434,12 @@ pub struct CleanupResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionPolicy {
+    Count(u32),
+    CreatedAtOrAfter(DateTime<Utc>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteExecutionTreeResult {
     Deleted,
     AlreadyDeleted,
@@ -1460,9 +1466,16 @@ pub struct CasGcResult {
     pub deleted_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExecutionGcResult {
+    pub tombstoned_roots: u64,
+    pub deleted_rows: u64,
+    pub has_more: bool,
+}
+
 #[async_trait]
 pub trait CasGc: Send + Sync {
-    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite>;
+    async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite>;
 }
 
 #[async_trait]
@@ -1475,8 +1488,9 @@ pub trait DbAdmin: Send + Sync {
 
     async fn retain_executions(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite>;
 
@@ -1489,11 +1503,14 @@ pub trait DbAdmin: Send + Sync {
 
     async fn retain_deployments(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
         delete_executions: bool,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite>;
+
+    async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite>;
 }
 
 #[async_trait]

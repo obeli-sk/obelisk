@@ -66,6 +66,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
     #[serde(default)]
     pub(crate) cancel_watcher: CancelWatcherTomlConfig,
+    #[serde(default)]
+    pub(crate) maintenance: MaintenanceTomlConfig,
     #[cfg(feature = "otlp")]
     #[serde(default)]
     pub(crate) otlp: Option<otlp::OtlpConfig>,
@@ -595,6 +597,67 @@ pub(crate) struct CancelWatcherTomlConfig {
     pub(crate) tick_sleep: DurationConfig,
 }
 
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaintenanceTomlConfig {
+    #[serde(default)]
+    pub(crate) gc: GarbageCollectionTomlConfig,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GarbageCollectionTomlConfig {
+    #[serde(default = "default_gc_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_gc_interval")]
+    pub(crate) interval: DurationConfig,
+    #[serde(default = "default_gc_batch_size")]
+    pub(crate) batch_size: u32,
+    #[serde(default = "default_gc_batch_delay")]
+    pub(crate) batch_delay: DurationConfig,
+    #[serde(default)]
+    pub(crate) retention: RetentionTomlConfig,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetentionTomlConfig {
+    #[serde(default)]
+    pub(crate) executions: RetentionPolicyTomlConfig,
+    #[serde(default)]
+    pub(crate) deployments: RetentionPolicyTomlConfig,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetentionPolicyTomlConfig {
+    #[serde(default = "default_retention_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_retention_max_age")]
+    pub(crate) max_age: DurationConfig,
+}
+
+impl Default for RetentionPolicyTomlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_retention_enabled(),
+            max_age: default_retention_max_age(),
+        }
+    }
+}
+
+impl Default for GarbageCollectionTomlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_gc_enabled(),
+            interval: default_gc_interval(),
+            batch_size: default_gc_batch_size(),
+            batch_delay: default_gc_batch_delay(),
+            retention: RetentionTomlConfig::default(),
+        }
+    }
+}
+
 impl Default for CancelWatcherTomlConfig {
     fn default() -> Self {
         Self {
@@ -906,6 +969,30 @@ fn default_cancel_watcher_tick_sleep() -> DurationConfig {
     DurationConfig::Seconds(1)
 }
 
+const fn default_gc_enabled() -> bool {
+    true
+}
+
+const fn default_gc_interval() -> DurationConfig {
+    DurationConfig::Seconds(30)
+}
+
+const fn default_gc_batch_size() -> u32 {
+    1000
+}
+
+const fn default_gc_batch_delay() -> DurationConfig {
+    DurationConfig::Milliseconds(25)
+}
+
+const fn default_retention_enabled() -> bool {
+    true
+}
+
+const fn default_retention_max_age() -> DurationConfig {
+    DurationConfig::Hours(30 * 24)
+}
+
 // HTTP server declaration (referenced by ServerConfigToml)
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -1013,6 +1100,45 @@ mod tests {
             let actual: TestConfig = toml::from_str(r#"allow = "true""#).unwrap();
             assert_eq!(AllowExecActivities::AllowAny, actual.allow);
             toml::from_str::<TestConfig>(r#"allow = "yes""#).unwrap_err();
+        }
+    }
+
+    mod retention {
+        use super::*;
+
+        #[test]
+        fn omitted_retention_uses_enabled_thirty_day_defaults() {
+            let config: ServerConfigToml = toml::from_str("").unwrap();
+            let retention = config.maintenance.gc.retention;
+            for policy in [retention.executions, retention.deployments] {
+                assert!(policy.enabled);
+                assert!(matches!(policy.max_age, DurationConfig::Hours(720)));
+            }
+        }
+
+        #[test]
+        fn execution_and_deployment_retention_can_be_configured_independently() {
+            let config: ServerConfigToml = toml::from_str(
+                r"
+                [maintenance.gc.retention.executions]
+                enabled = false
+
+                [maintenance.gc.retention.deployments]
+                max_age.hours = 48
+                ",
+            )
+            .unwrap();
+            let retention = config.maintenance.gc.retention;
+            assert!(!retention.executions.enabled);
+            assert!(matches!(
+                retention.executions.max_age,
+                DurationConfig::Hours(720)
+            ));
+            assert!(retention.deployments.enabled);
+            assert!(matches!(
+                retention.deployments.max_age,
+                DurationConfig::Hours(48)
+            ));
         }
     }
 }

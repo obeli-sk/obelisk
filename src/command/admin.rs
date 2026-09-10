@@ -2,8 +2,8 @@ use crate::{
     args,
     client::{ClientStartup, send_json},
     server::web_api_server::admin::{
-        CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse, GcCasRequest,
-        GcCasResponse, RetainDeploymentsRequest,
+        CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
+        RetainDeploymentsRequest,
     },
 };
 use http::header::ACCEPT;
@@ -35,7 +35,7 @@ impl args::Admin {
             }) => {
                 if force {
                     eprintln!(
-                        "WARNING: forcibly deleting non-terminal execution trees that do not reference the active deployment"
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
                     );
                 }
                 let mut results = Vec::with_capacity(execution_ids.len());
@@ -70,13 +70,20 @@ impl args::Admin {
             }
             Self::Executions(args::AdminExecutions::Retain {
                 count,
+                max_age,
                 batch_size,
+                force,
                 dry_run,
                 json,
                 api_url,
             }) => {
+                if force {
+                    eprintln!(
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
+                    );
+                }
                 if !dry_run {
-                    eprintln!("Deleting completed execution trees older than the newest {count}");
+                    eprintln!("Deleting execution trees outside the retention policy");
                 }
                 let response: CleanupResponse = send_json(
                     client
@@ -84,7 +91,9 @@ impl args::Admin {
                         .header(ACCEPT, "application/json")
                         .json(&CleanupRequest {
                             retain_count: count,
+                            max_age_seconds: max_age.map(|age| age.as_secs()),
                             batch_size,
+                            force_non_terminal: force,
                             dry_run,
                         }),
                 )
@@ -107,7 +116,7 @@ impl args::Admin {
             }) => {
                 if force {
                     eprintln!(
-                        "WARNING: forcibly deleting non-terminal execution trees that do not reference the active deployment"
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
                     );
                 }
                 let mut results = Vec::with_capacity(deployment_ids.len());
@@ -146,14 +155,21 @@ impl args::Admin {
             }
             Self::Deployments(args::AdminDeployments::Retain {
                 count,
+                max_age,
                 delete_executions,
+                force,
                 batch_size,
                 dry_run,
                 json,
                 api_url,
             }) => {
+                if force {
+                    eprintln!(
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
+                    );
+                }
                 if !dry_run {
-                    eprintln!("Deleting inactive deployments older than the newest {count}");
+                    eprintln!("Deleting inactive deployments outside the retention policy");
                 }
                 let response: CleanupResponse = send_json(
                     client
@@ -161,8 +177,10 @@ impl args::Admin {
                         .header(ACCEPT, "application/json")
                         .json(&RetainDeploymentsRequest {
                             retain_count: count,
+                            max_age_seconds: max_age.map(|age| age.as_secs()),
                             batch_size,
                             delete_executions,
+                            force_non_terminal: force,
                             dry_run,
                         }),
                 )
@@ -174,27 +192,6 @@ impl args::Admin {
                     response.blocked_by_execution_reference,
                     response.blocked_non_terminal,
                     response.has_more
-                );
-                print_result(json, &response, &message)
-            }
-            Self::CasGc {
-                dry_run,
-                json,
-                api_url,
-            } => {
-                if !dry_run {
-                    eprintln!("Deleting unreferenced CAS blobs");
-                }
-                let response: GcCasResponse = send_json(
-                    client
-                        .post(format!("{api_url}/v1/admin/cas/gc"))
-                        .header(ACCEPT, "application/json")
-                        .json(&GcCasRequest { dry_run }),
-                )
-                .await?;
-                let message = format!(
-                    "{} orphan blob(s), {} deleted ({} bytes).",
-                    response.orphan_blobs, response.deleted_blobs, response.deleted_bytes
                 );
                 print_result(json, &response, &message)
             }
