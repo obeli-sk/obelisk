@@ -160,7 +160,7 @@ pub(crate) enum AdminExecutions {
     Delete {
         #[arg(required = true, num_args = 1..)]
         execution_ids: Vec<ExecutionId>,
-        /// Delete non-terminal trees unless they reference the active deployment.
+        /// Delete non-terminal trees unless their roots belong to the active deployment.
         #[arg(long)]
         force: bool,
         #[arg(long)]
@@ -201,7 +201,7 @@ pub(crate) enum AdminDeployments {
         deployment_ids: Vec<DeploymentId>,
         #[arg(long)]
         delete_executions: bool,
-        /// Delete non-terminal trees unless they reference the active deployment.
+        /// Delete non-terminal trees unless their roots belong to the active deployment.
         #[arg(long, requires = "delete_executions")]
         force: bool,
         #[arg(long)]
@@ -220,6 +220,9 @@ pub(crate) enum AdminDeployments {
         count: u32,
         #[arg(long)]
         delete_executions: bool,
+        /// Delete non-terminal trees unless their roots belong to the active deployment.
+        #[arg(long, requires = "delete_executions")]
+        force: bool,
         #[arg(long, default_value_t = 100)]
         batch_size: u32,
         #[arg(long)]
@@ -1287,6 +1290,47 @@ mod tests {
         assert_eq!(deployment_ids, [first, second]);
         assert!(delete_executions);
         assert!(force);
+
+        let args = Args::try_parse_from([
+            "obelisk",
+            "admin",
+            "deployments",
+            "retain",
+            "--count",
+            "10",
+            "--delete-executions",
+            "--force",
+        ])
+        .unwrap();
+        let Subcommand::Admin(AdminArgs {
+            command:
+                Admin::Deployments(AdminDeployments::Retain {
+                    count,
+                    delete_executions,
+                    force,
+                    ..
+                }),
+            ..
+        }) = args.command
+        else {
+            panic!("expected deployment retention");
+        };
+        assert_eq!(count, 10);
+        assert!(delete_executions);
+        assert!(force);
+
+        assert!(
+            Args::try_parse_from([
+                "obelisk",
+                "admin",
+                "deployments",
+                "retain",
+                "--count",
+                "10",
+                "--force",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

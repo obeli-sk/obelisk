@@ -1499,6 +1499,7 @@ pub trait DbAdmin: Send + Sync {
         retain_count: u32,
         batch_size: u32,
         delete_executions: bool,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite>;
 

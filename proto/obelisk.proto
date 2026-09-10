@@ -1341,6 +1341,7 @@ message RetainDeploymentsRequest {
     uint32 batch_size = 2;
     bool delete_executions = 3;
     bool dry_run = 4;
+    bool force_non_terminal = 5;
 }
 message CleanupResponse {
     uint64 deleted_execution_trees = 1;

@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deleting one or more execution trees and inactive deployments and applying bounded retention
   policies that clean up the oldest eligible records first. Deletion tombstones execution roots
   synchronously, and configurable automatic maintenance removes their trees and unreferenced
-  shared metadata and CAS blobs in bounded batches. Explicit deletion can force removal of a
-  non-terminal tree unless its root belongs to the active deployment.
+  shared metadata and CAS blobs in bounded batches. Explicit deletion and deployment retention can
+  force removal of a non-terminal tree unless its root belongs to the active deployment.
 
 - *(workflow)* `join-next-for` workflow-support function blocks until the next response arrives and
   requires it to belong to a given function. Its `join-next-for-error` reports `function-mismatch`

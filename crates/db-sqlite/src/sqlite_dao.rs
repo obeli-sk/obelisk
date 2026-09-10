@@ -5720,6 +5720,7 @@ impl DbAdmin for SqlitePool {
         retain_count: u32,
         batch_size: u32,
         delete_executions: bool,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
@@ -5744,24 +5745,35 @@ impl DbAdmin for SqlitePool {
                     let roots = Self::deployment_execution_roots_tx(tx, id)?;
                     if !roots.is_empty() && !delete_executions {
                         result.blocked_by_execution_reference += 1;
-                    } else if delete_executions
-                        && roots
-                            .iter()
-                            .map(|root| Self::execution_is_non_terminal_tx(tx, root))
-                            .collect::<Result<Vec<_>, _>>()?
-                            .into_iter()
-                            .any(|blocked| blocked)
-                    {
-                        result.blocked_non_terminal += 1;
-                    } else if result.deleted_deployments == u64::from(batch_size) {
-                        result.has_more = true;
-                        break;
                     } else {
+                        let mut blocked = false;
+                        if delete_executions {
+                            for root in &roots {
+                                let non_terminal = Self::execution_is_non_terminal_tx(tx, root)?;
+                                blocked |= non_terminal
+                                    && (!force_non_terminal
+                                        || Self::execution_tree_references_active_deployment_tx(
+                                            tx, root,
+                                        )?);
+                            }
+                        }
+                        if blocked {
+                            result.blocked_non_terminal += 1;
+                            continue;
+                        }
+                        if result.deleted_deployments == u64::from(batch_size) {
+                            result.has_more = true;
+                            break;
+                        }
                         result.deleted_deployments += 1;
                         result.deleted_execution_trees += roots.len() as u64;
                         if !dry_run {
-                            let outcome =
-                                Self::delete_deployment_tx(tx, id, delete_executions, false)?;
+                            let outcome = Self::delete_deployment_tx(
+                                tx,
+                                id,
+                                delete_executions,
+                                force_non_terminal,
+                            )?;
                             debug_assert!(matches!(
                                 outcome,
                                 DeleteDeploymentResult::Deleted { .. }

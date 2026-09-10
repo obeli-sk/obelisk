@@ -3333,6 +3333,9 @@
           "dry_run": {
             "type": "boolean"
           },
+          "force_non_terminal": {
+            "type": "boolean"
+          },
           "retain_count": {
             "type": "integer",
             "format": "int32",

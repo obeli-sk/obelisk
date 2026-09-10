@@ -6038,6 +6038,7 @@ impl DbAdmin for PostgresConnection {
         retain_count: u32,
         batch_size: u32,
         delete_executions: bool,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
@@ -6065,13 +6066,17 @@ impl DbAdmin for PostgresConnection {
             if !roots.is_empty() && !delete_executions {
                 result.blocked_by_execution_reference += 1;
             } else {
-                let mut blocked_non_terminal = false;
+                let mut blocked = false;
                 if delete_executions {
                     for root in &roots {
-                        blocked_non_terminal |= execution_is_non_terminal_tx(&tx, root).await?;
+                        let non_terminal = execution_is_non_terminal_tx(&tx, root).await?;
+                        blocked |= non_terminal
+                            && (!force_non_terminal
+                                || execution_tree_references_active_deployment_tx(&tx, root)
+                                    .await?);
                     }
                 }
-                if blocked_non_terminal {
+                if blocked {
                     result.blocked_non_terminal += 1;
                 } else if result.deleted_deployments == u64::from(batch_size) {
                     result.has_more = true;
@@ -6081,7 +6086,8 @@ impl DbAdmin for PostgresConnection {
                     result.deleted_execution_trees += roots.len() as u64;
                     if !dry_run {
                         let outcome =
-                            delete_deployment_tx(&tx, id, delete_executions, false).await?;
+                            delete_deployment_tx(&tx, id, delete_executions, force_non_terminal)
+                                .await?;
                         debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
                     }
                 }

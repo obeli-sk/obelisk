@@ -347,6 +347,8 @@ pub(crate) mod admin {
         #[serde(default)]
         pub(crate) delete_executions: bool,
         #[serde(default)]
+        pub(crate) force_non_terminal: bool,
+        #[serde(default)]
         pub(crate) dry_run: bool,
     }
 
@@ -433,7 +435,7 @@ pub(crate) mod admin {
             }
             DeleteExecutionTreeResult::ActiveDeployment => {
                 return Err(precondition(
-                    "non-terminal execution tree references the active deployment",
+                    "non-terminal execution tree root belongs to the active deployment",
                 ));
             }
         };
@@ -522,7 +524,7 @@ pub(crate) mod admin {
             }
             DeleteDeploymentResult::ReferencedByActiveDeployment { execution_trees } => {
                 return Err(precondition(format!(
-                    "non-terminal executions in {execution_trees} tree(s) reference the active deployment"
+                    "non-terminal execution roots in {execution_trees} tree(s) belong to the active deployment"
                 )));
             }
         };
@@ -535,6 +537,11 @@ pub(crate) mod admin {
         Json(request): Json<RetainDeploymentsRequest>,
     ) -> Result<Response, HttpResponse> {
         validate_batch_size(request.batch_size)?;
+        if request.force_non_terminal && !request.delete_executions {
+            return Err(precondition(
+                "force_non_terminal requires delete_executions",
+            ));
+        }
         let result = state
             .db_pool
             .admin_conn()
@@ -544,6 +551,7 @@ pub(crate) mod admin {
                 request.retain_count,
                 request.batch_size,
                 request.delete_executions,
+                request.force_non_terminal,
                 request.dry_run,
             )
             .await

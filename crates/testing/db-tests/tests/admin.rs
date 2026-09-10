@@ -403,7 +403,10 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
     create_execution(db_pool.as_ref(), &clock, referenced, true).await;
 
     let admin = db_pool.admin_conn().await.unwrap();
-    let first = admin.retain_deployments(0, 1, false, false).await.unwrap();
+    let first = admin
+        .retain_deployments(0, 1, false, false, false)
+        .await
+        .unwrap();
     assert_eq!(first.deleted_deployments, 1);
     assert_eq!(first.blocked_by_execution_reference, 0);
     assert!(first.has_more);
@@ -428,7 +431,10 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
             .is_some()
     );
 
-    let second = admin.retain_deployments(0, 1, false, false).await.unwrap();
+    let second = admin
+        .retain_deployments(0, 1, false, false, false)
+        .await
+        .unwrap();
     assert_eq!(second.deleted_deployments, 1);
     assert_eq!(second.blocked_by_execution_reference, 1);
     assert!(!second.has_more);
@@ -462,6 +468,37 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
             .unwrap()
             .is_none()
     );
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_retention_can_force_non_terminal_trees(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let deployment_id = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), deployment_id, clock.now()).await;
+    create_execution(db_pool.as_ref(), &clock, deployment_id, false).await;
+
+    let admin = db_pool.admin_conn().await.unwrap();
+    let blocked = admin
+        .retain_deployments(0, 1, true, false, false)
+        .await
+        .unwrap();
+    assert_eq!(blocked.deleted_deployments, 0);
+    assert_eq!(blocked.blocked_non_terminal, 1);
+
+    let forced = admin
+        .retain_deployments(0, 1, true, true, false)
+        .await
+        .unwrap();
+    assert_eq!(forced.deleted_deployments, 1);
+    assert_eq!(forced.deleted_execution_trees, 1);
+    assert_eq!(forced.blocked_non_terminal, 0);
+
     drop(admin);
     db_close.close().await;
 }

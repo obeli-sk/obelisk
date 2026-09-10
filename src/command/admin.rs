@@ -35,7 +35,7 @@ impl args::Admin {
             }) => {
                 if force {
                     eprintln!(
-                        "WARNING: forcibly deleting non-terminal execution trees that do not reference the active deployment"
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
                     );
                 }
                 let mut results = Vec::with_capacity(execution_ids.len());
@@ -107,7 +107,7 @@ impl args::Admin {
             }) => {
                 if force {
                     eprintln!(
-                        "WARNING: forcibly deleting non-terminal execution trees that do not reference the active deployment"
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
                     );
                 }
                 let mut results = Vec::with_capacity(deployment_ids.len());
@@ -147,11 +147,17 @@ impl args::Admin {
             Self::Deployments(args::AdminDeployments::Retain {
                 count,
                 delete_executions,
+                force,
                 batch_size,
                 dry_run,
                 json,
                 api_url,
             }) => {
+                if force {
+                    eprintln!(
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
+                    );
+                }
                 if !dry_run {
                     eprintln!("Deleting inactive deployments older than the newest {count}");
                 }
@@ -163,6 +169,7 @@ impl args::Admin {
                             retain_count: count,
                             batch_size,
                             delete_executions,
+                            force_non_terminal: force,
                             dry_run,
                         }),
                 )

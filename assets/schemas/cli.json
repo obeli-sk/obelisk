@@ -924,7 +924,7 @@
               "options": [
                 {
                   "name": "--force",
-                  "help": "Delete non-terminal trees unless they reference the active deployment"
+                  "help": "Delete non-terminal trees unless their roots belong to the active deployment"
                 },
                 {
                   "name": "--json"
@@ -982,7 +982,7 @@
                 },
                 {
                   "name": "--force",
-                  "help": "Delete non-terminal trees unless they reference the active deployment"
+                  "help": "Delete non-terminal trees unless their roots belong to the active deployment"
                 },
                 {
                   "name": "--json"
@@ -1013,6 +1013,10 @@
                 },
                 {
                   "name": "--delete-executions"
+                },
+                {
+                  "name": "--force",
+                  "help": "Delete non-terminal trees unless their roots belong to the active deployment"
                 },
                 {
                   "name": "--batch-size"
