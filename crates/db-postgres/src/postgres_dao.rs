@@ -29,8 +29,9 @@ use concepts::{
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
         ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked,
-        Version, VersionType, WasmBacktrace,
+        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
+        SystemEventFilter, SystemEventLevel, TimeoutOutcome, Unlocked, Version, VersionType,
+        WasmBacktrace,
     },
 };
 use db_common::{
@@ -5961,6 +5962,83 @@ async fn delete_deployment_tx(
 
 #[async_trait]
 impl DbAdmin for PostgresConnection {
+    async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
+        self.client.lock().await.execute(
+            "INSERT INTO t_system_event (event_id, created_at, level, code, message, execution_id, deployment_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+            &[&event.event_id, &event.created_at, &event.level.as_str(), &event.code, &event.message,
+              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details)],
+        ).await?;
+        Ok(())
+    }
+
+    async fn list_system_events(
+        &self,
+        filter: SystemEventFilter,
+    ) -> Result<Vec<SystemEvent>, DbErrorRead> {
+        let rows = self.client.lock().await.query(
+            "SELECT event_id, created_at, level, code, message, execution_id, deployment_id, details FROM t_system_event
+             WHERE ($1::text IS NULL OR level = $1) AND ($2::text IS NULL OR code = $2)
+               AND ($3::text IS NULL OR deployment_id = $3) AND ($4::text IS NULL OR event_id < $4)
+             ORDER BY event_id DESC LIMIT $5",
+            &[&filter.level.map(SystemEventLevel::as_str), &filter.code,
+              &filter.deployment_id.map(|id| id.to_string()), &filter.before_event_id,
+              &i64::from(filter.limit.clamp(1, 1000))],
+        ).await?;
+        rows.into_iter()
+            .map(|row| {
+                let level: String = get(&row, 2)?;
+                let execution_id: Option<String> = get(&row, 5)?;
+                let deployment_id: Option<String> = get(&row, 6)?;
+                Ok(SystemEvent {
+                    event_id: get(&row, 0)?,
+                    created_at: get(&row, 1)?,
+                    level: match level.as_str() {
+                        "warning" => SystemEventLevel::Warning,
+                        "error" => SystemEventLevel::Error,
+                        _ => SystemEventLevel::Info,
+                    },
+                    code: get(&row, 3)?,
+                    message: get(&row, 4)?,
+                    execution_id: execution_id
+                        .map(|id| id.parse())
+                        .transpose()
+                        .map_err(|err| {
+                            consistency_db_err(format!("invalid system event execution id: {err}"))
+                        })?,
+                    deployment_id: deployment_id.map(|id| id.parse()).transpose().map_err(
+                        |err| {
+                            consistency_db_err(format!("invalid system event deployment id: {err}"))
+                        },
+                    )?,
+                    details: get::<Json<serde_json::Value>, _>(&row, 7)?.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
+        let row = self.client.lock().await.query_one(
+            "SELECT pg_database_size(current_database()), (SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE), (SELECT COUNT(*) FROM t_deployment), (SELECT COUNT(*) FROM t_system_event)", &[]
+        ).await?;
+        Ok(StorageStatus {
+            database_bytes: u64::try_from(get::<i64, _>(&row, 0)?).ok(),
+            execution_count: get::<i64, _>(&row, 1)? as u64,
+            deployment_count: get::<i64, _>(&row, 2)? as u64,
+            system_event_count: get::<i64, _>(&row, 3)? as u64,
+        })
+    }
+
+    async fn gc_system_events(
+        &self,
+        created_before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64, DbErrorWrite> {
+        Ok(self.client.lock().await.execute(
+            "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2)",
+            &[&created_before, &i64::from(limit.clamp(1, 10_000))]
+        ).await?)
+    }
+
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,

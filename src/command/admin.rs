@@ -3,7 +3,7 @@ use crate::{
     client::{ClientStartup, send_json},
     server::web_api_server::admin::{
         CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
-        RetainDeploymentsRequest,
+        RetainDeploymentsRequest, StorageStatusResponse, SystemEventsResponse,
     },
 };
 use http::header::ACCEPT;
@@ -192,6 +192,54 @@ impl args::Admin {
                     response.blocked_by_execution_reference,
                     response.blocked_non_terminal,
                     response.has_more
+                );
+                print_result(json, &response, &message)
+            }
+            Self::Events(args::AdminEvents::List {
+                level,
+                code,
+                limit,
+                json,
+                api_url,
+            }) => {
+                let response: SystemEventsResponse = send_json(
+                    client
+                        .get(format!("{api_url}/v1/admin/system-events"))
+                        .query(&[("level", level), ("code", code)])
+                        .query(&[("limit", limit)])
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                } else {
+                    for event in response.events {
+                        println!(
+                            "{} {} {}: {}",
+                            event.created_at.to_rfc3339(),
+                            event.level,
+                            event.code,
+                            event.message
+                        );
+                    }
+                }
+                Ok(())
+            }
+            Self::Storage(args::AdminStorage::Show { json, api_url }) => {
+                let response: StorageStatusResponse = send_json(
+                    client
+                        .get(format!("{api_url}/v1/admin/storage"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
+                let message = format!(
+                    "database: {} bytes; executions: {}; deployments: {}; system events: {}",
+                    response
+                        .database_bytes
+                        .map_or_else(|| "unknown".into(), |n| n.to_string()),
+                    response.execution_count,
+                    response.deployment_count,
+                    response.system_event_count
                 );
                 print_result(json, &response, &message)
             }

@@ -1473,6 +1473,85 @@ pub struct ExecutionGcResult {
     pub has_more: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemEventLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+impl SystemEventLevel {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SystemEvent {
+    pub event_id: String,
+    pub created_at: DateTime<Utc>,
+    pub level: SystemEventLevel,
+    pub code: String,
+    pub message: String,
+    pub execution_id: Option<ExecutionId>,
+    pub deployment_id: Option<DeploymentId>,
+    pub details: serde_json::Value,
+}
+
+impl SystemEvent {
+    #[must_use]
+    pub fn new(
+        level: SystemEventLevel,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        execution_id: Option<ExecutionId>,
+        deployment_id: Option<DeploymentId>,
+        details: serde_json::Value,
+    ) -> Self {
+        fn bounded(value: String, length: usize) -> String {
+            value.chars().take(length).collect()
+        }
+        let details = if serde_json::to_vec(&details).is_ok_and(|encoded| encoded.len() <= 4000) {
+            details
+        } else {
+            serde_json::json!({"truncated": true})
+        };
+        Self {
+            event_id: format!("sev_{}", ulid::Ulid::new()),
+            created_at: Utc::now(),
+            level,
+            code: bounded(code.into(), 64),
+            message: bounded(message.into(), 512),
+            execution_id,
+            deployment_id,
+            details,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SystemEventFilter {
+    pub level: Option<SystemEventLevel>,
+    pub code: Option<String>,
+    pub deployment_id: Option<DeploymentId>,
+    pub before_event_id: Option<String>,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageStatus {
+    pub database_bytes: Option<u64>,
+    pub execution_count: u64,
+    pub deployment_count: u64,
+    pub system_event_count: u64,
+}
+
 #[async_trait]
 pub trait CasGc: Send + Sync {
     async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite>;
@@ -1480,6 +1559,21 @@ pub trait CasGc: Send + Sync {
 
 #[async_trait]
 pub trait DbAdmin: Send + Sync {
+    async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite>;
+
+    async fn list_system_events(
+        &self,
+        filter: SystemEventFilter,
+    ) -> Result<Vec<SystemEvent>, DbErrorRead>;
+
+    async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead>;
+
+    async fn gc_system_events(
+        &self,
+        created_before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64, DbErrorWrite>;
+
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,

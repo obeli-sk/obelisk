@@ -1995,6 +1995,120 @@ fn cleanup_to_grpc(result: storage::CleanupResult) -> grpc_gen::CleanupResponse 
 
 #[tonic::async_trait]
 impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
+    async fn list_system_events(
+        &self,
+        request: tonic::Request<grpc_gen::ListSystemEventsRequest>,
+    ) -> TonicRespResult<grpc_gen::ListSystemEventsResponse> {
+        let request = request.into_inner();
+        let level = request
+            .level
+            .map(|level| match grpc_gen::SystemEventLevel::try_from(level) {
+                Ok(grpc_gen::SystemEventLevel::Info) => Ok(storage::SystemEventLevel::Info),
+                Ok(grpc_gen::SystemEventLevel::Warning) => Ok(storage::SystemEventLevel::Warning),
+                Ok(grpc_gen::SystemEventLevel::Error) => Ok(storage::SystemEventLevel::Error),
+                _ => Err(tonic::Status::invalid_argument(
+                    "invalid system event level",
+                )),
+            })
+            .transpose()?;
+        let limit = if request.limit == 0 {
+            100
+        } else {
+            request.limit
+        };
+        if limit > 1000 {
+            return Err(tonic::Status::invalid_argument(
+                "limit must not exceed 1000",
+            ));
+        }
+        let events = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .list_system_events(storage::SystemEventFilter {
+                level,
+                code: request.code,
+                deployment_id: request.deployment_id.map(TryInto::try_into).transpose()?,
+                before_event_id: request.before_event_id,
+                limit,
+            })
+            .await
+            .to_status()?;
+        let next_cursor =
+            (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
+        Ok(tonic::Response::new(grpc_gen::ListSystemEventsResponse {
+            events: events
+                .into_iter()
+                .map(|event| grpc_gen::SystemEvent {
+                    event_id: event.event_id,
+                    created_at: Some(event.created_at.into()),
+                    level: match event.level {
+                        storage::SystemEventLevel::Info => grpc_gen::SystemEventLevel::Info as i32,
+                        storage::SystemEventLevel::Warning => {
+                            grpc_gen::SystemEventLevel::Warning as i32
+                        }
+                        storage::SystemEventLevel::Error => {
+                            grpc_gen::SystemEventLevel::Error as i32
+                        }
+                    },
+                    code: event.code,
+                    message: event.message,
+                    execution_id: event.execution_id.map(Into::into),
+                    deployment_id: event.deployment_id.map(Into::into),
+                    details_json: event.details.to_string(),
+                })
+                .collect(),
+            next_cursor,
+        }))
+    }
+
+    async fn get_storage_status(
+        &self,
+        _request: tonic::Request<grpc_gen::GetStorageStatusRequest>,
+    ) -> TonicRespResult<grpc_gen::GetStorageStatusResponse> {
+        let status = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .get_storage_status()
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(grpc_gen::GetStorageStatusResponse {
+            database_bytes: status.database_bytes,
+            execution_count: status.execution_count,
+            deployment_count: status.deployment_count,
+            system_event_count: status.system_event_count,
+            cas_blob_count: None,
+            cas_bytes: None,
+        }))
+    }
+
+    async fn garbage_collect_system_events(
+        &self,
+        request: tonic::Request<grpc_gen::GarbageCollectSystemEventsRequest>,
+    ) -> TonicRespResult<grpc_gen::GarbageCollectSystemEventsResponse> {
+        let request = request.into_inner();
+        let created_before = request
+            .created_before
+            .argument_must_exist("created_before")?
+            .try_into()
+            .map_err(|_| tonic::Status::invalid_argument("invalid created_before"))?;
+        validate_batch_size(request.limit)?;
+        let deleted = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .gc_system_events(created_before, request.limit)
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(
+            grpc_gen::GarbageCollectSystemEventsResponse { deleted },
+        ))
+    }
+
     async fn delete_execution_tree(
         &self,
         request: tonic::Request<grpc_gen::DeleteExecutionTreeRequest>,

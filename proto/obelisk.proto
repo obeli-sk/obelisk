@@ -58,6 +58,9 @@ service AdminRepository {
     rpc RetainExecutions(RetainExecutionsRequest) returns (CleanupResponse);
     rpc DeleteDeployment(DeleteDeploymentRequest) returns (DeleteDeploymentResponse);
     rpc RetainDeployments(RetainDeploymentsRequest) returns (CleanupResponse);
+    rpc ListSystemEvents(ListSystemEventsRequest) returns (ListSystemEventsResponse);
+    rpc GetStorageStatus(GetStorageStatusRequest) returns (GetStorageStatusResponse);
+    rpc GarbageCollectSystemEvents(GarbageCollectSystemEventsRequest) returns (GarbageCollectSystemEventsResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -1358,6 +1361,48 @@ message CleanupResponse {
     uint64 blocked_by_execution_reference = 5;
     bool has_more = 6;
 }
+
+enum SystemEventLevel {
+    SYSTEM_EVENT_LEVEL_UNSPECIFIED = 0;
+    SYSTEM_EVENT_LEVEL_INFO = 1;
+    SYSTEM_EVENT_LEVEL_WARNING = 2;
+    SYSTEM_EVENT_LEVEL_ERROR = 3;
+}
+message SystemEvent {
+    string event_id = 1;
+    google.protobuf.Timestamp created_at = 2;
+    SystemEventLevel level = 3;
+    string code = 4;
+    string message = 5;
+    optional ExecutionId execution_id = 6;
+    optional DeploymentId deployment_id = 7;
+    string details_json = 8;
+}
+message ListSystemEventsRequest {
+    optional SystemEventLevel level = 1;
+    optional string code = 2;
+    optional DeploymentId deployment_id = 3;
+    optional string before_event_id = 4;
+    uint32 limit = 5;
+}
+message ListSystemEventsResponse {
+    repeated SystemEvent events = 1;
+    optional string next_cursor = 2;
+}
+message GetStorageStatusRequest {}
+message GetStorageStatusResponse {
+    optional uint64 database_bytes = 1;
+    uint64 execution_count = 2;
+    uint64 deployment_count = 3;
+    uint64 system_event_count = 4;
+    optional uint64 cas_blob_count = 5;
+    optional uint64 cas_bytes = 6;
+}
+message GarbageCollectSystemEventsRequest {
+    google.protobuf.Timestamp created_before = 1;
+    uint32 limit = 2;
+}
+message GarbageCollectSystemEventsResponse { uint64 deleted = 1; }
 
 message GetDeploymentRequest {
     DeploymentId deployment_id = 1;

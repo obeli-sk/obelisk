@@ -6,7 +6,7 @@ use concepts::{
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest, RetentionPolicy,
+        ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventFilter, SystemEventLevel,
     },
     time::ClockFn,
 };
@@ -32,6 +32,81 @@ fn deployment_record(
         created_by: None,
         files,
     }
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn system_events_are_filtered_paginated_and_collected(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let admin = db_pool.admin_conn().await.unwrap();
+    let first = SystemEvent::new(
+        SystemEventLevel::Info,
+        "server_started",
+        "Server started",
+        None,
+        None,
+        serde_json::json!({"version": "test"}),
+    );
+    let first_id = first.event_id.clone();
+    admin.append_system_event(first).await.unwrap();
+    let second = SystemEvent::new(
+        SystemEventLevel::Warning,
+        "storage_pressure",
+        "Storage pressure",
+        None,
+        None,
+        serde_json::json!({"threshold_percent": 90}),
+    );
+    let second_id = second.event_id.clone();
+    admin.append_system_event(second).await.unwrap();
+
+    let warning = admin
+        .list_system_events(SystemEventFilter {
+            level: Some(SystemEventLevel::Warning),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(warning.len(), 1);
+    assert_eq!(warning[0].event_id, second_id);
+    let first_page = admin
+        .list_system_events(SystemEventFilter {
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let older = admin
+        .list_system_events(SystemEventFilter {
+            before_event_id: Some(first_page[0].event_id.clone()),
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(older.len(), 1);
+    assert_ne!(older[0].event_id, first_page[0].event_id);
+    assert!([first_id, second_id].contains(&older[0].event_id));
+    assert_eq!(
+        admin.get_storage_status().await.unwrap().system_event_count,
+        2
+    );
+    assert_eq!(
+        admin
+            .gc_system_events(chrono::Utc::now() + Duration::seconds(1), 1)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        admin.get_storage_status().await.unwrap().system_event_count,
+        1
+    );
+    drop(admin);
+    db_close.close().await;
 }
 
 async fn create_execution(

@@ -29,8 +29,8 @@ use concepts::{
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
         ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked,
-        Version, VersionType,
+        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
+        SystemEventFilter, SystemEventLevel, TimeoutOutcome, Unlocked, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -5627,6 +5627,98 @@ impl SqlitePool {
 
 #[async_trait]
 impl DbAdmin for SqlitePool {
+    async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let details = serde_json::to_string(&event.details)
+                    .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
+                tx.execute(
+                    "INSERT INTO t_system_event (event_id, created_at, level, code, message, execution_id, deployment_id, details) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.message, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details],
+                )?;
+                Ok(())
+            },
+            TxType::Other,
+            "append_system_event",
+        ).await
+    }
+
+    async fn list_system_events(
+        &self,
+        filter: SystemEventFilter,
+    ) -> Result<Vec<SystemEvent>, DbErrorRead> {
+        self.transaction(
+            move |tx| {
+                let mut statement = tx.prepare(
+                    "SELECT event_id, created_at, level, code, message, execution_id, deployment_id, details FROM t_system_event
+                     WHERE (?1 IS NULL OR level = ?1) AND (?2 IS NULL OR code = ?2)
+                       AND (?3 IS NULL OR deployment_id = ?3) AND (?4 IS NULL OR event_id < ?4)
+                     ORDER BY event_id DESC LIMIT ?5"
+                )?;
+                let rows = statement.query_map(rusqlite::params![
+                    filter.level.map(SystemEventLevel::as_str), filter.code,
+                    filter.deployment_id.map(|id| id.to_string()), filter.before_event_id,
+                    i64::from(filter.limit.clamp(1, 1000))
+                ], |row| {
+                    let level: String = row.get(2)?;
+                    let details: String = row.get(7)?;
+                    Ok(SystemEvent {
+                        event_id: row.get(0)?, created_at: row.get(1)?,
+                        level: match level.as_str() { "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
+                        code: row.get(3)?, message: row.get(4)?,
+                        execution_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
+                        deployment_id: row.get::<_, Option<String>>(6)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,
+                        details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err)))?,
+                    })
+                })?.collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }, TxType::Other, "list_system_events"
+        ).await
+    }
+
+    async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
+        self.transaction(
+            |tx| {
+                let page_count: i64 = tx.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+                let page_size: i64 = tx.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+                Ok(StorageStatus {
+                    database_bytes: page_count
+                        .checked_mul(page_size)
+                        .and_then(|n| u64::try_from(n).ok()),
+                    execution_count: tx.query_row(
+                        "SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )? as u64,
+                    deployment_count: tx.query_row(
+                        "SELECT COUNT(*) FROM t_deployment",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )? as u64,
+                    system_event_count: tx.query_row(
+                        "SELECT COUNT(*) FROM t_system_event",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )? as u64,
+                })
+            },
+            TxType::Other,
+            "get_storage_status",
+        )
+        .await
+    }
+
+    async fn gc_system_events(
+        &self,
+        created_before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<u64, DbErrorWrite> {
+        self.transaction(
+            move |tx| Ok(tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit.clamp(1, 10_000))])? as u64),
+            TxType::MultipleWrites, "gc_system_events"
+        ).await
+    }
+
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,
