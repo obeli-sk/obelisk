@@ -3333,56 +3333,52 @@ fn spawn_maintenance_gc(
     mut termination_watcher: watch::Receiver<()>,
     config: GarbageCollectionTomlConfig,
 ) -> AbortOnDropHandle {
-    let handle = utils::spawn::spawn_named(
-        "maintenance_gc",
-        async move {
-            debug!("Spawned maintenance garbage collector");
-            let interval = Duration::from(config.interval);
-            let batch_delay = Duration::from(config.batch_delay);
+    let handle = utils::spawn::spawn_named("maintenance_gc", async move {
+        debug!("Spawned maintenance garbage collector");
+        let interval = Duration::from(config.interval);
+        let batch_delay = Duration::from(config.batch_delay);
+        loop {
+            tokio::select! {
+                biased;
+                _ = termination_watcher.changed() => break,
+                () = tokio::time::sleep(interval) => {}
+            }
             loop {
-                tokio::select! {
+                let collect = async {
+                    let admin = db_pool.admin_conn().await?;
+                    admin.gc_executions(config.batch_size).await
+                };
+                let result = tokio::select! {
                     biased;
                     _ = termination_watcher.changed() => break,
-                    () = tokio::time::sleep(interval) => {}
-                }
-                loop {
-                    let collect = async {
-                        let admin = db_pool.admin_conn().await?;
-                        admin.gc_executions(config.batch_size).await
-                    };
-                    let result = tokio::select! {
-                        biased;
-                        _ = termination_watcher.changed() => break,
-                        result = collect => result,
-                    };
-                    match result {
-                        Ok(result) if result.has_more && result.deleted_rows > 0 => {
-                            tokio::select! {
-                                biased;
-                                _ = termination_watcher.changed() => break,
-                                () = tokio::time::sleep(batch_delay) => {}
-                            }
+                    result = collect => result,
+                };
+                match result {
+                    Ok(result) if result.has_more && result.deleted_rows > 0 => {
+                        tokio::select! {
+                            biased;
+                            _ = termination_watcher.changed() => break,
+                            () = tokio::time::sleep(batch_delay) => {}
                         }
-                        Ok(_) => {
-                            if let Err(err) = deployment_switch_manager
-                                .gc_cas(false, config.batch_size)
-                                .await
-                            {
-                                debug!("automatic CAS garbage collection deferred: {err}");
-                            }
-                            break;
+                    }
+                    Ok(_) => {
+                        if let Err(err) = deployment_switch_manager
+                            .gc_cas(false, config.batch_size)
+                            .await
+                        {
+                            debug!("automatic CAS garbage collection deferred: {err}");
                         }
-                        Err(err) => {
-                            warn!("automatic execution garbage collection failed: {err}");
-                            break;
-                        }
+                        break;
+                    }
+                    Err(err) => {
+                        warn!("automatic execution garbage collection failed: {err}");
+                        break;
                     }
                 }
             }
-            debug!("Ending maintenance garbage collector");
         }
-        .instrument(info_span!(parent: None, "maintenance_gc")),
-    );
+        debug!("Ending maintenance garbage collector");
+    });
     AbortOnDropHandle::new(handle.abort_handle())
 }
 

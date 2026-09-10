@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
-use tracing::{Instrument, Level, debug, info_span, instrument, trace, warn};
+use tracing::{Level, debug, instrument, trace, warn};
 
 const RECV_MANY_LIMIT: usize = 500; // max items per tx
 const DB_ERR_DELAY_MS: u64 = 100;
@@ -40,7 +40,6 @@ pub fn spawn_new(
                     }
                 }
             }
-            .instrument(info_span!(parent: None, "log_db_forwarder"))
         })
         .abort_handle(),
     )

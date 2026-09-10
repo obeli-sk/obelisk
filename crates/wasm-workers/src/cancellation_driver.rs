@@ -31,7 +31,7 @@ use db_common::{
 };
 use executor::AbortOnDropHandle;
 use std::{collections::HashMap, collections::HashSet, sync::Arc, time::Duration};
-use tracing::{Instrument, debug, info_span, warn};
+use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
 enum CloseStepError {
@@ -56,34 +56,30 @@ impl CancellationDriver {
         batch_size: u32,
     ) -> AbortOnDropHandle {
         AbortOnDropHandle::new(
-            utils::spawn::spawn_named(
-                "cancellation_driver",
-                async move {
-                    debug!("Spawned the cancellation driver");
-                    // Child executions (activities/workflows) whose cancellation was
-                    // already requested by this process. Avoids needless DB interactions as further cancellation
-                    // requests are skipped.
-                    let mut cancellation_requested_inflight: HashSet<ExecutionIdDerived> =
-                        HashSet::new();
-                    loop {
-                        match db_pool.connection().await {
-                            Ok(conn) => {
-                                tick(
-                                    conn.as_ref(),
-                                    &cancel_registry,
-                                    clock_fn.now(),
-                                    batch_size,
-                                    &mut cancellation_requested_inflight,
-                                )
-                                .await;
-                            }
-                            Err(err) => warn!("Cannot obtain a db connection - {err:?}"),
+            utils::spawn::spawn_named("cancellation_driver", async move {
+                debug!("Spawned the cancellation driver");
+                // Child executions (activities/workflows) whose cancellation was
+                // already requested by this process. Avoids needless DB interactions as further cancellation
+                // requests are skipped.
+                let mut cancellation_requested_inflight: HashSet<ExecutionIdDerived> =
+                    HashSet::new();
+                loop {
+                    match db_pool.connection().await {
+                        Ok(conn) => {
+                            tick(
+                                conn.as_ref(),
+                                &cancel_registry,
+                                clock_fn.now(),
+                                batch_size,
+                                &mut cancellation_requested_inflight,
+                            )
+                            .await;
                         }
-                        sleep.sleep(tick_sleep).await;
+                        Err(err) => warn!("Cannot obtain a db connection - {err:?}"),
                     }
+                    sleep.sleep(tick_sleep).await;
                 }
-                .instrument(info_span!(parent: None, "cancellation_driver")),
-            )
+            })
             .abort_handle(),
         )
     }

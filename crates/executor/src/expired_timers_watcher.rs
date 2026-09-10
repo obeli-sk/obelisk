@@ -18,9 +18,7 @@ use concepts::{
     storage::{ExecutionRequest, ExpiredTimer},
 };
 use std::{sync::Arc, time::Duration};
-use tracing::Instrument;
 use tracing::Level;
-use tracing::info_span;
 use tracing::trace;
 use tracing::warn;
 use tracing::{debug, info, instrument};
@@ -46,23 +44,19 @@ pub struct TickProgress {
 pub fn spawn_new(db_pool: Arc<dyn DbPool>, config: TimersWatcherConfig) -> AbortOnDropHandle {
     let tick_sleep = config.tick_sleep;
     AbortOnDropHandle::new(
-        utils::spawn::spawn_named(
-            "expired_timers_watcher",
-            async move {
-                debug!("Spawned expired timers watcher");
-                let mut old_err = None;
-                loop {
-                    let executed_at = config.clock_fn.now() - config.leeway;
-                    let res = match db_pool.connection().await {
-                        Ok(conn) => tick(conn.as_ref(), executed_at).await,
-                        Err(err) => Err(DbErrorWrite::from(err)),
-                    };
-                    log_err_if_new(res, &mut old_err);
-                    tokio::time::sleep(tick_sleep).await;
-                }
+        utils::spawn::spawn_named("expired_timers_watcher", async move {
+            debug!("Spawned expired timers watcher");
+            let mut old_err = None;
+            loop {
+                let executed_at = config.clock_fn.now() - config.leeway;
+                let res = match db_pool.connection().await {
+                    Ok(conn) => tick(conn.as_ref(), executed_at).await,
+                    Err(err) => Err(DbErrorWrite::from(err)),
+                };
+                log_err_if_new(res, &mut old_err);
+                tokio::time::sleep(tick_sleep).await;
             }
-            .instrument(info_span!(parent: None, "expired_timers_watcher")),
-        )
+        })
         .abort_handle(),
     )
 }
