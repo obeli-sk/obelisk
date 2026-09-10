@@ -1,4 +1,7 @@
 [build]
+# Always build with tokio_unstable so task names (utils::spawn::spawn_named)
+# and tokio-console are available without a manual RUSTFLAGS override.
+rustflags = ["--cfg", "tokio_unstable"]
 
 [env]
 CARGO_WORKSPACE_DIR = { value = "", relative = true } # remove once stable https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-reads
