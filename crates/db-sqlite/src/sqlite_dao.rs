@@ -321,6 +321,8 @@ enum LtxPriority {
     Low,
 }
 
+const SLOW_TRANSACTION_THRESHOLD: Duration = Duration::from_millis(500);
+
 #[derive(derive_more::Debug)]
 enum ThreadCommand {
     LogicalTx(LogicalTx),
@@ -751,7 +753,20 @@ impl SqlitePool {
                 warn!("Cannot commit transaction - {err:?}");
                 CommitError(RusqliteError::from(err))
             });
-            histograms.record_commit(now.elapsed());
+            let commit_elapsed = now.elapsed();
+            histograms.record_commit(commit_elapsed);
+            if commit_elapsed >= SLOW_TRANSACTION_THRESHOLD {
+                let transactions = ltx_list
+                    .iter()
+                    .filter(|(_, result)| *result == ApplyOrSkip::Apply)
+                    .map(|(ltx, _)| ltx.func_name)
+                    .collect::<Vec<_>>();
+                warn!(
+                    elapsed_ms = commit_elapsed.as_millis(),
+                    ?transactions,
+                    "slow SQLite physical transaction commit"
+                );
+            }
             Ok(commit_result)
         }
 
@@ -791,6 +806,14 @@ impl SqlitePool {
         )?;
 
         for (ltx, apply_or_skip) in ltx_list {
+            let total_elapsed = ltx.sent_at.elapsed();
+            if total_elapsed >= SLOW_TRANSACTION_THRESHOLD {
+                warn!(
+                    transaction = ltx.func_name,
+                    elapsed_ms = total_elapsed.as_millis(),
+                    "slow SQLite transaction completed"
+                );
+            }
             let to_send = match apply_or_skip {
                 ApplyOrSkip::Apply => ok_or_commit_error.clone(),
                 ApplyOrSkip::Skip => {
@@ -814,7 +837,22 @@ impl SqlitePool {
         let sent_latency = ltx.sent_at.elapsed();
         let started_at = Instant::now();
         let res = (ltx.func)(physical_tx);
-        histograms.record_command(sent_latency, ltx.func_name, started_at.elapsed());
+        let execution_latency = started_at.elapsed();
+        histograms.record_command(sent_latency, ltx.func_name, execution_latency);
+        if sent_latency >= SLOW_TRANSACTION_THRESHOLD {
+            warn!(
+                transaction = ltx.func_name,
+                elapsed_ms = sent_latency.as_millis(),
+                "SQLite transaction waited in writer queue"
+            );
+        }
+        if execution_latency >= SLOW_TRANSACTION_THRESHOLD {
+            warn!(
+                transaction = ltx.func_name,
+                elapsed_ms = execution_latency.as_millis(),
+                "slow SQLite transaction body"
+            );
+        }
         res
     }
 
