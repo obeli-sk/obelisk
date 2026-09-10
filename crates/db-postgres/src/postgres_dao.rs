@@ -5875,8 +5875,11 @@ impl DbAdmin for PostgresConnection {
         let tx = client.transaction().await?;
         let rows = tx
             .query(
-                "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' \
-             ORDER BY created_at DESC, execution_id DESC LIMIT $1 OFFSET $2",
+                "SELECT execution_id FROM (\
+                     SELECT execution_id, created_at FROM t_state \
+                     WHERE is_top_level = true AND state = 'finished' \
+                     ORDER BY created_at DESC, execution_id DESC OFFSET $2\
+                 ) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
                 &[&(i64::from(batch_size) + 1), &i64::from(retain_count)],
             )
             .await?;
@@ -5933,8 +5936,11 @@ impl DbAdmin for PostgresConnection {
         let tx = client.transaction().await?;
         let rows = tx
             .query(
-                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' \
-             ORDER BY created_at DESC, deployment_id DESC OFFSET $1",
+                "SELECT deployment_id FROM (\
+                     SELECT deployment_id, created_at FROM t_deployment \
+                     WHERE status = 'inactive' \
+                     ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
+                 ) retained ORDER BY created_at ASC, deployment_id ASC",
                 &[&i64::from(retain_count)],
             )
             .await?;
