@@ -2968,6 +2968,25 @@ async fn require_live_root(
     }
 }
 
+async fn reject_tombstoned_root(
+    tx: &Transaction<'_>,
+    execution_id: &ExecutionId,
+) -> Result<(), DbErrorRead> {
+    let root = ExecutionId::TopLevel(execution_id.get_top_level());
+    let tombstoned = tx
+        .query_opt(
+            "SELECT tombstoned FROM t_state WHERE execution_id = $1 AND is_top_level = TRUE",
+            &[&root.to_string()],
+        )
+        .await?
+        .is_some_and(|row| row.get::<_, bool>(0));
+    if tombstoned {
+        Err(DbErrorRead::NotFound)
+    } else {
+        Ok(())
+    }
+}
+
 async fn append_response(
     tx: &Transaction<'_>,
     execution_id: &ExecutionId,
@@ -5247,7 +5266,7 @@ impl DbExternalApi for PostgresConnection {
     ) -> Result<ListResponsesResponse, DbErrorRead> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        require_live_root(&tx, execution_id).await?;
+        reject_tombstoned_root(&tx, execution_id).await?;
 
         let max_cursor = get_max_response_cursor(&tx, execution_id).await?;
         let responses = list_responses(&tx, execution_id, Some(pagination), join_set).await?;

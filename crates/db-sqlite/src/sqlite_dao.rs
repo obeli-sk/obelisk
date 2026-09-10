@@ -556,6 +556,26 @@ impl SqlitePool {
         }
     }
 
+    fn reject_tombstoned_root(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+    ) -> Result<(), DbErrorRead> {
+        let root = ExecutionId::TopLevel(execution_id.get_top_level());
+        let tombstoned = tx
+            .query_row(
+                "SELECT tombstoned FROM t_state WHERE execution_id = ?1 AND is_top_level = TRUE",
+                [root.to_string()],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if tombstoned {
+            Err(DbErrorRead::NotFound)
+        } else {
+            Ok(())
+        }
+    }
+
     fn execution_is_non_terminal_tx(
         tx: &Transaction<'_>,
         execution_id: &ExecutionId,
@@ -5080,7 +5100,7 @@ impl DbExternalApi for SqlitePool {
         let join_set = join_set.cloned();
         self.transaction(
             move |tx| {
-                Self::require_live_root(tx, &execution_id)?;
+                Self::reject_tombstoned_root(tx, &execution_id)?;
                 let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
                 let responses =
                     Self::list_responses(tx, &execution_id, Some(pagination), join_set.as_ref())?;
