@@ -16,7 +16,8 @@ where
 {
     if crate::env_vars::is_env_true(&crate::env_vars::SupportedEnvVar::TOKIO_CONSOLE) {
         // Run with
-        // TOKIO_CONSOLE=true RUSTFLAGS="--cfg tokio_unstable" cargo run --features tokio-console
+        // TOKIO_CONSOLE=true cargo run --features tokio-console
+        // (tokio_unstable is enabled by default via .cargo/config.toml)
         use tracing_subscriber::Layer;
         Some(
             console_subscriber::spawn().with_filter(

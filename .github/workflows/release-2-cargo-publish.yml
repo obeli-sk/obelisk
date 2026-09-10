@@ -149,7 +149,7 @@ jobs:
           else
             PACKAGE_ARGS+=(--workspace)
           fi
-          nix develop .#publish --command cargo publish "${PACKAGE_ARGS[@]}" --locked $DRY_RUN_ARG $NO_VERIFY_ARG
+          nix develop --command cargo publish "${PACKAGE_ARGS[@]}" --locked $DRY_RUN_ARG $NO_VERIFY_ARG
 
   call_child:
     needs:
