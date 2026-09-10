@@ -2536,6 +2536,18 @@ async fn append(
     }
 
     let combined_state = get_combined_state(tx, execution_id).await?;
+    // Manual advance is the only path that appends ordinary workflow events while the
+    // execution is paused. Recheck its root in every committing transaction so a
+    // concurrent admin tombstone stops the next captured write. Already-locked work
+    // deliberately remains allowed to finish after its root is tombstoned.
+    if matches!(
+        combined_state.execution_with_state.pending_state,
+        PendingState::Paused(_)
+    ) {
+        require_live_root(tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+    }
     if combined_state
         .execution_with_state
         .pending_state
@@ -5848,11 +5860,9 @@ async fn deployment_execution_roots_tx(
         .await?
         .into_iter()
         .map(|row| {
-            let id = row
-                .get::<_, String>(0)
+            row.get::<_, String>(0)
                 .parse::<ExecutionId>()
-                .expect("database execution id must be valid");
-            id
+                .expect("database execution id must be valid")
         })
         .collect())
 }

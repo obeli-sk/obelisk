@@ -2287,6 +2287,16 @@ impl SqlitePool {
         }
 
         let combined_state = Self::get_combined_state(tx, execution_id)?;
+        // Manual advance is the only path that appends ordinary workflow events while the
+        // execution is paused. Recheck its root in every committing transaction so a
+        // concurrent admin tombstone stops the next captured write. Already-locked work
+        // deliberately remains allowed to finish after its root is tombstoned.
+        if matches!(
+            combined_state.execution_with_state.pending_state,
+            PendingState::Paused(_)
+        ) {
+            Self::require_live_root(tx, execution_id).map_err(DbErrorWrite::from)?;
+        }
         if combined_state
             .execution_with_state
             .pending_state
