@@ -1322,9 +1322,13 @@ message DeleteExecutionTreeResponse {
     bool already_deleted = 2;
 }
 message RetainExecutionsRequest {
-    uint32 retain_count = 1;
+    oneof retention {
+        uint32 retain_count = 1;
+        google.protobuf.Duration max_age = 4;
+    }
     uint32 batch_size = 2;
     bool dry_run = 3;
+    bool force_non_terminal = 5;
 }
 message DeleteDeploymentRequest {
     DeploymentId deployment_id = 1;
@@ -1337,7 +1341,10 @@ message DeleteDeploymentResponse {
     uint64 deleted_execution_trees = 3;
 }
 message RetainDeploymentsRequest {
-    uint32 retain_count = 1;
+    oneof retention {
+        uint32 retain_count = 1;
+        google.protobuf.Duration max_age = 6;
+    }
     uint32 batch_size = 2;
     bool delete_executions = 3;
     bool dry_run = 4;

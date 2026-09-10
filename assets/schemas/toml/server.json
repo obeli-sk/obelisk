@@ -845,6 +845,16 @@
           "default": {
             "milliseconds": 25
           }
+        },
+        "retention_enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "retention_max_age": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "hours": 720
+          }
         }
       },
       "additionalProperties": false

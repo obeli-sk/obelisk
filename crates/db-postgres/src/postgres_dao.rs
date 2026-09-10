@@ -28,9 +28,9 @@ use concepts::{
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked, Version,
-        VersionType, WasmBacktrace,
+        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked,
+        Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -430,8 +430,8 @@ async fn insert_deployment_tx(
     let digest = record.digest.to_string();
     tx.execute(
         "INSERT INTO t_deployment \
-         (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+         (deployment_id, description, digest, created_at, inactive_at, status, deployment_toml, obelisk_version, created_by) \
+         VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8)",
         &[
             &record.deployment_id.to_string(), // $1
             &record.description,               // $2
@@ -5454,14 +5454,14 @@ impl DbExternalApi for PostgresConnection {
         let tx = client_guard.transaction().await?;
         // Demote currently active or enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status IN ('active', 'enqueued')",
-            &[],
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = $1 WHERE status IN ('active', 'enqueued')",
+            &[&now],
         )
         .await?;
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = $1 WHERE deployment_id = $2",
+                "UPDATE t_deployment SET status = 'active', last_active_at = $1, inactive_at = NULL WHERE deployment_id = $2",
                 &[&now, &deployment_id.to_string()],
             )
             .await?;
@@ -5490,7 +5490,7 @@ impl DbExternalApi for PostgresConnection {
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'enqueued'",
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = CURRENT_TIMESTAMP WHERE status = 'enqueued'",
             &[],
         )
         .await?;
@@ -5502,7 +5502,7 @@ impl DbExternalApi for PostgresConnection {
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'enqueued' WHERE deployment_id = $1",
+                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL WHERE deployment_id = $1",
                 &[&deployment_id.to_string()],
             )
             .await?;
@@ -5975,25 +5975,41 @@ impl DbAdmin for PostgresConnection {
 
     async fn retain_executions(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let rows = tx
-            .query(
+        let rows = match (retention, force_non_terminal) {
+            (RetentionPolicy::Count(count), false) => tx.query(
                 "SELECT execution_id FROM (\
                      SELECT execution_id, created_at FROM t_state \
                      WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
                      ORDER BY created_at DESC, execution_id DESC OFFSET $2\
                  ) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
-                &[&(i64::from(batch_size) + 1), &i64::from(retain_count)],
-            )
-            .await?;
+                &[&(i64::from(batch_size) + 1), &i64::from(count)],
+            ).await?,
+            (RetentionPolicy::CreatedAtOrAfter(cutoff), false) => tx.query(
+                "SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &cutoff],
+            ).await?,
+            (RetentionPolicy::Count(count), true) => tx.query(
+                "SELECT execution_id FROM (SELECT execution_id, created_at FROM t_state WHERE is_top_level = true AND tombstoned = FALSE ORDER BY created_at DESC, execution_id DESC OFFSET $2) retained ORDER BY created_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &i64::from(count)],
+            ).await?,
+            (RetentionPolicy::CreatedAtOrAfter(cutoff), true) => tx.query(
+                "SELECT execution_id FROM t_state WHERE is_top_level = true AND tombstoned = FALSE AND updated_at < $2 ORDER BY updated_at ASC, execution_id ASC LIMIT $1",
+                &[&(i64::from(batch_size) + 1), &cutoff],
+            ).await?,
+        };
         let has_more = rows.len() > batch_size as usize;
         let mut result = CleanupResult {
-            retained: u64::from(retain_count),
+            retained: match retention {
+                RetentionPolicy::Count(count) => u64::from(count),
+                RetentionPolicy::CreatedAtOrAfter(_) => 0,
+            },
             has_more,
             ..Default::default()
         };
@@ -6005,11 +6021,11 @@ impl DbAdmin for PostgresConnection {
                     .get::<_, String>(0)
                     .parse::<ExecutionId>()
                     .expect("database execution id must be valid");
-                match delete_execution_tree_tx(&tx, &id, false).await? {
+                match delete_execution_tree_tx(&tx, &id, force_non_terminal).await? {
                     DeleteExecutionTreeResult::Deleted => result.deleted_execution_trees += 1,
-                    DeleteExecutionTreeResult::NonTerminal => result.blocked_non_terminal += 1,
-                    DeleteExecutionTreeResult::ActiveDeployment => {
-                        unreachable!("force is disabled")
+                    DeleteExecutionTreeResult::NonTerminal
+                    | DeleteExecutionTreeResult::ActiveDeployment => {
+                        result.blocked_non_terminal += 1;
                     }
                     DeleteExecutionTreeResult::AlreadyDeleted => {}
                 }
@@ -6035,7 +6051,7 @@ impl DbAdmin for PostgresConnection {
 
     async fn retain_deployments(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
         delete_executions: bool,
         force_non_terminal: bool,
@@ -6043,18 +6059,25 @@ impl DbAdmin for PostgresConnection {
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let rows = tx
-            .query(
+        let rows = match retention {
+            RetentionPolicy::Count(count) => tx.query(
                 "SELECT deployment_id FROM (\
                      SELECT deployment_id, created_at FROM t_deployment \
                      WHERE status = 'inactive' \
                      ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
                  ) retained ORDER BY created_at ASC, deployment_id ASC",
-                &[&i64::from(retain_count)],
-            )
-            .await?;
+                &[&i64::from(count)],
+            ).await?,
+            RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
+                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC",
+                &[&cutoff],
+            ).await?,
+        };
         let mut result = CleanupResult {
-            retained: u64::from(retain_count),
+            retained: match retention {
+                RetentionPolicy::Count(count) => u64::from(count),
+                RetentionPolicy::CreatedAtOrAfter(_) => 0,
+            },
             ..Default::default()
         };
         for row in rows {

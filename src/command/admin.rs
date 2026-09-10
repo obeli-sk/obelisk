@@ -70,13 +70,20 @@ impl args::Admin {
             }
             Self::Executions(args::AdminExecutions::Retain {
                 count,
+                max_age,
                 batch_size,
+                force,
                 dry_run,
                 json,
                 api_url,
             }) => {
+                if force {
+                    eprintln!(
+                        "WARNING: forcibly deleting non-terminal execution trees whose roots do not belong to the active deployment"
+                    );
+                }
                 if !dry_run {
-                    eprintln!("Deleting completed execution trees older than the newest {count}");
+                    eprintln!("Deleting execution trees outside the retention policy");
                 }
                 let response: CleanupResponse = send_json(
                     client
@@ -84,7 +91,9 @@ impl args::Admin {
                         .header(ACCEPT, "application/json")
                         .json(&CleanupRequest {
                             retain_count: count,
+                            max_age_seconds: max_age.map(|age| age.as_secs()),
                             batch_size,
+                            force_non_terminal: force,
                             dry_run,
                         }),
                 )
@@ -146,6 +155,7 @@ impl args::Admin {
             }
             Self::Deployments(args::AdminDeployments::Retain {
                 count,
+                max_age,
                 delete_executions,
                 force,
                 batch_size,
@@ -159,7 +169,7 @@ impl args::Admin {
                     );
                 }
                 if !dry_run {
-                    eprintln!("Deleting inactive deployments older than the newest {count}");
+                    eprintln!("Deleting inactive deployments outside the retention policy");
                 }
                 let response: CleanupResponse = send_json(
                     client
@@ -167,6 +177,7 @@ impl args::Admin {
                         .header(ACCEPT, "application/json")
                         .json(&RetainDeploymentsRequest {
                             retain_count: count,
+                            max_age_seconds: max_age.map(|age| age.as_secs()),
                             batch_size,
                             delete_executions,
                             force_non_terminal: force,

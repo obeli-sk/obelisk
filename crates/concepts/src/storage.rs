@@ -1434,6 +1434,12 @@ pub struct CleanupResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionPolicy {
+    Count(u32),
+    CreatedAtOrAfter(DateTime<Utc>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteExecutionTreeResult {
     Deleted,
     AlreadyDeleted,
@@ -1482,8 +1488,9 @@ pub trait DbAdmin: Send + Sync {
 
     async fn retain_executions(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite>;
 
@@ -1496,7 +1503,7 @@ pub trait DbAdmin: Send + Sync {
 
     async fn retain_deployments(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
         delete_executions: bool,
         force_non_terminal: bool,

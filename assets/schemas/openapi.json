@@ -2177,7 +2177,6 @@
       "CleanupRequest": {
         "type": "object",
         "required": [
-          "retain_count",
           "batch_size"
         ],
         "properties": {
@@ -2189,8 +2188,22 @@
           "dry_run": {
             "type": "boolean"
           },
+          "force_non_terminal": {
+            "type": "boolean"
+          },
+          "max_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
           "retain_count": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32",
             "minimum": 0
           }
@@ -3318,7 +3331,6 @@
       "RetainDeploymentsRequest": {
         "type": "object",
         "required": [
-          "retain_count",
           "batch_size"
         ],
         "properties": {
@@ -3336,8 +3348,19 @@
           "force_non_terminal": {
             "type": "boolean"
           },
+          "max_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
           "retain_count": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32",
             "minimum": 0
           }

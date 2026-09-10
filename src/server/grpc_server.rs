@@ -2048,12 +2048,26 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
     ) -> TonicRespResult<grpc_gen::CleanupResponse> {
         let request = request.into_inner();
         validate_batch_size(request.batch_size)?;
+        let retention = match request.retention {
+            Some(grpc_gen::retain_executions_request::Retention::RetainCount(count)) => {
+                storage::RetentionPolicy::Count(count)
+            }
+            Some(grpc_gen::retain_executions_request::Retention::MaxAge(age)) => {
+                retention_from_grpc_age(age)?
+            }
+            None => return Err(tonic::Status::invalid_argument("retention is required")),
+        };
         let result = self
             .db_pool
             .admin_conn()
             .await
             .map_err(map_to_status)?
-            .retain_executions(request.retain_count, request.batch_size, request.dry_run)
+            .retain_executions(
+                retention,
+                request.batch_size,
+                request.force_non_terminal,
+                request.dry_run,
+            )
             .await
             .to_status()?;
         Ok(tonic::Response::new(cleanup_to_grpc(result)))
@@ -2130,6 +2144,15 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
     ) -> TonicRespResult<grpc_gen::CleanupResponse> {
         let request = request.into_inner();
         validate_batch_size(request.batch_size)?;
+        let retention = match request.retention {
+            Some(grpc_gen::retain_deployments_request::Retention::RetainCount(count)) => {
+                storage::RetentionPolicy::Count(count)
+            }
+            Some(grpc_gen::retain_deployments_request::Retention::MaxAge(age)) => {
+                retention_from_grpc_age(age)?
+            }
+            None => return Err(tonic::Status::invalid_argument("retention is required")),
+        };
         if request.force_non_terminal && !request.delete_executions {
             return Err(tonic::Status::failed_precondition(
                 "force_non_terminal requires delete_executions",
@@ -2141,7 +2164,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .await
             .map_err(map_to_status)?
             .retain_deployments(
-                request.retain_count,
+                retention,
                 request.batch_size,
                 request.delete_executions,
                 request.force_non_terminal,
@@ -2151,6 +2174,24 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .to_status()?;
         Ok(tonic::Response::new(cleanup_to_grpc(result)))
     }
+}
+
+fn retention_from_grpc_age(
+    age: prost_wkt_types::Duration,
+) -> Result<storage::RetentionPolicy, tonic::Status> {
+    let age = std::time::Duration::try_from(age)
+        .map_err(|_| tonic::Status::invalid_argument("max_age must be a positive duration"))?;
+    if age.is_zero() {
+        return Err(tonic::Status::invalid_argument(
+            "max_age must be greater than zero",
+        ));
+    }
+    let age = chrono::Duration::from_std(age)
+        .map_err(|_| tonic::Status::invalid_argument("max_age is too large"))?;
+    let cutoff = chrono::Utc::now()
+        .checked_sub_signed(age)
+        .ok_or_else(|| tonic::Status::invalid_argument("max_age is too large"))?;
+    Ok(storage::RetentionPolicy::CreatedAtOrAfter(cutoff))
 }
 
 fn validate_batch_size(batch_size: u32) -> Result<(), tonic::Status> {

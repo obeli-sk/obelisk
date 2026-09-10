@@ -173,12 +173,17 @@ pub(crate) enum AdminExecutions {
         )]
         api_url: String,
     },
-    /// Keep the newest completed top-level execution trees.
+    /// Retain top-level execution trees by count or age.
     Retain {
-        #[arg(long)]
-        count: u32,
+        #[arg(long, required_unless_present = "max_age", conflicts_with = "max_age")]
+        count: Option<u32>,
+        #[arg(long, value_parser = parse_retention_age)]
+        max_age: Option<std::time::Duration>,
         #[arg(long, default_value_t = 100)]
         batch_size: u32,
+        /// Delete non-terminal trees unless their roots belong to the active deployment.
+        #[arg(long)]
+        force: bool,
         #[arg(long)]
         dry_run: bool,
         #[arg(long)]
@@ -214,10 +219,12 @@ pub(crate) enum AdminDeployments {
         )]
         api_url: String,
     },
-    /// Keep the newest inactive deployments in addition to active and enqueued deployments.
+    /// Retain inactive deployments by count or age; active and enqueued deployments are kept.
     Retain {
-        #[arg(long)]
-        count: u32,
+        #[arg(long, required_unless_present = "max_age", conflicts_with = "max_age")]
+        count: Option<u32>,
+        #[arg(long, value_parser = parse_retention_age)]
+        max_age: Option<std::time::Duration>,
         #[arg(long)]
         delete_executions: bool,
         /// Delete non-terminal trees unless their roots belong to the active deployment.
@@ -237,6 +244,29 @@ pub(crate) enum AdminDeployments {
         )]
         api_url: String,
     },
+}
+
+fn parse_retention_age(value: &str) -> Result<std::time::Duration, String> {
+    let split = value
+        .find(|character: char| !character.is_ascii_digit())
+        .ok_or_else(|| "duration must have a unit: s, m, h, or d".to_owned())?;
+    let amount = value[..split]
+        .parse::<u64>()
+        .map_err(|_| "duration must start with a positive integer".to_owned())?;
+    if amount == 0 {
+        return Err("duration must be greater than zero".to_owned());
+    }
+    let multiplier = match &value[split..] {
+        "s" => 1,
+        "m" => 60,
+        "h" => 60 * 60,
+        "d" => 24 * 60 * 60,
+        _ => return Err("duration unit must be s, m, h, or d".to_owned()),
+    };
+    amount
+        .checked_mul(multiplier)
+        .map(std::time::Duration::from_secs)
+        .ok_or_else(|| "duration is too large".to_owned())
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -1315,7 +1345,7 @@ mod tests {
         else {
             panic!("expected deployment retention");
         };
-        assert_eq!(count, 10);
+        assert_eq!(count, Some(10));
         assert!(delete_executions);
         assert!(force);
 
@@ -1328,6 +1358,42 @@ mod tests {
                 "--count",
                 "10",
                 "--force",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn admin_retention_accepts_exactly_one_selector() {
+        let args = Args::try_parse_from([
+            "obelisk",
+            "admin",
+            "executions",
+            "retain",
+            "--max-age",
+            "30d",
+        ])
+        .unwrap();
+        let Subcommand::Admin(AdminArgs {
+            command: Admin::Executions(AdminExecutions::Retain { count, max_age, .. }),
+            ..
+        }) = args.command
+        else {
+            panic!("expected execution retention");
+        };
+        assert_eq!(count, None);
+        assert_eq!(max_age, Some(std::time::Duration::from_hours(30 * 24)));
+        assert!(Args::try_parse_from(["obelisk", "admin", "executions", "retain"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "obelisk",
+                "admin",
+                "executions",
+                "retain",
+                "--count",
+                "10",
+                "--max-age",
+                "30d",
             ])
             .is_err()
         );

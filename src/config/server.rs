@@ -615,6 +615,10 @@ pub(crate) struct GarbageCollectionTomlConfig {
     pub(crate) batch_size: u32,
     #[serde(default = "default_gc_batch_delay")]
     pub(crate) batch_delay: DurationConfig,
+    #[serde(default = "default_retention_enabled")]
+    pub(crate) retention_enabled: bool,
+    #[serde(default = "default_retention_max_age")]
+    pub(crate) retention_max_age: DurationConfig,
 }
 
 impl Default for GarbageCollectionTomlConfig {
@@ -624,6 +628,8 @@ impl Default for GarbageCollectionTomlConfig {
             interval: default_gc_interval(),
             batch_size: default_gc_batch_size(),
             batch_delay: default_gc_batch_delay(),
+            retention_enabled: default_retention_enabled(),
+            retention_max_age: default_retention_max_age(),
         }
     }
 }
@@ -953,6 +959,14 @@ const fn default_gc_batch_size() -> u32 {
 
 const fn default_gc_batch_delay() -> DurationConfig {
     DurationConfig::Milliseconds(25)
+}
+
+const fn default_retention_enabled() -> bool {
+    true
+}
+
+const fn default_retention_max_age() -> DurationConfig {
+    DurationConfig::Hours(30 * 24)
 }
 
 // HTTP server declaration (referenced by ServerConfigToml)

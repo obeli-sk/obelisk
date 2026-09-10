@@ -28,9 +28,9 @@ use concepts::{
         LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
         PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED,
-        STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked, Version,
-        VersionType,
+        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
+        STATE_LOCKED, STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked,
+        Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -3786,8 +3786,8 @@ impl SqlitePool {
         );
         tx.execute(
             "INSERT INTO t_deployment \
-             (deployment_id, description, digest, created_at, status, deployment_toml, obelisk_version, created_by) \
-             VALUES (:deployment_id, :description, :digest, :created_at, :status, :deployment_toml, :obelisk_version, :created_by)",
+             (deployment_id, description, digest, created_at, inactive_at, status, deployment_toml, obelisk_version, created_by) \
+             VALUES (:deployment_id, :description, :digest, :created_at, :created_at, :status, :deployment_toml, :obelisk_version, :created_by)",
             rusqlite::named_params! {
                 ":deployment_id": record.deployment_id.to_string(),
                 ":description": record.description,
@@ -4008,14 +4008,14 @@ impl SqlitePool {
     ) -> Result<(), DbErrorWrite> {
         // Demote the currently active or enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status IN ('active', 'enqueued')",
-            [],
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = :now WHERE status IN ('active', 'enqueued')",
+            rusqlite::named_params! { ":now": now },
         )
         .map_err(RusqliteError::from)?;
         // Set target deployment to active, recording activation time.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'active', last_active_at = :now WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'active', last_active_at = :now, inactive_at = NULL WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
                     ":now": now,
                     ":deployment_id": deployment_id.to_string(),
@@ -4046,7 +4046,7 @@ impl SqlitePool {
         }
         // Demote any previously enqueued deployment to inactive.
         tx.execute(
-            "UPDATE t_deployment SET status = 'inactive' WHERE status = 'enqueued'",
+            "UPDATE t_deployment SET status = 'inactive', inactive_at = strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now') WHERE status = 'enqueued'",
             [],
         )
         .map_err(RusqliteError::from)?;
@@ -4057,7 +4057,7 @@ impl SqlitePool {
         // Set target deployment to enqueued.
         let rows = tx
             .execute(
-                "UPDATE t_deployment SET status = 'enqueued' WHERE deployment_id = :deployment_id",
+                "UPDATE t_deployment SET status = 'enqueued', inactive_at = NULL WHERE deployment_id = :deployment_id",
                 rusqlite::named_params! {
                     ":deployment_id": deployment_id.to_string(),
                 },
@@ -5646,29 +5646,44 @@ impl DbAdmin for SqlitePool {
 
     async fn retain_executions(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
+        force_non_terminal: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let mut ids = tx
-                    .prepare(
-                        "SELECT execution_id FROM (\
+                let mut ids = match (retention, force_non_terminal) {
+                    (RetentionPolicy::Count(count), false) => tx
+                        .prepare("SELECT execution_id FROM (\
                              SELECT execution_id, created_at FROM t_state \
                              WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
                              ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2\
-                         ) ORDER BY created_at ASC, execution_id ASC LIMIT ?1",
-                    )?
-                    .query_map(
-                        rusqlite::params![i64::from(batch_size) + 1, i64::from(retain_count)],
+                         ) ORDER BY created_at ASC, execution_id ASC LIMIT ?1")?
+                        .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count)],
                         |row| row.get::<_, ExecutionId>(0),
                     )?
-                    .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<Vec<_>, _>>()?,
+                    (RetentionPolicy::CreatedAtOrAfter(cutoff), false) => tx
+                        .prepare("SELECT execution_id FROM t_state WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE AND updated_at < ?2 ORDER BY updated_at ASC, execution_id ASC LIMIT ?1")?
+                        .query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff], |row| row.get::<_, ExecutionId>(0))?
+                        .collect::<Result<Vec<_>, _>>()?,
+                    (RetentionPolicy::Count(count), true) => tx
+                        .prepare("SELECT execution_id FROM (SELECT execution_id, created_at FROM t_state WHERE is_top_level = true AND tombstoned = FALSE ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2) ORDER BY created_at ASC, execution_id ASC LIMIT ?1")?
+                        .query_map(rusqlite::params![i64::from(batch_size) + 1, i64::from(count)], |row| row.get::<_, ExecutionId>(0))?
+                        .collect::<Result<Vec<_>, _>>()?,
+                    (RetentionPolicy::CreatedAtOrAfter(cutoff), true) => tx
+                        .prepare("SELECT execution_id FROM t_state WHERE is_top_level = true AND tombstoned = FALSE AND updated_at < ?2 ORDER BY updated_at ASC, execution_id ASC LIMIT ?1")?
+                        .query_map(rusqlite::params![i64::from(batch_size) + 1, cutoff], |row| row.get::<_, ExecutionId>(0))?
+                        .collect::<Result<Vec<_>, _>>()?,
+                };
                 let has_more = ids.len() > batch_size as usize;
                 ids.truncate(batch_size as usize);
                 let mut result = CleanupResult {
-                    retained: u64::from(retain_count),
+                    retained: match retention {
+                        RetentionPolicy::Count(count) => u64::from(count),
+                        RetentionPolicy::CreatedAtOrAfter(_) => 0,
+                    },
                     has_more,
                     ..Default::default()
                 };
@@ -5676,15 +5691,13 @@ impl DbAdmin for SqlitePool {
                     if dry_run {
                         result.deleted_execution_trees += 1;
                     } else {
-                        match Self::delete_execution_tree_tx(tx, &id, false)? {
+                        match Self::delete_execution_tree_tx(tx, &id, force_non_terminal)? {
                             DeleteExecutionTreeResult::Deleted => {
                                 result.deleted_execution_trees += 1;
                             }
-                            DeleteExecutionTreeResult::NonTerminal => {
+                            DeleteExecutionTreeResult::NonTerminal
+                            | DeleteExecutionTreeResult::ActiveDeployment => {
                                 result.blocked_non_terminal += 1;
-                            }
-                            DeleteExecutionTreeResult::ActiveDeployment => {
-                                unreachable!("force is disabled")
                             }
                             DeleteExecutionTreeResult::AlreadyDeleted => {}
                         }
@@ -5717,7 +5730,7 @@ impl DbAdmin for SqlitePool {
 
     async fn retain_deployments(
         &self,
-        retain_count: u32,
+        retention: RetentionPolicy,
         batch_size: u32,
         delete_executions: bool,
         force_non_terminal: bool,
@@ -5725,20 +5738,28 @@ impl DbAdmin for SqlitePool {
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let ids = tx
-                    .prepare(
+                let ids = match retention {
+                    RetentionPolicy::Count(count) => tx.prepare(
                         "SELECT deployment_id FROM (\
                              SELECT deployment_id, created_at FROM t_deployment \
                              WHERE status = 'inactive' \
                              ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1\
                          ) ORDER BY created_at ASC, deployment_id ASC",
                     )?
-                    .query_map([i64::from(retain_count)], |row| {
+                    .query_map([i64::from(count)], |row| {
                         row.get::<_, DeploymentId>(0)
                     })?
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<Vec<_>, _>>()?,
+                    RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
+                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < ?1 ORDER BY inactive_at ASC, deployment_id ASC",
+                    )?.query_map([cutoff], |row| row.get::<_, DeploymentId>(0))?
+                    .collect::<Result<Vec<_>, _>>()?,
+                };
                 let mut result = CleanupResult {
-                    retained: u64::from(retain_count),
+                    retained: match retention {
+                        RetentionPolicy::Count(count) => u64::from(count),
+                        RetentionPolicy::CreatedAtOrAfter(_) => 0,
+                    },
                     ..Default::default()
                 };
                 for id in ids {

@@ -334,15 +334,19 @@ pub(crate) mod admin {
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct CleanupRequest {
-        pub(crate) retain_count: u32,
+        pub(crate) retain_count: Option<u32>,
+        pub(crate) max_age_seconds: Option<u64>,
         pub(crate) batch_size: u32,
+        #[serde(default)]
+        pub(crate) force_non_terminal: bool,
         #[serde(default)]
         pub(crate) dry_run: bool,
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct RetainDeploymentsRequest {
-        pub(crate) retain_count: u32,
+        pub(crate) retain_count: Option<u32>,
+        pub(crate) max_age_seconds: Option<u64>,
         pub(crate) batch_size: u32,
         #[serde(default)]
         pub(crate) delete_executions: bool,
@@ -392,6 +396,27 @@ pub(crate) mod admin {
             status: StatusCode::PRECONDITION_FAILED,
             message: message.into(),
             accept: AcceptHeader::Json,
+        }
+    }
+
+    fn retention_policy(
+        retain_count: Option<u32>,
+        max_age_seconds: Option<u64>,
+    ) -> Result<storage::RetentionPolicy, HttpResponse> {
+        match (retain_count, max_age_seconds) {
+            (Some(count), None) => Ok(storage::RetentionPolicy::Count(count)),
+            (None, Some(seconds)) if seconds > 0 => {
+                let age = chrono::Duration::from_std(std::time::Duration::from_secs(seconds))
+                    .map_err(|_| precondition("max_age_seconds is too large"))?;
+                let cutoff = chrono::Utc::now()
+                    .checked_sub_signed(age)
+                    .ok_or_else(|| precondition("max_age_seconds is too large"))?;
+                Ok(storage::RetentionPolicy::CreatedAtOrAfter(cutoff))
+            }
+            (None, Some(_)) => Err(precondition("max_age_seconds must be greater than zero")),
+            _ => Err(precondition(
+                "exactly one of retain_count or max_age_seconds is required",
+            )),
         }
     }
 
@@ -448,12 +473,18 @@ pub(crate) mod admin {
         Json(request): Json<CleanupRequest>,
     ) -> Result<Response, HttpResponse> {
         validate_batch_size(request.batch_size)?;
+        let retention = retention_policy(request.retain_count, request.max_age_seconds)?;
         let result = state
             .db_pool
             .admin_conn()
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .retain_executions(request.retain_count, request.batch_size, request.dry_run)
+            .retain_executions(
+                retention,
+                request.batch_size,
+                request.force_non_terminal,
+                request.dry_run,
+            )
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
         Ok(pretty_json_response(
@@ -537,6 +568,7 @@ pub(crate) mod admin {
         Json(request): Json<RetainDeploymentsRequest>,
     ) -> Result<Response, HttpResponse> {
         validate_batch_size(request.batch_size)?;
+        let retention = retention_policy(request.retain_count, request.max_age_seconds)?;
         if request.force_non_terminal && !request.delete_executions {
             return Err(precondition(
                 "force_non_terminal requires delete_executions",
@@ -548,7 +580,7 @@ pub(crate) mod admin {
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
             .retain_deployments(
-                request.retain_count,
+                retention,
                 request.batch_size,
                 request.delete_executions,
                 request.force_non_terminal,

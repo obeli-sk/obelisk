@@ -104,6 +104,7 @@ use concepts::storage::DeploymentFileRecord;
 use concepts::storage::EnqueueOutcome;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
+use concepts::storage::RetentionPolicy;
 use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentStatus};
 use concepts::time::ClockFn;
 use concepts::time::Now;
@@ -1667,6 +1668,11 @@ pub(crate) async fn run_internal(
     let maintenance_gc = config.maintenance.gc;
     if maintenance_gc.batch_size == 0 {
         bail!("`maintenance.gc.batch_size` must be greater than zero");
+    }
+    if maintenance_gc.retention_enabled
+        && Duration::from(maintenance_gc.retention_max_age).is_zero()
+    {
+        bail!("`maintenance.gc.retention_max_age` must be greater than zero");
     }
     let database = config.database.clone();
 
@@ -3337,11 +3343,54 @@ fn spawn_maintenance_gc(
         debug!("Spawned maintenance garbage collector");
         let interval = Duration::from(config.interval);
         let batch_delay = Duration::from(config.batch_delay);
+        let retention_max_age = Duration::from(config.retention_max_age);
+        if config.retention_enabled {
+            info!(
+                max_age_seconds = retention_max_age.as_secs(),
+                "Periodic retention enabled; terminal executions and inactive deployments older than the maximum age are eligible for deletion"
+            );
+        } else {
+            info!(
+                "Periodic retention disabled; history is retained until deleted through the admin API"
+            );
+        }
         loop {
             tokio::select! {
                 biased;
                 _ = termination_watcher.changed() => break,
                 () = tokio::time::sleep(interval) => {}
+            }
+            if config.retention_enabled {
+                let Some(cutoff) = chrono::Duration::from_std(retention_max_age)
+                    .ok()
+                    .and_then(|age| chrono::Utc::now().checked_sub_signed(age))
+                else {
+                    warn!("periodic retention maximum age is too large");
+                    break;
+                };
+                let retain = async {
+                    let admin = db_pool.admin_conn().await?;
+                    admin
+                        .retain_executions(
+                            RetentionPolicy::CreatedAtOrAfter(cutoff),
+                            config.batch_size,
+                            false,
+                            false,
+                        )
+                        .await?;
+                    admin
+                        .retain_deployments(
+                            RetentionPolicy::CreatedAtOrAfter(cutoff),
+                            config.batch_size,
+                            true,
+                            false,
+                            false,
+                        )
+                        .await
+                };
+                if let Err(err) = retain.await {
+                    warn!("automatic retention failed: {err}");
+                }
             }
             loop {
                 let collect = async {

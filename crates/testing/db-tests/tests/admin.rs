@@ -6,7 +6,7 @@ use concepts::{
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest,
+        ExecutionRequest, RetentionPolicy,
     },
     time::ClockFn,
 };
@@ -200,7 +200,10 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
     let middle = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
     clock.move_time_forward(Duration::milliseconds(1).to_std().unwrap());
     let newer = create_execution(db_pool.as_ref(), &clock, DeploymentId::generate(), true).await;
-    let result = admin.retain_executions(1, 1, false).await.unwrap();
+    let result = admin
+        .retain_executions(RetentionPolicy::Count(1), 1, false, false)
+        .await
+        .unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
     assert!(result.has_more);
     collect_execution_garbage(admin.as_ref()).await;
@@ -231,7 +234,10 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .await
             .is_ok()
     );
-    let result = admin.retain_executions(1, 1, false).await.unwrap();
+    let result = admin
+        .retain_executions(RetentionPolicy::Count(1), 1, false, false)
+        .await
+        .unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
     assert!(!result.has_more);
     collect_execution_garbage(admin.as_ref()).await;
@@ -404,7 +410,7 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
 
     let admin = db_pool.admin_conn().await.unwrap();
     let first = admin
-        .retain_deployments(0, 1, false, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
         .await
         .unwrap();
     assert_eq!(first.deleted_deployments, 1);
@@ -432,7 +438,7 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
     );
 
     let second = admin
-        .retain_deployments(0, 1, false, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
         .await
         .unwrap();
     assert_eq!(second.deleted_deployments, 1);
@@ -485,19 +491,92 @@ async fn deployment_retention_can_force_non_terminal_trees(database: Database) {
 
     let admin = db_pool.admin_conn().await.unwrap();
     let blocked = admin
-        .retain_deployments(0, 1, true, false, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false)
         .await
         .unwrap();
     assert_eq!(blocked.deleted_deployments, 0);
     assert_eq!(blocked.blocked_non_terminal, 1);
 
     let forced = admin
-        .retain_deployments(0, 1, true, true, false)
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, true, false)
         .await
         .unwrap();
     assert_eq!(forced.deleted_deployments, 1);
     assert_eq!(forced.deleted_execution_trees, 1);
     assert_eq!(forced.blocked_non_terminal, 0);
+
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn age_retention_uses_completion_and_inactive_times(database: Database) {
+    set_up();
+    // State transition timestamps use the database clock. Start near wall-clock time so
+    // advancing the simulated API clock also produces a meaningful retention cutoff.
+    let clock = SimClock::new(chrono::Utc::now());
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let old_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), old_deployment, clock.now()).await;
+    let old_execution = create_execution(db_pool.as_ref(), &clock, old_deployment, true).await;
+    let stale_non_terminal =
+        create_execution(db_pool.as_ref(), &clock, old_deployment, false).await;
+    clock.move_time_forward(Duration::days(31).to_std().unwrap());
+    let new_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), new_deployment, clock.now()).await;
+    db_pool
+        .external_api_conn()
+        .await
+        .unwrap()
+        .activate_deployment(old_deployment, clock.now())
+        .await
+        .unwrap();
+    db_pool
+        .external_api_conn()
+        .await
+        .unwrap()
+        .activate_deployment(new_deployment, clock.now())
+        .await
+        .unwrap();
+    let cutoff = clock.now() - Duration::days(30);
+    let admin = db_pool.admin_conn().await.unwrap();
+    let executions = admin
+        .retain_executions(RetentionPolicy::CreatedAtOrAfter(cutoff), 10, false, false)
+        .await
+        .unwrap();
+    assert_eq!(executions.deleted_execution_trees, 1);
+    assert_eq!(
+        admin
+            .delete_execution_tree(&old_execution, false)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::AlreadyDeleted
+    );
+    let forced = admin
+        .retain_executions(RetentionPolicy::CreatedAtOrAfter(cutoff), 10, true, false)
+        .await
+        .unwrap();
+    assert_eq!(forced.deleted_execution_trees, 1);
+    assert_eq!(
+        admin
+            .delete_execution_tree(&stale_non_terminal, true)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::AlreadyDeleted
+    );
+    let deployments = admin
+        .retain_deployments(
+            RetentionPolicy::CreatedAtOrAfter(cutoff),
+            10,
+            true,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(deployments.deleted_deployments, 0);
 
     drop(admin);
     db_close.close().await;
