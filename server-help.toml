@@ -92,8 +92,12 @@
 # interval.seconds = 30
 # batch_size = 1000
 # batch_delay.milliseconds = 25
-# retention_enabled = true
-# retention_max_age.hours = 720
+# [maintenance.gc.retention.executions]
+# enabled = true
+# max_age.hours = 720
+# [maintenance.gc.retention.deployments]
+# enabled = true
+# max_age.hours = 720
 
 ## Global WASM Configuration
 # [wasm]

@@ -1669,10 +1669,13 @@ pub(crate) async fn run_internal(
     if maintenance_gc.batch_size == 0 {
         bail!("`maintenance.gc.batch_size` must be greater than zero");
     }
-    if maintenance_gc.retention_enabled
-        && Duration::from(maintenance_gc.retention_max_age).is_zero()
-    {
-        bail!("`maintenance.gc.retention_max_age` must be greater than zero");
+    for (name, retention) in [
+        ("executions", maintenance_gc.retention.executions),
+        ("deployments", maintenance_gc.retention.deployments),
+    ] {
+        if retention.enabled && Duration::from(retention.max_age).is_zero() {
+            bail!("`maintenance.gc.retention.{name}.max_age` must be greater than zero");
+        }
     }
     let database = config.database.clone();
 
@@ -3343,16 +3346,21 @@ fn spawn_maintenance_gc(
         debug!("Spawned maintenance garbage collector");
         let interval = Duration::from(config.interval);
         let batch_delay = Duration::from(config.batch_delay);
-        let retention_max_age = Duration::from(config.retention_max_age);
-        if config.retention_enabled {
-            info!(
-                max_age_seconds = retention_max_age.as_secs(),
-                "Periodic retention enabled; terminal executions and inactive deployments older than the maximum age are eligible for deletion"
-            );
-        } else {
-            info!(
-                "Periodic retention disabled; history is retained until deleted through the admin API"
-            );
+        let execution_retention = config.retention.executions;
+        let deployment_retention = config.retention.deployments;
+        for (record_type, retention) in [
+            ("executions", execution_retention),
+            ("deployments", deployment_retention),
+        ] {
+            if retention.enabled {
+                info!(
+                    record_type,
+                    max_age_seconds = Duration::from(retention.max_age).as_secs(),
+                    "Periodic retention enabled"
+                );
+            } else {
+                info!(record_type, "Periodic retention disabled");
+            }
         }
         loop {
             tokio::select! {
@@ -3360,12 +3368,16 @@ fn spawn_maintenance_gc(
                 _ = termination_watcher.changed() => break,
                 () = tokio::time::sleep(interval) => {}
             }
-            if config.retention_enabled {
-                let Some(cutoff) = chrono::Duration::from_std(retention_max_age)
-                    .ok()
-                    .and_then(|age| chrono::Utc::now().checked_sub_signed(age))
+            if execution_retention.enabled {
+                let Some(cutoff) =
+                    chrono::Duration::from_std(Duration::from(execution_retention.max_age))
+                        .ok()
+                        .and_then(|age| chrono::Utc::now().checked_sub_signed(age))
                 else {
-                    warn!("periodic retention maximum age is too large");
+                    warn!(
+                        record_type = "executions",
+                        "periodic retention maximum age is too large"
+                    );
                     break;
                 };
                 let retain = async {
@@ -3377,7 +3389,29 @@ fn spawn_maintenance_gc(
                             false,
                             false,
                         )
-                        .await?;
+                        .await
+                };
+                if let Err(err) = retain.await {
+                    warn!(
+                        record_type = "executions",
+                        "automatic retention failed: {err}"
+                    );
+                }
+            }
+            if deployment_retention.enabled {
+                let Some(cutoff) =
+                    chrono::Duration::from_std(Duration::from(deployment_retention.max_age))
+                        .ok()
+                        .and_then(|age| chrono::Utc::now().checked_sub_signed(age))
+                else {
+                    warn!(
+                        record_type = "deployments",
+                        "periodic retention maximum age is too large"
+                    );
+                    break;
+                };
+                let retain = async {
+                    let admin = db_pool.admin_conn().await?;
                     admin
                         .retain_deployments(
                             RetentionPolicy::CreatedAtOrAfter(cutoff),
@@ -3389,7 +3423,10 @@ fn spawn_maintenance_gc(
                         .await
                 };
                 if let Err(err) = retain.await {
-                    warn!("automatic retention failed: {err}");
+                    warn!(
+                        record_type = "deployments",
+                        "automatic retention failed: {err}"
+                    );
                 }
             }
             loop {

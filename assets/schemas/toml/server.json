@@ -846,11 +846,32 @@
             "milliseconds": 25
           }
         },
-        "retention_enabled": {
+        "retention": {
+          "$ref": "#/$defs/RetentionTomlConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetentionTomlConfig": {
+      "type": "object",
+      "properties": {
+        "executions": {
+          "$ref": "#/$defs/RetentionPolicyTomlConfig"
+        },
+        "deployments": {
+          "$ref": "#/$defs/RetentionPolicyTomlConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetentionPolicyTomlConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
           "type": "boolean",
           "default": true
         },
-        "retention_max_age": {
+        "max_age": {
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "hours": 720

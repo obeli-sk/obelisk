@@ -615,10 +615,35 @@ pub(crate) struct GarbageCollectionTomlConfig {
     pub(crate) batch_size: u32,
     #[serde(default = "default_gc_batch_delay")]
     pub(crate) batch_delay: DurationConfig,
+    #[serde(default)]
+    pub(crate) retention: RetentionTomlConfig,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetentionTomlConfig {
+    #[serde(default)]
+    pub(crate) executions: RetentionPolicyTomlConfig,
+    #[serde(default)]
+    pub(crate) deployments: RetentionPolicyTomlConfig,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RetentionPolicyTomlConfig {
     #[serde(default = "default_retention_enabled")]
-    pub(crate) retention_enabled: bool,
+    pub(crate) enabled: bool,
     #[serde(default = "default_retention_max_age")]
-    pub(crate) retention_max_age: DurationConfig,
+    pub(crate) max_age: DurationConfig,
+}
+
+impl Default for RetentionPolicyTomlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_retention_enabled(),
+            max_age: default_retention_max_age(),
+        }
+    }
 }
 
 impl Default for GarbageCollectionTomlConfig {
@@ -628,8 +653,7 @@ impl Default for GarbageCollectionTomlConfig {
             interval: default_gc_interval(),
             batch_size: default_gc_batch_size(),
             batch_delay: default_gc_batch_delay(),
-            retention_enabled: default_retention_enabled(),
-            retention_max_age: default_retention_max_age(),
+            retention: RetentionTomlConfig::default(),
         }
     }
 }
@@ -1076,6 +1100,45 @@ mod tests {
             let actual: TestConfig = toml::from_str(r#"allow = "true""#).unwrap();
             assert_eq!(AllowExecActivities::AllowAny, actual.allow);
             toml::from_str::<TestConfig>(r#"allow = "yes""#).unwrap_err();
+        }
+    }
+
+    mod retention {
+        use super::*;
+
+        #[test]
+        fn omitted_retention_uses_enabled_thirty_day_defaults() {
+            let config: ServerConfigToml = toml::from_str("").unwrap();
+            let retention = config.maintenance.gc.retention;
+            for policy in [retention.executions, retention.deployments] {
+                assert!(policy.enabled);
+                assert!(matches!(policy.max_age, DurationConfig::Hours(720)));
+            }
+        }
+
+        #[test]
+        fn execution_and_deployment_retention_can_be_configured_independently() {
+            let config: ServerConfigToml = toml::from_str(
+                r"
+                [maintenance.gc.retention.executions]
+                enabled = false
+
+                [maintenance.gc.retention.deployments]
+                max_age.hours = 48
+                ",
+            )
+            .unwrap();
+            let retention = config.maintenance.gc.retention;
+            assert!(!retention.executions.enabled);
+            assert!(matches!(
+                retention.executions.max_age,
+                DurationConfig::Hours(720)
+            ));
+            assert!(retention.deployments.enabled);
+            assert!(matches!(
+                retention.deployments.max_age,
+                DurationConfig::Hours(48)
+            ));
         }
     }
 }
