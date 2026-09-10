@@ -4885,6 +4885,9 @@ impl DbConnection for PostgresConnection {
 
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
+        require_live_root(&tx, &execution_id)
+            .await
+            .map_err(|err| DbErrorStubResponse::Write(err.into()))?;
 
         let limit = validate_append_requests(&tx, &execution_id, std::slice::from_mut(&mut req))
             .await
@@ -5709,8 +5712,12 @@ impl DbExternalApi for PostgresConnection {
     #[instrument(skip(self))]
     async fn pause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let (execution_id, join_set_id) = delay_id.split_to_parts();
-        let client_guard = self.client.lock().await;
-        let rows_modified = client_guard
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        require_live_root(&tx, &execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+        let rows_modified = tx
             .execute(
                 "UPDATE t_delay SET is_paused = TRUE \
                  WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3",
@@ -5724,14 +5731,19 @@ impl DbExternalApi for PostgresConnection {
         if rows_modified == 0 {
             return Err(DbErrorWrite::NotFound);
         }
+        tx.commit().await?;
         Ok(())
     }
 
     #[instrument(skip(self))]
     async fn unpause_delay(&self, delay_id: &DelayId) -> Result<(), DbErrorWrite> {
         let (execution_id, join_set_id) = delay_id.split_to_parts();
-        let client_guard = self.client.lock().await;
-        let rows_modified = client_guard
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        require_live_root(&tx, &execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
+        let rows_modified = tx
             .execute(
                 "UPDATE t_delay SET is_paused = FALSE \
                  WHERE execution_id = $1 AND join_set_id = $2 AND delay_id = $3",
@@ -5745,6 +5757,7 @@ impl DbExternalApi for PostgresConnection {
         if rows_modified == 0 {
             return Err(DbErrorWrite::NotFound);
         }
+        tx.commit().await?;
         Ok(())
     }
 }
@@ -6169,7 +6182,7 @@ impl DbAdmin for PostgresConnection {
 #[async_trait]
 impl CasGc for PostgresConnection {
     #[instrument(skip(self))]
-    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite> {
+    async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         let row = tx
@@ -6177,9 +6190,9 @@ impl CasGc for PostgresConnection {
                 "SELECT \
                  COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
                  COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                 COALESCE(SUM(size) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), 0)::bigint \
+                 COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT $1) candidates), 0)::bigint \
                  FROM t_file",
-                &[],
+                &[&i64::from(batch_size.max(1))],
             )
             .await?;
         let referenced_blobs = row.get::<_, i64>(0).cast_unsigned();
@@ -6189,9 +6202,9 @@ impl CasGc for PostgresConnection {
             0
         } else {
             tx.execute(
-                "DELETE FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)",
-                &[],
+                "DELETE FROM t_file WHERE ctid IN (SELECT ctid FROM t_file WHERE digest NOT IN \
+                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT $1)",
+                &[&i64::from(batch_size.max(1))],
             )
             .await?
         };

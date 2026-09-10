@@ -1469,7 +1469,7 @@ pub struct ExecutionGcResult {
 
 #[async_trait]
 pub trait CasGc: Send + Sync {
-    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite>;
+    async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite>;
 }
 
 #[async_trait]

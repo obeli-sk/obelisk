@@ -5372,6 +5372,7 @@ impl DbExternalApi for SqlitePool {
         self.transaction(
             move |tx| {
                 let (execution_id, join_set_id) = delay_id.split_to_parts();
+                Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 let rows_modified = tx.execute(
                     "UPDATE t_delay SET is_paused = 1 \
                      WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id",
@@ -5398,6 +5399,7 @@ impl DbExternalApi for SqlitePool {
         self.transaction(
             move |tx| {
                 let (execution_id, join_set_id) = delay_id.split_to_parts();
+                Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 let rows_modified = tx.execute(
                     "UPDATE t_delay SET is_paused = 0 \
                      WHERE execution_id = :execution_id AND join_set_id = :join_set_id AND delay_id = :delay_id",
@@ -5778,7 +5780,7 @@ impl DbAdmin for SqlitePool {
 #[async_trait]
 impl CasGc for SqlitePool {
     #[instrument(skip(self))]
-    async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite> {
+    async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
                 let (referenced_blobs, orphan_blobs, deleted_bytes) = tx
@@ -5786,9 +5788,9 @@ impl CasGc for SqlitePool {
                         "SELECT \
                          COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
                          COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                         COALESCE(SUM(size) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), 0) \
+                         COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT ?1)), 0) \
                          FROM t_file",
-                        [],
+                        [i64::from(batch_size.max(1))],
                         |row| {
                             Ok((
                                 row.get::<_, i64>(0)?.cast_unsigned(),
@@ -5802,9 +5804,9 @@ impl CasGc for SqlitePool {
                     0
                 } else {
                     tx.execute(
-                        "DELETE FROM t_file WHERE digest NOT IN \
-                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)",
-                        [],
+                        "DELETE FROM t_file WHERE rowid IN (SELECT rowid FROM t_file WHERE digest NOT IN \
+                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT ?1)",
+                        [i64::from(batch_size.max(1))],
                     )
                     .map_err(RusqliteError::from)? as u64
                 };
@@ -6478,6 +6480,8 @@ impl DbConnection for SqlitePool {
         let notifiers = self
             .transaction(
                 move |tx| {
+                    Self::require_live_root(tx, &execution_id)
+                        .map_err(|err| DbErrorStubResponse::Write(err.into()))?;
                     let mut req = req.clone();
                     let limit = Self::validate_append_requests(
                         tx,

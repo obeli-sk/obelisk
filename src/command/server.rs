@@ -301,6 +301,7 @@ impl DeploymentSwitchManagerHandle {
     pub(crate) async fn gc_cas(
         &self,
         dry_run: bool,
+        batch_size: u32,
     ) -> Result<concepts::storage::CasGcResult, SubmitDeploymentError> {
         let _permit = self.try_acquire_submit_permit()?;
         self.inner
@@ -308,7 +309,7 @@ impl DeploymentSwitchManagerHandle {
             .cas_gc_conn()
             .await
             .map_err(|err| SubmitDeploymentError::Other(err.into()))?
-            .gc_cas(dry_run)
+            .gc_cas(dry_run, batch_size)
             .await
             .map_err(|err| SubmitDeploymentError::Other(err.into()))
     }
@@ -2918,7 +2919,7 @@ async fn submit_deployment_manifest(
             // Keep the original rejection reason regardless of the sweep's outcome.
             const { assert!(DEFAULT_SUBMIT_CONCURRENCY == 1) };
             let gc_result = match db_pool.cas_gc_conn().await {
-                Ok(gc) => gc.gc_cas(false).await.map_err(anyhow::Error::from),
+                Ok(gc) => gc.gc_cas(false, 10_000).await.map_err(anyhow::Error::from),
                 Err(err) => Err(anyhow::Error::from(err)),
             };
             if let Err(gc_err) = gc_result {
@@ -3360,7 +3361,10 @@ fn spawn_maintenance_gc(
                         }
                     }
                     Ok(_) => {
-                        if let Err(err) = deployment_switch_manager.gc_cas(false).await {
+                        if let Err(err) = deployment_switch_manager
+                            .gc_cas(false, config.batch_size)
+                            .await
+                        {
                             debug!("automatic CAS garbage collection deferred: {err}");
                         }
                         break;

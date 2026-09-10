@@ -262,6 +262,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
     let cas = db_pool.cas_conn().await.unwrap();
     let referenced_digest = cas.write_blob(b"referenced").await.unwrap();
     let orphan_digest = cas.write_blob(b"orphan").await.unwrap();
+    let second_orphan_digest = cas.write_blob(b"second orphan").await.unwrap();
     let deployment_id = DeploymentId::generate();
     db_pool
         .external_api_conn()
@@ -297,23 +298,37 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(true)
+        .gc_cas(true, 10)
         .await
         .unwrap();
     assert_eq!(dry_run.referenced_blobs, 1);
-    assert_eq!(dry_run.orphan_blobs, 1);
+    assert_eq!(dry_run.orphan_blobs, 2);
     assert_eq!(dry_run.deleted_blobs, 0);
     assert!(cas.contains_blob(&orphan_digest).await.unwrap());
     let collected = db_pool
         .cas_gc_conn()
         .await
         .unwrap()
-        .gc_cas(false)
+        .gc_cas(false, 1)
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
     assert!(cas.contains_blob(&referenced_digest).await.unwrap());
+    assert_ne!(
+        cas.contains_blob(&orphan_digest).await.unwrap(),
+        cas.contains_blob(&second_orphan_digest).await.unwrap(),
+        "one CAS GC batch must delete exactly one of the two orphan blobs"
+    );
+    let collected = db_pool
+        .cas_gc_conn()
+        .await
+        .unwrap()
+        .gc_cas(false, 1)
+        .await
+        .unwrap();
+    assert_eq!(collected.deleted_blobs, 1);
     assert!(!cas.contains_blob(&orphan_digest).await.unwrap());
+    assert!(!cas.contains_blob(&second_orphan_digest).await.unwrap());
 
     assert_eq!(
         admin
@@ -497,7 +512,15 @@ async fn deployment_cleanup_owns_mixed_tree_by_root(database: Database) {
             deleted_execution_trees: 0
         }
     );
-    assert!(db_pool.connection().await.unwrap().get(&child).await.is_ok());
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&child)
+            .await
+            .is_ok()
+    );
     assert_eq!(
         admin
             .delete_deployment(root_deployment, true, false)
@@ -508,8 +531,24 @@ async fn deployment_cleanup_owns_mixed_tree_by_root(database: Database) {
         }
     );
     collect_execution_garbage(admin.as_ref()).await;
-    assert!(db_pool.connection().await.unwrap().get(&root).await.is_err());
-    assert!(db_pool.connection().await.unwrap().get(&child).await.is_err());
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&root)
+            .await
+            .is_err()
+    );
+    assert!(
+        db_pool
+            .connection()
+            .await
+            .unwrap()
+            .get(&child)
+            .await
+            .is_err()
+    );
     drop(admin);
     db_close.close().await;
 }
