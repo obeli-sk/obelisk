@@ -4730,6 +4730,7 @@ impl DbExecutor for SqlitePool {
         let execution_id = execution_id.clone();
         self.transaction(
             move |tx| {
+                Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 let combined_state = Self::get_combined_state(tx, &execution_id)?;
                 SqlitePool::append_activity_cancellation_requested_tx(
                     tx,
@@ -4752,7 +4753,10 @@ impl DbExecutor for SqlitePool {
     ) -> Result<CancelOutcome, DbErrorWrite> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at),
+            move |tx| {
+                Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
+                SqlitePool::cancel_workflow(tx, &execution_id, cancelled_at)
+            },
             TxType::MultipleWrites,
             "cancel_workflow",
         )
@@ -5344,7 +5348,10 @@ impl DbExternalApi for SqlitePool {
     ) -> Result<AppendResponse, DbErrorWrite> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| SqlitePool::pause_execution(tx, &execution_id, paused_at),
+            move |tx| {
+                Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
+                SqlitePool::pause_execution(tx, &execution_id, paused_at)
+            },
             TxType::MultipleWrites,
             "pause_execution",
         )
@@ -5359,7 +5366,10 @@ impl DbExternalApi for SqlitePool {
     ) -> Result<AppendResponse, DbErrorWrite> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| SqlitePool::unpause_execution(tx, &execution_id, unpaused_at),
+            move |tx| {
+                Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
+                SqlitePool::unpause_execution(tx, &execution_id, unpaused_at)
+            },
             TxType::MultipleWrites,
             "unpause_execution",
         )
@@ -5711,18 +5721,20 @@ impl DbAdmin for SqlitePool {
                     .optional()?;
                 let Some(root) = root else {
                     let limit = i64::from(batch_size.max(1));
-                    let mut deleted_rows = 0;
                     for (table, predicate) in [
                         ("t_wasm_backtrace", "NOT EXISTS (SELECT 1 FROM t_execution_backtrace e WHERE e.backtrace_hash = t_wasm_backtrace.backtrace_hash)"),
                         ("t_component_source", "NOT EXISTS (SELECT 1 FROM t_deployment_component d WHERE d.component_digest = t_component_source.component_digest)"),
                         ("t_component_metadata", "NOT EXISTS (SELECT 1 FROM t_deployment_component d WHERE d.component_digest = t_component_metadata.component_digest)"),
                     ] {
-                        deleted_rows += tx.execute(
+                        let deleted_rows = tx.execute(
                             &format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?1)"),
                             [limit],
                         )? as u64;
+                        if deleted_rows > 0 {
+                            return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: true });
+                        }
                     }
-                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: deleted_rows > 0 });
+                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows: 0, has_more: false });
                 };
                 let pattern = format!("{root}.%");
                 let limit = i64::from(batch_size.max(1));
@@ -5741,10 +5753,13 @@ impl DbAdmin for SqlitePool {
                 if locked {
                     return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: 0, has_more: true });
                 }
-                let mut deleted_rows = tx.execute(
+                let deleted_rows = tx.execute(
                     "DELETE FROM t_state WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id LIKE ?1 ORDER BY execution_id LIMIT ?2)",
                     rusqlite::params![pattern, limit],
                 )? as u64;
+                if deleted_rows > 0 {
+                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true });
+                }
                 for (table, predicate) in [
                     ("t_join_set_response", "execution_id = ?1 OR execution_id LIKE ?2 OR child_execution_id = ?1 OR child_execution_id LIKE ?2"),
                     ("t_delay", "execution_id = ?1 OR execution_id LIKE ?2"),
@@ -5752,10 +5767,13 @@ impl DbAdmin for SqlitePool {
                     ("t_log", "execution_id = ?1 OR execution_id LIKE ?2"),
                     ("t_execution_log", "execution_id = ?1 OR execution_id LIKE ?2"),
                 ] {
-                    deleted_rows += tx.execute(
+                    let deleted_rows = tx.execute(
                         &format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?3)"),
                         rusqlite::params![root, pattern, limit],
                     )? as u64;
+                    if deleted_rows > 0 {
+                        return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: true });
+                    }
                 }
                 let remaining = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_join_set_response WHERE execution_id = ?2 OR execution_id LIKE ?1 OR child_execution_id = ?2 OR child_execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_delay WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_log WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id = ?2 OR execution_id LIKE ?1)",
@@ -5763,12 +5781,13 @@ impl DbAdmin for SqlitePool {
                     |row| row.get::<_, bool>(0),
                 )?;
                 if !remaining {
-                    deleted_rows += tx.execute(
+                    let deleted_rows = tx.execute(
                         "DELETE FROM t_state WHERE execution_id = ?1 AND is_top_level = TRUE AND tombstoned = TRUE",
                         [&root],
                     )? as u64;
+                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: true });
                 }
-                Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: remaining })
+                Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows: 0, has_more: false })
             },
             TxType::MultipleWrites,
             "gc_executions",

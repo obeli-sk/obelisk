@@ -4249,6 +4249,9 @@ impl DbExecutor for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        require_live_root(&tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
         let combined_state = get_combined_state(&tx, execution_id).await?;
         append_activity_cancellation_requested_tx(tx, execution_id, cancelled_at, &combined_state)
             .await
@@ -4263,6 +4266,9 @@ impl DbExecutor for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        require_live_root(&tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
         cancel_workflow_tx(tx, execution_id, cancelled_at).await
     }
 }
@@ -5621,6 +5627,9 @@ impl DbExternalApi for PostgresConnection {
         for _ in 0..CONFLICT_RETRY_LIMIT {
             let tx = client_guard.transaction().await?;
 
+            require_live_root(&tx, execution_id)
+                .await
+                .map_err(DbErrorWrite::from)?;
             let combined_state = get_combined_state(&tx, execution_id).await?;
             let mut appending_version = combined_state.get_next_version_fail_if_finished()?;
             debug!("Pausing with {appending_version}");
@@ -5691,6 +5700,9 @@ impl DbExternalApi for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
 
+        require_live_root(&tx, execution_id)
+            .await
+            .map_err(DbErrorWrite::from)?;
         let combined_state = get_combined_state(&tx, execution_id).await?;
         let appending_version = combined_state.get_next_version_fail_if_finished()?;
         debug!("Unpausing with {appending_version}");
@@ -6061,7 +6073,6 @@ impl DbAdmin for PostgresConnection {
             .await?;
         let Some(row) = row else {
             let limit = i64::from(batch_size.max(1));
-            let mut deleted_rows = 0;
             for (table, predicate) in [
                 (
                     "t_wasm_backtrace",
@@ -6076,16 +6087,24 @@ impl DbAdmin for PostgresConnection {
                     "NOT EXISTS (SELECT 1 FROM t_deployment_component d WHERE d.component_digest = t_component_metadata.component_digest)",
                 ),
             ] {
-                deleted_rows += tx.execute(
+                let deleted_rows = tx.execute(
                     &format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT $1)"),
                     &[&limit],
                 ).await?;
+                if deleted_rows > 0 {
+                    tx.commit().await?;
+                    return Ok(ExecutionGcResult {
+                        tombstoned_roots: 0,
+                        deleted_rows,
+                        has_more: true,
+                    });
+                }
             }
             tx.commit().await?;
             return Ok(ExecutionGcResult {
                 tombstoned_roots: 0,
-                deleted_rows,
-                has_more: deleted_rows > 0,
+                deleted_rows: 0,
+                has_more: false,
             });
         };
         let root = row.get::<_, String>(0);
@@ -6121,12 +6140,20 @@ impl DbAdmin for PostgresConnection {
             });
         }
 
-        let mut deleted_rows = tx
+        let deleted_rows = tx
             .execute(
                 "DELETE FROM t_state WHERE ctid IN (SELECT ctid FROM t_state WHERE execution_id LIKE $1 ORDER BY execution_id LIMIT $2)",
                 &[&pattern, &limit],
             )
             .await?;
+        if deleted_rows > 0 {
+            tx.commit().await?;
+            return Ok(ExecutionGcResult {
+                tombstoned_roots: 1,
+                deleted_rows,
+                has_more: true,
+            });
+        }
         for (table, predicate) in [
             (
                 "t_join_set_response",
@@ -6143,12 +6170,20 @@ impl DbAdmin for PostgresConnection {
                 "execution_id = $1 OR execution_id LIKE $2",
             ),
         ] {
-            deleted_rows += tx
+            let deleted_rows = tx
                 .execute(
                     &format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT $3)"),
                     &[&root, &pattern, &limit],
                 )
                 .await?;
+            if deleted_rows > 0 {
+                tx.commit().await?;
+                return Ok(ExecutionGcResult {
+                    tombstoned_roots: 1,
+                    deleted_rows,
+                    has_more: true,
+                });
+            }
         }
         lock_join_set_response_append_order(
             &tx,
@@ -6163,18 +6198,24 @@ impl DbAdmin for PostgresConnection {
             .await?
             .get::<_, bool>(0);
         if !remaining {
-            deleted_rows += tx
+            let deleted_rows = tx
                 .execute(
                     "DELETE FROM t_state WHERE execution_id = $1 AND is_top_level = TRUE AND tombstoned = TRUE",
                     &[&root],
                 )
                 .await?;
+            tx.commit().await?;
+            return Ok(ExecutionGcResult {
+                tombstoned_roots: 0,
+                deleted_rows,
+                has_more: true,
+            });
         }
         tx.commit().await?;
         Ok(ExecutionGcResult {
-            tombstoned_roots: 1,
-            deleted_rows,
-            has_more: remaining,
+            tombstoned_roots: 0,
+            deleted_rows: 0,
+            has_more: false,
         })
     }
 }
