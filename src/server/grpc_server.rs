@@ -2145,23 +2145,6 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .to_status()?;
         Ok(tonic::Response::new(cleanup_to_grpc(result)))
     }
-
-    async fn gc_cas(
-        &self,
-        request: tonic::Request<grpc_gen::GcCasRequest>,
-    ) -> TonicRespResult<grpc_gen::GcCasResponse> {
-        let result = self
-            .deployment_switch_manager
-            .gc_cas(request.into_inner().dry_run)
-            .await
-            .map_err(|err| tonic::Status::failed_precondition(err.to_string()))?;
-        Ok(tonic::Response::new(grpc_gen::GcCasResponse {
-            referenced_blobs: result.referenced_blobs,
-            orphan_blobs: result.orphan_blobs,
-            deleted_blobs: result.deleted_blobs,
-            deleted_bytes: result.deleted_bytes,
-        }))
-    }
 }
 
 fn validate_batch_size(batch_size: u32) -> Result<(), tonic::Status> {

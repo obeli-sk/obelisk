@@ -56,6 +56,7 @@ use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::AllowExecActivities;
 use crate::config::server::CancelWatcherTomlConfig;
 use crate::config::server::DatabaseConfigToml;
+use crate::config::server::GarbageCollectionTomlConfig;
 use crate::config::server::HttpServer;
 use crate::config::server::SQLITE_FILE_NAME;
 use crate::config::server::ServerConfigToml;
@@ -1662,6 +1663,10 @@ pub(crate) async fn run_internal(
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
+    let maintenance_gc = config.maintenance.gc;
+    if maintenance_gc.batch_size == 0 {
+        bail!("`maintenance.gc.batch_size` must be greater than zero");
+    }
     let database = config.database.clone();
 
     // Open the database pool before compilation so that in the no-deployment case
@@ -1877,6 +1882,7 @@ pub(crate) async fn run_internal(
         global_webhook_instance_limiter,
         timers_watcher,
         cancel_watcher,
+        maintenance_gc,
         &cancel_registry,
         &termination_watcher,
         prepared_dirs.clone(),
@@ -3320,6 +3326,56 @@ async fn create_missing_cron_seeds(
     Ok(())
 }
 
+fn spawn_maintenance_gc(
+    db_pool: Arc<dyn DbPool>,
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
+    mut termination_watcher: watch::Receiver<()>,
+    config: GarbageCollectionTomlConfig,
+) -> AbortOnDropHandle {
+    let handle = tokio::spawn(async move {
+        let interval = Duration::from(config.interval);
+        let batch_delay = Duration::from(config.batch_delay);
+        loop {
+            tokio::select! {
+                biased;
+                _ = termination_watcher.changed() => break,
+                () = tokio::time::sleep(interval) => {}
+            }
+            loop {
+                let collect = async {
+                    let admin = db_pool.admin_conn().await?;
+                    admin.gc_executions(config.batch_size).await
+                };
+                let result = tokio::select! {
+                    biased;
+                    _ = termination_watcher.changed() => break,
+                    result = collect => result,
+                };
+                match result {
+                    Ok(result) if result.has_more && result.deleted_rows > 0 => {
+                        tokio::select! {
+                            biased;
+                            _ = termination_watcher.changed() => break,
+                            () = tokio::time::sleep(batch_delay) => {}
+                        }
+                    }
+                    Ok(_) => {
+                        if let Err(err) = deployment_switch_manager.gc_cas(false).await {
+                            debug!("automatic CAS garbage collection deferred: {err}");
+                        }
+                        break;
+                    }
+                    Err(err) => {
+                        warn!("automatic execution garbage collection failed: {err}");
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    AbortOnDropHandle::new(handle.abort_handle())
+}
+
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
@@ -3331,6 +3387,7 @@ async fn spawn_tasks_and_threads(
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
+    maintenance_gc: GarbageCollectionTomlConfig,
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
     prepared_dirs: PreparedDirs,
@@ -3428,6 +3485,14 @@ async fn spawn_tasks_and_threads(
         log_forwarder_sender.clone(),
         DEFAULT_SUBMIT_CONCURRENCY,
     );
+    let maintenance_gc = maintenance_gc.enabled.then(|| {
+        spawn_maintenance_gc(
+            db_pool.clone(),
+            deployment_switch_manager.clone(),
+            termination_watcher.clone(),
+            maintenance_gc,
+        )
+    });
     let server_init = ServerInit {
         server_verified,
         deployment_ctx,
@@ -3438,6 +3503,7 @@ async fn spawn_tasks_and_threads(
         timers_watcher,
         cancel_watcher,
         cancellation_driver,
+        maintenance_gc,
         http_servers_handles,
         epoch_ticker,
         log_db_forarder,
@@ -3459,6 +3525,7 @@ struct ServerInit {
     timers_watcher: Option<AbortOnDropHandle>,
     cancel_watcher: AbortOnDropHandle,
     cancellation_driver: AbortOnDropHandle,
+    maintenance_gc: Option<AbortOnDropHandle>,
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
     log_db_forarder: AbortOnDropHandle,
@@ -3480,6 +3547,7 @@ impl ServerInit {
             timers_watcher,
             cancel_watcher,
             cancellation_driver,
+            maintenance_gc,
             http_servers_handles,
             epoch_ticker,
             log_db_forarder,
@@ -3516,6 +3584,7 @@ impl ServerInit {
         drop(timers_watcher);
         drop(cancel_watcher);
         drop(cancellation_driver);
+        drop(maintenance_gc);
         drop(http_servers_handles);
         drop(epoch_ticker);
         drop(engines);

@@ -117,7 +117,6 @@ pub(crate) struct WebApiState {
         admin::retain_executions,
         admin::delete_deployment,
         admin::retain_deployments,
-        admin::gc_cas,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -150,8 +149,6 @@ pub(crate) struct WebApiState {
         admin::CleanupRequest,
         admin::RetainDeploymentsRequest,
         admin::CleanupResponse,
-        admin::GcCasRequest,
-        admin::GcCasResponse,
         deployment::DeploymentSubmitErrorBody,
         deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
@@ -316,7 +313,6 @@ fn admin_router() -> Router<Arc<WebApiState>> {
             "/deployments/retain",
             routing::post(admin::retain_deployments),
         )
-        .route("/cas/gc", routing::post(admin::gc_cas))
 }
 
 pub(crate) mod admin {
@@ -375,20 +371,6 @@ pub(crate) mod admin {
                 has_more: value.has_more,
             }
         }
-    }
-
-    #[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct GcCasRequest {
-        #[serde(default)]
-        pub(crate) dry_run: bool,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct GcCasResponse {
-        pub(crate) referenced_blobs: u64,
-        pub(crate) orphan_blobs: u64,
-        pub(crate) deleted_blobs: u64,
-        pub(crate) deleted_bytes: u64,
     }
 
     fn validate_batch_size(batch_size: u32) -> Result<(), HttpResponse> {
@@ -569,27 +551,6 @@ pub(crate) mod admin {
         Ok(pretty_json_response(
             StatusCode::OK,
             &CleanupResponse::from(result),
-        ))
-    }
-
-    #[utoipa::path(post, path = "/v1/admin/cas/gc", tag = "admin", request_body = GcCasRequest, responses((status = 200, body = GcCasResponse)))]
-    pub(crate) async fn gc_cas(
-        State(state): State<Arc<WebApiState>>,
-        Json(request): Json<GcCasRequest>,
-    ) -> Result<Response, HttpResponse> {
-        let result = state
-            .deployment_switch_manager
-            .gc_cas(request.dry_run)
-            .await
-            .map_err(|err| precondition(err.to_string()))?;
-        Ok(pretty_json_response(
-            StatusCode::OK,
-            &GcCasResponse {
-                referenced_blobs: result.referenced_blobs,
-                orphan_blobs: result.orphan_blobs,
-                deleted_blobs: result.deleted_blobs,
-                deleted_bytes: result.deleted_bytes,
-            },
         ))
     }
 }

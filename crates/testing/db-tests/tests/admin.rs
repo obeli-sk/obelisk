@@ -97,6 +97,15 @@ async fn insert_deployment(
         .unwrap();
 }
 
+async fn collect_execution_garbage(admin: &dyn concepts::storage::DbAdmin) {
+    for _ in 0..100 {
+        if !admin.gc_executions(10).await.unwrap().has_more {
+            return;
+        }
+    }
+    panic!("execution garbage collection did not converge");
+}
+
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
@@ -121,6 +130,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .unwrap(),
         DeleteExecutionTreeResult::Deleted
     );
+    collect_execution_garbage(admin.as_ref()).await;
 
     let active_deployment = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), active_deployment, clock.now()).await;
@@ -174,6 +184,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
             .unwrap(),
         DeleteExecutionTreeResult::Deleted
     );
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -192,6 +203,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
     let result = admin.retain_executions(1, 1, false).await.unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
     assert!(result.has_more);
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -222,6 +234,7 @@ async fn execution_cleanup_is_terminal_idempotent_and_bounded(database: Database
     let result = admin.retain_executions(1, 1, false).await.unwrap();
     assert_eq!(result.deleted_execution_trees, 1);
     assert!(!result.has_more);
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -311,6 +324,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
             deleted_execution_trees: 1
         }
     );
+    collect_execution_garbage(admin.as_ref()).await;
     assert!(
         db_pool
             .connection()
@@ -433,6 +447,69 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
             .unwrap()
             .is_none()
     );
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_cleanup_owns_mixed_tree_by_root(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let root_deployment = DeploymentId::generate();
+    let child_deployment = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), root_deployment, clock.now()).await;
+    insert_deployment(db_pool.as_ref(), child_deployment, clock.now()).await;
+    let root = create_execution(db_pool.as_ref(), &clock, root_deployment, true).await;
+    let child = ExecutionId::Derived(
+        root.next_level(&JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap()),
+    );
+    db_pool
+        .connection()
+        .await
+        .unwrap()
+        .create(CreateRequest {
+            created_at: clock.now(),
+            execution_id: child.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: clock.now(),
+            component_id: ComponentId::dummy_activity(),
+            deployment_id: child_deployment,
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: u64::MAX,
+        })
+        .await
+        .unwrap();
+
+    let admin = db_pool.admin_conn().await.unwrap();
+    assert_eq!(
+        admin
+            .delete_deployment(child_deployment, false, false)
+            .await
+            .unwrap(),
+        DeleteDeploymentResult::Deleted {
+            deleted_execution_trees: 0
+        }
+    );
+    assert!(db_pool.connection().await.unwrap().get(&child).await.is_ok());
+    assert_eq!(
+        admin
+            .delete_deployment(root_deployment, true, false)
+            .await
+            .unwrap(),
+        DeleteDeploymentResult::Deleted {
+            deleted_execution_trees: 1
+        }
+    );
+    collect_execution_garbage(admin.as_ref()).await;
+    assert!(db_pool.connection().await.unwrap().get(&root).await.is_err());
+    assert!(db_pool.connection().await.unwrap().get(&child).await.is_err());
     drop(admin);
     db_close.close().await;
 }

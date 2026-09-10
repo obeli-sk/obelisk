@@ -85,6 +85,14 @@
 # database.postgres.db_name =  "${POSTGRES_DATABASE}"
 # database.postgres.provision_policy = "never" # One of "auto"|"never". If `auto` is selected, missing database will be created on startup.
 
+## Automatic garbage collection. Tombstoned execution trees and unreferenced shared data are
+## removed in bounded batches. Disable this only when maintenance is managed externally.
+# [maintenance.gc]
+# enabled = true
+# interval.seconds = 30
+# batch_size = 1000
+# batch_delay.milliseconds = 25
+
 ## Global WASM Configuration
 # [wasm]
 ## WASM Cache dir

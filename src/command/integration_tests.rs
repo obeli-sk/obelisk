@@ -71,11 +71,9 @@ use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
-    ExecutionId as GrpcExecutionId, GcCasRequest, GetDeploymentRequest, GetFileRequest,
-    GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck,
-    SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
-    admin_repository_client::AdminRepositoryClient,
-    cancel_execution_response::CancelExecutionOutcome,
+    ExecutionId as GrpcExecutionId, GetDeploymentRequest, GetStatusRequest,
+    ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck, SubmitDeploymentRequest,
+    SubmitRequest, SwitchDeploymentRequest, cancel_execution_response::CancelExecutionOutcome,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
     function_repository_client::FunctionRepositoryClient, switch_deployment_response::Outcome,
@@ -2919,20 +2917,20 @@ routes = [{ methods = ["GET"], route = "/" }]
         .await
         .expect_err("compile+link must reject the missing interface");
 
-    // Fresh server: the only blob that could be orphaned is the one this rejected submit
-    // wrote. The submit's own best-effort sweep must already have reclaimed it.
-    let deleted = AdminRepositoryClient::connect(format!("http://{}", server.api_addr()))
+    let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
         .await
-        .unwrap()
-        .gc_cas(GcCasRequest { dry_run: false })
-        .await
-        .unwrap()
-        .into_inner()
-        .deleted_blobs;
-    assert_eq!(
-        deleted, 0,
-        "a rejected submit must not leak orphan blobs, found {deleted}"
+        .unwrap();
+    assert!(
+        !pool
+            .cas_conn()
+            .await
+            .unwrap()
+            .contains_blob(&prepared.files[0].digest)
+            .await
+            .unwrap(),
+        "a rejected submit must not leak orphan blobs"
     );
+    pool.close().await;
 
     server.shutdown().await;
 }
@@ -3171,12 +3169,9 @@ ffqn = "testing:integration/pkg.run"
     server.shutdown().await;
 }
 
-/// `GcCas` deletes CAS blobs not referenced by any stored deployment while keeping
-/// those a valid deployment still references. A rejected submit now reclaims its own blobs
-/// (see `rejected_submit_reclaims_orphan_blobs_grpc`), so the orphan here is seeded straight
-/// into the CAS to give GC something to reclaim.
+/*
 #[tokio::test]
-async fn gc_cas_grpc() {
+async fn removed_manual_gc_tests() {
     let server = TestServer::start(test_addr!(81)).await;
 
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
@@ -3353,6 +3348,7 @@ async fn gc_cas_webapi() {
 
     server.shutdown().await;
 }
+*/
 
 #[tokio::test]
 async fn admin_cleanup_webapi() {

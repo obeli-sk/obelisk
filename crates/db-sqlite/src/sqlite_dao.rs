@@ -18,9 +18,9 @@ use concepts::{
         DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
         DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
         DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
-        ExecutionEvent, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
-        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
-        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
+        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
         JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
         LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
         ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
@@ -530,6 +530,32 @@ struct PendingAfterEventUpdate {
 }
 
 impl SqlitePool {
+    fn ancillary_root_is_live(
+        tx: &Transaction<'_>,
+        execution_id: &ExecutionId,
+    ) -> Result<bool, RusqliteError> {
+        let root = ExecutionId::TopLevel(execution_id.get_top_level());
+        Ok(tx
+            .query_row(
+            "SELECT NOT tombstoned FROM t_state WHERE execution_id = ?1 AND is_top_level = TRUE",
+            [root.to_string()],
+            |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    fn require_live_root(
+        tx: &Transaction<'_>,
+        execution_id: &ExecutionId,
+    ) -> Result<(), DbErrorRead> {
+        if Self::ancillary_root_is_live(tx, execution_id)? {
+            Ok(())
+        } else {
+            Err(DbErrorRead::NotFound)
+        }
+    }
+
     fn execution_is_non_terminal_tx(
         tx: &Transaction<'_>,
         execution_id: &ExecutionId,
@@ -548,8 +574,8 @@ impl SqlitePool {
     ) -> Result<bool, RusqliteError> {
         let root = execution_id.to_string();
         tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM t_state s JOIN t_deployment d ON d.deployment_id = s.deployment_id WHERE (s.execution_id = ?1 OR s.execution_id LIKE ?2) AND d.status = 'active')",
-            rusqlite::params![root, format!("{root}.%")],
+            "SELECT EXISTS(SELECT 1 FROM t_state s JOIN t_deployment d ON d.deployment_id = s.deployment_id WHERE s.execution_id = ?1 AND s.is_top_level = TRUE AND d.status = 'active')",
+            [root],
             |row| row.get::<_, bool>(0),
         )
         .map_err(RusqliteError::from)
@@ -1675,7 +1701,9 @@ impl SqlitePool {
             column: &str,
             filter: &ListExecutionsFilter,
         ) -> Result<StatementModifier<'a>, RusqliteError> {
-            let mut where_vec: Vec<String> = vec![];
+            let mut where_vec: Vec<String> = vec![
+                "NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%'))".to_string(),
+            ];
             let mut params: Vec<(&'static str, ToSqlOutput<'a>)> = vec![];
             let limit = pagination.length();
             let limit_desc = pagination.is_desc();
@@ -2004,6 +2032,14 @@ impl SqlitePool {
         retry_config: ComponentRetryConfig,
     ) -> Result<LockedExecution, DbErrorWrite> {
         trace!("lock_single_execution");
+        let tombstoned = tx.query_row(
+            "SELECT tombstoned FROM t_state WHERE execution_id = ?1",
+            [execution_id.to_string()],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if tombstoned {
+            return Err(DbErrorWrite::NotFound);
+        }
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         let context_component_digest = if update_component_digest_and_deployment_id {
             component_id.component_digest.clone()
@@ -3139,7 +3175,7 @@ impl SqlitePool {
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND lifecycle = 'active'
+                    AND lifecycle = 'active' AND tombstoned = FALSE
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
             ))?;
@@ -3173,7 +3209,7 @@ impl SqlitePool {
                     SELECT execution_id, corresponding_version FROM t_state WHERE
                     state = "{STATE_PENDING_AT}" AND
                     pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn
-                    AND lifecycle = 'active'
+                    AND lifecycle = 'active' AND tombstoned = FALSE
                     AND (incompatible_digest IS NULL OR incompatible_digest <> :current_digest)
                     ORDER BY pending_expires_finished LIMIT :batch_size
                     "#
@@ -3219,7 +3255,7 @@ impl SqlitePool {
                 state = "{STATE_PENDING_AT}" AND
                 pending_expires_finished <= :pending_expires_finished AND
                 component_id_input_digest = :component_id_input_digest
-                AND lifecycle = 'active'
+                AND lifecycle = 'active' AND tombstoned = FALSE
                 ORDER BY pending_expires_finished LIMIT :batch_size
                 "#
         ))?;
@@ -4737,6 +4773,7 @@ impl DbExternalApi for SqlitePool {
 
         self.transaction(
             move |tx| {
+                Self::require_live_root(tx, &execution_id)?;
                 let select = "SELECT component_id, version_min_including, version_max_excluding, wasm_backtrace FROM t_execution_backtrace e \
                                 INNER JOIN t_wasm_backtrace w ON e.backtrace_hash = w.backtrace_hash \
                                 WHERE execution_id = :execution_id";
@@ -4999,6 +5036,7 @@ impl DbExternalApi for SqlitePool {
         let execution_id = execution_id.clone();
         self.transaction(
             move |tx| {
+                Self::require_live_root(tx, &execution_id)?;
                 let events = Self::list_execution_events(
                     tx,
                     &execution_id,
@@ -5028,6 +5066,7 @@ impl DbExternalApi for SqlitePool {
         let join_set = join_set.cloned();
         self.transaction(
             move |tx| {
+                Self::require_live_root(tx, &execution_id)?;
                 let max_cursor = Self::get_max_response_cursor(tx, &execution_id)?;
                 let responses =
                     Self::list_responses(tx, &execution_id, Some(pagination), join_set.as_ref())?;
@@ -5054,6 +5093,7 @@ impl DbExternalApi for SqlitePool {
         let req_since = req_since.0;
         self.transaction(
             move |tx| {
+                Self::require_live_root(tx, &execution_id)?;
                 let combined_state = Self::get_combined_state(tx, &execution_id)?;
                 let events = Self::list_execution_events(
                     tx,
@@ -5096,6 +5136,7 @@ impl DbExternalApi for SqlitePool {
         let new = new.clone();
         self.transaction(
             move |tx| {
+                Self::require_live_root(tx, &execution_id).map_err(DbErrorWrite::from)?;
                 Self::upgrade_execution_component_single_write(
                     tx,
                     &execution_id,
@@ -5120,7 +5161,10 @@ impl DbExternalApi for SqlitePool {
     ) -> Result<ListLogsResponse, DbErrorRead> {
         let execution_id = execution_id.clone();
         self.transaction(
-            move |tx| Self::list_logs_tx(tx, &execution_id, show_derived, &filter, &pagination),
+            move |tx| {
+                Self::require_live_root(tx, &execution_id)?;
+                Self::list_logs_tx(tx, &execution_id, show_derived, &filter, &pagination)
+            },
             TxType::Other, // read only
             "list_logs",
         )
@@ -5382,13 +5426,17 @@ impl SqlitePool {
         force_non_terminal: bool,
     ) -> Result<DeleteExecutionTreeResult, RusqliteError> {
         let root = execution_id.to_string();
-        let pattern = format!("{root}.%");
-        let exists = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id = ?1)",
-            [&root],
-            |row| row.get::<_, bool>(0),
-        )?;
-        if !exists {
+        let tombstoned = tx
+            .query_row(
+                "SELECT tombstoned FROM t_state WHERE execution_id = ?1 AND is_top_level = TRUE",
+                [&root],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?;
+        let Some(tombstoned) = tombstoned else {
+            return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
+        };
+        if tombstoned {
             return Ok(DeleteExecutionTreeResult::AlreadyDeleted);
         }
         if Self::execution_is_non_terminal_tx(tx, execution_id)? {
@@ -5399,26 +5447,9 @@ impl SqlitePool {
                 return Ok(DeleteExecutionTreeResult::ActiveDeployment);
             }
         }
-        for (table, column) in [
-            ("t_join_set_response", "execution_id"),
-            ("t_delay", "execution_id"),
-            ("t_execution_backtrace", "execution_id"),
-            ("t_log", "execution_id"),
-            ("t_execution_log", "execution_id"),
-            ("t_state", "execution_id"),
-        ] {
-            tx.execute(
-                &format!("DELETE FROM {table} WHERE {column} = ?1 OR {column} LIKE ?2"),
-                rusqlite::params![root, pattern],
-            )?;
-        }
         tx.execute(
-            "DELETE FROM t_join_set_response WHERE child_execution_id = ?1 OR child_execution_id LIKE ?2",
-            rusqlite::params![root, pattern],
-        )?;
-        tx.execute(
-            "DELETE FROM t_wasm_backtrace WHERE backtrace_hash NOT IN (SELECT backtrace_hash FROM t_execution_backtrace)",
-            [],
+            "UPDATE t_state SET tombstoned = TRUE WHERE execution_id = ?1 AND is_top_level = TRUE",
+            [&root],
         )?;
         Ok(DeleteExecutionTreeResult::Deleted)
     }
@@ -5427,14 +5458,12 @@ impl SqlitePool {
         tx: &Transaction<'_>,
         deployment_id: DeploymentId,
     ) -> Result<HashSet<ExecutionId>, RusqliteError> {
-        tx.prepare("SELECT execution_id FROM t_state WHERE deployment_id = ?1")?
+        tx.prepare("SELECT execution_id FROM t_state WHERE deployment_id = ?1 AND is_top_level = TRUE AND tombstoned = FALSE")?
             .query_map([deployment_id.to_string()], |row| {
                 row.get::<_, ExecutionId>(0)
             })?
             .map(|result| {
-                result
-                    .map(|id| ExecutionId::TopLevel(id.get_top_level()))
-                    .map_err(RusqliteError::from)
+                result.map_err(RusqliteError::from)
             })
             .collect()
     }
@@ -5510,14 +5539,6 @@ impl SqlitePool {
             [&id],
         )?;
         tx.execute("DELETE FROM t_deployment WHERE deployment_id = ?1", [&id])?;
-        tx.execute(
-            "DELETE FROM t_component_source WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
-            [],
-        )?;
-        tx.execute(
-            "DELETE FROM t_component_metadata WHERE component_digest NOT IN (SELECT component_digest FROM t_deployment_component)",
-            [],
-        )?;
         Ok(DeleteDeploymentResult::Deleted {
             deleted_execution_trees: roots.len() as u64,
         })
@@ -5555,7 +5576,7 @@ impl DbAdmin for SqlitePool {
                     .prepare(
                         "SELECT execution_id FROM (\
                              SELECT execution_id, created_at FROM t_state \
-                             WHERE is_top_level = true AND state = 'finished' \
+                             WHERE is_top_level = true AND state = 'finished' AND tombstoned = FALSE \
                              ORDER BY created_at DESC, execution_id DESC LIMIT -1 OFFSET ?2\
                          ) ORDER BY created_at ASC, execution_id ASC LIMIT ?1",
                     )?
@@ -5672,6 +5693,83 @@ impl DbAdmin for SqlitePool {
             },
             TxType::MultipleWrites,
             "retain_deployments",
+        )
+        .await
+    }
+
+    async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let root = tx
+                    .query_row(
+                        "SELECT execution_id FROM t_state WHERE is_top_level = TRUE AND tombstoned = TRUE ORDER BY execution_id LIMIT 1",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                let Some(root) = root else {
+                    let limit = i64::from(batch_size.max(1));
+                    let mut deleted_rows = 0;
+                    for (table, predicate) in [
+                        ("t_wasm_backtrace", "NOT EXISTS (SELECT 1 FROM t_execution_backtrace e WHERE e.backtrace_hash = t_wasm_backtrace.backtrace_hash)"),
+                        ("t_component_source", "NOT EXISTS (SELECT 1 FROM t_deployment_component d WHERE d.component_digest = t_component_source.component_digest)"),
+                        ("t_component_metadata", "NOT EXISTS (SELECT 1 FROM t_deployment_component d WHERE d.component_digest = t_component_metadata.component_digest)"),
+                    ] {
+                        deleted_rows += tx.execute(
+                            &format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?1)"),
+                            [limit],
+                        )? as u64;
+                    }
+                    return Ok(ExecutionGcResult { tombstoned_roots: 0, deleted_rows, has_more: deleted_rows > 0 });
+                };
+                let pattern = format!("{root}.%");
+                let limit = i64::from(batch_size.max(1));
+                let propagated = tx.execute(
+                    "UPDATE t_state SET tombstoned = TRUE WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id LIKE ?1 AND tombstoned = FALSE ORDER BY execution_id LIMIT ?2)",
+                    rusqlite::params![pattern, limit],
+                )?;
+                if propagated > 0 {
+                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: propagated as u64, has_more: true });
+                }
+                let locked = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE (execution_id = ?1 OR execution_id LIKE ?2) AND state = 'locked')",
+                    rusqlite::params![root, pattern],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if locked {
+                    return Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows: 0, has_more: true });
+                }
+                let mut deleted_rows = tx.execute(
+                    "DELETE FROM t_state WHERE rowid IN (SELECT rowid FROM t_state WHERE execution_id LIKE ?1 ORDER BY execution_id LIMIT ?2)",
+                    rusqlite::params![pattern, limit],
+                )? as u64;
+                for (table, predicate) in [
+                    ("t_join_set_response", "execution_id = ?1 OR execution_id LIKE ?2 OR child_execution_id = ?1 OR child_execution_id LIKE ?2"),
+                    ("t_delay", "execution_id = ?1 OR execution_id LIKE ?2"),
+                    ("t_execution_backtrace", "execution_id = ?1 OR execution_id LIKE ?2"),
+                    ("t_log", "execution_id = ?1 OR execution_id LIKE ?2"),
+                    ("t_execution_log", "execution_id = ?1 OR execution_id LIKE ?2"),
+                ] {
+                    deleted_rows += tx.execute(
+                        &format!("DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT ?3)"),
+                        rusqlite::params![root, pattern, limit],
+                    )? as u64;
+                }
+                let remaining = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM t_state WHERE execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_join_set_response WHERE execution_id = ?2 OR execution_id LIKE ?1 OR child_execution_id = ?2 OR child_execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_delay WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_backtrace WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_log WHERE execution_id = ?2 OR execution_id LIKE ?1 UNION ALL SELECT 1 FROM t_execution_log WHERE execution_id = ?2 OR execution_id LIKE ?1)",
+                    rusqlite::params![pattern, root],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if !remaining {
+                    deleted_rows += tx.execute(
+                        "DELETE FROM t_state WHERE execution_id = ?1 AND is_top_level = TRUE AND tombstoned = TRUE",
+                        [&root],
+                    )? as u64;
+                }
+                Ok(ExecutionGcResult { tombstoned_roots: 1, deleted_rows, has_more: remaining })
+            },
+            TxType::MultipleWrites,
+            "gc_executions",
         )
         .await
     }
@@ -5797,7 +5895,7 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |tx| {
                 let mut stmt = tx.prepare(
-                    "SELECT execution_id FROM t_state WHERE lifecycle = :lifecycle \
+                    "SELECT execution_id FROM t_state WHERE lifecycle = :lifecycle AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (t_state.execution_id = root.execution_id OR t_state.execution_id LIKE root.execution_id || '.%')) \
                      ORDER BY created_at LIMIT :batch_size",
                 )?;
                 let rows = stmt
@@ -6195,7 +6293,13 @@ impl DbConnection for SqlitePool {
     async fn append_backtrace(&self, append: BacktraceInfo) -> Result<(), DbErrorWrite> {
         trace!("append_backtrace");
         self.transaction_fire_forget(
-            move |tx| Self::append_backtrace(tx, &append).map(drop),
+            move |tx| {
+                if Self::ancillary_root_is_live(tx, &append.execution_id)? {
+                    Self::append_backtrace(tx, &append).map(drop)
+                } else {
+                    Ok(())
+                }
+            },
             "append_backtrace",
         )
         .await;
@@ -6212,7 +6316,9 @@ impl DbConnection for SqlitePool {
             move |tx| {
                 let mut inserted = 0;
                 for append in &batch {
-                    inserted += Self::append_backtrace(tx, append)?;
+                    if Self::ancillary_root_is_live(tx, &append.execution_id)? {
+                        inserted += Self::append_backtrace(tx, append)?;
+                    }
                 }
                 Ok::<_, DbErrorWrite>(inserted)
             },
@@ -6225,8 +6331,17 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn append_log(&self, row: LogInfoAppendRow) -> Result<(), DbErrorWrite> {
         trace!("append_log");
-        self.transaction_fire_forget(move |tx| Self::append_log(tx, &row), "append_log")
-            .await;
+        self.transaction_fire_forget(
+            move |tx| {
+                if Self::ancillary_root_is_live(tx, &row.execution_id)? {
+                    Self::append_log(tx, &row)
+                } else {
+                    Ok(())
+                }
+            },
+            "append_log",
+        )
+        .await;
         Ok(())
     }
 
@@ -6237,7 +6352,9 @@ impl DbConnection for SqlitePool {
         self.transaction_fire_forget(
             move |tx| {
                 for row in &batch {
-                    Self::append_log(tx, row)?;
+                    if Self::ancillary_root_is_live(tx, &row.execution_id)? {
+                        Self::append_log(tx, row)?;
+                    }
                 }
                 Ok::<_, DbErrorWrite>(())
             },
@@ -6256,7 +6373,7 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |conn| {
                 let mut expired_timers = conn.prepare(
-                    "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= :at AND NOT is_paused",
+                    "SELECT d.execution_id, d.join_set_id, d.delay_id FROM t_delay d WHERE d.expires_at <= :at AND NOT d.is_paused AND NOT EXISTS (SELECT 1 FROM t_state root WHERE root.is_top_level = TRUE AND root.tombstoned = TRUE AND (d.execution_id = root.execution_id OR d.execution_id LIKE root.execution_id || '.%'))",
                 )?
                 .query_map(
                         named_params! {

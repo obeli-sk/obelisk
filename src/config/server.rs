@@ -66,6 +66,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
     #[serde(default)]
     pub(crate) cancel_watcher: CancelWatcherTomlConfig,
+    #[serde(default)]
+    pub(crate) maintenance: MaintenanceTomlConfig,
     #[cfg(feature = "otlp")]
     #[serde(default)]
     pub(crate) otlp: Option<otlp::OtlpConfig>,
@@ -595,6 +597,37 @@ pub(crate) struct CancelWatcherTomlConfig {
     pub(crate) tick_sleep: DurationConfig,
 }
 
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MaintenanceTomlConfig {
+    #[serde(default)]
+    pub(crate) gc: GarbageCollectionTomlConfig,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GarbageCollectionTomlConfig {
+    #[serde(default = "default_gc_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_gc_interval")]
+    pub(crate) interval: DurationConfig,
+    #[serde(default = "default_gc_batch_size")]
+    pub(crate) batch_size: u32,
+    #[serde(default = "default_gc_batch_delay")]
+    pub(crate) batch_delay: DurationConfig,
+}
+
+impl Default for GarbageCollectionTomlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_gc_enabled(),
+            interval: default_gc_interval(),
+            batch_size: default_gc_batch_size(),
+            batch_delay: default_gc_batch_delay(),
+        }
+    }
+}
+
 impl Default for CancelWatcherTomlConfig {
     fn default() -> Self {
         Self {
@@ -904,6 +937,22 @@ fn default_timers_watcher_tick_sleep() -> DurationConfig {
 
 fn default_cancel_watcher_tick_sleep() -> DurationConfig {
     DurationConfig::Seconds(1)
+}
+
+const fn default_gc_enabled() -> bool {
+    true
+}
+
+const fn default_gc_interval() -> DurationConfig {
+    DurationConfig::Seconds(30)
+}
+
+const fn default_gc_batch_size() -> u32 {
+    1000
+}
+
+const fn default_gc_batch_delay() -> DurationConfig {
+    DurationConfig::Milliseconds(25)
 }
 
 // HTTP server declaration (referenced by ServerConfigToml)

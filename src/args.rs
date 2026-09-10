@@ -152,20 +152,6 @@ pub(crate) enum Admin {
     Executions(AdminExecutions),
     #[command(subcommand)]
     Deployments(AdminDeployments),
-    /// Delete unreferenced content-addressed blobs.
-    CasGc {
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(long)]
-        json: bool,
-        #[arg(
-            short,
-            long,
-            env = "OBELISK_API_URL",
-            default_value = "http://127.0.0.1:5005"
-        )]
-        api_url: String,
-    },
 }
 
 #[derive(Debug, clap::Subcommand)]

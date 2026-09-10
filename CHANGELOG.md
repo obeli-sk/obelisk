@@ -10,10 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(admin)* Added operator-only gRPC and `/v1/admin` APIs, plus `obelisk admin` commands, for
   deleting one or more execution trees and inactive deployments and applying bounded retention
-  policies that clean up the oldest eligible records first. Explicit deletion can force removal of
-  non-terminal trees after verifying that no execution in the tree references the active
-  deployment.
-- *(admin)* Added explicit CAS garbage collection with dry-run and byte/count diagnostics.
+  policies that clean up the oldest eligible records first. Deletion tombstones execution roots
+  synchronously, and configurable automatic maintenance removes their trees and unreferenced
+  shared metadata and CAS blobs in bounded batches. Explicit deletion can force removal of a
+  non-terminal tree unless its root belongs to the active deployment.
 
 - *(workflow)* `join-next-for` workflow-support function blocks until the next response arrives and
   requires it to belong to a given function. Its `join-next-for-error` reports `function-mismatch`
@@ -21,9 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** *(api, cli)* CAS garbage collection moved from `DeploymentRepository`,
-  `DELETE /v1/files/orphans`, and `obelisk deployment gc` to `AdminRepository.GcCas`,
-  `POST /v1/admin/cas/gc`, and `obelisk admin cas-gc`.
 - **Breaking:** *(config)* `max_deployment_file_bytes` moved from the top level of `server.toml`
   to `limits.max_deployment_file_bytes`.
 - **Breaking:** *(config)* Deployments can only read process environment variables listed in the

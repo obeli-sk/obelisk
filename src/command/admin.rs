@@ -2,8 +2,8 @@ use crate::{
     args,
     client::{ClientStartup, send_json},
     server::web_api_server::admin::{
-        CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse, GcCasRequest,
-        GcCasResponse, RetainDeploymentsRequest,
+        CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
+        RetainDeploymentsRequest,
     },
 };
 use http::header::ACCEPT;
@@ -174,27 +174,6 @@ impl args::Admin {
                     response.blocked_by_execution_reference,
                     response.blocked_non_terminal,
                     response.has_more
-                );
-                print_result(json, &response, &message)
-            }
-            Self::CasGc {
-                dry_run,
-                json,
-                api_url,
-            } => {
-                if !dry_run {
-                    eprintln!("Deleting unreferenced CAS blobs");
-                }
-                let response: GcCasResponse = send_json(
-                    client
-                        .post(format!("{api_url}/v1/admin/cas/gc"))
-                        .header(ACCEPT, "application/json")
-                        .json(&GcCasRequest { dry_run }),
-                )
-                .await?;
-                let message = format!(
-                    "{} orphan blob(s), {} deleted ({} bytes).",
-                    response.orphan_blobs, response.deleted_blobs, response.deleted_bytes
                 );
                 print_result(json, &response, &message)
             }

@@ -1030,22 +1030,6 @@
               ]
             }
           ]
-        },
-        {
-          "name": "cas-gc",
-          "about": "Delete unreferenced content-addressed blobs",
-          "options": [
-            {
-              "name": "--dry-run"
-            },
-            {
-              "name": "--json"
-            },
-            {
-              "name": "--api-url",
-              "short": "a"
-            }
-          ]
         }
       ]
     },

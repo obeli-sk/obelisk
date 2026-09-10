@@ -1460,6 +1460,13 @@ pub struct CasGcResult {
     pub deleted_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExecutionGcResult {
+    pub tombstoned_roots: u64,
+    pub deleted_rows: u64,
+    pub has_more: bool,
+}
+
 #[async_trait]
 pub trait CasGc: Send + Sync {
     async fn gc_cas(&self, dry_run: bool) -> Result<CasGcResult, DbErrorWrite>;
@@ -1494,6 +1501,8 @@ pub trait DbAdmin: Send + Sync {
         delete_executions: bool,
         dry_run: bool,
     ) -> Result<CleanupResult, DbErrorWrite>;
+
+    async fn gc_executions(&self, batch_size: u32) -> Result<ExecutionGcResult, DbErrorWrite>;
 }
 
 #[async_trait]

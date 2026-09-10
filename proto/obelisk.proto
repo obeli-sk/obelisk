@@ -58,7 +58,6 @@ service AdminRepository {
     rpc RetainExecutions(RetainExecutionsRequest) returns (CleanupResponse);
     rpc DeleteDeployment(DeleteDeploymentRequest) returns (DeleteDeploymentResponse);
     rpc RetainDeployments(RetainDeploymentsRequest) returns (CleanupResponse);
-    rpc GcCas(GcCasRequest) returns (GcCasResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -1350,15 +1349,6 @@ message CleanupResponse {
     uint64 blocked_non_terminal = 4;
     uint64 blocked_by_execution_reference = 5;
     bool has_more = 6;
-}
-message GcCasRequest {
-    bool dry_run = 1;
-}
-message GcCasResponse {
-    uint64 referenced_blobs = 1;
-    uint64 orphan_blobs = 2;
-    uint64 deleted_blobs = 3;
-    uint64 deleted_bytes = 4;
 }
 
 message GetDeploymentRequest {
