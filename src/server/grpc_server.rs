@@ -1963,25 +1963,6 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
     }
 
     #[instrument(skip_all)]
-    async fn gc_orphan_files(
-        &self,
-        _request: tonic::Request<grpc_gen::GcOrphanFilesRequest>,
-    ) -> TonicRespResult<grpc_gen::GcOrphanFilesResponse> {
-        let conn = self
-            .db_pool
-            .external_api_conn()
-            .await
-            .map_err(map_to_status)?;
-        let deleted_count = conn
-            .gc_orphan_files()
-            .await
-            .map_err(|err| tonic::Status::internal(format!("cannot gc orphan files: {err}")))?;
-        Ok(tonic::Response::new(grpc_gen::GcOrphanFilesResponse {
-            deleted_count,
-        }))
-    }
-
-    #[instrument(skip_all)]
     async fn get_file(
         &self,
         request: tonic::Request<grpc_gen::GetFileRequest>,
@@ -1998,6 +1979,202 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             .map_err(|err| tonic::Status::internal(format!("cannot read file: {err}")))?
             .must_exist("file")?;
         Ok(tonic::Response::new(grpc_gen::GetFileResponse { content }))
+    }
+}
+
+fn cleanup_to_grpc(result: storage::CleanupResult) -> grpc_gen::CleanupResponse {
+    grpc_gen::CleanupResponse {
+        deleted_execution_trees: result.deleted_execution_trees,
+        deleted_deployments: result.deleted_deployments,
+        retained: result.retained,
+        blocked_non_terminal: result.blocked_non_terminal,
+        blocked_by_execution_reference: result.blocked_by_execution_reference,
+        has_more: result.has_more,
+    }
+}
+
+#[tonic::async_trait]
+impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
+    async fn delete_execution_tree(
+        &self,
+        request: tonic::Request<grpc_gen::DeleteExecutionTreeRequest>,
+    ) -> TonicRespResult<grpc_gen::DeleteExecutionTreeResponse> {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        if !execution_id.is_top_level() {
+            return Err(tonic::Status::failed_precondition(format!(
+                "execution must be top-level; top-level execution is {}",
+                execution_id.get_top_level()
+            )));
+        }
+        let outcome = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .delete_execution_tree(&execution_id, request.force_non_terminal)
+            .await
+            .to_status()?;
+        match outcome {
+            storage::DeleteExecutionTreeResult::Deleted => Ok(tonic::Response::new(
+                grpc_gen::DeleteExecutionTreeResponse {
+                    deleted: true,
+                    already_deleted: false,
+                },
+            )),
+            storage::DeleteExecutionTreeResult::AlreadyDeleted => Ok(tonic::Response::new(
+                grpc_gen::DeleteExecutionTreeResponse {
+                    deleted: false,
+                    already_deleted: true,
+                },
+            )),
+            storage::DeleteExecutionTreeResult::NonTerminal => Err(
+                tonic::Status::failed_precondition("execution tree is not terminal"),
+            ),
+            storage::DeleteExecutionTreeResult::ActiveDeployment => {
+                Err(tonic::Status::failed_precondition(
+                    "non-terminal execution tree references the active deployment",
+                ))
+            }
+        }
+    }
+
+    async fn retain_executions(
+        &self,
+        request: tonic::Request<grpc_gen::RetainExecutionsRequest>,
+    ) -> TonicRespResult<grpc_gen::CleanupResponse> {
+        let request = request.into_inner();
+        validate_batch_size(request.batch_size)?;
+        let result = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .retain_executions(request.retain_count, request.batch_size, request.dry_run)
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(cleanup_to_grpc(result)))
+    }
+
+    async fn delete_deployment(
+        &self,
+        request: tonic::Request<grpc_gen::DeleteDeploymentRequest>,
+    ) -> TonicRespResult<grpc_gen::DeleteDeploymentResponse> {
+        let request = request.into_inner();
+        let deployment_id = request
+            .deployment_id
+            .argument_must_exist("deployment_id")?
+            .try_into()?;
+        if request.force_non_terminal && !request.delete_executions {
+            return Err(tonic::Status::failed_precondition(
+                "force_non_terminal requires delete_executions",
+            ));
+        }
+        let outcome = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .delete_deployment(
+                deployment_id,
+                request.delete_executions,
+                request.force_non_terminal,
+            )
+            .await
+            .to_status()?;
+        match outcome {
+            storage::DeleteDeploymentResult::Deleted {
+                deleted_execution_trees,
+            } => Ok(tonic::Response::new(grpc_gen::DeleteDeploymentResponse {
+                deleted: true,
+                already_deleted: false,
+                deleted_execution_trees,
+            })),
+            storage::DeleteDeploymentResult::AlreadyDeleted => {
+                Ok(tonic::Response::new(grpc_gen::DeleteDeploymentResponse {
+                    deleted: false,
+                    already_deleted: true,
+                    deleted_execution_trees: 0,
+                }))
+            }
+            storage::DeleteDeploymentResult::Active => Err(tonic::Status::failed_precondition(
+                "active deployment cannot be deleted",
+            )),
+            storage::DeleteDeploymentResult::Enqueued => Err(tonic::Status::failed_precondition(
+                "enqueued deployment cannot be deleted",
+            )),
+            storage::DeleteDeploymentResult::Referenced { execution_trees } => {
+                Err(tonic::Status::failed_precondition(format!(
+                    "deployment is referenced by {execution_trees} execution tree(s)"
+                )))
+            }
+            storage::DeleteDeploymentResult::ReferencedByNonTerminal { execution_trees } => {
+                Err(tonic::Status::failed_precondition(format!(
+                    "deployment is referenced by non-terminal executions in {execution_trees} tree(s)"
+                )))
+            }
+            storage::DeleteDeploymentResult::ReferencedByActiveDeployment { execution_trees } => {
+                Err(tonic::Status::failed_precondition(format!(
+                    "non-terminal executions in {execution_trees} tree(s) reference the active deployment"
+                )))
+            }
+        }
+    }
+
+    async fn retain_deployments(
+        &self,
+        request: tonic::Request<grpc_gen::RetainDeploymentsRequest>,
+    ) -> TonicRespResult<grpc_gen::CleanupResponse> {
+        let request = request.into_inner();
+        validate_batch_size(request.batch_size)?;
+        let result = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .retain_deployments(
+                request.retain_count,
+                request.batch_size,
+                request.delete_executions,
+                request.dry_run,
+            )
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(cleanup_to_grpc(result)))
+    }
+
+    async fn gc_cas(
+        &self,
+        request: tonic::Request<grpc_gen::GcCasRequest>,
+    ) -> TonicRespResult<grpc_gen::GcCasResponse> {
+        let result = self
+            .deployment_switch_manager
+            .gc_cas(request.into_inner().dry_run)
+            .await
+            .map_err(|err| tonic::Status::failed_precondition(err.to_string()))?;
+        Ok(tonic::Response::new(grpc_gen::GcCasResponse {
+            referenced_blobs: result.referenced_blobs,
+            orphan_blobs: result.orphan_blobs,
+            deleted_blobs: result.deleted_blobs,
+            deleted_bytes: result.deleted_bytes,
+        }))
+    }
+}
+
+fn validate_batch_size(batch_size: u32) -> Result<(), tonic::Status> {
+    if batch_size == 0 {
+        Err(tonic::Status::invalid_argument(
+            "batch_size must be greater than zero",
+        ))
+    } else if batch_size > 10_000 {
+        Err(tonic::Status::invalid_argument(
+            "batch_size must not exceed 10000",
+        ))
+    } else {
+        Ok(())
     }
 }
 

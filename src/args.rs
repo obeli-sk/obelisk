@@ -107,6 +107,8 @@ pub(crate) enum Subcommand {
     Component(ComponentArgs),
     /// Manage deployments.
     Deployment(DeploymentArgs),
+    /// Perform operator-only destructive maintenance.
+    Admin(AdminArgs),
     /// Generate configuration files and WIT artifacts.
     #[command(subcommand)]
     Generate(Generate),
@@ -134,6 +136,118 @@ pub(crate) struct DeploymentArgs {
     pub(crate) command: Deployment,
     #[command(flatten)]
     pub(crate) token: ClientToken,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct AdminArgs {
+    #[command(subcommand)]
+    pub(crate) command: Admin,
+    #[command(flatten)]
+    pub(crate) token: ClientToken,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum Admin {
+    #[command(subcommand)]
+    Executions(AdminExecutions),
+    #[command(subcommand)]
+    Deployments(AdminDeployments),
+    /// Delete unreferenced content-addressed blobs.
+    CasGc {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum AdminExecutions {
+    /// Delete one or more terminal top-level executions and their derived trees.
+    Delete {
+        #[arg(required = true, num_args = 1..)]
+        execution_ids: Vec<ExecutionId>,
+        /// Delete non-terminal trees unless they reference the active deployment.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+    /// Keep the newest completed top-level execution trees.
+    Retain {
+        #[arg(long)]
+        count: u32,
+        #[arg(long, default_value_t = 100)]
+        batch_size: u32,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum AdminDeployments {
+    /// Delete one or more inactive deployments.
+    Delete {
+        #[arg(required = true, num_args = 1..)]
+        deployment_ids: Vec<DeploymentId>,
+        #[arg(long)]
+        delete_executions: bool,
+        /// Delete non-terminal trees unless they reference the active deployment.
+        #[arg(long, requires = "delete_executions")]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
+    /// Keep the newest inactive deployments in addition to active and enqueued deployments.
+    Retain {
+        #[arg(long)]
+        count: u32,
+        #[arg(long)]
+        delete_executions: bool,
+        #[arg(long, default_value_t = 100)]
+        batch_size: u32,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -241,20 +355,6 @@ pub(crate) enum Deployment {
     },
     /// List recent deployments.
     List {
-        /// Address of the obelisk server
-        #[arg(
-            short,
-            long,
-            env = "OBELISK_API_URL",
-            default_value = "http://127.0.0.1:5005"
-        )]
-        api_url: String,
-    },
-    /// Delete content-addressed file blobs not referenced by any stored deployment.
-    ///
-    /// Such orphans are left behind when a submit writes blobs to the store and then
-    /// fails verification before persisting the deployment.
-    Gc {
         /// Address of the obelisk server
         #[arg(
             short,
@@ -1140,5 +1240,80 @@ mod tests {
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
         assert!(err.to_string().contains("API token must not be empty"));
+    }
+
+    #[test]
+    fn admin_plural_delete_accepts_multiple_ids() {
+        let first = ExecutionId::generate();
+        let second = ExecutionId::generate();
+        let args = Args::try_parse_from([
+            "obelisk".to_owned(),
+            "admin".to_owned(),
+            "executions".to_owned(),
+            "delete".to_owned(),
+            first.to_string(),
+            second.to_string(),
+            "--force".to_owned(),
+        ])
+        .unwrap();
+
+        let Subcommand::Admin(AdminArgs {
+            command:
+                Admin::Executions(AdminExecutions::Delete {
+                    execution_ids,
+                    force,
+                    ..
+                }),
+            ..
+        }) = args.command
+        else {
+            panic!("expected plural admin execution deletion");
+        };
+        assert_eq!(execution_ids, [first, second]);
+        assert!(force);
+
+        let first = DeploymentId::generate();
+        let second = DeploymentId::generate();
+        let args = Args::try_parse_from([
+            "obelisk".to_owned(),
+            "admin".to_owned(),
+            "deployments".to_owned(),
+            "delete".to_owned(),
+            first.to_string(),
+            second.to_string(),
+            "--delete-executions".to_owned(),
+            "--force".to_owned(),
+        ])
+        .unwrap();
+        let Subcommand::Admin(AdminArgs {
+            command:
+                Admin::Deployments(AdminDeployments::Delete {
+                    deployment_ids,
+                    delete_executions,
+                    force,
+                    ..
+                }),
+            ..
+        }) = args.command
+        else {
+            panic!("expected plural admin deployment deletion");
+        };
+        assert_eq!(deployment_ids, [first, second]);
+        assert!(delete_executions);
+        assert!(force);
+    }
+
+    #[test]
+    fn admin_singular_resource_group_is_rejected() {
+        let err = Args::try_parse_from([
+            "obelisk",
+            "admin",
+            "execution",
+            "delete",
+            &ExecutionId::generate().to_string(),
+        ])
+        .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 }

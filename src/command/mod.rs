@@ -1,3 +1,4 @@
+pub(crate) mod admin;
 pub(crate) mod component;
 pub(crate) mod deployment;
 pub(crate) mod execution;

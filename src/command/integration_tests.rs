@@ -71,9 +71,10 @@ use db_sqlite::sqlite_dao::{SqliteConfig, SqlitePool};
 use directories::BaseDirs;
 use grpc::grpc_gen::{
     AdvanceExecutionRequest, CancelExecutionRequest, DeploymentId as GrpcDeploymentId,
-    ExecutionId as GrpcExecutionId, GcOrphanFilesRequest, GetDeploymentRequest, GetFileRequest,
+    ExecutionId as GrpcExecutionId, GcCasRequest, GetDeploymentRequest, GetFileRequest,
     GetStatusRequest, ListComponentsRequest, ReplayExecutionRequest, RuntimeConfigCheck,
     SubmitDeploymentRequest, SubmitRequest, SwitchDeploymentRequest,
+    admin_repository_client::AdminRepositoryClient,
     cancel_execution_response::CancelExecutionOutcome,
     deployment_repository_client::DeploymentRepositoryClient,
     execution_repository_client::ExecutionRepositoryClient,
@@ -2212,7 +2213,7 @@ async fn list_functions() {
 
 #[tokio::test]
 async fn list_components_grpc_by_explicit_deployment_id() {
-    let server = TestServer::start(test_addr!(40_102)).await;
+    let server = TestServer::start(test_addr!(999)).await;
     const NEW_STUB_NAME: &str = "explicit_deployment_stub_grpc";
     const NEW_STUB_FFQN: &str = "testing:integration/stubs.explicit-deployment-grpc";
 
@@ -2920,12 +2921,14 @@ routes = [{ methods = ["GET"], route = "/" }]
 
     // Fresh server: the only blob that could be orphaned is the one this rejected submit
     // wrote. The submit's own best-effort sweep must already have reclaimed it.
-    let deleted = grpc_client
-        .gc_orphan_files(grpc::grpc_gen::GcOrphanFilesRequest {})
+    let deleted = AdminRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap()
+        .gc_cas(GcCasRequest { dry_run: false })
         .await
         .unwrap()
         .into_inner()
-        .deleted_count;
+        .deleted_blobs;
     assert_eq!(
         deleted, 0,
         "a rejected submit must not leak orphan blobs, found {deleted}"
@@ -3168,12 +3171,12 @@ ffqn = "testing:integration/pkg.run"
     server.shutdown().await;
 }
 
-/// `GcOrphanFiles` deletes CAS blobs not referenced by any stored deployment while keeping
+/// `GcCas` deletes CAS blobs not referenced by any stored deployment while keeping
 /// those a valid deployment still references. A rejected submit now reclaims its own blobs
 /// (see `rejected_submit_reclaims_orphan_blobs_grpc`), so the orphan here is seeded straight
 /// into the CAS to give GC something to reclaim.
 #[tokio::test]
-async fn gc_orphan_files_grpc() {
+async fn gc_cas_grpc() {
     let server = TestServer::start(test_addr!(81)).await;
 
     let grpc_client = DeploymentRepositoryClient::connect(format!("http://{}", server.api_addr()))
@@ -3181,6 +3184,9 @@ async fn gc_orphan_files_grpc() {
         .unwrap()
         .max_encoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES)
         .max_decoding_message_size(crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES);
+    let mut admin_client = AdminRepositoryClient::connect(format!("http://{}", server.api_addr()))
+        .await
+        .unwrap();
 
     // A valid deployment: its blob is referenced and must survive GC.
     let good_dir = tempfile::tempdir().unwrap();
@@ -3260,13 +3266,12 @@ ffqn = "testing:integration/a.run"
         .expect("orphan blob present before gc");
 
     // GC deletes exactly the orphan.
-    let deleted = grpc_client
-        .clone()
-        .gc_orphan_files(GcOrphanFilesRequest {})
+    let deleted = admin_client
+        .gc_cas(GcCasRequest { dry_run: false })
         .await
         .unwrap()
         .into_inner()
-        .deleted_count;
+        .deleted_blobs;
     assert_eq!(deleted, 1, "exactly one orphan blob must be deleted");
 
     // After GC: the orphan is gone, the referenced blob remains.
@@ -3287,20 +3292,19 @@ ffqn = "testing:integration/a.run"
     assert_eq!(status.code(), tonic::Code::NotFound);
 
     // A second GC is a no-op.
-    let deleted = grpc_client
-        .clone()
-        .gc_orphan_files(GcOrphanFilesRequest {})
+    let deleted = admin_client
+        .gc_cas(GcCasRequest { dry_run: false })
         .await
         .unwrap()
         .into_inner()
-        .deleted_count;
+        .deleted_blobs;
     assert_eq!(deleted, 0, "second gc must delete nothing");
 
     server.shutdown().await;
 }
 
 #[tokio::test]
-async fn gc_orphan_files_webapi() {
+async fn gc_cas_webapi() {
     let server = TestServer::start(test_addr!(123)).await;
     let orphan_digest = {
         let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
@@ -3319,13 +3323,14 @@ async fn gc_orphan_files_webapi() {
 
     let response = server
         .client
-        .delete(format!("{}/v1/files/orphans", server.base_url))
+        .post(format!("{}/v1/admin/cas/gc", server.base_url))
         .header("Accept", "application/json")
+        .json(&json!({ "dry_run": false }))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    assert_eq!(response.json::<Value>().await.unwrap()["deleted_count"], 1);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted_blobs"], 1);
 
     let response = server
         .client
@@ -3337,13 +3342,152 @@ async fn gc_orphan_files_webapi() {
 
     let response = server
         .client
-        .delete(format!("{}/v1/files/orphans", server.base_url))
+        .post(format!("{}/v1/admin/cas/gc", server.base_url))
         .header("Accept", "application/json")
+        .json(&json!({ "dry_run": false }))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    assert_eq!(response.json::<Value>().await.unwrap()["deleted_count"], 0);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted_blobs"], 0);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn admin_cleanup_webapi() {
+    let server = TestServer::start(test_addr!(40_102)).await;
+    let older_execution = server.generate_execution_id().await;
+    let newer_execution = server.generate_execution_id().await;
+    for execution_id in [&older_execution, &newer_execution] {
+        let response = server
+            .submit_follow_with_id(
+                execution_id,
+                "testing:integration/activity.add",
+                vec![json!(1), json!(2)],
+            )
+            .await;
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+        assert_eq!(response.json::<Value>().await.unwrap(), json!({ "ok": 3 }));
+    }
+
+    let response = server
+        .client
+        .post(format!("{}/v1/admin/executions/retain", server.base_url))
+        .json(&json!({ "retain_count": 1, "batch_size": 100, "dry_run": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert!(
+        body["deleted_execution_trees"].as_u64().unwrap() >= 1,
+        "{body}"
+    );
+    assert_eq!(body["has_more"], false);
+
+    let executions = server.list_executions().await;
+    let ids = executions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|execution| execution["execution_id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(!ids.contains(&older_execution.as_str()));
+    assert!(ids.contains(&newer_execution.as_str()));
+
+    let response = server
+        .client
+        .delete(format!(
+            "{}/v1/admin/executions/{newer_execution}",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted"], true);
+    let response = server
+        .client
+        .delete(format!(
+            "{}/v1/admin/executions/{newer_execution}",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["already_deleted"],
+        true
+    );
+
+    let older_deployment = server
+        .submit_modified_deployment(|doc| {
+            append_inline_stub(
+                doc,
+                "older-cleanup",
+                "testing:integration/stubs.older-cleanup",
+            );
+        })
+        .await;
+    let newer_deployment = server
+        .submit_modified_deployment(|doc| {
+            append_inline_stub(
+                doc,
+                "newer-cleanup",
+                "testing:integration/stubs.newer-cleanup",
+            );
+        })
+        .await;
+    let response = server
+        .client
+        .post(format!("{}/v1/admin/deployments/retain", server.base_url))
+        .json(&json!({
+            "retain_count": 1,
+            "batch_size": 100,
+            "delete_executions": false,
+            "dry_run": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["deleted_deployments"],
+        1
+    );
+    let response = server
+        .client
+        .get(format!(
+            "{}/v1/deployments/{older_deployment}",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    let response = server
+        .client
+        .delete(format!(
+            "{}/v1/admin/deployments/{newer_deployment}",
+            server.base_url
+        ))
+        .query(&[("force_non_terminal", true)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::PRECONDITION_FAILED);
+    let response = server
+        .client
+        .delete(format!(
+            "{}/v1/admin/deployments/{newer_deployment}",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap()["deleted"], true);
 
     server.shutdown().await;
 }

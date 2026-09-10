@@ -18,8 +18,8 @@ use crate::command::server::{
 use crate::config::secret_registry::{API_TOKEN, API_TOKEN_LEGACY, EnvVarSecretsCleanup};
 use anyhow::ensure;
 use args::{
-    Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs, ExecutionArgs, Server,
-    Subcommand, VerifyArgs,
+    AdminArgs, Args, ComponentArgs, Deployment, DeploymentArgs, DeploymentVerifyArgs,
+    ExecutionArgs, Server, Subcommand, VerifyArgs,
 };
 use clap::Parser;
 use client::ClientStartup;
@@ -192,6 +192,10 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         Subcommand::Deployment(DeploymentArgs { command, token }) => {
+            Box::pin(command.run(ClientStartup::new(token.api_token)))
+        }
+
+        Subcommand::Admin(AdminArgs { command, token }) => {
             Box::pin(command.run(ClientStartup::new(token.api_token)))
         }
 

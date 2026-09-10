@@ -76,6 +76,7 @@ pub(crate) struct WebApiState {
         (name = "components", description = "Component management"),
         (name = "functions", description = "Function management"),
         (name = "deployments", description = "Deployment management"),
+        (name = "admin", description = "Operator-only destructive maintenance"),
         (name = "delays", description = "Delay management")
     ),
     paths(
@@ -112,7 +113,11 @@ pub(crate) struct WebApiState {
         deployment::submit_put,
         deployment::switch,
         deployment::get_file,
-        deployment::gc_orphan_files,
+        admin::delete_execution_tree,
+        admin::retain_executions,
+        admin::delete_deployment,
+        admin::retain_deployments,
+        admin::gc_cas,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -140,7 +145,13 @@ pub(crate) struct WebApiState {
         functions::FunctionOutput,
         deployment::DeploymentStateSer,
         deployment::DeploymentSubmitResponse,
-        deployment::GcOrphanFilesResponseSer,
+        admin::DeleteResponse,
+        admin::DeleteDeploymentResponse,
+        admin::CleanupRequest,
+        admin::RetainDeploymentsRequest,
+        admin::CleanupResponse,
+        admin::GcCasRequest,
+        admin::GcCasResponse,
         deployment::DeploymentSubmitErrorBody,
         deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
@@ -269,10 +280,7 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
             "/deployments/{deployment-id}",
             routing::get(deployment::get).put(deployment::submit_put),
         )
-        .route(
-            "/files/orphans",
-            routing::delete(deployment::gc_orphan_files),
-        )
+        .nest("/admin", admin_router())
         .route("/files/{digest}", routing::get(deployment::get_file))
         .route(
             "/deployments/{deployment-id}/switch",
@@ -288,6 +296,302 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
             routing::get(execution_backtrace_source),
         )
         .layer(DefaultBodyLimit::max(max_transport_message_size_bytes))
+}
+
+fn admin_router() -> Router<Arc<WebApiState>> {
+    Router::new()
+        .route(
+            "/executions/{execution-id}",
+            routing::delete(admin::delete_execution_tree),
+        )
+        .route(
+            "/executions/retain",
+            routing::post(admin::retain_executions),
+        )
+        .route(
+            "/deployments/{deployment-id}",
+            routing::delete(admin::delete_deployment),
+        )
+        .route(
+            "/deployments/retain",
+            routing::post(admin::retain_deployments),
+        )
+        .route("/cas/gc", routing::post(admin::gc_cas))
+}
+
+pub(crate) mod admin {
+    use super::*;
+    use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult};
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct DeleteResponse {
+        pub(crate) deleted: bool,
+        pub(crate) already_deleted: bool,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct DeleteDeploymentResponse {
+        pub(crate) deleted: bool,
+        pub(crate) already_deleted: bool,
+        pub(crate) deleted_execution_trees: u64,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct CleanupRequest {
+        pub(crate) retain_count: u32,
+        pub(crate) batch_size: u32,
+        #[serde(default)]
+        pub(crate) dry_run: bool,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct RetainDeploymentsRequest {
+        pub(crate) retain_count: u32,
+        pub(crate) batch_size: u32,
+        #[serde(default)]
+        pub(crate) delete_executions: bool,
+        #[serde(default)]
+        pub(crate) dry_run: bool,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct CleanupResponse {
+        pub(crate) deleted_execution_trees: u64,
+        pub(crate) deleted_deployments: u64,
+        pub(crate) retained: u64,
+        pub(crate) blocked_non_terminal: u64,
+        pub(crate) blocked_by_execution_reference: u64,
+        pub(crate) has_more: bool,
+    }
+
+    impl From<storage::CleanupResult> for CleanupResponse {
+        fn from(value: storage::CleanupResult) -> Self {
+            Self {
+                deleted_execution_trees: value.deleted_execution_trees,
+                deleted_deployments: value.deleted_deployments,
+                retained: value.retained,
+                blocked_non_terminal: value.blocked_non_terminal,
+                blocked_by_execution_reference: value.blocked_by_execution_reference,
+                has_more: value.has_more,
+            }
+        }
+    }
+
+    #[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct GcCasRequest {
+        #[serde(default)]
+        pub(crate) dry_run: bool,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct GcCasResponse {
+        pub(crate) referenced_blobs: u64,
+        pub(crate) orphan_blobs: u64,
+        pub(crate) deleted_blobs: u64,
+        pub(crate) deleted_bytes: u64,
+    }
+
+    fn validate_batch_size(batch_size: u32) -> Result<(), HttpResponse> {
+        if batch_size == 0 || batch_size > 10_000 {
+            Err(HttpResponse {
+                status: StatusCode::BAD_REQUEST,
+                message: "batch_size must be between 1 and 10000".into(),
+                accept: AcceptHeader::Json,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn precondition(message: impl Into<String>) -> HttpResponse {
+        HttpResponse {
+            status: StatusCode::PRECONDITION_FAILED,
+            message: message.into(),
+            accept: AcceptHeader::Json,
+        }
+    }
+
+    #[derive(Debug, Default, Deserialize, IntoParams)]
+    pub(crate) struct DeleteExecutionQuery {
+        #[serde(default)]
+        force_non_terminal: bool,
+    }
+
+    #[utoipa::path(delete, path = "/v1/admin/executions/{execution_id}", tag = "admin", params(DeleteExecutionQuery), responses((status = 200, body = DeleteResponse)))]
+    pub(crate) async fn delete_execution_tree(
+        Path(execution_id): Path<ExecutionId>,
+        Query(query): Query<DeleteExecutionQuery>,
+        State(state): State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        if !execution_id.is_top_level() {
+            return Err(precondition(format!(
+                "execution must be top-level; top-level execution is {}",
+                execution_id.get_top_level()
+            )));
+        }
+        let outcome = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .delete_execution_tree(&execution_id, query.force_non_terminal)
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        let response = match outcome {
+            DeleteExecutionTreeResult::Deleted => DeleteResponse {
+                deleted: true,
+                already_deleted: false,
+            },
+            DeleteExecutionTreeResult::AlreadyDeleted => DeleteResponse {
+                deleted: false,
+                already_deleted: true,
+            },
+            DeleteExecutionTreeResult::NonTerminal => {
+                return Err(precondition("execution tree is not terminal"));
+            }
+            DeleteExecutionTreeResult::ActiveDeployment => {
+                return Err(precondition(
+                    "non-terminal execution tree references the active deployment",
+                ));
+            }
+        };
+        Ok(pretty_json_response(StatusCode::OK, &response))
+    }
+
+    #[utoipa::path(post, path = "/v1/admin/executions/retain", tag = "admin", request_body = CleanupRequest, responses((status = 200, body = CleanupResponse)))]
+    pub(crate) async fn retain_executions(
+        State(state): State<Arc<WebApiState>>,
+        Json(request): Json<CleanupRequest>,
+    ) -> Result<Response, HttpResponse> {
+        validate_batch_size(request.batch_size)?;
+        let result = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .retain_executions(request.retain_count, request.batch_size, request.dry_run)
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &CleanupResponse::from(result),
+        ))
+    }
+
+    #[derive(Debug, Default, Deserialize, IntoParams)]
+    pub(crate) struct DeleteDeploymentQuery {
+        #[serde(default)]
+        delete_executions: bool,
+        #[serde(default)]
+        force_non_terminal: bool,
+    }
+
+    #[utoipa::path(delete, path = "/v1/admin/deployments/{deployment_id}", tag = "admin", params(DeleteDeploymentQuery), responses((status = 200, body = DeleteDeploymentResponse)))]
+    pub(crate) async fn delete_deployment(
+        Path(deployment_id): Path<DeploymentId>,
+        Query(query): Query<DeleteDeploymentQuery>,
+        State(state): State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        if query.force_non_terminal && !query.delete_executions {
+            return Err(precondition(
+                "force_non_terminal requires delete_executions",
+            ));
+        }
+        let outcome = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .delete_deployment(
+                deployment_id,
+                query.delete_executions,
+                query.force_non_terminal,
+            )
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        let response = match outcome {
+            DeleteDeploymentResult::Deleted {
+                deleted_execution_trees,
+            } => DeleteDeploymentResponse {
+                deleted: true,
+                already_deleted: false,
+                deleted_execution_trees,
+            },
+            DeleteDeploymentResult::AlreadyDeleted => DeleteDeploymentResponse {
+                deleted: false,
+                already_deleted: true,
+                deleted_execution_trees: 0,
+            },
+            DeleteDeploymentResult::Active => {
+                return Err(precondition("active deployment cannot be deleted"));
+            }
+            DeleteDeploymentResult::Enqueued => {
+                return Err(precondition("enqueued deployment cannot be deleted"));
+            }
+            DeleteDeploymentResult::Referenced { execution_trees } => {
+                return Err(precondition(format!(
+                    "deployment is referenced by {execution_trees} execution tree(s)"
+                )));
+            }
+            DeleteDeploymentResult::ReferencedByNonTerminal { execution_trees } => {
+                return Err(precondition(format!(
+                    "deployment is referenced by non-terminal executions in {execution_trees} tree(s)"
+                )));
+            }
+            DeleteDeploymentResult::ReferencedByActiveDeployment { execution_trees } => {
+                return Err(precondition(format!(
+                    "non-terminal executions in {execution_trees} tree(s) reference the active deployment"
+                )));
+            }
+        };
+        Ok(pretty_json_response(StatusCode::OK, &response))
+    }
+
+    #[utoipa::path(post, path = "/v1/admin/deployments/retain", tag = "admin", request_body = RetainDeploymentsRequest, responses((status = 200, body = CleanupResponse)))]
+    pub(crate) async fn retain_deployments(
+        State(state): State<Arc<WebApiState>>,
+        Json(request): Json<RetainDeploymentsRequest>,
+    ) -> Result<Response, HttpResponse> {
+        validate_batch_size(request.batch_size)?;
+        let result = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .retain_deployments(
+                request.retain_count,
+                request.batch_size,
+                request.delete_executions,
+                request.dry_run,
+            )
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &CleanupResponse::from(result),
+        ))
+    }
+
+    #[utoipa::path(post, path = "/v1/admin/cas/gc", tag = "admin", request_body = GcCasRequest, responses((status = 200, body = GcCasResponse)))]
+    pub(crate) async fn gc_cas(
+        State(state): State<Arc<WebApiState>>,
+        Json(request): Json<GcCasRequest>,
+    ) -> Result<Response, HttpResponse> {
+        let result = state
+            .deployment_switch_manager
+            .gc_cas(request.dry_run)
+            .await
+            .map_err(|err| precondition(err.to_string()))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &GcCasResponse {
+                referenced_blobs: result.referenced_blobs,
+                orphan_blobs: result.orphan_blobs,
+                deleted_blobs: result.deleted_blobs,
+                deleted_bytes: result.deleted_bytes,
+            },
+        ))
+    }
 }
 
 /// Generate a new execution ID
@@ -3588,11 +3892,6 @@ pub(crate) mod deployment {
         pub files: Vec<FileRefSer>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub(crate) struct GcOrphanFilesResponseSer {
-        pub(crate) deleted_count: u64,
-    }
-
     impl From<&DeploymentRecord> for DeploymentRecordSer {
         fn from(r: &DeploymentRecord) -> Self {
             Self {
@@ -4095,33 +4394,6 @@ pub(crate) mod deployment {
             })?
             .ok_or_else(|| HttpResponse::not_found(accept, Some("file")))?;
         Ok(content.into_response())
-    }
-
-    /// Delete file blobs that are not referenced by a deployment.
-    #[utoipa::path(
-        delete,
-        path = "/v1/files/orphans",
-        tag = "deployments",
-        responses(
-            (status = 200, description = "Orphan files deleted", body = GcOrphanFilesResponseSer)
-        )
-    )]
-    pub(crate) async fn gc_orphan_files(
-        state: State<Arc<WebApiState>>,
-    ) -> Result<Response, HttpResponse> {
-        let accept = AcceptHeader::Json;
-        let deleted_count = state
-            .db_pool
-            .external_api_conn()
-            .await
-            .map_err(|e| ErrorWrapper(e, accept))?
-            .gc_orphan_files()
-            .await
-            .map_err(|e| ErrorWrapper(e, accept))?;
-        Ok(pretty_json_response(
-            StatusCode::OK,
-            &GcOrphanFilesResponseSer { deleted_count },
-        ))
     }
 
     /// Request payload for switching deployment

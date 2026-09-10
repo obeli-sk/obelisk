@@ -13,6 +13,164 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/v1/admin/cas/gc": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "gc_cas",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GcCasRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GcCasResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/deployments/retain": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "retain_deployments",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetainDeploymentsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/deployments/{deployment_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "delete_deployment",
+        "parameters": [
+          {
+            "name": "delete_executions",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "force_non_terminal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteDeploymentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/executions/retain": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "retain_executions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/executions/{execution_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "delete_execution_tree",
+        "parameters": [
+          {
+            "name": "force_non_terminal",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/components": {
       "get": {
         "tags": [
@@ -1548,27 +1706,6 @@
         }
       }
     },
-    "/v1/files/orphans": {
-      "delete": {
-        "tags": [
-          "deployments"
-        ],
-        "summary": "Delete file blobs that are not referenced by a deployment.",
-        "operationId": "gc_orphan_files",
-        "responses": {
-          "200": {
-            "description": "Orphan files deleted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GcOrphanFilesResponseSer"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/files/{digest}": {
       "get": {
         "tags": [
@@ -2067,6 +2204,69 @@
         ],
         "description": "A write captured during replay, produced by the replay endpoint and applied by the advance endpoint."
       },
+      "CleanupRequest": {
+        "type": "object",
+        "required": [
+          "retain_count",
+          "batch_size"
+        ],
+        "properties": {
+          "batch_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "retain_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "CleanupResponse": {
+        "type": "object",
+        "required": [
+          "deleted_execution_trees",
+          "deleted_deployments",
+          "retained",
+          "blocked_non_terminal",
+          "blocked_by_execution_reference",
+          "has_more"
+        ],
+        "properties": {
+          "blocked_by_execution_reference": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "blocked_non_terminal": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deleted_deployments": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deleted_execution_trees": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "retained": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ComponentConfig": {
         "type": "object",
         "description": "Component configuration with optional imports/exports",
@@ -2213,6 +2413,42 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "DeleteDeploymentResponse": {
+        "type": "object",
+        "required": [
+          "deleted",
+          "already_deleted",
+          "deleted_execution_trees"
+        ],
+        "properties": {
+          "already_deleted": {
+            "type": "boolean"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "deleted_execution_trees": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "DeleteResponse": {
+        "type": "object",
+        "required": [
+          "deleted",
+          "already_deleted"
+        ],
+        "properties": {
+          "already_deleted": {
+            "type": "boolean"
+          },
+          "deleted": {
+            "type": "boolean"
           }
         }
       },
@@ -2795,13 +3031,39 @@
           }
         }
       },
-      "GcOrphanFilesResponseSer": {
+      "GcCasRequest": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          }
+        }
+      },
+      "GcCasResponse": {
         "type": "object",
         "required": [
-          "deleted_count"
+          "referenced_blobs",
+          "orphan_blobs",
+          "deleted_blobs",
+          "deleted_bytes"
         ],
         "properties": {
-          "deleted_count": {
+          "deleted_blobs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deleted_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "orphan_blobs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "referenced_blobs": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
@@ -3122,6 +3384,31 @@
         ],
         "description": "Lossy representation of `SupportedFunctionReturnValue`. Does not contain WIT type."
       },
+      "RetainDeploymentsRequest": {
+        "type": "object",
+        "required": [
+          "retain_count",
+          "batch_size"
+        ],
+        "properties": {
+          "batch_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "delete_executions": {
+            "type": "boolean"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "retain_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "StubResponseSer": {
         "type": "object",
         "description": "A serializable mirror of `AppendResponseToExecution` from concepts.",
@@ -3236,6 +3523,10 @@
     {
       "name": "deployments",
       "description": "Deployment management"
+    },
+    {
+      "name": "admin",
+      "description": "Operator-only destructive maintenance"
     },
     {
       "name": "delays",
