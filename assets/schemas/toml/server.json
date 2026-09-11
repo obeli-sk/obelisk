@@ -860,6 +860,9 @@
         },
         "deployments": {
           "$ref": "#/$defs/RetentionPolicyTomlConfig"
+        },
+        "system_events": {
+          "$ref": "#/$defs/RetentionPolicyTomlConfig"
         }
       },
       "additionalProperties": false

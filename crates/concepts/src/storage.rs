@@ -1514,7 +1514,7 @@ impl SystemEvent {
         deployment_id: Option<DeploymentId>,
         details: serde_json::Value,
     ) -> Self {
-        fn bounded(value: String, length: usize) -> String {
+        fn bounded(value: &str, length: usize) -> String {
             value.chars().take(length).collect()
         }
         let details = if serde_json::to_vec(&details).is_ok_and(|encoded| encoded.len() <= 4000) {
@@ -1526,8 +1526,8 @@ impl SystemEvent {
             event_id: format!("sev_{}", ulid::Ulid::new()),
             created_at: Utc::now(),
             level,
-            code: bounded(code.into(), 64),
-            message: bounded(message.into(), 512),
+            code: bounded(&code.into(), 64),
+            message: bounded(&message.into(), 512),
             execution_id,
             deployment_id,
             details,
@@ -1568,7 +1568,7 @@ pub trait DbAdmin: Send + Sync {
 
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead>;
 
-    async fn gc_system_events(
+    async fn retain_system_events(
         &self,
         created_before: DateTime<Utc>,
         limit: u32,

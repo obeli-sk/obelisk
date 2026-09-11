@@ -5685,21 +5685,23 @@ impl DbAdmin for SqlitePool {
                     database_bytes: page_count
                         .checked_mul(page_size)
                         .and_then(|n| u64::try_from(n).ok()),
-                    execution_count: tx.query_row(
-                        "SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    )? as u64,
-                    deployment_count: tx.query_row(
-                        "SELECT COUNT(*) FROM t_deployment",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    )? as u64,
-                    system_event_count: tx.query_row(
-                        "SELECT COUNT(*) FROM t_system_event",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    )? as u64,
+                    execution_count: tx
+                        .query_row(
+                            "SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )?
+                        .cast_unsigned(),
+                    deployment_count: tx
+                        .query_row("SELECT COUNT(*) FROM t_deployment", [], |row| {
+                            row.get::<_, i64>(0)
+                        })?
+                        .cast_unsigned(),
+                    system_event_count: tx
+                        .query_row("SELECT COUNT(*) FROM t_system_event", [], |row| {
+                            row.get::<_, i64>(0)
+                        })?
+                        .cast_unsigned(),
                 })
             },
             TxType::Other,
@@ -5708,14 +5710,14 @@ impl DbAdmin for SqlitePool {
         .await
     }
 
-    async fn gc_system_events(
+    async fn retain_system_events(
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
     ) -> Result<u64, DbErrorWrite> {
         self.transaction(
             move |tx| Ok(tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit.clamp(1, 10_000))])? as u64),
-            TxType::MultipleWrites, "gc_system_events"
+            TxType::MultipleWrites, "retain_system_events"
         ).await
     }
 

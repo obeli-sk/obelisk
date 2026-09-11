@@ -96,7 +96,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     );
     assert_eq!(
         admin
-            .gc_system_events(chrono::Utc::now() + Duration::seconds(1), 1)
+            .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 1)
             .await
             .unwrap(),
         1

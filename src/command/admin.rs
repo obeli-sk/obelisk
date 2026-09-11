@@ -3,7 +3,8 @@ use crate::{
     client::{ClientStartup, send_json},
     server::web_api_server::admin::{
         CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
-        RetainDeploymentsRequest, StorageStatusResponse, SystemEventsResponse,
+        RetainDeploymentsRequest, RetainSystemEventsRequest, RetainSystemEventsResponse,
+        StorageStatusResponse, SystemEventsResponse,
     },
 };
 use http::header::ACCEPT;
@@ -224,6 +225,28 @@ impl args::Admin {
                     }
                 }
                 Ok(())
+            }
+            Self::Events(args::AdminEvents::Retain {
+                max_age,
+                batch_size,
+                json,
+                api_url,
+            }) => {
+                let response: RetainSystemEventsResponse = send_json(
+                    client
+                        .post(format!("{api_url}/v1/admin/system-events/retain"))
+                        .header(ACCEPT, "application/json")
+                        .json(&RetainSystemEventsRequest {
+                            max_age_seconds: max_age.as_secs(),
+                            batch_size,
+                        }),
+                )
+                .await?;
+                let message = format!(
+                    "{} system event(s) deleted; has_more={}",
+                    response.deleted, response.has_more
+                );
+                print_result(json, &response, &message)
             }
             Self::Storage(args::AdminStorage::Show { json, api_url }) => {
                 let response: StorageStatusResponse = send_json(

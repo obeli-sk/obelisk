@@ -6022,13 +6022,13 @@ impl DbAdmin for PostgresConnection {
         ).await?;
         Ok(StorageStatus {
             database_bytes: u64::try_from(get::<i64, _>(&row, 0)?).ok(),
-            execution_count: get::<i64, _>(&row, 1)? as u64,
-            deployment_count: get::<i64, _>(&row, 2)? as u64,
-            system_event_count: get::<i64, _>(&row, 3)? as u64,
+            execution_count: get::<i64, _>(&row, 1)?.cast_unsigned(),
+            deployment_count: get::<i64, _>(&row, 2)?.cast_unsigned(),
+            system_event_count: get::<i64, _>(&row, 3)?.cast_unsigned(),
         })
     }
 
-    async fn gc_system_events(
+    async fn retain_system_events(
         &self,
         created_before: DateTime<Utc>,
         limit: u32,

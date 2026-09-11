@@ -1672,6 +1672,7 @@ pub(crate) async fn run_internal(
     for (name, retention) in [
         ("executions", maintenance_gc.retention.executions),
         ("deployments", maintenance_gc.retention.deployments),
+        ("system_events", maintenance_gc.retention.system_events),
     ] {
         if retention.enabled && Duration::from(retention.max_age).is_zero() {
             bail!("`maintenance.gc.retention.{name}.max_age` must be greater than zero");
@@ -3348,9 +3349,11 @@ fn spawn_maintenance_gc(
         let batch_delay = Duration::from(config.batch_delay);
         let execution_retention = config.retention.executions;
         let deployment_retention = config.retention.deployments;
+        let system_event_retention = config.retention.system_events;
         for (record_type, retention) in [
             ("executions", execution_retention),
             ("deployments", deployment_retention),
+            ("system_events", system_event_retention),
         ] {
             if retention.enabled {
                 info!(
@@ -3380,22 +3383,44 @@ fn spawn_maintenance_gc(
                     );
                     break;
                 };
-                let retain = async {
-                    let admin = db_pool.admin_conn().await?;
-                    admin
-                        .retain_executions(
-                            RetentionPolicy::CreatedAtOrAfter(cutoff),
-                            config.batch_size,
-                            false,
-                            false,
-                        )
-                        .await
-                };
-                if let Err(err) = retain.await {
-                    warn!(
-                        record_type = "executions",
-                        "automatic retention failed: {err}"
-                    );
+                loop {
+                    let retain = async {
+                        let admin = db_pool.admin_conn().await?;
+                        admin
+                            .retain_executions(
+                                RetentionPolicy::CreatedAtOrAfter(cutoff),
+                                config.batch_size,
+                                false,
+                                false,
+                            )
+                            .await
+                    };
+                    let result = tokio::select! {
+                        biased;
+                        _ = termination_watcher.changed() => break,
+                        result = retain => result,
+                    };
+                    match result {
+                        Ok(result) => {
+                            if result.deleted_execution_trees > 0 {
+                                tokio::select! {
+                                    biased;
+                                    _ = termination_watcher.changed() => break,
+                                    () = tokio::time::sleep(batch_delay) => {}
+                                }
+                            }
+                            if !result.has_more {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            warn!(
+                                record_type = "executions",
+                                "automatic retention failed: {err}"
+                            );
+                            break;
+                        }
+                    }
                 }
             }
             if deployment_retention.enabled {
@@ -3410,23 +3435,94 @@ fn spawn_maintenance_gc(
                     );
                     break;
                 };
-                let retain = async {
-                    let admin = db_pool.admin_conn().await?;
-                    admin
-                        .retain_deployments(
-                            RetentionPolicy::CreatedAtOrAfter(cutoff),
-                            config.batch_size,
-                            true,
-                            false,
-                            false,
-                        )
-                        .await
-                };
-                if let Err(err) = retain.await {
+                loop {
+                    let retain = async {
+                        let admin = db_pool.admin_conn().await?;
+                        admin
+                            .retain_deployments(
+                                RetentionPolicy::CreatedAtOrAfter(cutoff),
+                                config.batch_size,
+                                true,
+                                false,
+                                false,
+                            )
+                            .await
+                    };
+                    let result = tokio::select! {
+                        biased;
+                        _ = termination_watcher.changed() => break,
+                        result = retain => result,
+                    };
+                    match result {
+                        Ok(result) => {
+                            if result.deleted_deployments > 0 {
+                                tokio::select! {
+                                    biased;
+                                    _ = termination_watcher.changed() => break,
+                                    () = tokio::time::sleep(batch_delay) => {}
+                                }
+                            }
+                            if !result.has_more {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            warn!(
+                                record_type = "deployments",
+                                "automatic retention failed: {err}"
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+            if system_event_retention.enabled {
+                let Some(cutoff) =
+                    chrono::Duration::from_std(Duration::from(system_event_retention.max_age))
+                        .ok()
+                        .and_then(|age| chrono::Utc::now().checked_sub_signed(age))
+                else {
                     warn!(
-                        record_type = "deployments",
-                        "automatic retention failed: {err}"
+                        record_type = "system_events",
+                        "periodic retention maximum age is too large"
                     );
+                    break;
+                };
+                loop {
+                    let collect = async {
+                        let admin = db_pool.admin_conn().await?;
+                        admin.retain_system_events(cutoff, config.batch_size).await
+                    };
+                    let result = tokio::select! {
+                        biased;
+                        _ = termination_watcher.changed() => break,
+                        result = collect => result,
+                    };
+                    match result {
+                        Ok(deleted) => {
+                            if deleted > 0 {
+                                tokio::select! {
+                                    biased;
+                                    _ = termination_watcher.changed() => break,
+                                    () = tokio::time::sleep(batch_delay) => {}
+                                }
+                            }
+                            if deleted < u64::from(config.batch_size) {
+                                debug!(
+                                    record_type = "system_events",
+                                    deleted, "automatic retention finished"
+                                );
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            warn!(
+                                record_type = "system_events",
+                                "automatic retention failed: {err}"
+                            );
+                            break;
+                        }
+                    }
                 }
             }
             loop {
@@ -3440,21 +3536,36 @@ fn spawn_maintenance_gc(
                     result = collect => result,
                 };
                 match result {
-                    Ok(result) if result.has_more && result.deleted_rows > 0 => {
-                        tokio::select! {
-                            biased;
-                            _ = termination_watcher.changed() => break,
-                            () = tokio::time::sleep(batch_delay) => {}
+                    Ok(result) => {
+                        if result.deleted_rows > 0 {
+                            tokio::select! {
+                                biased;
+                                _ = termination_watcher.changed() => break,
+                                () = tokio::time::sleep(batch_delay) => {}
+                            }
                         }
-                    }
-                    Ok(_) => {
-                        if let Err(err) = deployment_switch_manager
-                            .gc_cas(false, config.batch_size)
-                            .await
-                        {
-                            debug!("automatic CAS garbage collection deferred: {err}");
+                        if !(result.has_more && result.deleted_rows > 0) {
+                            let cas_result = tokio::select! {
+                                biased;
+                                _ = termination_watcher.changed() => break,
+                                result = deployment_switch_manager.gc_cas(false, config.batch_size) => result,
+                            };
+                            match cas_result {
+                                Ok(result) => {
+                                    if result.deleted_blobs > 0 {
+                                        tokio::select! {
+                                            biased;
+                                            _ = termination_watcher.changed() => break,
+                                            () = tokio::time::sleep(batch_delay) => {}
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    debug!("automatic CAS garbage collection deferred: {err}");
+                                }
+                            }
+                            break;
                         }
-                        break;
                     }
                     Err(err) => {
                         warn!("automatic execution garbage collection failed: {err}");

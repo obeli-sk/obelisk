@@ -2085,28 +2085,29 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         }))
     }
 
-    async fn garbage_collect_system_events(
+    async fn retain_system_events(
         &self,
-        request: tonic::Request<grpc_gen::GarbageCollectSystemEventsRequest>,
-    ) -> TonicRespResult<grpc_gen::GarbageCollectSystemEventsResponse> {
+        request: tonic::Request<grpc_gen::RetainSystemEventsRequest>,
+    ) -> TonicRespResult<grpc_gen::RetainSystemEventsResponse> {
         let request = request.into_inner();
-        let created_before = request
-            .created_before
-            .argument_must_exist("created_before")?
-            .try_into()
-            .map_err(|_| tonic::Status::invalid_argument("invalid created_before"))?;
-        validate_batch_size(request.limit)?;
+        let created_before =
+            match retention_from_grpc_age(request.max_age.argument_must_exist("max_age")?)? {
+                storage::RetentionPolicy::CreatedAtOrAfter(cutoff) => cutoff,
+                storage::RetentionPolicy::Count(_) => unreachable!(),
+            };
+        validate_batch_size(request.batch_size)?;
         let deleted = self
             .db_pool
             .admin_conn()
             .await
             .map_err(map_to_status)?
-            .gc_system_events(created_before, request.limit)
+            .retain_system_events(created_before, request.batch_size)
             .await
             .to_status()?;
-        Ok(tonic::Response::new(
-            grpc_gen::GarbageCollectSystemEventsResponse { deleted },
-        ))
+        Ok(tonic::Response::new(grpc_gen::RetainSystemEventsResponse {
+            deleted,
+            has_more: deleted == u64::from(request.batch_size),
+        }))
     }
 
     async fn delete_execution_tree(

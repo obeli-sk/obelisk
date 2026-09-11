@@ -178,6 +178,22 @@ pub(crate) enum AdminEvents {
         )]
         api_url: String,
     },
+    /// Retain system events newer than the configured maximum age.
+    Retain {
+        #[arg(long, value_parser = parse_retention_age)]
+        max_age: std::time::Duration,
+        #[arg(long, default_value_t = 1000)]
+        batch_size: u32,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]

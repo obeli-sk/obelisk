@@ -119,6 +119,7 @@ pub(crate) struct WebApiState {
         admin::retain_deployments,
         admin::list_system_events,
         admin::storage_status,
+        admin::retain_system_events,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -153,6 +154,8 @@ pub(crate) struct WebApiState {
         admin::CleanupResponse,
         admin::SystemEventsResponse,
         admin::StorageStatusResponse,
+        admin::RetainSystemEventsRequest,
+        admin::RetainSystemEventsResponse,
         deployment::DeploymentSubmitErrorBody,
         deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
@@ -318,6 +321,10 @@ fn admin_router() -> Router<Arc<WebApiState>> {
             routing::post(admin::retain_deployments),
         )
         .route("/system-events", routing::get(admin::list_system_events))
+        .route(
+            "/system-events/retain",
+            routing::post(admin::retain_system_events),
+        )
         .route("/storage", routing::get(admin::storage_status))
 }
 
@@ -380,6 +387,18 @@ pub(crate) mod admin {
         pub(crate) execution_count: u64,
         pub(crate) deployment_count: u64,
         pub(crate) system_event_count: u64,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct RetainSystemEventsRequest {
+        pub(crate) max_age_seconds: u64,
+        pub(crate) batch_size: u32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct RetainSystemEventsResponse {
+        pub(crate) deleted: u64,
+        pub(crate) has_more: bool,
     }
 
     #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -468,6 +487,37 @@ pub(crate) mod admin {
                 execution_count: status.execution_count,
                 deployment_count: status.deployment_count,
                 system_event_count: status.system_event_count,
+            },
+        ))
+    }
+
+    #[utoipa::path(post, path = "/v1/admin/system-events/retain", tag = "admin", request_body = RetainSystemEventsRequest, responses((status = 200, body = RetainSystemEventsResponse)))]
+    pub(crate) async fn retain_system_events(
+        State(state): State<Arc<WebApiState>>,
+        Json(request): Json<RetainSystemEventsRequest>,
+    ) -> Result<Response, HttpResponse> {
+        validate_batch_size(request.batch_size)?;
+        if request.max_age_seconds == 0 {
+            return Err(precondition("max_age_seconds must be greater than zero"));
+        }
+        let age = chrono::Duration::from_std(Duration::from_secs(request.max_age_seconds))
+            .map_err(|_| precondition("max_age_seconds is too large"))?;
+        let cutoff = Utc::now()
+            .checked_sub_signed(age)
+            .ok_or_else(|| precondition("max_age_seconds is too large"))?;
+        let deleted = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .retain_system_events(cutoff, request.batch_size)
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &RetainSystemEventsResponse {
+                deleted,
+                has_more: deleted == u64::from(request.batch_size),
             },
         ))
     }

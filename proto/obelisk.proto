@@ -60,7 +60,7 @@ service AdminRepository {
     rpc RetainDeployments(RetainDeploymentsRequest) returns (CleanupResponse);
     rpc ListSystemEvents(ListSystemEventsRequest) returns (ListSystemEventsResponse);
     rpc GetStorageStatus(GetStorageStatusRequest) returns (GetStorageStatusResponse);
-    rpc GarbageCollectSystemEvents(GarbageCollectSystemEventsRequest) returns (GarbageCollectSystemEventsResponse);
+    rpc RetainSystemEvents(RetainSystemEventsRequest) returns (RetainSystemEventsResponse);
 }
 
 message GenerateExecutionIdRequest {
@@ -1398,11 +1398,14 @@ message GetStorageStatusResponse {
     optional uint64 cas_blob_count = 5;
     optional uint64 cas_bytes = 6;
 }
-message GarbageCollectSystemEventsRequest {
-    google.protobuf.Timestamp created_before = 1;
-    uint32 limit = 2;
+message RetainSystemEventsRequest {
+    google.protobuf.Duration max_age = 1;
+    uint32 batch_size = 2;
 }
-message GarbageCollectSystemEventsResponse { uint64 deleted = 1; }
+message RetainSystemEventsResponse {
+    uint64 deleted = 1;
+    bool has_more = 2;
+}
 
 message GetDeploymentRequest {
     DeploymentId deployment_id = 1;
