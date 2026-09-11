@@ -1512,6 +1512,15 @@ pub struct SystemEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemEventCode {
+    ServerStartupCompleted,
+    ServerStartupFailed,
+    DeploymentSubmitStarted,
+    DeploymentSubmitCompleted,
+    DeploymentSubmitFailed,
+    DeploymentSwitchStarted,
+    DeploymentSwitchCompleted,
+    DeploymentSwitchFailed,
+    OutboundHttpDenied,
     AdminExecutionDeleteStarted,
     AdminExecutionDeleteCompleted,
     AdminExecutionRetainStarted,
@@ -1528,6 +1537,15 @@ impl SystemEventCode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ServerStartupCompleted => "server.startup.completed",
+            Self::ServerStartupFailed => "server.startup.failed",
+            Self::DeploymentSubmitStarted => "deployment.submit.started",
+            Self::DeploymentSubmitCompleted => "deployment.submit.completed",
+            Self::DeploymentSubmitFailed => "deployment.submit.failed",
+            Self::DeploymentSwitchStarted => "deployment.switch.started",
+            Self::DeploymentSwitchCompleted => "deployment.switch.completed",
+            Self::DeploymentSwitchFailed => "deployment.switch.failed",
+            Self::OutboundHttpDenied => "outbound_http.denied",
             Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
             Self::AdminExecutionDeleteCompleted => "admin.execution.delete.completed",
             Self::AdminExecutionRetainStarted => "admin.execution.retain.started",
@@ -1544,7 +1562,11 @@ impl SystemEventCode {
     #[must_use]
     pub fn level(self) -> SystemEventLevel {
         match self {
-            Self::MaintenanceGcFailed => SystemEventLevel::Warning,
+            Self::ServerStartupFailed
+            | Self::DeploymentSubmitFailed
+            | Self::DeploymentSwitchFailed
+            | Self::OutboundHttpDenied
+            | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
             _ => SystemEventLevel::Info,
         }
     }
@@ -1552,6 +1574,15 @@ impl SystemEventCode {
     #[must_use]
     pub fn message(self) -> &'static str {
         match self {
+            Self::ServerStartupCompleted => "Server startup completed",
+            Self::ServerStartupFailed => "Server startup failed",
+            Self::DeploymentSubmitStarted => "Deployment submission started",
+            Self::DeploymentSubmitCompleted => "Deployment submission completed",
+            Self::DeploymentSubmitFailed => "Deployment submission failed",
+            Self::DeploymentSwitchStarted => "Deployment switch started",
+            Self::DeploymentSwitchCompleted => "Deployment switch completed",
+            Self::DeploymentSwitchFailed => "Deployment switch failed",
+            Self::OutboundHttpDenied => "Outbound HTTP request denied",
             Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
             Self::AdminExecutionDeleteCompleted => "Execution tree deletion completed",
             Self::AdminExecutionRetainStarted => "Execution retention started",
@@ -1604,6 +1635,15 @@ impl SystemEvent {
     #[must_use]
     pub fn message(&self) -> &str {
         match self.code.as_str() {
+            "server.startup.completed" => SystemEventCode::ServerStartupCompleted.message(),
+            "server.startup.failed" => SystemEventCode::ServerStartupFailed.message(),
+            "deployment.submit.started" => SystemEventCode::DeploymentSubmitStarted.message(),
+            "deployment.submit.completed" => SystemEventCode::DeploymentSubmitCompleted.message(),
+            "deployment.submit.failed" => SystemEventCode::DeploymentSubmitFailed.message(),
+            "deployment.switch.started" => SystemEventCode::DeploymentSwitchStarted.message(),
+            "deployment.switch.completed" => SystemEventCode::DeploymentSwitchCompleted.message(),
+            "deployment.switch.failed" => SystemEventCode::DeploymentSwitchFailed.message(),
+            "outbound_http.denied" => SystemEventCode::OutboundHttpDenied.message(),
             "admin.execution.delete.started" => {
                 SystemEventCode::AdminExecutionDeleteStarted.message()
             }
@@ -3627,6 +3667,15 @@ mod tests {
     #[test]
     fn system_event_codes_fit_storage_limits() {
         for code in [
+            SystemEventCode::ServerStartupCompleted,
+            SystemEventCode::ServerStartupFailed,
+            SystemEventCode::DeploymentSubmitStarted,
+            SystemEventCode::DeploymentSubmitCompleted,
+            SystemEventCode::DeploymentSubmitFailed,
+            SystemEventCode::DeploymentSwitchStarted,
+            SystemEventCode::DeploymentSwitchCompleted,
+            SystemEventCode::DeploymentSwitchFailed,
+            SystemEventCode::OutboundHttpDenied,
             SystemEventCode::AdminExecutionDeleteStarted,
             SystemEventCode::AdminExecutionDeleteCompleted,
             SystemEventCode::AdminExecutionRetainStarted,

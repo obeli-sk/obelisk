@@ -1805,11 +1805,24 @@ pub(crate) async fn run_internal(
     };
     let engines = create_engines(&config, &prepared_dirs)?;
     let server_verified = server_verify(config, engines, secret_registry).await?;
-    config_prepass::preflight(
+    if let Err(err) = config_prepass::preflight(
         &server_verified,
         Some(&deployment_resolved),
         RuntimeConfigAvailability::Strict,
-    )?;
+    ) {
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerStartupFailed,
+            None,
+            Some(active_deployment_id),
+            serde_json::json!({
+                "stage": "deployment_preflight",
+                "error": err.to_string(),
+            }),
+        )
+        .await;
+        return Err(err.into());
+    }
     let cas: Arc<dyn Cas> = db_pool.cas_conn().await?.into();
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
@@ -1893,7 +1906,7 @@ pub(crate) async fn run_internal(
     .instrument(span)
     .await?;
     let deployment_switch_manager = server_init.deployment_switch_manager.clone();
-    switch_deployment(
+    switch_deployment_inner(
         deployment_switch_manager.clone(),
         active_deployment_id,
         SwitchDeploymentAction::Activate,
@@ -1907,6 +1920,14 @@ pub(crate) async fn run_internal(
         }
         SwitchError::Other(err) => err,
     })?;
+    crate::server::system_event_writer::record(
+        server_init.db_pool.as_ref(),
+        concepts::storage::SystemEventCode::ServerStartupCompleted,
+        None,
+        Some(active_deployment_id),
+        serde_json::json!({}),
+    )
+    .await;
 
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.server_verified.clone(),
@@ -2713,6 +2734,18 @@ pub(crate) async fn submit_deployment(
     deployment_switch_manager: DeploymentSwitchManagerHandle,
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
+    crate::server::system_event_writer::record(
+        db_pool.as_ref(),
+        concepts::storage::SystemEventCode::DeploymentSubmitStarted,
+        None,
+        Some(deployment_id),
+        serde_json::json!({
+            "created_by": created_by.as_deref(),
+            "runtime_config_availability": format!("{runtime_config_availability:?}"),
+        }),
+    )
+    .await;
+    let event_db_pool = db_pool.clone();
 
     let result = match deployment_switch_manager.try_acquire_submit_permit() {
         Ok(_submit_permit) => {
@@ -2742,10 +2775,45 @@ pub(crate) async fn submit_deployment(
     };
 
     match &result {
-        Ok(_) => info!(outcome = "success", "Deployment submission finished"),
+        Ok(_) => {
+            info!(outcome = "success", "Deployment submission finished");
+            crate::server::system_event_writer::record(
+                event_db_pool.as_ref(),
+                concepts::storage::SystemEventCode::DeploymentSubmitCompleted,
+                None,
+                Some(deployment_id),
+                serde_json::json!({}),
+            )
+            .await;
+        }
         Err(err) => {
             info!(outcome = "error", error = %err, "Deployment submission finished");
             debug!(error = ?err, "Deployment submission error details");
+            let (kind, error, missing_secrets) = match err {
+                SubmitDeploymentError::Busy => ("busy", err.to_string(), None),
+                SubmitDeploymentError::Conflict(source) => {
+                    ("conflict", format!("{source:#}"), None)
+                }
+                SubmitDeploymentError::Package(source) => ("package", format!("{source:?}"), None),
+                SubmitDeploymentError::UnregisteredSecrets(names) => (
+                    "unregistered_secrets",
+                    err.to_string(),
+                    Some(names.iter().collect::<Vec<_>>()),
+                ),
+                SubmitDeploymentError::Other(source) => ("validation", format!("{source:#}"), None),
+            };
+            crate::server::system_event_writer::record(
+                event_db_pool.as_ref(),
+                concepts::storage::SystemEventCode::DeploymentSubmitFailed,
+                None,
+                Some(deployment_id),
+                serde_json::json!({
+                    "kind": kind,
+                    "error": error,
+                    "missing_secrets": missing_secrets,
+                }),
+            )
+            .await;
         }
     }
     result
@@ -3019,6 +3087,52 @@ async fn enqueue_deployment_and_release(
 
 #[instrument(skip_all, fields(%deployment_id))]
 pub(crate) async fn switch_deployment(
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
+    deployment_id: DeploymentId,
+    action: SwitchDeploymentAction,
+) -> Result<SwitchOutcome, SwitchError> {
+    let db_pool = deployment_switch_manager.inner.db_pool.clone();
+    crate::server::system_event_writer::record(
+        db_pool.as_ref(),
+        concepts::storage::SystemEventCode::DeploymentSwitchStarted,
+        None,
+        Some(deployment_id),
+        serde_json::json!({"action": format!("{action:?}")}),
+    )
+    .await;
+    let result = switch_deployment_inner(deployment_switch_manager, deployment_id, action).await;
+    let (code, details) = match &result {
+        Ok(outcome) => (
+            concepts::storage::SystemEventCode::DeploymentSwitchCompleted,
+            serde_json::json!({"outcome": outcome.to_string()}),
+        ),
+        Err(err) => {
+            let (kind, error) = match err {
+                SwitchError::Busy => (
+                    "busy",
+                    "another deployment submit or switch is running".to_string(),
+                ),
+                SwitchError::NotFound => ("not_found", "deployment not found".to_string()),
+                SwitchError::Other(source) => ("validation", format!("{source:#}")),
+            };
+            (
+                concepts::storage::SystemEventCode::DeploymentSwitchFailed,
+                serde_json::json!({"kind": kind, "error": error}),
+            )
+        }
+    };
+    crate::server::system_event_writer::record(
+        db_pool.as_ref(),
+        code,
+        None,
+        Some(deployment_id),
+        details,
+    )
+    .await;
+    result
+}
+
+async fn switch_deployment_inner(
     deployment_switch_manager: DeploymentSwitchManagerHandle,
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
