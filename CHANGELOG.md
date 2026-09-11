@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deployments without restarting.
 - **Breaking:** *(grpc)* Removed the deprecated `function_name_prefix` execution filter. Use the
   structured `function_filter` field.
+- **Breaking:** *(js)* Removed the deprecated `ChildExecutionError` alias. Use `ChildError`.
 
 ### Added
 

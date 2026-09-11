@@ -1291,8 +1291,7 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
         };",
     ))?;
 
-    // obelisk.ChildError (plus the deprecated obelisk.ChildExecutionError alias):
-    // native, brand-safe error thrown for a failed awaited child execution, a
+    // obelisk.ChildError is a native, brand-safe error thrown for a failed awaited child, a
     // cancelled delay, or a cancelled sleep.
     let obelisk = context
         .global_object()
@@ -1335,7 +1334,6 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
             "stub",
             "JoinSetExhaustedError",
             "ChildError",
-            "ChildExecutionError",
         ],
         &obelisk,
         loader,

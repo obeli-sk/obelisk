@@ -10,10 +10,6 @@
 //!   instance via the native brand (`downcast_ref`) and re-serializes `.value`,
 //!   so `throw e` behaves like `throw e.value`.
 //!
-//! `obelisk.ChildExecutionError` (the 0.40.0 name) stays as a deprecated alias
-//! for the same constructor, so `instanceof` checks against either name are
-//! identical.
-//!
 //! The native data ([`ChildError`]) is intentionally empty: every user-visible
 //! field lives as an ordinary JS own property. The Rust struct exists only as a
 //! brand that the producer can detect via `downcast_ref`, rather than sniffing
@@ -59,8 +55,7 @@ impl Class for ChildError {
     }
 }
 
-/// Register `obelisk.ChildError` (and its deprecated alias
-/// `obelisk.ChildExecutionError`).
+/// Register `obelisk.ChildError`.
 ///
 /// Must run after the global `obelisk` object has been installed. Registers the
 /// native class, moves the constructor under `obelisk` (off the global
@@ -83,12 +78,6 @@ pub fn register(namespace: &JsObject, context: &mut Context) -> JsResult<()> {
     constructor_object.set_prototype(Some(error));
     namespace.set(
         js_string!("ChildError"),
-        constructor.clone(),
-        false,
-        context,
-    )?;
-    namespace.set(
-        js_string!("ChildExecutionError"),
         constructor.clone(),
         false,
         context,

@@ -884,7 +884,6 @@ fn setup_obelisk_api(loader: &MapModuleLoader, context: &mut Context) -> JsResul
             "get",
             "tryGet",
             "ChildError",
-            "ChildExecutionError",
         ],
         &obelisk,
         loader,

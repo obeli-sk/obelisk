@@ -7,9 +7,6 @@ export default function cancel_sleep_error() {
         if (!(e instanceof obelisk.ChildError) || !(e instanceof Error)) {
             throw `expected ChildError, got: ${e}`;
         }
-        if (obelisk.ChildExecutionError !== obelisk.ChildError) {
-            throw 'expected deprecated ChildExecutionError alias';
-        }
         if (e.name !== 'ChildError' || e.message !== 'Sleep was cancelled') {
             throw `unexpected error identity: ${e.name}: ${e.message}`;
         }
