@@ -4703,7 +4703,7 @@ pub(crate) mod deployment {
         #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
         /// Apply deployment without restart
-        #[serde(default, alias = "hot_redeploy")] // backcompat: 0.41.0
+        #[serde(default)]
         pub apply: bool,
     }
 

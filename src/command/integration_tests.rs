@@ -1318,8 +1318,7 @@ impl TestServer {
                 self.base_url
             ))
             .header("Accept", "application/json")
-            // backcompat: 0.41.0 - exercises the `hot_redeploy` alias of `apply`
-            .json(&json!({ "hot_redeploy": true }))
+            .json(&json!({ "apply": true }))
             .send()
             .await
             .expect("webapi switch deployment request failed");

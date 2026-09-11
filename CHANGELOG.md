@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   use bare paths relative to `deployment.toml`.
 - **Breaking:** *(config)* Removed unnamed `allow_exec_activities` digest lists. Use a map from
   activity names to content digests.
+- **Breaking:** *(api)* Removed the `hot_redeploy` REST request alias. Use `apply` when switching
+  deployments without restarting.
 
 ### Added
 
