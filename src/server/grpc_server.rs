@@ -1995,6 +1995,171 @@ fn cleanup_to_grpc(result: storage::CleanupResult) -> grpc_gen::CleanupResponse 
 
 #[tonic::async_trait]
 impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
+    async fn get_system_event(
+        &self,
+        request: tonic::Request<grpc_gen::GetSystemEventRequest>,
+    ) -> TonicRespResult<grpc_gen::GetSystemEventResponse> {
+        let mut event = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .get_system_event(&request.into_inner().event_id)
+            .await
+            .to_status()?
+            .ok_or_else(|| tonic::Status::not_found("system event not found"))?;
+        crate::server::system_event_writer::hydrate_cas_details(
+            self.db_pool.as_ref(),
+            std::slice::from_mut(&mut event),
+        )
+        .await;
+        let message = event.message().to_owned();
+        Ok(tonic::Response::new(grpc_gen::GetSystemEventResponse {
+            event: Some(grpc_gen::SystemEvent {
+                event_id: event.event_id,
+                server_run_id: event.server_run_id,
+                created_at: Some(event.created_at.into()),
+                level: match event.level {
+                    storage::SystemEventLevel::Info => grpc_gen::SystemEventLevel::Info as i32,
+                    storage::SystemEventLevel::Warning => {
+                        grpc_gen::SystemEventLevel::Warning as i32
+                    }
+                    storage::SystemEventLevel::Error => grpc_gen::SystemEventLevel::Error as i32,
+                },
+                code: event.code,
+                message,
+                execution_id: event.execution_id.map(Into::into),
+                deployment_id: event.deployment_id.map(Into::into),
+                details_json: event.details.to_string(),
+            }),
+        }))
+    }
+
+    async fn list_system_events(
+        &self,
+        request: tonic::Request<grpc_gen::ListSystemEventsRequest>,
+    ) -> TonicRespResult<grpc_gen::ListSystemEventsResponse> {
+        let request = request.into_inner();
+        let level = request
+            .level
+            .map(|level| match grpc_gen::SystemEventLevel::try_from(level) {
+                Ok(grpc_gen::SystemEventLevel::Info) => Ok(storage::SystemEventLevel::Info),
+                Ok(grpc_gen::SystemEventLevel::Warning) => Ok(storage::SystemEventLevel::Warning),
+                Ok(grpc_gen::SystemEventLevel::Error) => Ok(storage::SystemEventLevel::Error),
+                _ => Err(tonic::Status::invalid_argument(
+                    "invalid system event level",
+                )),
+            })
+            .transpose()?;
+        let limit = if request.limit == 0 {
+            100
+        } else {
+            request.limit
+        };
+        if limit > 1000 {
+            return Err(tonic::Status::invalid_argument(
+                "limit must not exceed 1000",
+            ));
+        }
+        let mut events = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .list_system_events(storage::SystemEventFilter {
+                event_id: None,
+                server_run_id: request.server_run_id,
+                level,
+                code: request.code,
+                deployment_id: request.deployment_id.map(TryInto::try_into).transpose()?,
+                before_event_id: request.before_event_id,
+                limit,
+            })
+            .await
+            .to_status()?;
+        crate::server::system_event_writer::hydrate_cas_details(self.db_pool.as_ref(), &mut events)
+            .await;
+        let next_cursor =
+            (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
+        Ok(tonic::Response::new(grpc_gen::ListSystemEventsResponse {
+            events: events
+                .into_iter()
+                .map(|event| {
+                    let message = event.message().to_owned();
+                    grpc_gen::SystemEvent {
+                        event_id: event.event_id,
+                        server_run_id: event.server_run_id,
+                        created_at: Some(event.created_at.into()),
+                        level: match event.level {
+                            storage::SystemEventLevel::Info => {
+                                grpc_gen::SystemEventLevel::Info as i32
+                            }
+                            storage::SystemEventLevel::Warning => {
+                                grpc_gen::SystemEventLevel::Warning as i32
+                            }
+                            storage::SystemEventLevel::Error => {
+                                grpc_gen::SystemEventLevel::Error as i32
+                            }
+                        },
+                        code: event.code,
+                        message,
+                        execution_id: event.execution_id.map(Into::into),
+                        deployment_id: event.deployment_id.map(Into::into),
+                        details_json: event.details.to_string(),
+                    }
+                })
+                .collect(),
+            next_cursor,
+        }))
+    }
+
+    async fn get_storage_status(
+        &self,
+        _request: tonic::Request<grpc_gen::GetStorageStatusRequest>,
+    ) -> TonicRespResult<grpc_gen::GetStorageStatusResponse> {
+        let status = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .get_storage_status()
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(grpc_gen::GetStorageStatusResponse {
+            database_bytes: status.database_bytes,
+            execution_count: status.execution_count,
+            deployment_count: status.deployment_count,
+            system_event_count: status.system_event_count,
+            cas_blob_count: None,
+            cas_bytes: None,
+        }))
+    }
+
+    async fn retain_system_events(
+        &self,
+        request: tonic::Request<grpc_gen::RetainSystemEventsRequest>,
+    ) -> TonicRespResult<grpc_gen::RetainSystemEventsResponse> {
+        let request = request.into_inner();
+        let created_before =
+            match retention_from_grpc_age(request.max_age.argument_must_exist("max_age")?)? {
+                storage::RetentionPolicy::CreatedAtOrAfter(cutoff) => cutoff,
+                storage::RetentionPolicy::Count(_) => unreachable!(),
+            };
+        validate_batch_size(request.batch_size)?;
+        let result = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .retain_system_events(created_before, request.batch_size)
+            .await
+            .to_status()?;
+        Ok(tonic::Response::new(grpc_gen::RetainSystemEventsResponse {
+            deleted: result.deleted,
+            has_more: result.has_more,
+        }))
+    }
+
     async fn delete_execution_tree(
         &self,
         request: tonic::Request<grpc_gen::DeleteExecutionTreeRequest>,
@@ -2010,6 +2175,14 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                 execution_id.get_top_level()
             )));
         }
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminExecutionDeleteStarted,
+            Some(execution_id.clone()),
+            None,
+            serde_json::json!({"force_non_terminal": request.force_non_terminal}),
+        )
+        .await;
         let outcome = self
             .db_pool
             .admin_conn()
@@ -2018,28 +2191,40 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .delete_execution_tree(&execution_id, request.force_non_terminal)
             .await
             .to_status()?;
-        match outcome {
-            storage::DeleteExecutionTreeResult::Deleted => Ok(tonic::Response::new(
-                grpc_gen::DeleteExecutionTreeResponse {
-                    deleted: true,
-                    already_deleted: false,
-                },
-            )),
-            storage::DeleteExecutionTreeResult::AlreadyDeleted => Ok(tonic::Response::new(
+        let response = match outcome {
+            storage::DeleteExecutionTreeResult::Deleted => grpc_gen::DeleteExecutionTreeResponse {
+                deleted: true,
+                already_deleted: false,
+            },
+            storage::DeleteExecutionTreeResult::AlreadyDeleted => {
                 grpc_gen::DeleteExecutionTreeResponse {
                     deleted: false,
                     already_deleted: true,
-                },
-            )),
-            storage::DeleteExecutionTreeResult::NonTerminal => Err(
-                tonic::Status::failed_precondition("execution tree is not terminal"),
-            ),
-            storage::DeleteExecutionTreeResult::ActiveDeployment => {
-                Err(tonic::Status::failed_precondition(
-                    "non-terminal execution tree root belongs to the active deployment",
-                ))
+                }
             }
-        }
+            storage::DeleteExecutionTreeResult::NonTerminal => {
+                return Err(tonic::Status::failed_precondition(
+                    "execution tree is not terminal",
+                ));
+            }
+            storage::DeleteExecutionTreeResult::ActiveDeployment => {
+                return Err(tonic::Status::failed_precondition(
+                    "non-terminal execution tree root belongs to the active deployment",
+                ));
+            }
+        };
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminExecutionDeleteCompleted,
+            Some(execution_id),
+            None,
+            serde_json::json!({
+                "deleted": response.deleted,
+                "already_deleted": response.already_deleted,
+            }),
+        )
+        .await;
+        Ok(tonic::Response::new(response))
     }
 
     async fn retain_executions(
@@ -2048,15 +2233,30 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
     ) -> TonicRespResult<grpc_gen::CleanupResponse> {
         let request = request.into_inner();
         validate_batch_size(request.batch_size)?;
-        let retention = match request.retention {
+        let (retention, retain_count, max_age_seconds) = match request.retention {
             Some(grpc_gen::retain_executions_request::Retention::RetainCount(count)) => {
-                storage::RetentionPolicy::Count(count)
+                (storage::RetentionPolicy::Count(count), Some(count), None)
             }
             Some(grpc_gen::retain_executions_request::Retention::MaxAge(age)) => {
-                retention_from_grpc_age(age)?
+                let seconds = age.seconds;
+                (retention_from_grpc_age(age)?, None, Some(seconds))
             }
             None => return Err(tonic::Status::invalid_argument("retention is required")),
         };
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminExecutionRetainStarted,
+            None,
+            None,
+            serde_json::json!({
+                "retain_count": retain_count,
+                "max_age_seconds": max_age_seconds,
+                "batch_size": request.batch_size,
+                "force_non_terminal": request.force_non_terminal,
+                "dry_run": request.dry_run,
+            }),
+        )
+        .await;
         let result = self
             .db_pool
             .admin_conn()
@@ -2070,6 +2270,21 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             )
             .await
             .to_status()?;
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminExecutionRetainCompleted,
+            None,
+            None,
+            serde_json::json!({
+                "deleted_execution_trees": result.deleted_execution_trees,
+                "deleted_deployments": result.deleted_deployments,
+                "retained": result.retained,
+                "blocked_non_terminal": result.blocked_non_terminal,
+                "blocked_by_execution_reference": result.blocked_by_execution_reference,
+                "has_more": result.has_more,
+            }),
+        )
+        .await;
         Ok(tonic::Response::new(cleanup_to_grpc(result)))
     }
 
@@ -2087,6 +2302,17 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                 "force_non_terminal requires delete_executions",
             ));
         }
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminDeploymentDeleteStarted,
+            None,
+            Some(deployment_id),
+            serde_json::json!({
+                "delete_executions": request.delete_executions,
+                "force_non_terminal": request.force_non_terminal,
+            }),
+        )
+        .await;
         let outcome = self
             .db_pool
             .admin_conn()
@@ -2099,43 +2325,58 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             )
             .await
             .to_status()?;
-        match outcome {
+        let response = match outcome {
             storage::DeleteDeploymentResult::Deleted {
                 deleted_execution_trees,
-            } => Ok(tonic::Response::new(grpc_gen::DeleteDeploymentResponse {
+            } => grpc_gen::DeleteDeploymentResponse {
                 deleted: true,
                 already_deleted: false,
                 deleted_execution_trees,
-            })),
-            storage::DeleteDeploymentResult::AlreadyDeleted => {
-                Ok(tonic::Response::new(grpc_gen::DeleteDeploymentResponse {
-                    deleted: false,
-                    already_deleted: true,
-                    deleted_execution_trees: 0,
-                }))
+            },
+            storage::DeleteDeploymentResult::AlreadyDeleted => grpc_gen::DeleteDeploymentResponse {
+                deleted: false,
+                already_deleted: true,
+                deleted_execution_trees: 0,
+            },
+            storage::DeleteDeploymentResult::Active => {
+                return Err(tonic::Status::failed_precondition(
+                    "active deployment cannot be deleted",
+                ));
             }
-            storage::DeleteDeploymentResult::Active => Err(tonic::Status::failed_precondition(
-                "active deployment cannot be deleted",
-            )),
-            storage::DeleteDeploymentResult::Enqueued => Err(tonic::Status::failed_precondition(
-                "enqueued deployment cannot be deleted",
-            )),
+            storage::DeleteDeploymentResult::Enqueued => {
+                return Err(tonic::Status::failed_precondition(
+                    "enqueued deployment cannot be deleted",
+                ));
+            }
             storage::DeleteDeploymentResult::Referenced { execution_trees } => {
-                Err(tonic::Status::failed_precondition(format!(
+                return Err(tonic::Status::failed_precondition(format!(
                     "deployment is referenced by {execution_trees} execution tree(s)"
-                )))
+                )));
             }
             storage::DeleteDeploymentResult::ReferencedByNonTerminal { execution_trees } => {
-                Err(tonic::Status::failed_precondition(format!(
+                return Err(tonic::Status::failed_precondition(format!(
                     "deployment is referenced by non-terminal executions in {execution_trees} tree(s)"
-                )))
+                )));
             }
             storage::DeleteDeploymentResult::ReferencedByActiveDeployment { execution_trees } => {
-                Err(tonic::Status::failed_precondition(format!(
+                return Err(tonic::Status::failed_precondition(format!(
                     "non-terminal execution roots in {execution_trees} tree(s) belong to the active deployment"
-                )))
+                )));
             }
-        }
+        };
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminDeploymentDeleteCompleted,
+            None,
+            Some(deployment_id),
+            serde_json::json!({
+                "deleted": response.deleted,
+                "already_deleted": response.already_deleted,
+                "deleted_execution_trees": response.deleted_execution_trees,
+            }),
+        )
+        .await;
+        Ok(tonic::Response::new(response))
     }
 
     async fn retain_deployments(
@@ -2144,12 +2385,13 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
     ) -> TonicRespResult<grpc_gen::CleanupResponse> {
         let request = request.into_inner();
         validate_batch_size(request.batch_size)?;
-        let retention = match request.retention {
+        let (retention, retain_count, max_age_seconds) = match request.retention {
             Some(grpc_gen::retain_deployments_request::Retention::RetainCount(count)) => {
-                storage::RetentionPolicy::Count(count)
+                (storage::RetentionPolicy::Count(count), Some(count), None)
             }
             Some(grpc_gen::retain_deployments_request::Retention::MaxAge(age)) => {
-                retention_from_grpc_age(age)?
+                let seconds = age.seconds;
+                (retention_from_grpc_age(age)?, None, Some(seconds))
             }
             None => return Err(tonic::Status::invalid_argument("retention is required")),
         };
@@ -2158,6 +2400,21 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                 "force_non_terminal requires delete_executions",
             ));
         }
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminDeploymentRetainStarted,
+            None,
+            None,
+            serde_json::json!({
+                "retain_count": retain_count,
+                "max_age_seconds": max_age_seconds,
+                "batch_size": request.batch_size,
+                "delete_executions": request.delete_executions,
+                "force_non_terminal": request.force_non_terminal,
+                "dry_run": request.dry_run,
+            }),
+        )
+        .await;
         let result = self
             .db_pool
             .admin_conn()
@@ -2172,6 +2429,21 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             )
             .await
             .to_status()?;
+        crate::server::system_event_writer::record(
+            self.db_pool.as_ref(),
+            storage::SystemEventCode::AdminDeploymentRetainCompleted,
+            None,
+            None,
+            serde_json::json!({
+                "deleted_execution_trees": result.deleted_execution_trees,
+                "deleted_deployments": result.deleted_deployments,
+                "retained": result.retained,
+                "blocked_non_terminal": result.blocked_non_terminal,
+                "blocked_by_execution_reference": result.blocked_by_execution_reference,
+                "has_more": result.has_more,
+            }),
+        )
+        .await;
         Ok(tonic::Response::new(cleanup_to_grpc(result)))
     }
 }

@@ -1464,6 +1464,13 @@ pub struct CasGcResult {
     pub orphan_blobs: u64,
     pub deleted_blobs: u64,
     pub deleted_bytes: u64,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemEventRetentionResult {
+    pub deleted: u64,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1473,6 +1480,276 @@ pub struct ExecutionGcResult {
     pub has_more: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemEventLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+impl SystemEventLevel {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SystemEvent {
+    pub event_id: String,
+    pub server_run_id: String,
+    pub created_at: DateTime<Utc>,
+    pub level: SystemEventLevel,
+    pub code: String,
+    pub dedupe_key: Option<String>,
+    #[serde(skip)]
+    pub cas_digest: Option<ContentDigest>,
+    pub execution_id: Option<ExecutionId>,
+    pub deployment_id: Option<DeploymentId>,
+    pub details: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemEventCode {
+    ServerStartupCompleted,
+    ServerStartupFailed,
+    ServerShutdownRequested,
+    ServerShutdownCompleted,
+    DeploymentSubmitStarted,
+    DeploymentSubmitCompleted,
+    DeploymentSubmitFailed,
+    DeploymentSwitchStarted,
+    DeploymentSwitchCompleted,
+    DeploymentSwitchFailed,
+    ServerHttpPolicyApplied,
+    ComponentHttpPolicyApplied,
+    OutboundHttpDenied,
+    AdminExecutionDeleteStarted,
+    AdminExecutionDeleteCompleted,
+    AdminExecutionRetainStarted,
+    AdminExecutionRetainCompleted,
+    AdminDeploymentDeleteStarted,
+    AdminDeploymentDeleteCompleted,
+    AdminDeploymentRetainStarted,
+    AdminDeploymentRetainCompleted,
+    MaintenanceGcCompleted,
+    MaintenanceGcFailed,
+}
+
+impl SystemEventCode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ServerStartupCompleted => "server.startup.completed",
+            Self::ServerStartupFailed => "server.startup.failed",
+            Self::ServerShutdownRequested => "server.shutdown.requested",
+            Self::ServerShutdownCompleted => "server.shutdown.completed",
+            Self::DeploymentSubmitStarted => "deployment.submit.started",
+            Self::DeploymentSubmitCompleted => "deployment.submit.completed",
+            Self::DeploymentSubmitFailed => "deployment.submit.failed",
+            Self::DeploymentSwitchStarted => "deployment.switch.started",
+            Self::DeploymentSwitchCompleted => "deployment.switch.completed",
+            Self::DeploymentSwitchFailed => "deployment.switch.failed",
+            Self::ServerHttpPolicyApplied => "server.http_policy.applied",
+            Self::ComponentHttpPolicyApplied => "component.http_policy.applied",
+            Self::OutboundHttpDenied => "outbound_http.denied",
+            Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
+            Self::AdminExecutionDeleteCompleted => "admin.execution.delete.completed",
+            Self::AdminExecutionRetainStarted => "admin.execution.retain.started",
+            Self::AdminExecutionRetainCompleted => "admin.execution.retain.completed",
+            Self::AdminDeploymentDeleteStarted => "admin.deployment.delete.started",
+            Self::AdminDeploymentDeleteCompleted => "admin.deployment.delete.completed",
+            Self::AdminDeploymentRetainStarted => "admin.deployment.retain.started",
+            Self::AdminDeploymentRetainCompleted => "admin.deployment.retain.completed",
+            Self::MaintenanceGcCompleted => "maintenance.gc.completed",
+            Self::MaintenanceGcFailed => "maintenance.gc.failed",
+        }
+    }
+
+    #[must_use]
+    pub fn level(self) -> SystemEventLevel {
+        match self {
+            Self::ServerStartupFailed
+            | Self::DeploymentSubmitFailed
+            | Self::DeploymentSwitchFailed
+            | Self::OutboundHttpDenied
+            | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
+            _ => SystemEventLevel::Info,
+        }
+    }
+
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::ServerStartupCompleted => "Server startup completed",
+            Self::ServerStartupFailed => "Server startup failed",
+            Self::ServerShutdownRequested => "Server shutdown requested",
+            Self::ServerShutdownCompleted => "Server shutdown completed",
+            Self::DeploymentSubmitStarted => "Deployment submission started",
+            Self::DeploymentSubmitCompleted => "Deployment submission completed",
+            Self::DeploymentSubmitFailed => "Deployment submission failed",
+            Self::DeploymentSwitchStarted => "Deployment switch started",
+            Self::DeploymentSwitchCompleted => "Deployment switch completed",
+            Self::DeploymentSwitchFailed => "Deployment switch failed",
+            Self::ServerHttpPolicyApplied => "Server HTTP policy applied",
+            Self::ComponentHttpPolicyApplied => "Component HTTP policy applied",
+            Self::OutboundHttpDenied => "Outbound HTTP request denied",
+            Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
+            Self::AdminExecutionDeleteCompleted => "Execution tree deletion completed",
+            Self::AdminExecutionRetainStarted => "Execution retention started",
+            Self::AdminExecutionRetainCompleted => "Execution retention completed",
+            Self::AdminDeploymentDeleteStarted => "Deployment deletion started",
+            Self::AdminDeploymentDeleteCompleted => "Deployment deletion completed",
+            Self::AdminDeploymentRetainStarted => "Deployment retention started",
+            Self::AdminDeploymentRetainCompleted => "Deployment retention completed",
+            Self::MaintenanceGcCompleted => "Periodic garbage collection completed",
+            Self::MaintenanceGcFailed => "Periodic garbage collection failed",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SystemEventValidationError {
+    #[error("system event message exceeds 512 characters")]
+    MessageTooLong,
+    #[error("system event details cannot be encoded as JSON: {0}")]
+    InvalidDetails(#[from] serde_json::Error),
+    #[error("encoded system event details exceed 4000 bytes")]
+    DetailsTooLarge,
+}
+
+static SERVER_RUN_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[must_use]
+pub fn initialize_server_run_id() -> String {
+    SERVER_RUN_ID
+        .get_or_init(|| format!("srv_{}", ulid::Ulid::new()))
+        .clone()
+}
+
+fn server_run_id() -> String {
+    initialize_server_run_id()
+}
+
+impl SystemEvent {
+    pub fn new(
+        code: SystemEventCode,
+        execution_id: Option<ExecutionId>,
+        deployment_id: Option<DeploymentId>,
+        details: serde_json::Value,
+    ) -> Result<Self, SystemEventValidationError> {
+        let message = code.message();
+        if message.chars().count() > 512 {
+            return Err(SystemEventValidationError::MessageTooLong);
+        }
+        if serde_json::to_vec(&details)?.len() > 4000 {
+            return Err(SystemEventValidationError::DetailsTooLarge);
+        }
+        Ok(Self {
+            event_id: format!("sev_{}", ulid::Ulid::new()),
+            server_run_id: server_run_id(),
+            created_at: Utc::now(),
+            level: code.level(),
+            code: code.as_str().to_owned(),
+            dedupe_key: None,
+            cas_digest: None,
+            execution_id,
+            deployment_id,
+            details,
+        })
+    }
+
+    #[must_use]
+    pub fn with_dedupe_key(mut self, dedupe_key: impl Into<String>) -> Self {
+        self.dedupe_key = Some(dedupe_key.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_cas_digest(mut self, digest: ContentDigest) -> Self {
+        self.cas_digest = Some(digest);
+        self
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self.code.as_str() {
+            "server.startup.completed" => SystemEventCode::ServerStartupCompleted.message(),
+            "server.startup.failed" => SystemEventCode::ServerStartupFailed.message(),
+            "server.shutdown.requested" => SystemEventCode::ServerShutdownRequested.message(),
+            "server.shutdown.completed" => SystemEventCode::ServerShutdownCompleted.message(),
+            "deployment.submit.started" => SystemEventCode::DeploymentSubmitStarted.message(),
+            "deployment.submit.completed" => SystemEventCode::DeploymentSubmitCompleted.message(),
+            "deployment.submit.failed" => SystemEventCode::DeploymentSubmitFailed.message(),
+            "deployment.switch.started" => SystemEventCode::DeploymentSwitchStarted.message(),
+            "deployment.switch.completed" => SystemEventCode::DeploymentSwitchCompleted.message(),
+            "deployment.switch.failed" => SystemEventCode::DeploymentSwitchFailed.message(),
+            "server.http_policy.applied" => SystemEventCode::ServerHttpPolicyApplied.message(),
+            "component.http_policy.applied" => {
+                SystemEventCode::ComponentHttpPolicyApplied.message()
+            }
+            "outbound_http.denied" => SystemEventCode::OutboundHttpDenied.message(),
+            "admin.execution.delete.started" => {
+                SystemEventCode::AdminExecutionDeleteStarted.message()
+            }
+            "admin.execution.delete.completed" => {
+                SystemEventCode::AdminExecutionDeleteCompleted.message()
+            }
+            "admin.execution.retain.started" => {
+                SystemEventCode::AdminExecutionRetainStarted.message()
+            }
+            "admin.execution.retain.completed" => {
+                SystemEventCode::AdminExecutionRetainCompleted.message()
+            }
+            "admin.deployment.delete.started" => {
+                SystemEventCode::AdminDeploymentDeleteStarted.message()
+            }
+            "admin.deployment.delete.completed" => {
+                SystemEventCode::AdminDeploymentDeleteCompleted.message()
+            }
+            "admin.deployment.retain.started" => {
+                SystemEventCode::AdminDeploymentRetainStarted.message()
+            }
+            "admin.deployment.retain.completed" => {
+                SystemEventCode::AdminDeploymentRetainCompleted.message()
+            }
+            "maintenance.gc.completed" => SystemEventCode::MaintenanceGcCompleted.message(),
+            "maintenance.gc.failed" => SystemEventCode::MaintenanceGcFailed.message(),
+            _ => &self.code,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SystemEventFilter {
+    pub event_id: Option<String>,
+    pub server_run_id: Option<String>,
+    pub level: Option<SystemEventLevel>,
+    pub code: Option<String>,
+    pub deployment_id: Option<DeploymentId>,
+    pub before_event_id: Option<String>,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpPolicyEventIds {
+    pub server_policy_event_id: String,
+    pub component_policy_event_id: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageStatus {
+    pub database_bytes: Option<u64>,
+    pub execution_count: u64,
+    pub deployment_count: u64,
+    pub system_event_count: u64,
+}
+
 #[async_trait]
 pub trait CasGc: Send + Sync {
     async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite>;
@@ -1480,6 +1757,46 @@ pub trait CasGc: Send + Sync {
 
 #[async_trait]
 pub trait DbAdmin: Send + Sync {
+    async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite>;
+    async fn append_system_event_with_cas(
+        &self,
+        event: SystemEvent,
+        content: Vec<u8>,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn list_system_events(
+        &self,
+        filter: SystemEventFilter,
+    ) -> Result<Vec<SystemEvent>, DbErrorRead>;
+
+    async fn get_system_event(&self, event_id: &str) -> Result<Option<SystemEvent>, DbErrorRead> {
+        Ok(self
+            .list_system_events(SystemEventFilter {
+                event_id: Some(event_id.to_owned()),
+                limit: 1,
+                ..SystemEventFilter::default()
+            })
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    async fn find_http_policy_event_ids(
+        &self,
+        deployment_id: DeploymentId,
+        component: &str,
+        component_policy_hash: &str,
+        server_policy_hash: &str,
+    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead>;
+
+    async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead>;
+
+    async fn retain_system_events(
+        &self,
+        created_before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<SystemEventRetentionResult, DbErrorWrite>;
+
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,
@@ -3416,6 +3733,7 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
+    use super::{SystemEvent, SystemEventCode, SystemEventValidationError};
     use crate::ExecutionFailureKind;
     use crate::JoinSetId;
     use crate::Params;
@@ -3428,6 +3746,52 @@ mod tests {
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::WastVal;
     use val_json::wast_val::WastValWithType;
+
+    #[test]
+    fn system_event_codes_fit_storage_limits() {
+        for code in [
+            SystemEventCode::ServerStartupCompleted,
+            SystemEventCode::ServerStartupFailed,
+            SystemEventCode::ServerShutdownRequested,
+            SystemEventCode::ServerShutdownCompleted,
+            SystemEventCode::DeploymentSubmitStarted,
+            SystemEventCode::DeploymentSubmitCompleted,
+            SystemEventCode::DeploymentSubmitFailed,
+            SystemEventCode::DeploymentSwitchStarted,
+            SystemEventCode::DeploymentSwitchCompleted,
+            SystemEventCode::DeploymentSwitchFailed,
+            SystemEventCode::ServerHttpPolicyApplied,
+            SystemEventCode::ComponentHttpPolicyApplied,
+            SystemEventCode::OutboundHttpDenied,
+            SystemEventCode::AdminExecutionDeleteStarted,
+            SystemEventCode::AdminExecutionDeleteCompleted,
+            SystemEventCode::AdminExecutionRetainStarted,
+            SystemEventCode::AdminExecutionRetainCompleted,
+            SystemEventCode::AdminDeploymentDeleteStarted,
+            SystemEventCode::AdminDeploymentDeleteCompleted,
+            SystemEventCode::AdminDeploymentRetainStarted,
+            SystemEventCode::AdminDeploymentRetainCompleted,
+            SystemEventCode::MaintenanceGcCompleted,
+            SystemEventCode::MaintenanceGcFailed,
+        ] {
+            assert!(code.as_str().chars().count() <= 64);
+            assert!(code.message().chars().count() <= 512);
+        }
+    }
+
+    #[test]
+    fn oversized_system_event_details_are_rejected() {
+        let result = SystemEvent::new(
+            SystemEventCode::MaintenanceGcCompleted,
+            None,
+            None,
+            serde_json::json!({"value": "x".repeat(4000)}),
+        );
+        assert!(matches!(
+            result,
+            Err(SystemEventValidationError::DetailsTooLarge)
+        ));
+    }
 
     #[test]
     fn legacy_child_params_deserialize_as_inline() {

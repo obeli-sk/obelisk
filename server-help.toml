@@ -98,6 +98,9 @@
 # [maintenance.gc.retention.deployments]
 # enabled = true
 # max_age.hours = 720
+# [maintenance.gc.retention.system_events]
+# enabled = true
+# max_age.hours = 720
 
 ## Global WASM Configuration
 # [wasm]

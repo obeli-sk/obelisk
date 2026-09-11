@@ -6,7 +6,8 @@ use concepts::{
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest, RetentionPolicy,
+        ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventCode, SystemEventFilter,
+        SystemEventLevel,
     },
     time::ClockFn,
 };
@@ -32,6 +33,212 @@ fn deployment_record(
         created_by: None,
         files,
     }
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn system_events_are_filtered_paginated_and_collected(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let admin = db_pool.admin_conn().await.unwrap();
+    let mut first = SystemEvent::new(
+        SystemEventCode::AdminExecutionDeleteStarted,
+        None,
+        None,
+        serde_json::json!({"version": "test"}),
+    )
+    .unwrap();
+    first.server_run_id = "srv_01M281KSH954NC9NHNMCN09S6W".to_owned();
+    let first_id = first.event_id.clone();
+    admin.append_system_event(first).await.unwrap();
+    assert_eq!(
+        admin
+            .get_system_event(&first_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .event_id,
+        first_id
+    );
+    assert!(
+        admin
+            .get_system_event("sev_missing")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let mut second = SystemEvent::new(
+        SystemEventCode::MaintenanceGcFailed,
+        None,
+        None,
+        serde_json::json!({"threshold_percent": 90}),
+    )
+    .unwrap();
+    second.server_run_id = "srv_01M281KSH954NC9NHNMCN09S6X".to_owned();
+    let second_id = second.event_id.clone();
+    admin.append_system_event(second).await.unwrap();
+
+    let warning = admin
+        .list_system_events(SystemEventFilter {
+            level: Some(SystemEventLevel::Warning),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(warning.len(), 1);
+    assert_eq!(warning[0].event_id, second_id);
+    let first_run = admin
+        .list_system_events(SystemEventFilter {
+            server_run_id: Some("srv_01M281KSH954NC9NHNMCN09S6W".to_owned()),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(first_run.len(), 1);
+    assert_eq!(first_run[0].event_id, first_id);
+    let first_page = admin
+        .list_system_events(SystemEventFilter {
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let older = admin
+        .list_system_events(SystemEventFilter {
+            before_event_id: Some(first_page[0].event_id.clone()),
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(older.len(), 1);
+    assert_ne!(older[0].event_id, first_page[0].event_id);
+    assert!([first_id, second_id].contains(&older[0].event_id));
+    assert_eq!(
+        admin.get_storage_status().await.unwrap().system_event_count,
+        2
+    );
+    let retention = admin
+        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 1)
+        .await
+        .unwrap();
+    assert_eq!(retention.deleted, 1);
+    assert!(retention.has_more);
+    assert_eq!(
+        admin.get_storage_status().await.unwrap().system_event_count,
+        1
+    );
+    let deployment_id = DeploymentId::generate();
+    for _ in 0..2 {
+        let event = SystemEvent::new(
+            SystemEventCode::OutboundHttpDenied,
+            None,
+            Some(deployment_id),
+            serde_json::json!({"host": "example.com"}),
+        )
+        .unwrap()
+        .with_dedupe_key("component|GET|https|example.com|443|GlobalAllowlist");
+        admin.append_system_event(event).await.unwrap();
+    }
+    let denials = admin
+        .list_system_events(SystemEventFilter {
+            code: Some(SystemEventCode::OutboundHttpDenied.as_str().to_owned()),
+            deployment_id: Some(deployment_id),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(denials.len(), 1);
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn http_policy_event_ids_are_resolved(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let admin = db_pool.admin_conn().await.unwrap();
+    let server = SystemEvent::new(
+        SystemEventCode::ServerHttpPolicyApplied,
+        None,
+        None,
+        serde_json::json!({
+            "server_policy_hash": "sha256:server",
+            "webui_server_policy_hash": "sha256:webui",
+        }),
+    )
+    .unwrap();
+    let server_id = server.event_id.clone();
+    admin.append_system_event(server).await.unwrap();
+    let deployment_id = DeploymentId::generate();
+    let component = SystemEvent::new(
+        SystemEventCode::ComponentHttpPolicyApplied,
+        None,
+        Some(deployment_id),
+        serde_json::json!({
+            "component": "caller",
+            "component_policy_hash": "sha256:component",
+            "server_policy_hash": "sha256:webui",
+            "server_policy_event_id": server_id,
+        }),
+    )
+    .unwrap();
+    let component_id = component.event_id.clone();
+    admin.append_system_event(component).await.unwrap();
+
+    let ids = admin
+        .find_http_policy_event_ids(deployment_id, "caller", "sha256:component", "sha256:webui")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ids.server_policy_event_id, server_id);
+    assert_eq!(ids.component_policy_event_id, component_id);
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn system_event_cas_details_are_retained_with_the_event(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let cas = db_pool.cas_conn().await.unwrap();
+    let content = br#"{"policy":"large"}"#.to_vec();
+    let digest = concepts::cas::content_digest(&content);
+    let event = SystemEvent::new(
+        SystemEventCode::ComponentHttpPolicyApplied,
+        None,
+        Some(DeploymentId::generate()),
+        serde_json::json!({"policy_digest": digest.to_string()}),
+    )
+    .unwrap()
+    .with_cas_digest(digest.clone());
+    let admin = db_pool.admin_conn().await.unwrap();
+    admin
+        .append_system_event_with_cas(event, content)
+        .await
+        .unwrap();
+
+    let gc = db_pool.cas_gc_conn().await.unwrap();
+    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 0);
+    assert!(cas.contains_blob(&digest).await.unwrap());
+
+    admin
+        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 100)
+        .await
+        .unwrap();
+    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 1);
+    assert!(!cas.contains_blob(&digest).await.unwrap());
+
+    drop((admin, gc, cas));
+    db_close.close().await;
 }
 
 async fn create_execution(

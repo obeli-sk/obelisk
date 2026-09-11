@@ -218,6 +218,25 @@ mod tests {
     use super::*;
     use secrecy::ExposeSecret as _;
 
+    // Security: Default server.toml does not make the obelisk token available.
+    #[test]
+    fn default_does_not_make_token_available() {
+        let registry = SecretRegistry::resolve(
+            SecretsToml::new(),
+            PublicEnvToml::default(),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            None,
+        )
+        .unwrap();
+
+        assert!(registry.values.is_empty());
+        assert_eq!(
+            HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN.to_string()]),
+            registry.sensitive
+        );
+    }
+
     #[test]
     fn resolve_reads_value_wipes_source_and_rejects_lookup() {
         // A source name distinct from the logical name exercises the rename mapping.

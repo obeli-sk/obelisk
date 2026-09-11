@@ -1,10 +1,14 @@
 use crate::component_logger::ComponentLogger;
 use crate::http_request_policy::{HttpRequestPolicy, PolicyError, PolicyLayer};
-use concepts::storage::LogLevel;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
+use concepts::{
+    prefixed_ulid::DeploymentId,
+    storage::{DbPool, LogLevel, SystemEvent, SystemEventCode},
+};
 use http_body_util::BodyExt;
 use std::future::Future;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
@@ -34,6 +38,8 @@ pub(crate) struct HttpHooks {
     pub(crate) config_section_hint: ConfigSectionHint,
     /// The deployment component name for error-message TOML snippets.
     pub(crate) component_name: String,
+    pub(crate) deployment_id: Option<DeploymentId>,
+    pub(crate) db_pool: Option<Arc<dyn DbPool>>,
 }
 
 /// Generate a simplified host pattern for the TOML snippet.
@@ -182,8 +188,102 @@ impl WasiHttpHooks for HttpHooks {
         self.http_client_traces.push((req, resp_trace_rx));
 
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
+        let attempted_url = request.uri().to_string();
         let http_policy_res = self.http_policy.apply(&mut request);
         if let Err(err) = http_policy_res {
+            if let (
+                Some(deployment_id),
+                Some(db_pool),
+                PolicyError::RequestDenied {
+                    method,
+                    scheme,
+                    host,
+                    port,
+                    denied_by,
+                    ..
+                },
+            ) = (self.deployment_id, self.db_pool.as_ref(), &err)
+            {
+                let dedupe_key = format!(
+                    "{}|{}|{}|{}|{}|{}|{}|{}",
+                    self.http_policy.component_policy_hash,
+                    self.http_policy.server_policy_hash,
+                    self.component_name,
+                    method,
+                    scheme,
+                    host,
+                    port,
+                    denied_by.audit_name(),
+                );
+                let server_toml = matches!(
+                    denied_by,
+                    PolicyLayer::GlobalAllowlist | PolicyLayer::Both
+                )
+                .then(|| {
+                    format!(
+                        "[[outbound_http.allowed_host]]\npattern = \"{}\"\nmethods = [\"{}\"]",
+                        format_host_pattern(scheme, host, *port),
+                        method.as_str()
+                    )
+                });
+                let execution_id = self.component_logger.execution_id.clone();
+                let component = self.component_name.clone();
+                let component_policy_hash = self.http_policy.component_policy_hash.clone();
+                let server_policy_hash = self.http_policy.server_policy_hash.clone();
+                let method = method.as_str().to_owned();
+                let scheme = scheme.clone();
+                let host = host.clone();
+                let port = *port;
+                let rejected_by = denied_by.audit_name();
+                let db_pool = db_pool.clone();
+                tokio::spawn(async move {
+                    match db_pool.admin_conn().await {
+                        Ok(admin) => {
+                            let policy_event_ids = match admin
+                                .find_http_policy_event_ids(
+                                    deployment_id,
+                                    &component,
+                                    &component_policy_hash,
+                                    &server_policy_hash,
+                                )
+                                .await
+                            {
+                                Ok(ids) => ids,
+                                Err(err) => {
+                                    tracing::warn!("Cannot resolve HTTP policy event IDs: {err}");
+                                    None
+                                }
+                            };
+                            let event = SystemEvent::new(
+                                SystemEventCode::OutboundHttpDenied,
+                                Some(execution_id),
+                                Some(deployment_id),
+                                serde_json::json!({
+                                    "component": component,
+                                    "method": method,
+                                    "scheme": scheme,
+                                    "host": host,
+                                    "port": port,
+                                    "url": attempted_url,
+                                    "rejected_by": rejected_by,
+                                    "component_policy_hash": component_policy_hash,
+                                    "server_policy_hash": server_policy_hash,
+                                    "component_policy_event_id": policy_event_ids.as_ref().map(|ids| &ids.component_policy_event_id),
+                                    "server_policy_event_id": policy_event_ids.as_ref().map(|ids| &ids.server_policy_event_id),
+                                    "server_toml": server_toml,
+                                }),
+                            )
+                            .map(|event| event.with_dedupe_key(dedupe_key));
+                            if let Ok(event) = event
+                                && let Err(err) = admin.append_system_event(event).await
+                            {
+                                tracing::warn!("Cannot persist outbound HTTP denial: {err}");
+                            }
+                        }
+                        Err(err) => tracing::warn!("Cannot persist outbound HTTP denial: {err}"),
+                    }
+                });
+            }
             // Generate a helpful TOML snippet for the user
             let log_msg = generate_toml_snippet(
                 &err,
@@ -334,6 +434,8 @@ mod tests {
                 secrets: Vec::new(),
             }],
             global_allowlist: Some(Vec::new()),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
         let message = generate_toml_snippet(
             &PolicyError::RequestDenied {

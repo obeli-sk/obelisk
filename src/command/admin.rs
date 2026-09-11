@@ -3,7 +3,8 @@ use crate::{
     client::{ClientStartup, send_json},
     server::web_api_server::admin::{
         CleanupRequest, CleanupResponse, DeleteDeploymentResponse, DeleteResponse,
-        RetainDeploymentsRequest,
+        RetainDeploymentsRequest, RetainSystemEventsRequest, RetainSystemEventsResponse,
+        StorageStatusResponse, SystemEventsResponse,
     },
 };
 use http::header::ACCEPT;
@@ -27,6 +28,30 @@ impl args::Admin {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> anyhow::Result<()> {
         let client = client_startup.web_api_client()?;
         match self {
+            Self::Events(args::AdminEvents::Get {
+                event_id,
+                json,
+                api_url,
+            }) => {
+                let event: crate::server::web_api_server::admin::SystemEventResponse = send_json(
+                    client
+                        .get(format!("{api_url}/v1/admin/system-events/{event_id}"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&event)?);
+                } else {
+                    println!(
+                        "{} {} {}: {}",
+                        event.created_at.to_rfc3339(),
+                        event.level,
+                        event.code,
+                        event.message
+                    );
+                }
+                Ok(())
+            }
             Self::Executions(args::AdminExecutions::Delete {
                 execution_ids,
                 force,
@@ -192,6 +217,81 @@ impl args::Admin {
                     response.blocked_by_execution_reference,
                     response.blocked_non_terminal,
                     response.has_more
+                );
+                print_result(json, &response, &message)
+            }
+            Self::Events(args::AdminEvents::List {
+                server_run_id,
+                level,
+                code,
+                limit,
+                json,
+                api_url,
+            }) => {
+                let response: SystemEventsResponse = send_json(
+                    client
+                        .get(format!("{api_url}/v1/admin/system-events"))
+                        .query(&[
+                            ("server_run_id", server_run_id),
+                            ("level", level),
+                            ("code", code),
+                        ])
+                        .query(&[("limit", limit)])
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                } else {
+                    for event in response.events {
+                        println!(
+                            "{} {} {}: {}",
+                            event.created_at.to_rfc3339(),
+                            event.level,
+                            event.code,
+                            event.message
+                        );
+                    }
+                }
+                Ok(())
+            }
+            Self::Events(args::AdminEvents::Retain {
+                max_age,
+                batch_size,
+                json,
+                api_url,
+            }) => {
+                let response: RetainSystemEventsResponse = send_json(
+                    client
+                        .post(format!("{api_url}/v1/admin/system-events/retain"))
+                        .header(ACCEPT, "application/json")
+                        .json(&RetainSystemEventsRequest {
+                            max_age_seconds: max_age.as_secs(),
+                            batch_size,
+                        }),
+                )
+                .await?;
+                let message = format!(
+                    "{} system event(s) deleted; has_more={}",
+                    response.deleted, response.has_more
+                );
+                print_result(json, &response, &message)
+            }
+            Self::Storage(args::AdminStorage::Show { json, api_url }) => {
+                let response: StorageStatusResponse = send_json(
+                    client
+                        .get(format!("{api_url}/v1/admin/storage"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
+                let message = format!(
+                    "database: {} bytes; executions: {}; deployments: {}; system events: {}",
+                    response
+                        .database_bytes
+                        .map_or_else(|| "unknown".into(), |n| n.to_string()),
+                    response.execution_count,
+                    response.deployment_count,
+                    response.system_event_count
                 );
                 print_result(json, &response, &message)
             }

@@ -141,6 +141,169 @@
         }
       }
     },
+    "/v1/admin/storage": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "storage_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/system-events": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "list_system_events",
+        "parameters": [
+          {
+            "name": "server_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "level",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "deployment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "before",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/system-events/retain": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "retain_system_events",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetainSystemEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetainSystemEventsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/system-events/{event_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "get_system_event",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/components": {
       "get": {
         "tags": [
@@ -3366,6 +3529,75 @@
           }
         }
       },
+      "RetainSystemEventsRequest": {
+        "type": "object",
+        "required": [
+          "max_age_seconds",
+          "batch_size"
+        ],
+        "properties": {
+          "batch_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "max_age_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "RetainSystemEventsResponse": {
+        "type": "object",
+        "required": [
+          "deleted",
+          "has_more"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StorageStatusResponse": {
+        "type": "object",
+        "required": [
+          "execution_count",
+          "deployment_count",
+          "system_event_count"
+        ],
+        "properties": {
+          "database_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "deployment_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "execution_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "system_event_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "StubResponseSer": {
         "type": "object",
         "description": "A serializable mirror of `AppendResponseToExecution` from concepts.",
@@ -3441,6 +3673,72 @@
             "items": {
               "$ref": "#/components/schemas/FileIssue"
             }
+          }
+        }
+      },
+      "SystemEventResponse": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "server_run_id",
+          "created_at",
+          "level",
+          "code",
+          "message",
+          "details"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deployment_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {},
+          "event_id": {
+            "type": "string"
+          },
+          "execution_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "level": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "server_run_id": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemEventsResponse": {
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemEventResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

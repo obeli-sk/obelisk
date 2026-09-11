@@ -117,6 +117,10 @@ pub(crate) struct WebApiState {
         admin::retain_executions,
         admin::delete_deployment,
         admin::retain_deployments,
+        admin::list_system_events,
+        admin::get_system_event,
+        admin::storage_status,
+        admin::retain_system_events,
     ),
     components(schemas(
         PaginationDirectionSortedFromLatest,
@@ -149,6 +153,10 @@ pub(crate) struct WebApiState {
         admin::CleanupRequest,
         admin::RetainDeploymentsRequest,
         admin::CleanupResponse,
+        admin::SystemEventsResponse,
+        admin::StorageStatusResponse,
+        admin::RetainSystemEventsRequest,
+        admin::RetainSystemEventsResponse,
         deployment::DeploymentSubmitErrorBody,
         deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
@@ -313,11 +321,231 @@ fn admin_router() -> Router<Arc<WebApiState>> {
             "/deployments/retain",
             routing::post(admin::retain_deployments),
         )
+        .route("/system-events", routing::get(admin::list_system_events))
+        .route(
+            "/system-events/{event-id}",
+            routing::get(admin::get_system_event),
+        )
+        .route(
+            "/system-events/retain",
+            routing::post(admin::retain_system_events),
+        )
+        .route("/storage", routing::get(admin::storage_status))
 }
 
 pub(crate) mod admin {
     use super::*;
-    use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult};
+    use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult, SystemEventCode};
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct SystemEventsResponse {
+        pub(crate) events: Vec<SystemEventResponse>,
+        pub(crate) next_cursor: Option<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct SystemEventResponse {
+        pub(crate) event_id: String,
+        pub(crate) server_run_id: String,
+        pub(crate) created_at: DateTime<Utc>,
+        pub(crate) level: String,
+        pub(crate) code: String,
+        pub(crate) message: String,
+        #[schema(value_type = Option<String>)]
+        pub(crate) execution_id: Option<ExecutionId>,
+        #[schema(value_type = Option<String>)]
+        pub(crate) deployment_id: Option<DeploymentId>,
+        pub(crate) details: serde_json::Value,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct StorageStatusResponse {
+        pub(crate) database_bytes: Option<u64>,
+        pub(crate) execution_count: u64,
+        pub(crate) deployment_count: u64,
+        pub(crate) system_event_count: u64,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct RetainSystemEventsRequest {
+        pub(crate) max_age_seconds: u64,
+        pub(crate) batch_size: u32,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, ToSchema)]
+    pub(crate) struct RetainSystemEventsResponse {
+        pub(crate) deleted: u64,
+        pub(crate) has_more: bool,
+    }
+
+    #[derive(Debug, Default, Deserialize, IntoParams)]
+    pub(crate) struct SystemEventsQuery {
+        server_run_id: Option<String>,
+        level: Option<String>,
+        code: Option<String>,
+        #[param(value_type = Option<String>)]
+        deployment_id: Option<DeploymentId>,
+        before: Option<String>,
+        limit: Option<u32>,
+    }
+
+    #[utoipa::path(get, path = "/v1/admin/system-events", tag = "admin", params(SystemEventsQuery), responses((status = 200, body = SystemEventsResponse)))]
+    pub(crate) async fn list_system_events(
+        Query(query): Query<SystemEventsQuery>,
+        State(state): State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let level = query
+            .level
+            .as_deref()
+            .map(|level| match level {
+                "info" => Ok(storage::SystemEventLevel::Info),
+                "warning" => Ok(storage::SystemEventLevel::Warning),
+                "error" => Ok(storage::SystemEventLevel::Error),
+                _ => Err(precondition("level must be info, warning, or error")),
+            })
+            .transpose()?;
+        let limit = query.limit.unwrap_or(100);
+        if limit == 0 || limit > 1000 {
+            return Err(precondition("limit must be between 1 and 1000"));
+        }
+        let mut events = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .list_system_events(storage::SystemEventFilter {
+                event_id: None,
+                server_run_id: query.server_run_id,
+                level,
+                code: query.code,
+                deployment_id: query.deployment_id,
+                before_event_id: query.before,
+                limit,
+            })
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        crate::server::system_event_writer::hydrate_cas_details(
+            state.db_pool.as_ref(),
+            &mut events,
+        )
+        .await;
+        let next_cursor =
+            (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
+        let events = events
+            .into_iter()
+            .map(|event| {
+                let message = event.message().to_owned();
+                SystemEventResponse {
+                    event_id: event.event_id,
+                    server_run_id: event.server_run_id,
+                    created_at: event.created_at,
+                    level: event.level.as_str().into(),
+                    code: event.code,
+                    message,
+                    execution_id: event.execution_id,
+                    deployment_id: event.deployment_id,
+                    details: event.details,
+                }
+            })
+            .collect();
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &SystemEventsResponse {
+                events,
+                next_cursor,
+            },
+        ))
+    }
+
+    #[utoipa::path(get, path = "/v1/admin/system-events/{event_id}", tag = "admin", responses((status = 200, body = SystemEventResponse), (status = 404)))]
+    pub(crate) async fn get_system_event(
+        Path(event_id): Path<String>,
+        State(state): State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let event = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .get_system_event(&event_id)
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .ok_or_else(|| HttpResponse::not_found(AcceptHeader::Json, "system event"))?;
+        let mut events = [event];
+        crate::server::system_event_writer::hydrate_cas_details(
+            state.db_pool.as_ref(),
+            &mut events,
+        )
+        .await;
+        let event = events.into_iter().next().unwrap();
+        let message = event.message().to_owned();
+        let response = SystemEventResponse {
+            event_id: event.event_id,
+            server_run_id: event.server_run_id,
+            created_at: event.created_at,
+            level: event.level.as_str().into(),
+            code: event.code,
+            message,
+            execution_id: event.execution_id,
+            deployment_id: event.deployment_id,
+            details: event.details,
+        };
+        Ok(pretty_json_response(StatusCode::OK, &response))
+    }
+
+    #[utoipa::path(get, path = "/v1/admin/storage", tag = "admin", responses((status = 200, body = StorageStatusResponse)))]
+    pub(crate) async fn storage_status(
+        State(state): State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let status = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .get_storage_status()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &StorageStatusResponse {
+                database_bytes: status.database_bytes,
+                execution_count: status.execution_count,
+                deployment_count: status.deployment_count,
+                system_event_count: status.system_event_count,
+            },
+        ))
+    }
+
+    #[utoipa::path(post, path = "/v1/admin/system-events/retain", tag = "admin", request_body = RetainSystemEventsRequest, responses((status = 200, body = RetainSystemEventsResponse)))]
+    pub(crate) async fn retain_system_events(
+        State(state): State<Arc<WebApiState>>,
+        Json(request): Json<RetainSystemEventsRequest>,
+    ) -> Result<Response, HttpResponse> {
+        validate_batch_size(request.batch_size)?;
+        if request.max_age_seconds == 0 {
+            return Err(precondition("max_age_seconds must be greater than zero"));
+        }
+        let age = chrono::Duration::from_std(Duration::from_secs(request.max_age_seconds))
+            .map_err(|_| precondition("max_age_seconds is too large"))?;
+        let cutoff = Utc::now()
+            .checked_sub_signed(age)
+            .ok_or_else(|| precondition("max_age_seconds is too large"))?;
+        let result = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .retain_system_events(cutoff, request.batch_size)
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        Ok(pretty_json_response(
+            StatusCode::OK,
+            &RetainSystemEventsResponse {
+                deleted: result.deleted,
+                has_more: result.has_more,
+            },
+        ))
+    }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct DeleteResponse {
@@ -438,6 +666,14 @@ pub(crate) mod admin {
                 execution_id.get_top_level()
             )));
         }
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminExecutionDeleteStarted,
+            Some(execution_id.clone()),
+            None,
+            json!({"force_non_terminal": query.force_non_terminal}),
+        )
+        .await;
         let outcome = state
             .db_pool
             .admin_conn()
@@ -464,6 +700,14 @@ pub(crate) mod admin {
                 ));
             }
         };
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminExecutionDeleteCompleted,
+            Some(execution_id),
+            None,
+            json!({"deleted": response.deleted, "already_deleted": response.already_deleted}),
+        )
+        .await;
         Ok(pretty_json_response(StatusCode::OK, &response))
     }
 
@@ -474,6 +718,7 @@ pub(crate) mod admin {
     ) -> Result<Response, HttpResponse> {
         validate_batch_size(request.batch_size)?;
         let retention = retention_policy(request.retain_count, request.max_age_seconds)?;
+        crate::server::system_event_writer::record(state.db_pool.as_ref(), SystemEventCode::AdminExecutionRetainStarted, None, None, json!({"retain_count": request.retain_count, "max_age_seconds": request.max_age_seconds, "batch_size": request.batch_size, "force_non_terminal": request.force_non_terminal, "dry_run": request.dry_run})).await;
         let result = state
             .db_pool
             .admin_conn()
@@ -487,6 +732,14 @@ pub(crate) mod admin {
             )
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminExecutionRetainCompleted,
+            None,
+            None,
+            serde_json::to_value(CleanupResponse::from(result)).unwrap(),
+        )
+        .await;
         Ok(pretty_json_response(
             StatusCode::OK,
             &CleanupResponse::from(result),
@@ -512,6 +765,17 @@ pub(crate) mod admin {
                 "force_non_terminal requires delete_executions",
             ));
         }
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentDeleteStarted,
+            None,
+            Some(deployment_id),
+            json!({
+                "delete_executions": query.delete_executions,
+                "force_non_terminal": query.force_non_terminal,
+            }),
+        )
+        .await;
         let outcome = state
             .db_pool
             .admin_conn()
@@ -559,6 +823,14 @@ pub(crate) mod admin {
                 )));
             }
         };
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentDeleteCompleted,
+            None,
+            Some(deployment_id),
+            serde_json::to_value(&response).expect("cleanup response must serialize"),
+        )
+        .await;
         Ok(pretty_json_response(StatusCode::OK, &response))
     }
 
@@ -574,6 +846,21 @@ pub(crate) mod admin {
                 "force_non_terminal requires delete_executions",
             ));
         }
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentRetainStarted,
+            None,
+            None,
+            json!({
+                "retain_count": request.retain_count,
+                "max_age_seconds": request.max_age_seconds,
+                "batch_size": request.batch_size,
+                "delete_executions": request.delete_executions,
+                "force_non_terminal": request.force_non_terminal,
+                "dry_run": request.dry_run,
+            }),
+        )
+        .await;
         let result = state
             .db_pool
             .admin_conn()
@@ -588,6 +875,15 @@ pub(crate) mod admin {
             )
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentRetainCompleted,
+            None,
+            None,
+            serde_json::to_value(CleanupResponse::from(result))
+                .expect("cleanup response must serialize"),
+        )
+        .await;
         Ok(pretty_json_response(
             StatusCode::OK,
             &CleanupResponse::from(result),

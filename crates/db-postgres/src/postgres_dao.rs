@@ -20,17 +20,18 @@ use concepts::{
         DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
         ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
-        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
-        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
-        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked,
-        Version, VersionType, WasmBacktrace,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -5961,6 +5962,157 @@ async fn delete_deployment_tx(
 
 #[async_trait]
 impl DbAdmin for PostgresConnection {
+    async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
+        self.client.lock().await.execute(
+            "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+            &[&event.event_id, &event.server_run_id, &event.created_at, &event.level.as_str(), &event.code,
+              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &event.cas_digest.map(|digest| digest.to_string())],
+        ).await?;
+        Ok(())
+    }
+
+    async fn append_system_event_with_cas(
+        &self,
+        event: SystemEvent,
+        content: Vec<u8>,
+    ) -> Result<(), DbErrorWrite> {
+        let digest = event.cas_digest.as_ref().expect("CAS digest must be set");
+        let size = i64::try_from(content.len()).map_err(|err| {
+            DbErrorWrite::from(DbErrorGeneric::Uncategorized {
+                reason: format!("system event CAS detail too large: {err}").into(),
+                context: SpanTrace::capture(),
+                source: Some(Arc::new(err)),
+                loc: Location::caller(),
+            })
+        })?;
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        tx.execute(
+            "INSERT INTO t_file (digest, content, size) VALUES ($1, $2, $3) ON CONFLICT (digest) DO NOTHING",
+            &[&digest.to_string(), &content, &size],
+        )
+        .await?;
+        tx.execute(
+            "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+            &[&event.event_id, &event.server_run_id, &event.created_at, &event.level.as_str(), &event.code,
+              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &digest.to_string()],
+        ).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_system_events(
+        &self,
+        filter: SystemEventFilter,
+    ) -> Result<Vec<SystemEvent>, DbErrorRead> {
+        let rows = self.client.lock().await.query(
+            "SELECT event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
+             WHERE ($1::text IS NULL OR event_id = $1) AND ($2::text IS NULL OR server_run_id = $2)
+               AND ($3::text IS NULL OR level = $3) AND ($4::text IS NULL OR code = $4)
+               AND ($5::text IS NULL OR deployment_id = $5) AND ($6::text IS NULL OR event_id < $6)
+             ORDER BY event_id DESC LIMIT $7",
+            &[&filter.event_id, &filter.server_run_id, &filter.level.map(SystemEventLevel::as_str),
+              &filter.code, &filter.deployment_id.map(|id| id.to_string()), &filter.before_event_id,
+              &i64::from(filter.limit.clamp(1, 1000))],
+        ).await?;
+        rows.into_iter()
+            .map(|row| {
+                let level: String = get(&row, 3)?;
+                let execution_id: Option<String> = get(&row, 5)?;
+                let deployment_id: Option<String> = get(&row, 6)?;
+                Ok(SystemEvent {
+                    event_id: get(&row, 0)?,
+                    server_run_id: get(&row, 1)?,
+                    created_at: get(&row, 2)?,
+                    level: match level.as_str() {
+                        "warning" => SystemEventLevel::Warning,
+                        "error" => SystemEventLevel::Error,
+                        _ => SystemEventLevel::Info,
+                    },
+                    code: get(&row, 4)?,
+                    dedupe_key: None,
+                    cas_digest: get::<Option<String>, _>(&row, 8)?
+                        .map(|digest| digest.parse())
+                        .transpose()
+                        .map_err(|err| {
+                            consistency_db_err(format!("invalid system event CAS digest: {err}"))
+                        })?,
+                    execution_id: execution_id
+                        .map(|id| id.parse())
+                        .transpose()
+                        .map_err(|err| {
+                            consistency_db_err(format!("invalid system event execution id: {err}"))
+                        })?,
+                    deployment_id: deployment_id.map(|id| id.parse()).transpose().map_err(
+                        |err| {
+                            consistency_db_err(format!("invalid system event deployment id: {err}"))
+                        },
+                    )?,
+                    details: get::<Json<serde_json::Value>, _>(&row, 7)?.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn find_http_policy_event_ids(
+        &self,
+        deployment_id: DeploymentId,
+        component: &str,
+        component_policy_hash: &str,
+        server_policy_hash: &str,
+    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead> {
+        let client = self.client.lock().await;
+        let deployment_id = deployment_id.to_string();
+        let component_row = client.query_opt(
+            "SELECT event_id, details->>'server_policy_event_id' FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = $1 AND details->>'component' = $2 AND details->>'component_policy_hash' = $3 AND details->>'server_policy_hash' = $4 ORDER BY event_id DESC LIMIT 1",
+            &[&deployment_id, &component, &component_policy_hash, &server_policy_hash],
+        ).await?;
+        let Some(component) = component_row else {
+            return Ok(None);
+        };
+        Ok(Some(HttpPolicyEventIds {
+            component_policy_event_id: get(&component, 0)?,
+            server_policy_event_id: get(&component, 1)?,
+        }))
+    }
+
+    async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
+        let row = self.client.lock().await.query_one(
+            "SELECT pg_database_size(current_database()), (SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE), (SELECT COUNT(*) FROM t_deployment), (SELECT COUNT(*) FROM t_system_event)", &[]
+        ).await?;
+        Ok(StorageStatus {
+            database_bytes: u64::try_from(get::<i64, _>(&row, 0)?).ok(),
+            execution_count: get::<i64, _>(&row, 1)?.cast_unsigned(),
+            deployment_count: get::<i64, _>(&row, 2)?.cast_unsigned(),
+            system_event_count: get::<i64, _>(&row, 3)?.cast_unsigned(),
+        })
+    }
+
+    async fn retain_system_events(
+        &self,
+        created_before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
+        let limit = limit.clamp(1, 10_000);
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let eligible = tx
+            .query_one(
+                "SELECT COUNT(*) FROM t_system_event WHERE created_at < $1",
+                &[&created_before],
+            )
+            .await?;
+        let deleted = tx.execute(
+            "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2)",
+            &[&created_before, &i64::from(limit)]
+        ).await?;
+        tx.commit().await?;
+        Ok(SystemEventRetentionResult {
+            deleted,
+            has_more: get::<i64, _>(&eligible, 0)?.cast_unsigned() > u64::from(limit),
+        })
+    }
+
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,
@@ -6287,9 +6439,9 @@ impl CasGc for PostgresConnection {
         let row = tx
             .query_one(
                 "SELECT \
-                 COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                 COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                 COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT $1) candidates), 0)::bigint \
+                 COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
+                 COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
+                 COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT $1) candidates), 0)::bigint \
                  FROM t_file",
                 &[&i64::from(batch_size.max(1))],
             )
@@ -6302,7 +6454,7 @@ impl CasGc for PostgresConnection {
         } else {
             tx.execute(
                 "DELETE FROM t_file WHERE ctid IN (SELECT ctid FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT $1)",
+                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT $1)",
                 &[&i64::from(batch_size.max(1))],
             )
             .await?
@@ -6317,6 +6469,7 @@ impl CasGc for PostgresConnection {
             } else {
                 0
             },
+            has_more: orphan_blobs > u64::from(batch_size.max(1)),
         })
     }
 }

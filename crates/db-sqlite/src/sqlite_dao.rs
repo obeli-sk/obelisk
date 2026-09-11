@@ -20,17 +20,18 @@ use concepts::{
         DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
         ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
-        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
-        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
-        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, SubscribeToResponsesError, TimeoutOutcome, Unlocked,
-        Version, VersionType,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -5627,6 +5628,160 @@ impl SqlitePool {
 
 #[async_trait]
 impl DbAdmin for SqlitePool {
+    async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let details = serde_json::to_string(&event.details)
+                    .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
+                tx.execute(
+                    "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id, event.server_run_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string)],
+                )?;
+                Ok(())
+            },
+            TxType::Other,
+            "append_system_event",
+        ).await
+    }
+
+    async fn append_system_event_with_cas(
+        &self,
+        event: SystemEvent,
+        content: Vec<u8>,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let digest = event.cas_digest.as_ref().expect("CAS digest must be set");
+                Self::upload_file_tx(tx, digest, &content)?;
+                let details = serde_json::to_string(&event.details).map_err(|err| {
+                    RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
+                })?;
+                tx.execute(
+                    "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id, event.server_run_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string()],
+                )?;
+                Ok(())
+            },
+            TxType::MultipleWrites,
+            "append_system_event_with_cas",
+        )
+        .await
+    }
+
+    async fn list_system_events(
+        &self,
+        filter: SystemEventFilter,
+    ) -> Result<Vec<SystemEvent>, DbErrorRead> {
+        self.transaction(
+            move |tx| {
+                let mut statement = tx.prepare(
+                    "SELECT event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
+                     WHERE (?1 IS NULL OR event_id = ?1) AND (?2 IS NULL OR server_run_id = ?2)
+                       AND (?3 IS NULL OR level = ?3) AND (?4 IS NULL OR code = ?4)
+                       AND (?5 IS NULL OR deployment_id = ?5) AND (?6 IS NULL OR event_id < ?6)
+                     ORDER BY event_id DESC LIMIT ?7"
+                )?;
+                let rows = statement.query_map(rusqlite::params![
+                    filter.event_id, filter.server_run_id, filter.level.map(SystemEventLevel::as_str), filter.code,
+                    filter.deployment_id.map(|id| id.to_string()), filter.before_event_id,
+                    i64::from(filter.limit.clamp(1, 1000))
+                ], |row| {
+                    let level: String = row.get(3)?;
+                    let details: String = row.get(7)?;
+                    Ok(SystemEvent {
+                        event_id: row.get(0)?, server_run_id: row.get(1)?, created_at: row.get(2)?,
+                        level: match level.as_str() { "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
+                        code: row.get(4)?,
+                        dedupe_key: None,
+                        cas_digest: row.get::<_, Option<String>>(8)?.map(|digest| digest.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err)))?,
+                        execution_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
+                        deployment_id: row.get::<_, Option<String>>(6)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,
+                        details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err)))?,
+                    })
+                })?.collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }, TxType::Other, "list_system_events"
+        ).await
+    }
+
+    async fn find_http_policy_event_ids(
+        &self,
+        deployment_id: DeploymentId,
+        component: &str,
+        component_policy_hash: &str,
+        server_policy_hash: &str,
+    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead> {
+        let deployment_id = deployment_id.to_string();
+        let component = component.to_owned();
+        let component_policy_hash = component_policy_hash.to_owned();
+        let server_policy_hash = server_policy_hash.to_owned();
+        self.transaction(move |tx| {
+            let ids = tx.query_row(
+                "SELECT event_id, json_extract(details, '$.server_policy_event_id') FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = ?1 AND json_extract(details, '$.component') = ?2 AND json_extract(details, '$.component_policy_hash') = ?3 AND json_extract(details, '$.server_policy_hash') = ?4 ORDER BY event_id DESC LIMIT 1",
+                rusqlite::params![deployment_id, component, component_policy_hash, server_policy_hash],
+                |row| Ok(HttpPolicyEventIds { component_policy_event_id: row.get(0)?, server_policy_event_id: row.get(1)? }),
+            ).optional()?;
+            Ok(ids)
+        }, TxType::Other, "find_http_policy_event_ids").await
+    }
+
+    async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {
+        self.transaction(
+            |tx| {
+                let page_count: i64 = tx.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+                let page_size: i64 = tx.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+                Ok(StorageStatus {
+                    database_bytes: page_count
+                        .checked_mul(page_size)
+                        .and_then(|n| u64::try_from(n).ok()),
+                    execution_count: tx
+                        .query_row(
+                            "SELECT COUNT(*) FROM t_state WHERE tombstoned = FALSE",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )?
+                        .cast_unsigned(),
+                    deployment_count: tx
+                        .query_row("SELECT COUNT(*) FROM t_deployment", [], |row| {
+                            row.get::<_, i64>(0)
+                        })?
+                        .cast_unsigned(),
+                    system_event_count: tx
+                        .query_row("SELECT COUNT(*) FROM t_system_event", [], |row| {
+                            row.get::<_, i64>(0)
+                        })?
+                        .cast_unsigned(),
+                })
+            },
+            TxType::Other,
+            "get_storage_status",
+        )
+        .await
+    }
+
+    async fn retain_system_events(
+        &self,
+        created_before: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let limit = limit.clamp(1, 10_000);
+                let eligible: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM t_system_event WHERE created_at < ?1",
+                    [created_before],
+                    |row| row.get(0),
+                )?;
+                let deleted = tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64;
+                Ok(SystemEventRetentionResult {
+                    deleted,
+                    has_more: eligible.cast_unsigned() > u64::from(limit),
+                })
+            },
+            TxType::MultipleWrites, "retain_system_events"
+        ).await
+    }
+
     async fn delete_execution_tree(
         &self,
         execution_id: &ExecutionId,
@@ -5906,9 +6061,9 @@ impl CasGc for SqlitePool {
                 let (referenced_blobs, orphan_blobs, deleted_bytes) = tx
                     .query_row(
                         "SELECT \
-                         COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                         COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                         COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT ?1)), 0) \
+                         COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
+                         COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
+                         COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT ?1)), 0) \
                          FROM t_file",
                         [i64::from(batch_size.max(1))],
                         |row| {
@@ -5925,7 +6080,7 @@ impl CasGc for SqlitePool {
                 } else {
                     tx.execute(
                         "DELETE FROM t_file WHERE rowid IN (SELECT rowid FROM t_file WHERE digest NOT IN \
-                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT ?1)",
+                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT ?1)",
                         [i64::from(batch_size.max(1))],
                     )
                     .map_err(RusqliteError::from)? as u64
@@ -5935,6 +6090,7 @@ impl CasGc for SqlitePool {
                     orphan_blobs,
                     deleted_blobs,
                     deleted_bytes: if dry_run || deleted_blobs > 0 { deleted_bytes } else { 0 },
+                    has_more: orphan_blobs > u64::from(batch_size.max(1)),
                 })
             },
             TxType::MultipleWrites,

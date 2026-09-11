@@ -1980,7 +1980,7 @@ impl WebhookEndpointCtx {
         let ctx = WebhookEndpointCtx {
             clock_fn: clock_fn.clone_box(),
             sleep,
-            db_pool,
+            db_pool: db_pool.clone(),
             fn_registry,
             table: ResourceTable::new(),
             wasi_ctx,
@@ -2002,6 +2002,8 @@ impl WebhookEndpointCtx {
                 component_logger,
                 config_section_hint: config.config_section_hint,
                 component_name: config.component_id.name.to_string(),
+                deployment_id: Some(deployment_id),
+                db_pool: Some(db_pool),
             },
             last_direct_call_id: None,
             backtrace_persist: config.backtrace_persist,

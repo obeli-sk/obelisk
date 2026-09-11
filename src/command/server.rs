@@ -1,4 +1,5 @@
 mod config_prepass;
+mod maintenance_gc;
 pub(crate) use config_prepass::secret_scaffold_snippet;
 
 use crate::ServerStartup;
@@ -56,7 +57,6 @@ use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::AllowExecActivities;
 use crate::config::server::CancelWatcherTomlConfig;
 use crate::config::server::DatabaseConfigToml;
-use crate::config::server::GarbageCollectionTomlConfig;
 use crate::config::server::HttpServer;
 use crate::config::server::SQLITE_FILE_NAME;
 use crate::config::server::ServerConfigToml;
@@ -104,7 +104,6 @@ use concepts::storage::DeploymentFileRecord;
 use concepts::storage::EnqueueOutcome;
 use concepts::storage::LogInfoAppendRow;
 use concepts::storage::LogLevel;
-use concepts::storage::RetentionPolicy;
 use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentStatus};
 use concepts::time::ClockFn;
 use concepts::time::Now;
@@ -346,6 +345,12 @@ impl DeploymentSwitchManagerHandle {
         let webhook_registry = self.inner.webhook_registry.clone();
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
+        let server_policy_event_id = self
+            .inner
+            .server_verified
+            .server_http_policy_event_id
+            .clone()
+            .expect("server policy event must be recorded before switching deployments");
         // Own the whole commit in a detached task: a dropped caller only stops observing the
         // result via `rx`, it cannot abort the switch. This covers the durable pre-critical
         // commits (cron seeds + activate) as well as the non-cancel-safe critical swap, so a
@@ -381,6 +386,7 @@ impl DeploymentSwitchManagerHandle {
                     webhook_registry,
                     cancel_registry,
                     log_forwarder_sender,
+                    server_policy_event_id,
                 )
                 .await
             }
@@ -628,6 +634,7 @@ pub(crate) async fn run(
     params: RunParams,
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
+    let _server_run_id = concepts::storage::initialize_server_run_id();
     let _guard: Guard = init::init(&config)?;
     let deployment = if let Some(deployment_path) = deployment {
         Some(LocalDeployment::from_path(&deployment_path).await?)
@@ -1665,18 +1672,12 @@ pub(crate) async fn run_internal(
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
-    let maintenance_gc = config.maintenance.gc;
-    if maintenance_gc.batch_size == 0 {
-        bail!("`maintenance.gc.batch_size` must be greater than zero");
-    }
-    for (name, retention) in [
-        ("executions", maintenance_gc.retention.executions),
-        ("deployments", maintenance_gc.retention.deployments),
-    ] {
-        if retention.enabled && Duration::from(retention.max_age).is_zero() {
-            bail!("`maintenance.gc.retention.{name}.max_age` must be greater than zero");
-        }
-    }
+    let maintenance_gc = config
+        .maintenance
+        .gc
+        .enabled
+        .then(|| maintenance_gc::ValidatedConfig::new(config.maintenance.gc))
+        .transpose()?;
     let database = config.database.clone();
 
     // Open the database pool before compilation so that in the no-deployment case
@@ -1812,11 +1813,26 @@ pub(crate) async fn run_internal(
     };
     let engines = create_engines(&config, &prepared_dirs)?;
     let server_verified = server_verify(config, engines, secret_registry).await?;
-    config_prepass::preflight(
+    if let Err(err) = config_prepass::preflight(
         &server_verified,
         Some(&deployment_resolved),
         RuntimeConfigAvailability::Strict,
-    )?;
+    ) {
+        let (error, error_truncated) = bounded_system_event_text(&err.to_string());
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerStartupFailed,
+            None,
+            Some(active_deployment_id),
+            serde_json::json!({
+                "stage": "deployment_preflight",
+                "error": error,
+                "error_truncated": error_truncated,
+            }),
+        )
+        .await;
+        return Err(err.into());
+    }
     let cas: Arc<dyn Cas> = db_pool.cas_conn().await?.into();
     let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
         server_verified.clone(),
@@ -1900,7 +1916,7 @@ pub(crate) async fn run_internal(
     .instrument(span)
     .await?;
     let deployment_switch_manager = server_init.deployment_switch_manager.clone();
-    switch_deployment(
+    switch_deployment_inner(
         deployment_switch_manager.clone(),
         active_deployment_id,
         SwitchDeploymentAction::Activate,
@@ -1914,7 +1930,6 @@ pub(crate) async fn run_internal(
         }
         SwitchError::Other(err) => err,
     })?;
-
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.server_verified.clone(),
         server_init.db_pool.clone(),
@@ -2023,9 +2038,32 @@ pub(crate) async fn run_internal(
                 .into_make_service()
             }
         };
-        let listener = TcpListener::bind(api_listening_addr)
-            .await
-            .with_context(|| format!("cannot bind to {api_listening_addr}"))?;
+        let listener = match TcpListener::bind(api_listening_addr).await {
+            Ok(listener) => listener,
+            Err(source) => {
+                crate::server::system_event_writer::record(
+                    server_init.db_pool.as_ref(),
+                    concepts::storage::SystemEventCode::ServerStartupFailed,
+                    None,
+                    Some(active_deployment_id),
+                    serde_json::json!({
+                        "stage": "api_bind",
+                        "api_listening_addr": api_listening_addr.to_string(),
+                        "error": source.to_string(),
+                    }),
+                )
+                .await;
+                return Err(source).with_context(|| format!("cannot bind to {api_listening_addr}"));
+            }
+        };
+        crate::server::system_event_writer::record(
+            server_init.db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerStartupCompleted,
+            None,
+            Some(active_deployment_id),
+            serde_json::json!({"api_listening_addr": api_listening_addr.to_string()}),
+        )
+        .await;
 
         axum::serve(listener, app_svc)
             .with_graceful_shutdown(async move {
@@ -2039,6 +2077,14 @@ pub(crate) async fn run_internal(
         // Normally Axum blocks before this point until all clients are disconnected.
         debug!("Server {api_listening_addr} has been closed");
     } else {
+        crate::server::system_event_writer::record(
+            server_init.db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerStartupCompleted,
+            None,
+            Some(active_deployment_id),
+            serde_json::json!({"api_listening_addr": null}),
+        )
+        .await;
         obelisk_is_ready();
         let _: Result<_, _> = termination_watcher.changed().await;
         server_init.close().await;
@@ -2077,6 +2123,8 @@ pub(crate) struct ServerVerified {
     max_persisted_value_size_bytes: u64,
     max_transport_message_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
+    server_http_policy_audit: serde_json::Value,
+    server_http_policy_event_id: Option<String>,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
     /// dropped by resolution, and locate its per-entry advisories in `source_path`.
@@ -2199,6 +2247,33 @@ impl ServerVerified {
             resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
                 .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?;
         let global_http_config = GlobalHttpConfig::from(server_hosts);
+        let (server_policy_hash, server_policy) =
+            wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries());
+        let webui_server_policy = if config.webui.enabled {
+            let target_url = format!("http://{}", config.api.listening_addr);
+            let (hosts, _advisories) = resolve_allowed_hosts(
+                vec![AllowedHostToml {
+                    pattern: target_url,
+                    methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+                    request_url_regex: None,
+                    secrets: Vec::new(),
+                    replace_in: Vec::new(),
+                }],
+                false,
+                &secret_registry,
+            )?;
+            let (hash, policy) = wasm_workers::http_request_policy::audit_http_policy(&hosts);
+            Some((hash, policy["policy"].clone()))
+        } else {
+            None
+        };
+        let server_http_policy_audit = serde_json::json!({
+            "format": "obelisk-http-policy-v1",
+            "server_policy_hash": server_policy_hash,
+            "server_policy": server_policy["policy"],
+            "webui_server_policy_hash": webui_server_policy.as_ref().map(|(hash, _)| hash),
+            "webui_server_policy": webui_server_policy.map(|(_, policy)| policy),
+        });
 
         Ok(Self {
             launch: ServerVerifiedLaunch {
@@ -2224,6 +2299,8 @@ impl ServerVerified {
             max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
             max_transport_message_size_bytes: config.limits.max_transport_message_size_bytes,
             global_http_config,
+            server_http_policy_audit,
+            server_http_policy_event_id: None,
             server_outbound_allowed_hosts,
             source_path,
             secret_registry,
@@ -2259,6 +2336,7 @@ pub(crate) struct ServerCompiledLinked {
     supressed_errors: Option<String>,
     frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
     max_persisted_value_size_bytes: u64,
+    http_policy_audits: Vec<serde_json::Value>,
 }
 
 impl ServerCompiledLinked {
@@ -2271,6 +2349,7 @@ impl ServerCompiledLinked {
         suppress_linking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
         trace!("Verified deployment: {deployment_verified:#?}");
+        let http_policy_audits = deployment_verified.http_policy_audits();
         let DeploymentVerified {
             runtime_config_availability,
             activities_wasm,
@@ -2351,6 +2430,7 @@ impl ServerCompiledLinked {
             supressed_errors: linked.supressed_errors,
             frame_files: linked.all_frame_files,
             max_persisted_value_size_bytes: server_verified.max_persisted_value_size_bytes,
+            http_policy_audits,
         })
     }
 
@@ -2720,6 +2800,18 @@ pub(crate) async fn submit_deployment(
     deployment_switch_manager: DeploymentSwitchManagerHandle,
 ) -> Result<DeploymentId, SubmitDeploymentError> {
     info!("Submitting deployment");
+    crate::server::system_event_writer::record(
+        db_pool.as_ref(),
+        concepts::storage::SystemEventCode::DeploymentSubmitStarted,
+        None,
+        Some(deployment_id),
+        serde_json::json!({
+            "created_by": created_by.as_deref(),
+            "runtime_config_availability": format!("{runtime_config_availability:?}"),
+        }),
+    )
+    .await;
+    let event_db_pool = db_pool.clone();
 
     let result = match deployment_switch_manager.try_acquire_submit_permit() {
         Ok(_submit_permit) => {
@@ -2749,10 +2841,53 @@ pub(crate) async fn submit_deployment(
     };
 
     match &result {
-        Ok(_) => info!(outcome = "success", "Deployment submission finished"),
+        Ok(_) => {
+            info!(outcome = "success", "Deployment submission finished");
+            crate::server::system_event_writer::record(
+                event_db_pool.as_ref(),
+                concepts::storage::SystemEventCode::DeploymentSubmitCompleted,
+                None,
+                Some(deployment_id),
+                serde_json::json!({}),
+            )
+            .await;
+        }
         Err(err) => {
             info!(outcome = "error", error = %err, "Deployment submission finished");
             debug!(error = ?err, "Deployment submission error details");
+            let (kind, error, missing_secrets, missing_secret_count) = match err {
+                SubmitDeploymentError::Busy => ("busy", err.to_string(), None, None),
+                SubmitDeploymentError::Conflict(source) => {
+                    ("conflict", format!("{source:#}"), None, None)
+                }
+                SubmitDeploymentError::Package(source) => {
+                    ("package", format!("{source:?}"), None, None)
+                }
+                SubmitDeploymentError::UnregisteredSecrets(names) => (
+                    "unregistered_secrets",
+                    err.to_string(),
+                    Some(names.iter().take(32).collect::<Vec<_>>()),
+                    Some(names.len()),
+                ),
+                SubmitDeploymentError::Other(source) => {
+                    ("validation", format!("{source:#}"), None, None)
+                }
+            };
+            let (error, error_truncated) = bounded_system_event_text(&error);
+            crate::server::system_event_writer::record(
+                event_db_pool.as_ref(),
+                concepts::storage::SystemEventCode::DeploymentSubmitFailed,
+                None,
+                Some(deployment_id),
+                serde_json::json!({
+                    "kind": kind,
+                    "error": error,
+                    "error_truncated": error_truncated,
+                    "missing_secrets": missing_secrets,
+                    "missing_secret_count": missing_secret_count,
+                }),
+            )
+            .await;
         }
     }
     result
@@ -3030,6 +3165,63 @@ pub(crate) async fn switch_deployment(
     deployment_id: DeploymentId,
     action: SwitchDeploymentAction,
 ) -> Result<SwitchOutcome, SwitchError> {
+    let db_pool = deployment_switch_manager.inner.db_pool.clone();
+    crate::server::system_event_writer::record(
+        db_pool.as_ref(),
+        concepts::storage::SystemEventCode::DeploymentSwitchStarted,
+        None,
+        Some(deployment_id),
+        serde_json::json!({"action": format!("{action:?}")}),
+    )
+    .await;
+    let result = switch_deployment_inner(deployment_switch_manager, deployment_id, action).await;
+    let (code, details) = match &result {
+        Ok(outcome) => (
+            concepts::storage::SystemEventCode::DeploymentSwitchCompleted,
+            serde_json::json!({"outcome": outcome.to_string()}),
+        ),
+        Err(err) => {
+            let (kind, error) = match err {
+                SwitchError::Busy => (
+                    "busy",
+                    "another deployment submit or switch is running".to_string(),
+                ),
+                SwitchError::NotFound => ("not_found", "deployment not found".to_string()),
+                SwitchError::Other(source) => ("validation", format!("{source:#}")),
+            };
+            let (error, error_truncated) = bounded_system_event_text(&error);
+            (
+                concepts::storage::SystemEventCode::DeploymentSwitchFailed,
+                serde_json::json!({
+                    "kind": kind,
+                    "error": error,
+                    "error_truncated": error_truncated,
+                }),
+            )
+        }
+    };
+    crate::server::system_event_writer::record(
+        db_pool.as_ref(),
+        code,
+        None,
+        Some(deployment_id),
+        details,
+    )
+    .await;
+    result
+}
+
+fn bounded_system_event_text(value: &str) -> (String, bool) {
+    const MAX_CHARS: usize = 2_000;
+    let truncated = value.chars().count() > MAX_CHARS;
+    (value.chars().take(MAX_CHARS).collect(), truncated)
+}
+
+async fn switch_deployment_inner(
+    deployment_switch_manager: DeploymentSwitchManagerHandle,
+    deployment_id: DeploymentId,
+    action: SwitchDeploymentAction,
+) -> Result<SwitchOutcome, SwitchError> {
     let deployment_already_active = deployment_switch_manager
         .inner
         .deployment_ctx
@@ -3230,6 +3422,7 @@ fn spawn_deployment_context(
 
 /// Write lock pretected switch to the new deployment
 #[instrument(skip_all, fields(%deployment_id))]
+#[expect(clippy::too_many_arguments)]
 async fn switch_hot_redeploy(
     server_compiled_linked: ServerCompiledLinked,
     deployment_id: DeploymentId,
@@ -3238,6 +3431,7 @@ async fn switch_hot_redeploy(
     webhook_registry: Arc<WebhookRegistry>,
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+    server_policy_event_id: String,
 ) -> Result<SwitchOutcome, SwitchError> {
     server_compiled_linked
         .runtime_config_availability
@@ -3263,6 +3457,15 @@ async fn switch_hot_redeploy(
     )
     .await;
 
+    let http_policy_audits = server_compiled_linked.http_policy_audits;
+    record_http_policy_audits(
+        db_pool.as_ref(),
+        deployment_id,
+        http_policy_audits,
+        &server_policy_event_id,
+    )
+    .await?;
+
     debug!("Swapping webhook registry");
     webhook_registry.swap(
         server_compiled_linked
@@ -3279,9 +3482,83 @@ async fn switch_hot_redeploy(
         &cancel_registry,
         &log_forwarder_sender,
     );
+    drop(write_guard_ctx);
 
     info!(%deployment_id, "Switched to new deployment");
     Ok(SwitchOutcome::Switched)
+}
+
+async fn record_http_policy_audits(
+    db_pool: &dyn DbPool,
+    deployment_id: DeploymentId,
+    audits: impl IntoIterator<Item = serde_json::Value>,
+    server_policy_event_id: &str,
+) -> Result<(), anyhow::Error> {
+    for mut policy in audits {
+        let object = policy
+            .as_object_mut()
+            .expect("HTTP policy audit must be an object");
+        let component = object
+            .remove("component")
+            .expect("HTTP policy audit must identify its component");
+        let component_policy_hash = object
+            .remove("component_policy_hash")
+            .expect("HTTP policy audit must have a component hash");
+        let server_policy_hash = object
+            .remove("server_policy_hash")
+            .expect("HTTP policy audit must have a server hash");
+        let server_policy_kind = object
+            .remove("server_policy_kind")
+            .expect("HTTP policy audit must identify the server policy");
+        let bytes = serde_json::to_vec(&policy).expect("HTTP policy audit must encode");
+        let digest = concepts::cas::content_digest(&bytes);
+        crate::server::system_event_writer::record_with_cas(
+            db_pool,
+            concepts::storage::SystemEventCode::ComponentHttpPolicyApplied,
+            None,
+            Some(deployment_id),
+            serde_json::json!({
+                "component": component,
+                "component_policy_hash": component_policy_hash,
+                "server_policy_hash": server_policy_hash,
+                "server_policy_kind": server_policy_kind,
+                "server_policy_event_id": server_policy_event_id,
+            }),
+            digest,
+            bytes,
+        )
+        .await
+        .ok_or_else(|| anyhow::anyhow!("cannot persist component HTTP policy audit"))?;
+    }
+    Ok(())
+}
+
+async fn record_server_http_policy_audit(
+    db_pool: &dyn DbPool,
+    policy: serde_json::Value,
+) -> Option<String> {
+    let server_policy_hash = policy["server_policy_hash"].clone();
+    let webui_server_policy_hash = policy["webui_server_policy_hash"].clone();
+    let policy = serde_json::json!({
+        "format": policy["format"],
+        "server_policy": policy["server_policy"],
+        "webui_server_policy": policy["webui_server_policy"],
+    });
+    let bytes = serde_json::to_vec(&policy).expect("server HTTP policy audit must encode");
+    let digest = concepts::cas::content_digest(&bytes);
+    crate::server::system_event_writer::record_with_cas(
+        db_pool,
+        concepts::storage::SystemEventCode::ServerHttpPolicyApplied,
+        None,
+        None,
+        serde_json::json!({
+            "server_policy_hash": server_policy_hash,
+            "webui_server_policy_hash": webui_server_policy_hash,
+        }),
+        digest,
+        bytes,
+    )
+    .await
 }
 
 // Create seed cron executions if they don't already exist (same config = same ContentDigest)
@@ -3336,142 +3613,10 @@ async fn create_missing_cron_seeds(
     Ok(())
 }
 
-fn spawn_maintenance_gc(
-    db_pool: Arc<dyn DbPool>,
-    deployment_switch_manager: DeploymentSwitchManagerHandle,
-    mut termination_watcher: watch::Receiver<()>,
-    config: GarbageCollectionTomlConfig,
-) -> AbortOnDropHandle {
-    let handle = utils::spawn::spawn_named("maintenance_gc", async move {
-        debug!("Spawned maintenance garbage collector");
-        let interval = Duration::from(config.interval);
-        let batch_delay = Duration::from(config.batch_delay);
-        let execution_retention = config.retention.executions;
-        let deployment_retention = config.retention.deployments;
-        for (record_type, retention) in [
-            ("executions", execution_retention),
-            ("deployments", deployment_retention),
-        ] {
-            if retention.enabled {
-                info!(
-                    record_type,
-                    max_age_seconds = Duration::from(retention.max_age).as_secs(),
-                    "Periodic retention enabled"
-                );
-            } else {
-                info!(record_type, "Periodic retention disabled");
-            }
-        }
-        loop {
-            tokio::select! {
-                biased;
-                _ = termination_watcher.changed() => break,
-                () = tokio::time::sleep(interval) => {}
-            }
-            if execution_retention.enabled {
-                let Some(cutoff) =
-                    chrono::Duration::from_std(Duration::from(execution_retention.max_age))
-                        .ok()
-                        .and_then(|age| chrono::Utc::now().checked_sub_signed(age))
-                else {
-                    warn!(
-                        record_type = "executions",
-                        "periodic retention maximum age is too large"
-                    );
-                    break;
-                };
-                let retain = async {
-                    let admin = db_pool.admin_conn().await?;
-                    admin
-                        .retain_executions(
-                            RetentionPolicy::CreatedAtOrAfter(cutoff),
-                            config.batch_size,
-                            false,
-                            false,
-                        )
-                        .await
-                };
-                if let Err(err) = retain.await {
-                    warn!(
-                        record_type = "executions",
-                        "automatic retention failed: {err}"
-                    );
-                }
-            }
-            if deployment_retention.enabled {
-                let Some(cutoff) =
-                    chrono::Duration::from_std(Duration::from(deployment_retention.max_age))
-                        .ok()
-                        .and_then(|age| chrono::Utc::now().checked_sub_signed(age))
-                else {
-                    warn!(
-                        record_type = "deployments",
-                        "periodic retention maximum age is too large"
-                    );
-                    break;
-                };
-                let retain = async {
-                    let admin = db_pool.admin_conn().await?;
-                    admin
-                        .retain_deployments(
-                            RetentionPolicy::CreatedAtOrAfter(cutoff),
-                            config.batch_size,
-                            true,
-                            false,
-                            false,
-                        )
-                        .await
-                };
-                if let Err(err) = retain.await {
-                    warn!(
-                        record_type = "deployments",
-                        "automatic retention failed: {err}"
-                    );
-                }
-            }
-            loop {
-                let collect = async {
-                    let admin = db_pool.admin_conn().await?;
-                    admin.gc_executions(config.batch_size).await
-                };
-                let result = tokio::select! {
-                    biased;
-                    _ = termination_watcher.changed() => break,
-                    result = collect => result,
-                };
-                match result {
-                    Ok(result) if result.has_more && result.deleted_rows > 0 => {
-                        tokio::select! {
-                            biased;
-                            _ = termination_watcher.changed() => break,
-                            () = tokio::time::sleep(batch_delay) => {}
-                        }
-                    }
-                    Ok(_) => {
-                        if let Err(err) = deployment_switch_manager
-                            .gc_cas(false, config.batch_size)
-                            .await
-                        {
-                            debug!("automatic CAS garbage collection deferred: {err}");
-                        }
-                        break;
-                    }
-                    Err(err) => {
-                        warn!("automatic execution garbage collection failed: {err}");
-                        break;
-                    }
-                }
-            }
-        }
-        debug!("Ending maintenance garbage collector");
-    });
-    AbortOnDropHandle::new(handle.abort_handle())
-}
-
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
-    server_verified: ServerVerified,
+    mut server_verified: ServerVerified,
     deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -3479,7 +3624,7 @@ async fn spawn_tasks_and_threads(
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
-    maintenance_gc: GarbageCollectionTomlConfig,
+    maintenance_gc: Option<maintenance_gc::ValidatedConfig>,
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
     prepared_dirs: PreparedDirs,
@@ -3487,6 +3632,20 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
+    let server_policy_event_id = record_server_http_policy_audit(
+        db_pool.as_ref(),
+        server_verified.server_http_policy_audit.clone(),
+    )
+    .await
+    .ok_or_else(|| anyhow::anyhow!("cannot persist server HTTP policy audit"))?;
+    server_verified.server_http_policy_event_id = Some(server_policy_event_id.clone());
+    record_http_policy_audits(
+        db_pool.as_ref(),
+        deployment_id,
+        server_compiled_linked.http_policy_audits.clone(),
+        &server_policy_event_id,
+    )
+    .await?;
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
         db_pool.cas_conn().await?.as_ref(),
@@ -3577,12 +3736,12 @@ async fn spawn_tasks_and_threads(
         log_forwarder_sender.clone(),
         DEFAULT_SUBMIT_CONCURRENCY,
     );
-    let maintenance_gc = maintenance_gc.enabled.then(|| {
-        spawn_maintenance_gc(
+    let maintenance_gc = maintenance_gc.map(|config| {
+        maintenance_gc::spawn(
             db_pool.clone(),
             deployment_switch_manager.clone(),
             termination_watcher.clone(),
-            maintenance_gc,
+            config,
         )
     });
     let server_init = ServerInit {
@@ -3649,6 +3808,16 @@ impl ServerInit {
             deployment_switch_manager,
         } = self;
 
+        let deployment_id = deployment_ctx.read().await.deployment_id;
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerShutdownRequested,
+            None,
+            Some(deployment_id),
+            serde_json::json!({"reason": "termination_requested"}),
+        )
+        .await;
+
         deployment_switch_manager.close().await;
 
         debug!("Closing executors");
@@ -3672,7 +3841,6 @@ impl ServerInit {
         .await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.
-        drop(db_pool);
         drop(timers_watcher);
         drop(cancel_watcher);
         drop(cancellation_driver);
@@ -3683,6 +3851,15 @@ impl ServerInit {
         drop(webhook_registry);
         drop(log_forwarder_sender);
         drop(log_db_forarder); // Some activity messages might not be stored.
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerShutdownCompleted,
+            None,
+            Some(deployment_id),
+            serde_json::json!({}),
+        )
+        .await;
+        drop(db_pool);
         debug!("Closing db");
         db_close.await;
     }
@@ -3792,6 +3969,80 @@ pub(crate) struct DeploymentVerified {
 }
 
 impl DeploymentVerified {
+    fn http_policy_audits(&self) -> Vec<serde_json::Value> {
+        fn audit(
+            component_id: &ComponentId,
+            allowed_hosts: &[AllowedHostConfig],
+            global_http_config: &GlobalHttpConfig,
+            server_policy_kind: &'static str,
+        ) -> serde_json::Value {
+            let (component_policy_hash, mut details) =
+                wasm_workers::http_request_policy::audit_http_policy(allowed_hosts);
+            let server_policy_hash =
+                wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries())
+                    .0;
+            let object = details
+                .as_object_mut()
+                .expect("HTTP policy audit details must be an object");
+            object.insert(
+                "component".to_string(),
+                component_id.name.to_string().into(),
+            );
+            object.insert(
+                "component_policy_hash".to_string(),
+                component_policy_hash.into(),
+            );
+            object.insert("server_policy_hash".to_string(), server_policy_hash.into());
+            object.insert("server_policy_kind".to_string(), server_policy_kind.into());
+            details
+        }
+
+        self.activities_wasm
+            .iter()
+            .map(|activity| {
+                audit(
+                    activity.component_id(),
+                    &activity.activity_config.allowed_hosts,
+                    &activity.activity_config.global_http_config,
+                    "server",
+                )
+            })
+            .chain(self.activities_js.iter().map(|activity| {
+                audit(
+                    activity.component_id(),
+                    &activity.activity_config.allowed_hosts,
+                    &activity.activity_config.global_http_config,
+                    "server",
+                )
+            }))
+            .chain(self.webhooks_wasm_by_names.values().map(|webhook| {
+                let global = webhook_global_http_allowlist(
+                    webhook.is_webui,
+                    &webhook.allowed_hosts,
+                    &self.global_http_config,
+                );
+                audit(
+                    &webhook.component_id,
+                    &webhook.allowed_hosts,
+                    &global,
+                    if webhook.is_webui {
+                        "webui_server"
+                    } else {
+                        "server"
+                    },
+                )
+            }))
+            .chain(self.webhooks_js_by_names.values().map(|webhook| {
+                audit(
+                    &webhook.component_id,
+                    &webhook.allowed_hosts,
+                    &self.global_http_config,
+                    "server",
+                )
+            }))
+            .collect()
+    }
+
     fn validate_component_digests(&self) -> Result<(), anyhow::Error> {
         fn record_component_ids<'a>(
             component_ids_by_digest: &mut HashMap<ComponentDigest, ComponentId>,
@@ -5648,17 +5899,19 @@ impl WorkerLinked {
         let mut replay_entry: Option<(ComponentId, ReplayWorker)> = None;
         let worker: Arc<dyn Worker> = match self.worker {
             LinkedWorkerKind::ActivityWasm(activity_compiled) => {
-                Arc::from(activity_compiled.into_worker(
+                Arc::from(activity_compiled.into_worker_with_system_events(
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
+                    Some((deployment_id, db_pool.clone())),
                 ))
             }
             LinkedWorkerKind::ActivityJs(js_activity_compiled) => {
-                Arc::from(js_activity_compiled.into_worker(
+                Arc::from(js_activity_compiled.into_worker_with_system_events(
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
+                    Some((deployment_id, db_pool.clone())),
                 ))
             }
             LinkedWorkerKind::ActivityExec(exec_activity_compiled) => {

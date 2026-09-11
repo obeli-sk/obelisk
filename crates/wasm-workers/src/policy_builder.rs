@@ -1,6 +1,6 @@
 use crate::http_request_policy::{
     AllowedHostConfig, AllowedHostPolicy, GlobalHttpConfig, HttpRequestPolicy, PlaceholderSecret,
-    SecretResolver, generate_placeholder,
+    SecretResolver, audit_http_policy, generate_placeholder,
 };
 use secrecy::SecretString;
 use wasmtime_wasi::WasiCtxBuilder;
@@ -29,6 +29,8 @@ pub(crate) fn build_http_policy(
         wasi_ctx.env(env_key, placeholder);
     }
     policy.global_allowlist = Some(build_authorization_hosts(global_http_config.entries()));
+    policy.component_policy_hash = audit_http_policy(allowed_hosts).0;
+    policy.server_policy_hash = audit_http_policy(global_http_config.entries()).0;
     policy
 }
 
@@ -107,6 +109,8 @@ fn build_http_policy_inner(
         HttpRequestPolicy {
             hosts,
             global_allowlist: None,
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         },
         placeholders,
     )

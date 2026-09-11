@@ -626,6 +626,8 @@ pub(crate) struct RetentionTomlConfig {
     pub(crate) executions: RetentionPolicyTomlConfig,
     #[serde(default)]
     pub(crate) deployments: RetentionPolicyTomlConfig,
+    #[serde(default)]
+    pub(crate) system_events: RetentionPolicyTomlConfig,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
@@ -1110,7 +1112,11 @@ mod tests {
         fn omitted_retention_uses_enabled_thirty_day_defaults() {
             let config: ServerConfigToml = toml::from_str("").unwrap();
             let retention = config.maintenance.gc.retention;
-            for policy in [retention.executions, retention.deployments] {
+            for policy in [
+                retention.executions,
+                retention.deployments,
+                retention.system_events,
+            ] {
                 assert!(policy.enabled);
                 assert!(matches!(policy.max_age, DurationConfig::Hours(720)));
             }
@@ -1125,6 +1131,9 @@ mod tests {
 
                 [maintenance.gc.retention.deployments]
                 max_age.hours = 48
+
+                [maintenance.gc.retention.system_events]
+                max_age.hours = 168
                 ",
             )
             .unwrap();
@@ -1138,6 +1147,11 @@ mod tests {
             assert!(matches!(
                 retention.deployments.max_age,
                 DurationConfig::Hours(48)
+            ));
+            assert!(retention.system_events.enabled);
+            assert!(matches!(
+                retention.system_events.max_age,
+                DurationConfig::Hours(168)
             ));
         }
     }
