@@ -3680,6 +3680,7 @@
         "type": "object",
         "required": [
           "event_id",
+          "server_run_id",
           "created_at",
           "level",
           "code",
@@ -3717,10 +3718,7 @@
             "type": "string"
           },
           "server_run_id": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           }
         }
       },
