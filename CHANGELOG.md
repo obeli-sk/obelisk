@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** *(js)* Removed the deprecated `ChildExecutionError` alias. Use `ChildError`.
 - **Breaking:** *(api)* Execution response filters now require canonical join-set IDs; bare names
   are no longer interpreted as named join sets.
+- **Breaking:** *(api)* Log pagination cursors must use the opaque cursor returned by the API;
+  RFC 3339 timestamps are no longer accepted as cursors. Use `after` for timestamp filtering.
 
 ### Added
 

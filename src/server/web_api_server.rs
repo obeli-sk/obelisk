@@ -1532,7 +1532,7 @@ pub(crate) mod logs {
         show_run_id: bool,
 
         // pagination
-        /// Opaque cursor for pagination. RFC 3339 timestamps are accepted for compatibility.
+        /// Opaque cursor for pagination
         cursor: Option<String>,
         /// Only include entries created after this timestamp.
         after: Option<DateTime<Utc>>,
@@ -1736,31 +1736,24 @@ pub(crate) mod logs {
         const DEFAULT_LENGTH: u16 = 20;
         const MAX_LENGTH_INCLUSIVE: u16 = 200;
 
-        let (cursor, legacy_after) = match params.cursor.as_deref() {
+        let cursor = match params.cursor.as_deref() {
             Some(cursor) => {
                 let opaque = BASE64_STANDARD
                     .decode(cursor)
                     .ok()
                     .and_then(|decoded| serde_json::from_slice::<LogCursor>(&decoded).ok());
-                let legacy_after = DateTime::parse_from_rfc3339(cursor)
-                    .ok()
-                    .map(|created_at| created_at.with_timezone(&Utc));
-                if opaque.is_none() && legacy_after.is_none() {
+                if opaque.is_none() {
                     return Err(HttpResponse {
                         status: StatusCode::BAD_REQUEST,
                         message: "invalid log cursor".to_string(),
                         accept,
                     });
                 }
-                (opaque, legacy_after)
+                opaque
             }
-            None => (None, None),
+            None => None,
         };
 
-        let (legacy_after, legacy_before) = match params.direction {
-            PaginationDirectionSortedFromOldest::Newer => (legacy_after, None),
-            PaginationDirectionSortedFromOldest::Older => (None, legacy_after),
-        };
         let filter = match (params.show_logs, params.show_streams) {
             (true, true) => LogFilter::show_combined(
                 params.level.into_iter().map(Into::into).collect(),
@@ -1780,7 +1773,7 @@ pub(crate) mod logs {
                 });
             }
         }
-        .with_created_bounds(params.after.or(legacy_after), legacy_before);
+        .with_created_bounds(params.after, None);
 
         let length = nonzero_page_length(
             MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH)),

@@ -1489,7 +1489,7 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "Opaque cursor for pagination. RFC 3339 timestamps are accepted for compatibility.",
+            "description": "Opaque cursor for pagination",
             "required": false,
             "schema": {
               "type": "string"
