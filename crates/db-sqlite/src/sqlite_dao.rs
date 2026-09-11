@@ -20,18 +20,18 @@ use concepts::{
         DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
         ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
-        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
-        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
-        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
-        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
-        Version, VersionType,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -5676,12 +5676,12 @@ impl DbAdmin for SqlitePool {
             move |tx| {
                 let mut statement = tx.prepare(
                     "SELECT event_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
-                     WHERE (?1 IS NULL OR level = ?1) AND (?2 IS NULL OR code = ?2)
-                       AND (?3 IS NULL OR deployment_id = ?3) AND (?4 IS NULL OR event_id < ?4)
-                     ORDER BY event_id DESC LIMIT ?5"
+                     WHERE (?1 IS NULL OR event_id = ?1) AND (?2 IS NULL OR level = ?2)
+                       AND (?3 IS NULL OR code = ?3) AND (?4 IS NULL OR deployment_id = ?4)
+                       AND (?5 IS NULL OR event_id < ?5) ORDER BY event_id DESC LIMIT ?6"
                 )?;
                 let rows = statement.query_map(rusqlite::params![
-                    filter.level.map(SystemEventLevel::as_str), filter.code,
+                    filter.event_id, filter.level.map(SystemEventLevel::as_str), filter.code,
                     filter.deployment_id.map(|id| id.to_string()), filter.before_event_id,
                     i64::from(filter.limit.clamp(1, 1000))
                 ], |row| {
@@ -5701,6 +5701,27 @@ impl DbAdmin for SqlitePool {
                 Ok(rows)
             }, TxType::Other, "list_system_events"
         ).await
+    }
+
+    async fn find_http_policy_event_ids(
+        &self,
+        deployment_id: DeploymentId,
+        component: &str,
+        component_policy_hash: &str,
+        server_policy_hash: &str,
+    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead> {
+        let deployment_id = deployment_id.to_string();
+        let component = component.to_owned();
+        let component_policy_hash = component_policy_hash.to_owned();
+        let server_policy_hash = server_policy_hash.to_owned();
+        self.transaction(move |tx| {
+            let ids = tx.query_row(
+                "SELECT event_id, json_extract(details, '$.server_policy_event_id') FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = ?1 AND json_extract(details, '$.component') = ?2 AND json_extract(details, '$.component_policy_hash') = ?3 AND json_extract(details, '$.server_policy_hash') = ?4 ORDER BY event_id DESC LIMIT 1",
+                rusqlite::params![deployment_id, component, component_policy_hash, server_policy_hash],
+                |row| Ok(HttpPolicyEventIds { component_policy_event_id: row.get(0)?, server_policy_event_id: row.get(1)? }),
+            ).optional()?;
+            Ok(ids)
+        }, TxType::Other, "find_http_policy_event_ids").await
     }
 
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {

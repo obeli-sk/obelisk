@@ -226,40 +226,61 @@ impl WasiHttpHooks for HttpHooks {
                         method.as_str()
                     )
                 });
-                let event = SystemEvent::new(
-                    SystemEventCode::OutboundHttpDenied,
-                    Some(self.component_logger.execution_id.clone()),
-                    Some(deployment_id),
-                    serde_json::json!({
-                        "component": self.component_name,
-                        "method": method.as_str(),
-                        "scheme": scheme,
-                        "host": host,
-                        "port": port,
-                        "url": attempted_url,
-                        "rejected_by": denied_by.audit_name(),
-                        "component_policy_hash": self.http_policy.component_policy_hash,
-                        "server_policy_hash": self.http_policy.server_policy_hash,
-                        "server_toml": server_toml,
-                    }),
-                )
-                .map(|event| event.with_dedupe_key(dedupe_key));
+                let execution_id = self.component_logger.execution_id.clone();
+                let component = self.component_name.clone();
+                let component_policy_hash = self.http_policy.component_policy_hash.clone();
+                let server_policy_hash = self.http_policy.server_policy_hash.clone();
+                let method = method.as_str().to_owned();
+                let scheme = scheme.clone();
+                let host = host.clone();
+                let port = *port;
+                let rejected_by = denied_by.audit_name();
                 let db_pool = db_pool.clone();
                 tokio::spawn(async move {
-                    match event {
-                        Ok(event) => match db_pool.admin_conn().await {
-                            Ok(admin) => {
-                                if let Err(err) = admin.append_system_event(event).await {
-                                    tracing::warn!("Cannot persist outbound HTTP denial: {err}");
+                    match db_pool.admin_conn().await {
+                        Ok(admin) => {
+                            let policy_event_ids = match admin
+                                .find_http_policy_event_ids(
+                                    deployment_id,
+                                    &component,
+                                    &component_policy_hash,
+                                    &server_policy_hash,
+                                )
+                                .await
+                            {
+                                Ok(ids) => ids,
+                                Err(err) => {
+                                    tracing::warn!("Cannot resolve HTTP policy event IDs: {err}");
+                                    None
                                 }
-                            }
-                            Err(err) => {
+                            };
+                            let event = SystemEvent::new(
+                                SystemEventCode::OutboundHttpDenied,
+                                Some(execution_id),
+                                Some(deployment_id),
+                                serde_json::json!({
+                                    "component": component,
+                                    "method": method,
+                                    "scheme": scheme,
+                                    "host": host,
+                                    "port": port,
+                                    "url": attempted_url,
+                                    "rejected_by": rejected_by,
+                                    "component_policy_hash": component_policy_hash,
+                                    "server_policy_hash": server_policy_hash,
+                                    "component_policy_event_id": policy_event_ids.as_ref().map(|ids| &ids.component_policy_event_id),
+                                    "server_policy_event_id": policy_event_ids.as_ref().map(|ids| &ids.server_policy_event_id),
+                                    "server_toml": server_toml,
+                                }),
+                            )
+                            .map(|event| event.with_dedupe_key(dedupe_key));
+                            if let Ok(event) = event
+                                && let Err(err) = admin.append_system_event(event).await
+                            {
                                 tracing::warn!("Cannot persist outbound HTTP denial: {err}");
                             }
-                        },
-                        Err(err) => {
-                            tracing::warn!("Cannot construct outbound HTTP denial: {err}");
                         }
+                        Err(err) => tracing::warn!("Cannot persist outbound HTTP denial: {err}"),
                     }
                 });
             }

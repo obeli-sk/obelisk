@@ -345,6 +345,12 @@ impl DeploymentSwitchManagerHandle {
         let webhook_registry = self.inner.webhook_registry.clone();
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
+        let server_policy_event_id = self
+            .inner
+            .server_verified
+            .server_http_policy_event_id
+            .clone()
+            .expect("server policy event must be recorded before switching deployments");
         // Own the whole commit in a detached task: a dropped caller only stops observing the
         // result via `rx`, it cannot abort the switch. This covers the durable pre-critical
         // commits (cron seeds + activate) as well as the non-cancel-safe critical swap, so a
@@ -380,6 +386,7 @@ impl DeploymentSwitchManagerHandle {
                     webhook_registry,
                     cancel_registry,
                     log_forwarder_sender,
+                    server_policy_event_id,
                 )
                 .await
             }
@@ -2116,6 +2123,7 @@ pub(crate) struct ServerVerified {
     max_transport_message_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
     server_http_policy_audit: serde_json::Value,
+    server_http_policy_event_id: Option<String>,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
     /// dropped by resolution, and locate its per-entry advisories in `source_path`.
@@ -2291,6 +2299,7 @@ impl ServerVerified {
             max_transport_message_size_bytes: config.limits.max_transport_message_size_bytes,
             global_http_config,
             server_http_policy_audit,
+            server_http_policy_event_id: None,
             server_outbound_allowed_hosts,
             source_path,
             secret_registry,
@@ -3412,6 +3421,7 @@ fn spawn_deployment_context(
 
 /// Write lock pretected switch to the new deployment
 #[instrument(skip_all, fields(%deployment_id))]
+#[expect(clippy::too_many_arguments)]
 async fn switch_hot_redeploy(
     server_compiled_linked: ServerCompiledLinked,
     deployment_id: DeploymentId,
@@ -3420,6 +3430,7 @@ async fn switch_hot_redeploy(
     webhook_registry: Arc<WebhookRegistry>,
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+    server_policy_event_id: String,
 ) -> Result<SwitchOutcome, SwitchError> {
     server_compiled_linked
         .runtime_config_availability
@@ -3445,6 +3456,15 @@ async fn switch_hot_redeploy(
     )
     .await;
 
+    let http_policy_audits = server_compiled_linked.http_policy_audits;
+    record_http_policy_audits(
+        db_pool.as_ref(),
+        deployment_id,
+        http_policy_audits,
+        &server_policy_event_id,
+    )
+    .await?;
+
     debug!("Swapping webhook registry");
     webhook_registry.swap(
         server_compiled_linked
@@ -3453,7 +3473,6 @@ async fn switch_hot_redeploy(
             .map(|(http_server, (_instance, state))| (http_server.name.to_string(), state.clone())),
     );
 
-    let http_policy_audits = server_compiled_linked.http_policy_audits;
     *write_guard_ctx = spawn_deployment_context(
         deployment_id,
         server_compiled_linked.workers_linked,
@@ -3463,7 +3482,6 @@ async fn switch_hot_redeploy(
         &log_forwarder_sender,
     );
     drop(write_guard_ctx);
-    record_http_policy_audits(db_pool.as_ref(), deployment_id, http_policy_audits).await;
 
     info!(%deployment_id, "Switched to new deployment");
     Ok(SwitchOutcome::Switched)
@@ -3473,7 +3491,8 @@ async fn record_http_policy_audits(
     db_pool: &dyn DbPool,
     deployment_id: DeploymentId,
     audits: impl IntoIterator<Item = serde_json::Value>,
-) {
+    server_policy_event_id: &str,
+) -> Result<(), anyhow::Error> {
     for mut policy in audits {
         let object = policy
             .as_object_mut()
@@ -3502,15 +3521,21 @@ async fn record_http_policy_audits(
                 "component_policy_hash": component_policy_hash,
                 "server_policy_hash": server_policy_hash,
                 "server_policy_kind": server_policy_kind,
+                "server_policy_event_id": server_policy_event_id,
             }),
             digest,
             bytes,
         )
-        .await;
+        .await
+        .ok_or_else(|| anyhow::anyhow!("cannot persist component HTTP policy audit"))?;
     }
+    Ok(())
 }
 
-async fn record_server_http_policy_audit(db_pool: &dyn DbPool, policy: serde_json::Value) {
+async fn record_server_http_policy_audit(
+    db_pool: &dyn DbPool,
+    policy: serde_json::Value,
+) -> Option<String> {
     let server_policy_hash = policy["server_policy_hash"].clone();
     let webui_server_policy_hash = policy["webui_server_policy_hash"].clone();
     let policy = serde_json::json!({
@@ -3532,7 +3557,7 @@ async fn record_server_http_policy_audit(db_pool: &dyn DbPool, policy: serde_jso
         digest,
         bytes,
     )
-    .await;
+    .await
 }
 
 // Create seed cron executions if they don't already exist (same config = same ContentDigest)
@@ -3590,7 +3615,7 @@ async fn create_missing_cron_seeds(
 #[instrument(skip_all)]
 #[expect(clippy::too_many_arguments)]
 async fn spawn_tasks_and_threads(
-    server_verified: ServerVerified,
+    mut server_verified: ServerVerified,
     deployment_id: DeploymentId,
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -3606,17 +3631,20 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
-    record_server_http_policy_audit(
+    let server_policy_event_id = record_server_http_policy_audit(
         db_pool.as_ref(),
         server_verified.server_http_policy_audit.clone(),
     )
-    .await;
+    .await
+    .ok_or_else(|| anyhow::anyhow!("cannot persist server HTTP policy audit"))?;
+    server_verified.server_http_policy_event_id = Some(server_policy_event_id.clone());
     record_http_policy_audits(
         db_pool.as_ref(),
         deployment_id,
         server_compiled_linked.http_policy_audits.clone(),
+        &server_policy_event_id,
     )
-    .await;
+    .await?;
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
         db_pool.cas_conn().await?.as_ref(),

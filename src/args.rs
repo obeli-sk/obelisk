@@ -160,6 +160,19 @@ pub(crate) enum Admin {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum AdminEvents {
+    /// Get one persisted system event by ID.
+    Get {
+        event_id: String,
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
     /// List persisted operator-visible system events.
     List {
         #[arg(long)]

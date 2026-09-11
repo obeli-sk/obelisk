@@ -28,6 +28,30 @@ impl args::Admin {
     pub(crate) async fn run(self, client_startup: ClientStartup) -> anyhow::Result<()> {
         let client = client_startup.web_api_client()?;
         match self {
+            Self::Events(args::AdminEvents::Get {
+                event_id,
+                json,
+                api_url,
+            }) => {
+                let event: crate::server::web_api_server::admin::SystemEventResponse = send_json(
+                    client
+                        .get(format!("{api_url}/v1/admin/system-events/{event_id}"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&event)?);
+                } else {
+                    println!(
+                        "{} {} {}: {}",
+                        event.created_at.to_rfc3339(),
+                        event.level,
+                        event.code,
+                        event.message
+                    );
+                }
+                Ok(())
+            }
             Self::Executions(args::AdminExecutions::Delete {
                 execution_ids,
                 force,

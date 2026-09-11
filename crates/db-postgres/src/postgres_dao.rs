@@ -20,18 +20,18 @@ use concepts::{
         DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
         ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
         ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING,
-        LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse, ListExecutionsFilter,
-        ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked, LockedBy,
-        LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow, LogLevel,
-        LogStreamType, Pagination, PendingState, PendingStateBlockedByJoinSet,
-        PendingStateFinishedError, PendingStateFinishedResultKind, PendingStateMerged,
-        RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
-        ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
-        STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
-        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
-        Version, VersionType, WasmBacktrace,
+        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
+        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
+        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -6007,10 +6007,10 @@ impl DbAdmin for PostgresConnection {
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
         let rows = self.client.lock().await.query(
             "SELECT event_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
-             WHERE ($1::text IS NULL OR level = $1) AND ($2::text IS NULL OR code = $2)
-               AND ($3::text IS NULL OR deployment_id = $3) AND ($4::text IS NULL OR event_id < $4)
-             ORDER BY event_id DESC LIMIT $5",
-            &[&filter.level.map(SystemEventLevel::as_str), &filter.code,
+             WHERE ($1::text IS NULL OR event_id = $1) AND ($2::text IS NULL OR level = $2)
+               AND ($3::text IS NULL OR code = $3) AND ($4::text IS NULL OR deployment_id = $4)
+               AND ($5::text IS NULL OR event_id < $5) ORDER BY event_id DESC LIMIT $6",
+            &[&filter.event_id, &filter.level.map(SystemEventLevel::as_str), &filter.code,
               &filter.deployment_id.map(|id| id.to_string()), &filter.before_event_id,
               &i64::from(filter.limit.clamp(1, 1000))],
         ).await?;
@@ -6050,6 +6050,28 @@ impl DbAdmin for PostgresConnection {
                 })
             })
             .collect()
+    }
+
+    async fn find_http_policy_event_ids(
+        &self,
+        deployment_id: DeploymentId,
+        component: &str,
+        component_policy_hash: &str,
+        server_policy_hash: &str,
+    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead> {
+        let client = self.client.lock().await;
+        let deployment_id = deployment_id.to_string();
+        let component_row = client.query_opt(
+            "SELECT event_id, details->>'server_policy_event_id' FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = $1 AND details->>'component' = $2 AND details->>'component_policy_hash' = $3 AND details->>'server_policy_hash' = $4 ORDER BY event_id DESC LIMIT 1",
+            &[&deployment_id, &component, &component_policy_hash, &server_policy_hash],
+        ).await?;
+        let Some(component) = component_row else {
+            return Ok(None);
+        };
+        Ok(Some(HttpPolicyEventIds {
+            component_policy_event_id: get(&component, 0)?,
+            server_policy_event_id: get(&component, 1)?,
+        }))
     }
 
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead> {

@@ -118,6 +118,7 @@ pub(crate) struct WebApiState {
         admin::delete_deployment,
         admin::retain_deployments,
         admin::list_system_events,
+        admin::get_system_event,
         admin::storage_status,
         admin::retain_system_events,
     ),
@@ -322,6 +323,10 @@ fn admin_router() -> Router<Arc<WebApiState>> {
         )
         .route("/system-events", routing::get(admin::list_system_events))
         .route(
+            "/system-events/{event-id}",
+            routing::get(admin::get_system_event),
+        )
+        .route(
             "/system-events/retain",
             routing::post(admin::retain_system_events),
         )
@@ -407,6 +412,7 @@ pub(crate) mod admin {
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
             .list_system_events(storage::SystemEventFilter {
+                event_id: None,
                 level,
                 code: query.code,
                 deployment_id: query.deployment_id,
@@ -445,6 +451,41 @@ pub(crate) mod admin {
                 next_cursor,
             },
         ))
+    }
+
+    #[utoipa::path(get, path = "/v1/admin/system-events/{event_id}", tag = "admin", responses((status = 200, body = SystemEventResponse), (status = 404)))]
+    pub(crate) async fn get_system_event(
+        Path(event_id): Path<String>,
+        State(state): State<Arc<WebApiState>>,
+    ) -> Result<Response, HttpResponse> {
+        let event = state
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .get_system_event(&event_id)
+            .await
+            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
+            .ok_or_else(|| HttpResponse::not_found(AcceptHeader::Json, "system event"))?;
+        let mut events = [event];
+        crate::server::system_event_writer::hydrate_cas_details(
+            state.db_pool.as_ref(),
+            &mut events,
+        )
+        .await;
+        let event = events.into_iter().next().unwrap();
+        let message = event.message().to_owned();
+        let response = SystemEventResponse {
+            event_id: event.event_id,
+            created_at: event.created_at,
+            level: event.level.as_str().into(),
+            code: event.code,
+            message,
+            execution_id: event.execution_id,
+            deployment_id: event.deployment_id,
+            details: event.details,
+        };
+        Ok(pretty_json_response(StatusCode::OK, &response))
     }
 
     #[utoipa::path(get, path = "/v1/admin/storage", tag = "admin", responses((status = 200, body = StorageStatusResponse)))]

@@ -1712,11 +1712,18 @@ impl SystemEvent {
 
 #[derive(Debug, Clone, Default)]
 pub struct SystemEventFilter {
+    pub event_id: Option<String>,
     pub level: Option<SystemEventLevel>,
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,
     pub before_event_id: Option<String>,
     pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpPolicyEventIds {
+    pub server_policy_event_id: String,
+    pub component_policy_event_id: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1745,6 +1752,26 @@ pub trait DbAdmin: Send + Sync {
         &self,
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead>;
+
+    async fn get_system_event(&self, event_id: &str) -> Result<Option<SystemEvent>, DbErrorRead> {
+        Ok(self
+            .list_system_events(SystemEventFilter {
+                event_id: Some(event_id.to_owned()),
+                limit: 1,
+                ..SystemEventFilter::default()
+            })
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    async fn find_http_policy_event_ids(
+        &self,
+        deployment_id: DeploymentId,
+        component: &str,
+        component_policy_hash: &str,
+        server_policy_hash: &str,
+    ) -> Result<Option<HttpPolicyEventIds>, DbErrorRead>;
 
     async fn get_storage_status(&self) -> Result<StorageStatus, DbErrorRead>;
 

@@ -1995,6 +1995,45 @@ fn cleanup_to_grpc(result: storage::CleanupResult) -> grpc_gen::CleanupResponse 
 
 #[tonic::async_trait]
 impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
+    async fn get_system_event(
+        &self,
+        request: tonic::Request<grpc_gen::GetSystemEventRequest>,
+    ) -> TonicRespResult<grpc_gen::GetSystemEventResponse> {
+        let mut event = self
+            .db_pool
+            .admin_conn()
+            .await
+            .map_err(map_to_status)?
+            .get_system_event(&request.into_inner().event_id)
+            .await
+            .to_status()?
+            .ok_or_else(|| tonic::Status::not_found("system event not found"))?;
+        crate::server::system_event_writer::hydrate_cas_details(
+            self.db_pool.as_ref(),
+            std::slice::from_mut(&mut event),
+        )
+        .await;
+        let message = event.message().to_owned();
+        Ok(tonic::Response::new(grpc_gen::GetSystemEventResponse {
+            event: Some(grpc_gen::SystemEvent {
+                event_id: event.event_id,
+                created_at: Some(event.created_at.into()),
+                level: match event.level {
+                    storage::SystemEventLevel::Info => grpc_gen::SystemEventLevel::Info as i32,
+                    storage::SystemEventLevel::Warning => {
+                        grpc_gen::SystemEventLevel::Warning as i32
+                    }
+                    storage::SystemEventLevel::Error => grpc_gen::SystemEventLevel::Error as i32,
+                },
+                code: event.code,
+                message,
+                execution_id: event.execution_id.map(Into::into),
+                deployment_id: event.deployment_id.map(Into::into),
+                details_json: event.details.to_string(),
+            }),
+        }))
+    }
+
     async fn list_system_events(
         &self,
         request: tonic::Request<grpc_gen::ListSystemEventsRequest>,
@@ -2027,6 +2066,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .await
             .map_err(map_to_status)?
             .list_system_events(storage::SystemEventFilter {
+                event_id: None,
                 level,
                 code: request.code,
                 deployment_id: request.deployment_id.map(TryInto::try_into).transpose()?,

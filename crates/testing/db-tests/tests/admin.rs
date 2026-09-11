@@ -51,6 +51,22 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     .unwrap();
     let first_id = first.event_id.clone();
     admin.append_system_event(first).await.unwrap();
+    assert_eq!(
+        admin
+            .get_system_event(&first_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .event_id,
+        first_id
+    );
+    assert!(
+        admin
+            .get_system_event("sev_missing")
+            .await
+            .unwrap()
+            .is_none()
+    );
     let second = SystemEvent::new(
         SystemEventCode::MaintenanceGcFailed,
         None,
@@ -125,6 +141,52 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         .await
         .unwrap();
     assert_eq!(denials.len(), 1);
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn http_policy_event_ids_are_resolved(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let admin = db_pool.admin_conn().await.unwrap();
+    let server = SystemEvent::new(
+        SystemEventCode::ServerHttpPolicyApplied,
+        None,
+        None,
+        serde_json::json!({
+            "server_policy_hash": "sha256:server",
+            "webui_server_policy_hash": "sha256:webui",
+        }),
+    )
+    .unwrap();
+    let server_id = server.event_id.clone();
+    admin.append_system_event(server).await.unwrap();
+    let deployment_id = DeploymentId::generate();
+    let component = SystemEvent::new(
+        SystemEventCode::ComponentHttpPolicyApplied,
+        None,
+        Some(deployment_id),
+        serde_json::json!({
+            "component": "caller",
+            "component_policy_hash": "sha256:component",
+            "server_policy_hash": "sha256:webui",
+            "server_policy_event_id": server_id,
+        }),
+    )
+    .unwrap();
+    let component_id = component.event_id.clone();
+    admin.append_system_event(component).await.unwrap();
+
+    let ids = admin
+        .find_http_policy_event_ids(deployment_id, "caller", "sha256:component", "sha256:webui")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ids.server_policy_event_id, server_id);
+    assert_eq!(ids.component_policy_event_id, component_id);
     drop(admin);
     db_close.close().await;
 }

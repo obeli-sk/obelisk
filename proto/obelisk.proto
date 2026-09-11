@@ -59,6 +59,7 @@ service AdminRepository {
     rpc DeleteDeployment(DeleteDeploymentRequest) returns (DeleteDeploymentResponse);
     rpc RetainDeployments(RetainDeploymentsRequest) returns (CleanupResponse);
     rpc ListSystemEvents(ListSystemEventsRequest) returns (ListSystemEventsResponse);
+    rpc GetSystemEvent(GetSystemEventRequest) returns (GetSystemEventResponse);
     rpc GetStorageStatus(GetStorageStatusRequest) returns (GetStorageStatusResponse);
     rpc RetainSystemEvents(RetainSystemEventsRequest) returns (RetainSystemEventsResponse);
 }
@@ -1388,6 +1389,12 @@ message ListSystemEventsRequest {
 message ListSystemEventsResponse {
     repeated SystemEvent events = 1;
     optional string next_cursor = 2;
+}
+message GetSystemEventRequest {
+    string event_id = 1;
+}
+message GetSystemEventResponse {
+    SystemEvent event = 1;
 }
 message GetStorageStatusRequest {}
 message GetStorageStatusResponse {
