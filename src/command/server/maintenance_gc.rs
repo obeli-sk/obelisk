@@ -4,7 +4,7 @@ use crate::config::deployment::DurationConfig;
 use crate::config::server::RetentionTomlConfig;
 use crate::config::server::{GarbageCollectionTomlConfig, RetentionPolicyTomlConfig};
 use anyhow::{Context as _, bail};
-use concepts::storage::{DbPool, RetentionPolicy, SystemEvent, SystemEventLevel};
+use concepts::storage::{DbPool, RetentionPolicy, SystemEventCode};
 use executor::AbortOnDropHandle;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -206,11 +206,11 @@ pub(super) fn spawn(
                 Ok(stats) => {
                     stats.log(total);
                     if stats.affected() > 0 {
-                        persist_event(
-                            &db_pool,
-                            SystemEventLevel::Info,
-                            "maintenance.gc.completed",
-                            "Periodic garbage collection completed",
+                        crate::server::system_event_writer::record(
+                            db_pool.as_ref(),
+                            SystemEventCode::MaintenanceGcCompleted,
+                            None,
+                            None,
                             stats.details(total),
                         )
                         .await;
@@ -224,11 +224,11 @@ pub(super) fn spawn(
                     let mut details = failure.stats.details(total);
                     details["category"] = failure.category.into();
                     details["error"] = format!("{:#}", failure.source).into();
-                    persist_event(
-                        &db_pool,
-                        SystemEventLevel::Warning,
-                        "maintenance.gc.failed",
-                        "Periodic garbage collection failed",
+                    crate::server::system_event_writer::record(
+                        db_pool.as_ref(),
+                        SystemEventCode::MaintenanceGcFailed,
+                        None,
+                        None,
                         details,
                     )
                     .await;
@@ -357,26 +357,6 @@ async fn run_sweep(
         }
     }
     Ok(stats)
-}
-
-async fn persist_event(
-    db_pool: &Arc<dyn DbPool>,
-    level: SystemEventLevel,
-    code: &'static str,
-    message: &'static str,
-    details: serde_json::Value,
-) {
-    let result = async {
-        db_pool
-            .admin_conn()
-            .await?
-            .append_system_event(SystemEvent::new(level, code, message, None, None, details))
-            .await
-    }
-    .await;
-    if let Err(err) = result {
-        warn!(code, "Cannot persist system event: {err}");
-    }
 }
 
 fn cutoff(max_age: Duration) -> chrono::DateTime<chrono::Utc> {

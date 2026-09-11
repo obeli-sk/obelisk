@@ -6,7 +6,8 @@ use concepts::{
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventFilter, SystemEventLevel,
+        ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventCode, SystemEventFilter,
+        SystemEventLevel,
     },
     time::ClockFn,
 };
@@ -42,23 +43,21 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     let (_guard, db_pool, db_close) = database.set_up().await;
     let admin = db_pool.admin_conn().await.unwrap();
     let first = SystemEvent::new(
-        SystemEventLevel::Info,
-        "server_started",
-        "Server started",
+        SystemEventCode::AdminExecutionDeleteStarted,
         None,
         None,
         serde_json::json!({"version": "test"}),
-    );
+    )
+    .unwrap();
     let first_id = first.event_id.clone();
     admin.append_system_event(first).await.unwrap();
     let second = SystemEvent::new(
-        SystemEventLevel::Warning,
-        "storage_pressure",
-        "Storage pressure",
+        SystemEventCode::MaintenanceGcFailed,
         None,
         None,
         serde_json::json!({"threshold_percent": 90}),
-    );
+    )
+    .unwrap();
     let second_id = second.event_id.clone();
     admin.append_system_event(second).await.unwrap();
 

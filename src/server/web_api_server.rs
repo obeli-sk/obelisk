@@ -330,36 +330,7 @@ fn admin_router() -> Router<Arc<WebApiState>> {
 
 pub(crate) mod admin {
     use super::*;
-    use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult};
-
-    async fn record_event(
-        db_pool: &dyn DbPool,
-        level: storage::SystemEventLevel,
-        code: &'static str,
-        message: &'static str,
-        execution_id: Option<ExecutionId>,
-        deployment_id: Option<DeploymentId>,
-        details: serde_json::Value,
-    ) {
-        match db_pool.admin_conn().await {
-            Ok(admin) => {
-                if let Err(err) = admin
-                    .append_system_event(storage::SystemEvent::new(
-                        level,
-                        code,
-                        message,
-                        execution_id,
-                        deployment_id,
-                        details,
-                    ))
-                    .await
-                {
-                    warn!(code, "cannot persist system event: {err}");
-                }
-            }
-            Err(err) => warn!(code, "cannot persist system event: {err}"),
-        }
-    }
+    use concepts::storage::{DeleteDeploymentResult, DeleteExecutionTreeResult, SystemEventCode};
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct SystemEventsResponse {
@@ -641,11 +612,9 @@ pub(crate) mod admin {
                 execution_id.get_top_level()
             )));
         }
-        record_event(
+        crate::server::system_event_writer::record(
             state.db_pool.as_ref(),
-            storage::SystemEventLevel::Info,
-            "execution_deletion_started",
-            "Execution tree deletion started",
+            SystemEventCode::AdminExecutionDeleteStarted,
             Some(execution_id.clone()),
             None,
             json!({"force_non_terminal": query.force_non_terminal}),
@@ -677,11 +646,9 @@ pub(crate) mod admin {
                 ));
             }
         };
-        record_event(
+        crate::server::system_event_writer::record(
             state.db_pool.as_ref(),
-            storage::SystemEventLevel::Info,
-            "execution_deletion_finished",
-            "Execution tree deletion finished",
+            SystemEventCode::AdminExecutionDeleteCompleted,
             Some(execution_id),
             None,
             json!({"deleted": response.deleted, "already_deleted": response.already_deleted}),
@@ -697,7 +664,7 @@ pub(crate) mod admin {
     ) -> Result<Response, HttpResponse> {
         validate_batch_size(request.batch_size)?;
         let retention = retention_policy(request.retain_count, request.max_age_seconds)?;
-        record_event(state.db_pool.as_ref(), storage::SystemEventLevel::Info, "execution_retention_started", "Execution retention started", None, None, json!({"retain_count": request.retain_count, "max_age_seconds": request.max_age_seconds, "batch_size": request.batch_size, "force_non_terminal": request.force_non_terminal, "dry_run": request.dry_run})).await;
+        crate::server::system_event_writer::record(state.db_pool.as_ref(), SystemEventCode::AdminExecutionRetainStarted, None, None, json!({"retain_count": request.retain_count, "max_age_seconds": request.max_age_seconds, "batch_size": request.batch_size, "force_non_terminal": request.force_non_terminal, "dry_run": request.dry_run})).await;
         let result = state
             .db_pool
             .admin_conn()
@@ -711,11 +678,9 @@ pub(crate) mod admin {
             )
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
-        record_event(
+        crate::server::system_event_writer::record(
             state.db_pool.as_ref(),
-            storage::SystemEventLevel::Info,
-            "execution_retention_finished",
-            "Execution retention finished",
+            SystemEventCode::AdminExecutionRetainCompleted,
             None,
             None,
             serde_json::to_value(CleanupResponse::from(result)).unwrap(),
