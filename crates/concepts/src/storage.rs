@@ -1678,7 +1678,6 @@ impl SystemEvent {
             "component.http_policy.applied" => {
                 SystemEventCode::ComponentHttpPolicyApplied.message()
             }
-            "deployment.http_policy.applied" => "Deployment HTTP policy applied",
             "outbound_http.denied" => SystemEventCode::OutboundHttpDenied.message(),
             "admin.execution.delete.started" => {
                 SystemEventCode::AdminExecutionDeleteStarted.message()

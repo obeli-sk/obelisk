@@ -3502,7 +3502,6 @@ async fn record_http_policy_audits(
                 "component_policy_hash": component_policy_hash,
                 "server_policy_hash": server_policy_hash,
                 "server_policy_kind": server_policy_kind,
-                "policy_digest": digest.to_string(),
             }),
             digest,
             bytes,
@@ -3514,6 +3513,11 @@ async fn record_http_policy_audits(
 async fn record_server_http_policy_audit(db_pool: &dyn DbPool, policy: serde_json::Value) {
     let server_policy_hash = policy["server_policy_hash"].clone();
     let webui_server_policy_hash = policy["webui_server_policy_hash"].clone();
+    let policy = serde_json::json!({
+        "format": policy["format"],
+        "server_policy": policy["server_policy"],
+        "webui_server_policy": policy["webui_server_policy"],
+    });
     let bytes = serde_json::to_vec(&policy).expect("server HTTP policy audit must encode");
     let digest = concepts::cas::content_digest(&bytes);
     crate::server::system_event_writer::record_with_cas(
@@ -3524,7 +3528,6 @@ async fn record_server_http_policy_audit(db_pool: &dyn DbPool, policy: serde_jso
         serde_json::json!({
             "server_policy_hash": server_policy_hash,
             "webui_server_policy_hash": webui_server_policy_hash,
-            "policy_digest": digest.to_string(),
         }),
         digest,
         bytes,
