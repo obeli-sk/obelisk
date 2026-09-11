@@ -75,7 +75,7 @@ impl ConfigName {
 )]
 #[schemars(with = "String")]
 pub enum ComponentLocationToml {
-    Path(String), // String because it can contain path prefix - $DEPLOYMENT_DIR/
+    Path(String),
     /// No `oci://` prefix.
     Oci(String),
 }
@@ -457,15 +457,6 @@ pub struct WebhookRouteDetail {
     #[serde(default)]
     pub methods: Vec<String>,
     pub route: String,
-}
-
-/// The literal prefix used to anchor a path at the deployment directory.
-pub(crate) const DEPLOYMENT_DIR_PREFIX: &str = "${DEPLOYMENT_DIR}";
-
-/// Strip an optional `${DEPLOYMENT_DIR}` (and following `/`) prefix, returning the remainder.
-pub(crate) fn strip_deployment_dir_prefix(s: &str) -> Option<&str> {
-    s.strip_prefix(DEPLOYMENT_DIR_PREFIX)
-        .map(|rest| rest.strip_prefix('/').unwrap_or(rest))
 }
 
 /// Normalize a deployment-owned relative path to forward-slash form, rejecting anything

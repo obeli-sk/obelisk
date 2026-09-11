@@ -1408,8 +1408,8 @@ impl LocalDeployment {
 /// Root for parsing a stored manifest for resolution against the CAS.
 ///
 /// Empty on purpose: a stored (processed) manifest has no submitter host to anchor relative paths
-/// to. Deployment-owned references are addressed by content digest in the CAS, so a relative /
-/// `${DEPLOYMENT_DIR}` path validated against an empty root stays relative: a logical filename,
+/// to. Deployment-owned references are addressed by content digest in the CAS, so a relative
+/// path validated against an empty root stays relative: a logical filename,
 /// never a storage address. Those become concrete on-disk paths only later, in
 /// [`DeploymentRunnable::resolve`], which materializes their blobs from the CAS.
 pub(crate) fn cas_deployment_dir() -> std::path::PathBuf {

@@ -9,7 +9,7 @@ use super::{
     JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, WebhookRoute, default_external_server_name,
     default_lock_extension, default_lock_extension_leeway, default_max_output_bytes,
     default_max_retries, default_retry_exp_backoff, resolve_local_refs,
-    sanitize_deployment_relative_path, strip_deployment_dir_prefix,
+    sanitize_deployment_relative_path,
 };
 use crate::args::TomlComponentType;
 use crate::config::env_var::EnvVarConfig;
@@ -116,9 +116,7 @@ impl DeploymentTomlValidated {
 }
 
 impl DeploymentToml {
-    // backcompat: Delete ${DEPLOYMENT_DIR} in 0.42
-    /// Expand `${DEPLOYMENT_DIR}/` prefixes in WASM component paths,
-    /// verify that every component name is unique, and return a `DeploymentTomlValidated`
+    /// Resolve WASM component paths, verify that every component name is unique, and return a `DeploymentTomlValidated`
     /// that also carries the name→type index and the deployment directory.
     pub(crate) fn validate(
         mut self,
@@ -319,20 +317,15 @@ impl DeploymentToml {
             .collect()
     }
 
-    /// Resolve a WASM component file path to an absolute path. A `${DEPLOYMENT_DIR}/<suffix>`
-    /// path and a bare relative path are both anchored to the deployment directory and must
-    /// stay within it (no `..` escape); authored absolute paths are rejected. This makes every
-    /// path in a deployment.toml deployment-relative.
+    /// Resolve a relative WASM component file path against the deployment directory.
     pub(crate) fn expand_deployment_dir(
         s: &mut String,
         deployment_dir: &std::path::Path,
     ) -> anyhow::Result<()> {
-        // A `${DEPLOYMENT_DIR}/x` path and a bare relative `x` are equivalent.
-        let candidate = strip_deployment_dir_prefix(s).unwrap_or(s.as_str());
-        if std::path::Path::new(candidate).is_absolute() {
+        if std::path::Path::new(s).is_absolute() {
             bail!("absolute local paths are not allowed in deployment manifests: `{s}`");
         }
-        let rel = sanitize_deployment_relative_path(candidate)
+        let rel = sanitize_deployment_relative_path(s)
             .with_context(|| format!("invalid deployment-relative path `{s}`"))?;
         *s = deployment_dir.join(rel).to_string_lossy().into_owned();
         Ok(())
@@ -371,9 +364,7 @@ impl DeploymentToml {
         Ok(())
     }
 
-    /// Expand `${DEPLOYMENT_DIR}` prefixes in WASM component paths (which are read lazily
-    /// at runtime and therefore must be absolute in the resolved form), rejecting `..`
-    /// escapes.
+    /// Resolve WASM component paths to absolute paths, rejecting `..` escapes.
     fn expand_deployment_dir_prefix(
         &mut self,
         deployment_dir: &std::path::Path,
@@ -400,9 +391,7 @@ impl DeploymentToml {
                 expand_loc(&mut c.common.location, deployment_dir)?;
             }
         }
-        // Script (JS/exec) locations and backtrace sources are NOT expanded here. Their
-        // `${DEPLOYMENT_DIR}` prefix is handled when resolving deployment-owned refs
-        // (`resolve_script_toml` / `resolve_backtrace`), so
+        // Script (JS/exec) locations and backtrace sources are resolved separately so
         // deployment-owned files preserve deployment-relative names.
         for c in &mut self.workflows_wasm {
             expand_loc(&mut c.common.location, deployment_dir)?;
@@ -730,8 +719,7 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
 pub(crate) struct ComponentBacktraceConfig {
     /// Maps a frame-symbol key to a backtrace source file path. On-disk format only;
     /// resolved to `ComponentBacktraceConfigResolved` before hash
-    /// computation. A relative path is deployment-dir-relative (a leading
-    /// `${DEPLOYMENT_DIR}/` is accepted for backcompat); absolute paths are rejected.
+    /// computation. A relative path is deployment-dir-relative; absolute paths are rejected.
     /// The source's content digest lives in the component's `component_files`, so
     /// this is a plain path map in both authored and processed manifests.
     #[serde(rename = "sources")]

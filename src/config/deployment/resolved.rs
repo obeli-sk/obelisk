@@ -11,7 +11,7 @@ use super::{
     ConfigName, CronComponentConfigToml, DeploymentTomlValidated, DurationConfig, ExecConfigToml,
     FunctionInterfaceToml, InflightSemaphore, InlineFunctionInterfaceToml, JsParamToml,
     LockingStrategy, LogLevelToml, MethodsInput, ReplaceIn, ScriptLocationPathOrOci, WebhookRoute,
-    WebhookRouteDetail, sanitize_deployment_relative_path, strip_deployment_dir_prefix,
+    WebhookRouteDetail, sanitize_deployment_relative_path,
 };
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
@@ -1560,7 +1560,7 @@ pub(crate) enum ModuleGraphResolution {
 /// Resolve a script source (JS or exec) TOML location to its resolved form.
 ///
 /// - inline `content` → `Content { content, file_name: default_file_name }` (owned).
-/// - a **relative** `Path` (bare, or `${DEPLOYMENT_DIR}/…`) → read + inline as `Content`,
+/// - a **relative** `Path` → read + inline as `Content`,
 ///   with `file_name` preserving the deployment-relative subpath (owned). `..` escapes error.
 /// - an **absolute** `Path` → rejected.
 /// - an `Oci` reference → `Oci { image }`.
@@ -1605,8 +1605,7 @@ pub(crate) async fn resolve_script_toml(
             if std::path::Path::new(&path).is_absolute() {
                 bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
             }
-            let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
-            let path = sanitize_deployment_relative_path(path)?;
+            let path = sanitize_deployment_relative_path(&path)?;
             if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
                 // `component_files` is the manifest's declared closure (`path -> digest`).
                 // Ensure the entry is in it (an entry-only manifest declares none), then walk
@@ -1688,12 +1687,9 @@ pub(crate) fn resolve_backtrace(
 ) -> anyhow::Result<ComponentBacktraceConfigResolved> {
     let mut frame_files_to_sources = HashMap::new();
     for (key, path) in &backtrace.frame_files_to_sources {
-        // Classify the source path like a script: a relative path (bare or
-        // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on export.
+        // Classify a relative source path as deployment-relative and mirror its subpath on export.
         // The pre-resolve validation pass already rejected absolute paths.
-        let file_name = if let Some(rest) = strip_deployment_dir_prefix(path) {
-            sanitize_deployment_relative_path(rest)?
-        } else if std::path::Path::new(path).is_absolute() {
+        let file_name = if std::path::Path::new(path).is_absolute() {
             unreachable!("absolute backtrace source `{path}` must be rejected before resolution")
         } else {
             sanitize_deployment_relative_path(path)?

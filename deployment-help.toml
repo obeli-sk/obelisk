@@ -420,6 +420,3 @@
 ## JS/exec components and backtrace sources are attached as deployment files at deploy time and referenced by the
 ## processed manifest's generated `component_files` map. `obelisk deployment get` recreates these files (mirroring
 ## subfolders), along with deployment-owned WASM components, from the content-addressed store.
-##
-## For backwards compatibility a relative path may be prefixed with `${DEPLOYMENT_DIR}/`; this is
-## equivalent to a bare relative path (the directory containing this deployment.toml) and is no longer needed.

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   digests are always computed from component content and configuration.
 - **Breaking:** *(config)* Removed the deprecated server-wide
   `[workflows].lock_extension_leeway`; configure it on each workflow component.
+- **Breaking:** *(config)* Removed the `${DEPLOYMENT_DIR}/` path prefix. Deployment-owned files
+  use bare paths relative to `deployment.toml`.
 
 ### Added
 
