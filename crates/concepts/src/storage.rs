@@ -1505,6 +1505,7 @@ pub struct SystemEvent {
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
+    pub dedupe_key: Option<String>,
     pub execution_id: Option<ExecutionId>,
     pub deployment_id: Option<DeploymentId>,
     pub details: serde_json::Value,
@@ -1626,10 +1627,17 @@ impl SystemEvent {
             created_at: Utc::now(),
             level: code.level(),
             code: code.as_str().to_owned(),
+            dedupe_key: None,
             execution_id,
             deployment_id,
             details,
         })
+    }
+
+    #[must_use]
+    pub fn with_dedupe_key(mut self, dedupe_key: impl Into<String>) -> Self {
+        self.dedupe_key = Some(dedupe_key.into());
+        self
     }
 
     #[must_use]

@@ -5964,9 +5964,9 @@ async fn delete_deployment_tx(
 impl DbAdmin for PostgresConnection {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.client.lock().await.execute(
-            "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+            "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
             &[&event.event_id, &event.created_at, &event.level.as_str(), &event.code,
-              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details)],
+              &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key],
         ).await?;
         Ok(())
     }
@@ -5998,6 +5998,7 @@ impl DbAdmin for PostgresConnection {
                         _ => SystemEventLevel::Info,
                     },
                     code: get(&row, 3)?,
+                    dedupe_key: None,
                     execution_id: execution_id
                         .map(|id| id.parse())
                         .transpose()

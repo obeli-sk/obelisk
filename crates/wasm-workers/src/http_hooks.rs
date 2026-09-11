@@ -1,10 +1,14 @@
 use crate::component_logger::ComponentLogger;
 use crate::http_request_policy::{HttpRequestPolicy, PolicyError, PolicyLayer};
-use concepts::storage::LogLevel;
 use concepts::storage::http_client_trace::{RequestTrace, ResponseTrace};
 use concepts::time::ClockFn;
+use concepts::{
+    prefixed_ulid::DeploymentId,
+    storage::{DbPool, LogLevel, SystemEvent, SystemEventCode},
+};
 use http_body_util::BodyExt;
 use std::future::Future;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
@@ -34,6 +38,8 @@ pub(crate) struct HttpHooks {
     pub(crate) config_section_hint: ConfigSectionHint,
     /// The deployment component name for error-message TOML snippets.
     pub(crate) component_name: String,
+    pub(crate) deployment_id: Option<DeploymentId>,
+    pub(crate) db_pool: Option<Arc<dyn DbPool>>,
 }
 
 /// Generate a simplified host pattern for the TOML snippet.
@@ -184,6 +190,68 @@ impl WasiHttpHooks for HttpHooks {
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
         let http_policy_res = self.http_policy.apply(&mut request);
         if let Err(err) = http_policy_res {
+            if let (
+                Some(deployment_id),
+                Some(db_pool),
+                PolicyError::RequestDenied {
+                    method,
+                    scheme,
+                    host,
+                    port,
+                    denied_by,
+                    ..
+                },
+            ) = (self.deployment_id, self.db_pool.as_ref(), &err)
+            {
+                let dedupe_key = format!(
+                    "{}|{}|{}|{}|{}|{denied_by:?}",
+                    self.component_name, method, scheme, host, port
+                );
+                let server_toml = matches!(
+                    denied_by,
+                    PolicyLayer::GlobalAllowlist | PolicyLayer::Both
+                )
+                .then(|| {
+                    format!(
+                        "[[outbound_http.allowed_host]]\npattern = \"{}\"\nmethods = [\"{}\"]",
+                        format_host_pattern(scheme, host, *port),
+                        method.as_str()
+                    )
+                });
+                let event = SystemEvent::new(
+                    SystemEventCode::OutboundHttpDenied,
+                    Some(self.component_logger.execution_id.clone()),
+                    Some(deployment_id),
+                    serde_json::json!({
+                        "component": self.component_name,
+                        "method": method.as_str(),
+                        "scheme": scheme,
+                        "host": host,
+                        "port": port,
+                        "denied_by": format!("{denied_by:?}"),
+                        "server_toml": server_toml,
+                    }),
+                )
+                .map(|event| event.with_dedupe_key(dedupe_key));
+                let db_pool = db_pool.clone();
+                tokio::spawn(async move {
+                    match event {
+                        Ok(event) => match db_pool.admin_conn().await {
+                            Ok(admin) => {
+                                if let Err(err) = admin.append_system_event(event).await {
+                                    tracing::warn!("Cannot persist outbound HTTP denial: {err}");
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!("Cannot persist outbound HTTP denial: {err}");
+                            }
+                        },
+                        Err(err) => {
+                            tracing::warn!("Cannot construct outbound HTTP denial: {err}");
+                        }
+                    }
+                });
+            }
             // Generate a helpful TOML snippet for the user
             let log_msg = generate_toml_snippet(
                 &err,

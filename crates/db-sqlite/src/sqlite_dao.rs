@@ -5634,8 +5634,8 @@ impl DbAdmin for SqlitePool {
                 let details = serde_json::to_string(&event.details)
                     .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
                 tx.execute(
-                    "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details],
+                    "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key],
                 )?;
                 Ok(())
             },
@@ -5667,6 +5667,7 @@ impl DbAdmin for SqlitePool {
                         event_id: row.get(0)?, created_at: row.get(1)?,
                         level: match level.as_str() { "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
                         code: row.get(3)?,
+                        dedupe_key: None,
                         execution_id: row.get::<_, Option<String>>(4)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))?,
                         deployment_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
                         details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,

@@ -5623,17 +5623,19 @@ impl WorkerLinked {
         let mut replay_entry: Option<(ComponentId, ReplayWorker)> = None;
         let worker: Arc<dyn Worker> = match self.worker {
             LinkedWorkerKind::ActivityWasm(activity_compiled) => {
-                Arc::from(activity_compiled.into_worker(
+                Arc::from(activity_compiled.into_worker_with_system_events(
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
+                    Some((deployment_id, db_pool.clone())),
                 ))
             }
             LinkedWorkerKind::ActivityJs(js_activity_compiled) => {
-                Arc::from(js_activity_compiled.into_worker(
+                Arc::from(js_activity_compiled.into_worker_with_system_events(
                     cancel_registry,
                     log_forwarder_sender,
                     logs_storage_config,
+                    Some((deployment_id, db_pool.clone())),
                 ))
             }
             LinkedWorkerKind::ActivityExec(exec_activity_compiled) => {

@@ -7,8 +7,9 @@ use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::storage::{LogInfoAppendRow, LogStreamType, Version};
+use concepts::storage::{DbPool, LogInfoAppendRow, LogStreamType, Version};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{
     ComponentId, FunctionFqn, PackageIfcFns, Params, SupportedFunctionReturnValue, TrapKind,
@@ -117,6 +118,22 @@ impl ActivityWorkerCompiled {
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> ActivityWorker {
+        self.into_worker_with_system_events(
+            cancel_registry,
+            log_forwarder_sender,
+            logs_storage_config,
+            None,
+        )
+    }
+
+    #[must_use]
+    pub fn into_worker_with_system_events(
+        self,
+        cancel_registry: CancelRegistry,
+        log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+        logs_storage_config: Option<LogStrageConfig>,
+        system_events: Option<(DeploymentId, Arc<dyn DbPool>)>,
+    ) -> ActivityWorker {
         let stdout = StdOutputConfigWithSender::new(
             self.config.forward_stdout,
             log_forwarder_sender,
@@ -139,6 +156,7 @@ impl ActivityWorkerCompiled {
             stdout,
             stderr,
             logs_storage_config,
+            system_events,
         }
     }
 }
@@ -155,6 +173,7 @@ pub struct ActivityWorker {
     stdout: Option<StdOutputConfigWithSender>,
     stderr: Option<StdOutputConfigWithSender>,
     logs_storage_config: Option<LogStrageConfig>,
+    system_events: Option<(DeploymentId, Arc<dyn DbPool>)>,
 }
 
 impl ActivityWorker {
@@ -311,6 +330,7 @@ impl ActivityWorker {
             stdout,
             stderr,
             self.logs_storage_config.clone(),
+            self.system_events.clone(),
         );
 
         // Set fuel.

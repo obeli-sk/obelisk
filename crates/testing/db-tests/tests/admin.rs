@@ -103,6 +103,28 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         admin.get_storage_status().await.unwrap().system_event_count,
         1
     );
+    let deployment_id = DeploymentId::generate();
+    for _ in 0..2 {
+        let event = SystemEvent::new(
+            SystemEventCode::OutboundHttpDenied,
+            None,
+            Some(deployment_id),
+            serde_json::json!({"host": "example.com"}),
+        )
+        .unwrap()
+        .with_dedupe_key("component|GET|https|example.com|443|GlobalAllowlist");
+        admin.append_system_event(event).await.unwrap();
+    }
+    let denials = admin
+        .list_system_events(SystemEventFilter {
+            code: Some(SystemEventCode::OutboundHttpDenied.as_str().to_owned()),
+            deployment_id: Some(deployment_id),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(denials.len(), 1);
     drop(admin);
     db_close.close().await;
 }

@@ -14,6 +14,7 @@ use concepts::{
     ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
     SupportedFunctionReturnValue,
 };
+use concepts::{prefixed_ulid::DeploymentId, storage::DbPool};
 use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
@@ -112,9 +113,28 @@ impl ActivityJsWorkerCompiled {
         log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> ActivityJsWorker {
-        let inner =
-            self.inner
-                .into_worker(cancel_registry, log_forwarder_sender, logs_storage_config);
+        self.into_worker_with_system_events(
+            cancel_registry,
+            log_forwarder_sender,
+            logs_storage_config,
+            None,
+        )
+    }
+
+    #[must_use]
+    pub fn into_worker_with_system_events(
+        self,
+        cancel_registry: CancelRegistry,
+        log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
+        logs_storage_config: Option<LogStrageConfig>,
+        system_events: Option<(DeploymentId, Arc<dyn DbPool>)>,
+    ) -> ActivityJsWorker {
+        let inner = self.inner.into_worker_with_system_events(
+            cancel_registry,
+            log_forwarder_sender,
+            logs_storage_config,
+            system_events,
+        );
         ActivityJsWorker {
             inner,
             js_entry_path: self.js_entry_path,
