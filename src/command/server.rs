@@ -2115,6 +2115,7 @@ pub(crate) struct ServerVerified {
     max_persisted_value_size_bytes: u64,
     max_transport_message_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
+    server_http_policy_audit: serde_json::Value,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
     /// dropped by resolution, and locate its per-entry advisories in `source_path`.
@@ -2237,6 +2238,33 @@ impl ServerVerified {
             resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
                 .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?;
         let global_http_config = GlobalHttpConfig::from(server_hosts);
+        let (server_policy_hash, server_policy) =
+            wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries());
+        let webui_server_policy = if config.webui.enabled {
+            let target_url = format!("http://{}", config.api.listening_addr);
+            let (hosts, _advisories) = resolve_allowed_hosts(
+                vec![AllowedHostToml {
+                    pattern: target_url,
+                    methods: Some(MethodsInput::Star(MethodsInputStar::default())),
+                    request_url_regex: None,
+                    secrets: Vec::new(),
+                    replace_in: Vec::new(),
+                }],
+                false,
+                &secret_registry,
+            )?;
+            let (hash, policy) = wasm_workers::http_request_policy::audit_http_policy(&hosts);
+            Some((hash, policy["policy"].clone()))
+        } else {
+            None
+        };
+        let server_http_policy_audit = serde_json::json!({
+            "format": "obelisk-http-policy-v1",
+            "server_policy_hash": server_policy_hash,
+            "server_policy": server_policy["policy"],
+            "webui_server_policy_hash": webui_server_policy.as_ref().map(|(hash, _)| hash),
+            "webui_server_policy": webui_server_policy.map(|(_, policy)| policy),
+        });
 
         Ok(Self {
             launch: ServerVerifiedLaunch {
@@ -2262,6 +2290,7 @@ impl ServerVerified {
             max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
             max_transport_message_size_bytes: config.limits.max_transport_message_size_bytes,
             global_http_config,
+            server_http_policy_audit,
             server_outbound_allowed_hosts,
             source_path,
             secret_registry,
@@ -3452,19 +3481,27 @@ async fn record_http_policy_audits(
         let component = object
             .remove("component")
             .expect("HTTP policy audit must identify its component");
-        let policy_set_hash = object
-            .remove("policy_set_hash")
-            .expect("HTTP policy audit must have a hash");
+        let component_policy_hash = object
+            .remove("component_policy_hash")
+            .expect("HTTP policy audit must have a component hash");
+        let server_policy_hash = object
+            .remove("server_policy_hash")
+            .expect("HTTP policy audit must have a server hash");
+        let server_policy_kind = object
+            .remove("server_policy_kind")
+            .expect("HTTP policy audit must identify the server policy");
         let bytes = serde_json::to_vec(&policy).expect("HTTP policy audit must encode");
         let digest = concepts::cas::content_digest(&bytes);
         crate::server::system_event_writer::record_with_cas(
             db_pool,
-            concepts::storage::SystemEventCode::DeploymentHttpPolicyApplied,
+            concepts::storage::SystemEventCode::ComponentHttpPolicyApplied,
             None,
             Some(deployment_id),
             serde_json::json!({
                 "component": component,
-                "policy_set_hash": policy_set_hash,
+                "component_policy_hash": component_policy_hash,
+                "server_policy_hash": server_policy_hash,
+                "server_policy_kind": server_policy_kind,
                 "policy_digest": digest.to_string(),
             }),
             digest,
@@ -3472,6 +3509,27 @@ async fn record_http_policy_audits(
         )
         .await;
     }
+}
+
+async fn record_server_http_policy_audit(db_pool: &dyn DbPool, policy: serde_json::Value) {
+    let server_policy_hash = policy["server_policy_hash"].clone();
+    let webui_server_policy_hash = policy["webui_server_policy_hash"].clone();
+    let bytes = serde_json::to_vec(&policy).expect("server HTTP policy audit must encode");
+    let digest = concepts::cas::content_digest(&bytes);
+    crate::server::system_event_writer::record_with_cas(
+        db_pool,
+        concepts::storage::SystemEventCode::ServerHttpPolicyApplied,
+        None,
+        None,
+        serde_json::json!({
+            "server_policy_hash": server_policy_hash,
+            "webui_server_policy_hash": webui_server_policy_hash,
+            "policy_digest": digest.to_string(),
+        }),
+        digest,
+        bytes,
+    )
+    .await;
 }
 
 // Create seed cron executions if they don't already exist (same config = same ContentDigest)
@@ -3545,6 +3603,11 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
+    record_server_http_policy_audit(
+        db_pool.as_ref(),
+        server_verified.server_http_policy_audit.clone(),
+    )
+    .await;
     record_http_policy_audits(
         db_pool.as_ref(),
         deployment_id,
@@ -3879,12 +3942,13 @@ impl DeploymentVerified {
             component_id: &ComponentId,
             allowed_hosts: &[AllowedHostConfig],
             global_http_config: &GlobalHttpConfig,
+            server_policy_kind: &'static str,
         ) -> serde_json::Value {
-            let (policy_set_hash, mut details) =
-                wasm_workers::http_request_policy::audit_http_policy(
-                    allowed_hosts,
-                    global_http_config,
-                );
+            let (component_policy_hash, mut details) =
+                wasm_workers::http_request_policy::audit_http_policy(allowed_hosts);
+            let server_policy_hash =
+                wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries())
+                    .0;
             let object = details
                 .as_object_mut()
                 .expect("HTTP policy audit details must be an object");
@@ -3892,7 +3956,12 @@ impl DeploymentVerified {
                 "component".to_string(),
                 component_id.name.to_string().into(),
             );
-            object.insert("policy_set_hash".to_string(), policy_set_hash.into());
+            object.insert(
+                "component_policy_hash".to_string(),
+                component_policy_hash.into(),
+            );
+            object.insert("server_policy_hash".to_string(), server_policy_hash.into());
+            object.insert("server_policy_kind".to_string(), server_policy_kind.into());
             details
         }
 
@@ -3903,6 +3972,7 @@ impl DeploymentVerified {
                     activity.component_id(),
                     &activity.activity_config.allowed_hosts,
                     &activity.activity_config.global_http_config,
+                    "server",
                 )
             })
             .chain(self.activities_js.iter().map(|activity| {
@@ -3910,6 +3980,7 @@ impl DeploymentVerified {
                     activity.component_id(),
                     &activity.activity_config.allowed_hosts,
                     &activity.activity_config.global_http_config,
+                    "server",
                 )
             }))
             .chain(self.webhooks_wasm_by_names.values().map(|webhook| {
@@ -3918,13 +3989,23 @@ impl DeploymentVerified {
                     &webhook.allowed_hosts,
                     &self.global_http_config,
                 );
-                audit(&webhook.component_id, &webhook.allowed_hosts, &global)
+                audit(
+                    &webhook.component_id,
+                    &webhook.allowed_hosts,
+                    &global,
+                    if webhook.is_webui {
+                        "webui_server"
+                    } else {
+                        "server"
+                    },
+                )
             }))
             .chain(self.webhooks_js_by_names.values().map(|webhook| {
                 audit(
                     &webhook.component_id,
                     &webhook.allowed_hosts,
                     &self.global_http_config,
+                    "server",
                 )
             }))
             .collect()

@@ -205,8 +205,9 @@ impl WasiHttpHooks for HttpHooks {
             ) = (self.deployment_id, self.db_pool.as_ref(), &err)
             {
                 let dedupe_key = format!(
-                    "{}|{}|{}|{}|{}|{}|{}",
-                    self.http_policy.policy_set_hash,
+                    "{}|{}|{}|{}|{}|{}|{}|{}",
+                    self.http_policy.component_policy_hash,
+                    self.http_policy.server_policy_hash,
                     self.component_name,
                     method,
                     scheme,
@@ -237,7 +238,8 @@ impl WasiHttpHooks for HttpHooks {
                         "port": port,
                         "url": attempted_url,
                         "rejected_by": denied_by.audit_name(),
-                        "policy_set_hash": self.http_policy.policy_set_hash,
+                        "component_policy_hash": self.http_policy.component_policy_hash,
+                        "server_policy_hash": self.http_policy.server_policy_hash,
                         "server_toml": server_toml,
                     }),
                 )
@@ -411,7 +413,8 @@ mod tests {
                 secrets: Vec::new(),
             }],
             global_allowlist: Some(Vec::new()),
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
         let message = generate_toml_snippet(
             &PolicyError::RequestDenied {

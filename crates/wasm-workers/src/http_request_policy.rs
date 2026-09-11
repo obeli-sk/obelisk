@@ -356,15 +356,13 @@ impl AllowedHostPolicy {
 pub struct HttpRequestPolicy {
     pub hosts: Vec<AllowedHostPolicy>,
     pub global_allowlist: Option<Vec<AllowedHostPolicy>>,
-    pub policy_set_hash: String,
+    pub component_policy_hash: String,
+    pub server_policy_hash: String,
 }
 
-/// Return the realized policy inputs in the same order in which they are evaluated.
+/// Return a canonical snapshot and hash of one realized policy input.
 #[must_use]
-pub fn audit_http_policy(
-    component_hosts: &[AllowedHostConfig],
-    global_http_config: &GlobalHttpConfig,
-) -> (String, Value) {
+pub fn audit_http_policy(hosts: &[AllowedHostConfig]) -> (String, Value) {
     fn replacement_name(location: ReplacementLocation) -> &'static str {
         match location {
             ReplacementLocation::Headers => "headers",
@@ -411,8 +409,7 @@ pub fn audit_http_policy(
 
     let details = json!({
         "format": "obelisk-http-policy-v1",
-        "deployment_policy": component_hosts.iter().map(entry).collect::<Vec<_>>(),
-        "server_policy": global_http_config.entries().iter().map(entry).collect::<Vec<_>>(),
+        "policy": hosts.iter().map(entry).collect::<Vec<_>>(),
     });
     let encoded = serde_json::to_vec(&details).expect("policy audit representation must encode");
     let hash = Sha256::digest(encoded);
@@ -858,17 +855,14 @@ mod tests {
             Some(r"^GET https://api\.example\.com/items$"),
         );
         let second = cfg("uploads.example.com", MethodsPattern::AllMethods, None);
-        let global = GlobalHttpConfig::from(vec![first.clone()]);
-
-        let (hash, details) = audit_http_policy(&[first.clone(), second.clone()], &global);
-        let (same_hash, _) = audit_http_policy(&[first.clone(), second.clone()], &global);
-        let (reordered_hash, _) = audit_http_policy(&[second, first], &global);
+        let (hash, details) = audit_http_policy(&[first.clone(), second.clone()]);
+        let (same_hash, _) = audit_http_policy(&[first.clone(), second.clone()]);
+        let (reordered_hash, _) = audit_http_policy(&[second, first]);
 
         assert_eq!(hash, same_hash);
         assert_ne!(hash, reordered_hash);
-        assert_eq!(details["deployment_policy"][0]["methods"][0], "GET");
-        assert_eq!(details["deployment_policy"][0]["methods"][1], "POST");
-        assert_eq!(details["server_policy"].as_array().unwrap().len(), 1);
+        assert_eq!(details["policy"][0]["methods"][0], "GET");
+        assert_eq!(details["policy"][0]["methods"][1], "POST");
     }
 
     #[test]
@@ -1202,7 +1196,8 @@ mod tests {
                 }],
             }],
             global_allowlist: None,
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
         let uri = format!(
             "https://api.example.com/{PLACEHOLDER}?{PLACEHOLDER}=unchanged&token=Bearer-{PLACEHOLDER}"
@@ -1270,7 +1265,8 @@ mod tests {
                 },
             ],
             global_allowlist: None,
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
 
         let mut request = hyper::Request::builder()
@@ -1338,7 +1334,8 @@ mod tests {
                 "",
                 &[ReplacementLocation::Headers],
             )])]),
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
 
         let mut request = hyper::Request::builder()
@@ -1373,7 +1370,8 @@ mod tests {
         let policy = HttpRequestPolicy {
             hosts: vec![host("api.example.com")],
             global_allowlist: Some(vec![host("other.example.com")]),
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")
@@ -1411,7 +1409,8 @@ mod tests {
                 host_and_secrets_fn("api.example.com", vec![header_secret.clone()]),
                 host_and_secrets_fn("other.example.com", Vec::new()), // Note: missing header secrets
             ]),
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
 
         // Host api: both sides authorize S -> replaced.
@@ -1443,7 +1442,8 @@ mod tests {
                 secrets: Vec::new(),
             }],
             global_allowlist: Some(Vec::new()),
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")
@@ -1465,7 +1465,8 @@ mod tests {
         let policy = HttpRequestPolicy {
             hosts: Vec::new(),
             global_allowlist: Some(Vec::new()),
-            policy_set_hash: String::new(),
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
         };
         let mut request = hyper::Request::builder()
             .uri("https://api.example.com/path")

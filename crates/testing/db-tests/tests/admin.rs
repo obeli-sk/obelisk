@@ -139,7 +139,7 @@ async fn system_event_cas_details_are_retained_with_the_event(database: Database
     let content = br#"{"policy":"large"}"#.to_vec();
     let digest = concepts::cas::content_digest(&content);
     let event = SystemEvent::new(
-        SystemEventCode::DeploymentHttpPolicyApplied,
+        SystemEventCode::ComponentHttpPolicyApplied,
         None,
         Some(DeploymentId::generate()),
         serde_json::json!({"policy_digest": digest.to_string()}),
