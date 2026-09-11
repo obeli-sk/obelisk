@@ -6066,7 +6066,7 @@ impl DbAdmin for PostgresConnection {
         let client = self.client.lock().await;
         let deployment_id = deployment_id.to_string();
         let component_row = client.query_opt(
-            "SELECT event_id, details->>'server_policy_event_id' FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = $1 AND details->>'component' = $2 AND details->>'component_policy_hash' = $3 AND details->>'server_policy_hash' = $4 ORDER BY event_id DESC LIMIT 1",
+            "SELECT event_id, details->>'server_configuration_event_id' FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = $1 AND details->>'component' = $2 AND details->>'component_policy_hash' = $3 AND details->>'server_policy_hash' = $4 ORDER BY event_id DESC LIMIT 1",
             &[&deployment_id, &component, &component_policy_hash, &server_policy_hash],
         ).await?;
         let Some(component) = component_row else {
@@ -6076,9 +6076,9 @@ impl DbAdmin for PostgresConnection {
             component_policy_event_id: get::<String, _>(&component, 0)?.parse().map_err(|err| {
                 consistency_db_err(format!("invalid component policy event ID: {err}"))
             })?,
-            server_policy_event_id: get::<String, _>(&component, 1)?.parse().map_err(|err| {
-                consistency_db_err(format!("invalid server policy event ID: {err}"))
-            })?,
+            server_configuration_event_id: get::<String, _>(&component, 1)?.parse().map_err(
+                |err| consistency_db_err(format!("invalid server configuration event ID: {err}")),
+            )?,
         }))
     }
 

@@ -269,7 +269,7 @@ impl WasiHttpHooks for HttpHooks {
                                     "component_policy_hash": component_policy_hash,
                                     "server_policy_hash": server_policy_hash,
                                     "component_policy_event_id": policy_event_ids.as_ref().map(|ids| &ids.component_policy_event_id),
-                                    "server_policy_event_id": policy_event_ids.as_ref().map(|ids| &ids.server_policy_event_id),
+                                    "server_configuration_event_id": policy_event_ids.as_ref().map(|ids| &ids.server_configuration_event_id),
                                     "server_toml": server_toml,
                                 }),
                             )

@@ -345,11 +345,11 @@ impl DeploymentSwitchManagerHandle {
         let webhook_registry = self.inner.webhook_registry.clone();
         let cancel_registry = self.inner.cancel_registry.clone();
         let log_forwarder_sender = self.inner.log_forwarder_sender.clone();
-        let server_policy_event_id = self
+        let server_configuration_event_id = self
             .inner
             .server_verified
-            .server_http_policy_event_id
-            .expect("server policy event must be recorded before switching deployments");
+            .server_configuration_event_id
+            .expect("server configuration event must be recorded before switching deployments");
         // Own the whole commit in a detached task: a dropped caller only stops observing the
         // result via `rx`, it cannot abort the switch. This covers the durable pre-critical
         // commits (cron seeds + activate) as well as the non-cancel-safe critical swap, so a
@@ -385,7 +385,7 @@ impl DeploymentSwitchManagerHandle {
                     webhook_registry,
                     cancel_registry,
                     log_forwarder_sender,
-                    server_policy_event_id,
+                    server_configuration_event_id,
                 )
                 .await
             }
@@ -2123,7 +2123,7 @@ pub(crate) struct ServerVerified {
     max_transport_message_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
     server_http_policy_audit: serde_json::Value,
-    server_http_policy_event_id: Option<SystemEventId>,
+    server_configuration_event_id: Option<SystemEventId>,
     environment_audit: serde_json::Value,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
@@ -2301,7 +2301,7 @@ impl ServerVerified {
             max_transport_message_size_bytes: config.limits.max_transport_message_size_bytes,
             global_http_config,
             server_http_policy_audit,
-            server_http_policy_event_id: None,
+            server_configuration_event_id: None,
             environment_audit,
             server_outbound_allowed_hosts,
             source_path,
@@ -3433,7 +3433,7 @@ async fn switch_hot_redeploy(
     webhook_registry: Arc<WebhookRegistry>,
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-    server_policy_event_id: SystemEventId,
+    server_configuration_event_id: SystemEventId,
 ) -> Result<SwitchOutcome, SwitchError> {
     server_compiled_linked
         .runtime_config_availability
@@ -3464,7 +3464,7 @@ async fn switch_hot_redeploy(
         db_pool.as_ref(),
         deployment_id,
         http_policy_audits,
-        &server_policy_event_id,
+        &server_configuration_event_id,
     )
     .await?;
 
@@ -3494,7 +3494,7 @@ async fn record_http_policy_audits(
     db_pool: &dyn DbPool,
     deployment_id: DeploymentId,
     audits: impl IntoIterator<Item = serde_json::Value>,
-    server_policy_event_id: &SystemEventId,
+    server_configuration_event_id: &SystemEventId,
 ) -> Result<(), anyhow::Error> {
     for mut policy in audits {
         let object = policy
@@ -3524,7 +3524,7 @@ async fn record_http_policy_audits(
                 "component_policy_hash": component_policy_hash,
                 "server_policy_hash": server_policy_hash,
                 "server_policy_kind": server_policy_kind,
-                "server_policy_event_id": server_policy_event_id,
+                "server_configuration_event_id": server_configuration_event_id,
             }),
             digest,
             bytes,
@@ -3535,27 +3535,30 @@ async fn record_http_policy_audits(
     Ok(())
 }
 
-async fn record_server_http_policy_audit(
+async fn record_server_configuration_audit(
     db_pool: &dyn DbPool,
-    policy: serde_json::Value,
+    server_verified: &ServerVerified,
 ) -> Option<SystemEventId> {
-    let server_policy_hash = policy["server_policy_hash"].clone();
-    let webui_server_policy_hash = policy["webui_server_policy_hash"].clone();
-    let policy = serde_json::json!({
-        "format": policy["format"],
-        "server_policy": policy["server_policy"],
-        "webui_server_policy": policy["webui_server_policy"],
+    let snapshot = serde_json::json!({
+        "format": "obelisk-server-configuration-v1",
+        "obelisk_version": PKG_VERSION,
+        "environment": server_verified.environment_audit,
+        "deployment_security": {
+            "exec": server_verified.allow_exec_activities.audit(),
+            "http": server_verified.server_http_policy_audit,
+        },
     });
-    let bytes = serde_json::to_vec(&policy).expect("server HTTP policy audit must encode");
+    let bytes = serde_json::to_vec(&snapshot).expect("server configuration audit must encode");
     let digest = concepts::cas::content_digest(&bytes);
     crate::server::system_event_writer::record_with_cas(
         db_pool,
-        concepts::storage::SystemEventCode::ServerHttpPolicyApplied,
+        concepts::storage::SystemEventCode::ServerConfigurationResolved,
         None,
         None,
         serde_json::json!({
-            "server_policy_hash": server_policy_hash,
-            "webui_server_policy_hash": webui_server_policy_hash,
+            "obelisk_version": PKG_VERSION,
+            "server_policy_hash": server_verified.server_http_policy_audit["server_policy_hash"],
+            "webui_server_policy_hash": server_verified.server_http_policy_audit["webui_server_policy_hash"],
         }),
         digest,
         bytes,
@@ -3634,20 +3637,16 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
-    let server_policy_event_id = record_server_http_policy_audit(
-        db_pool.as_ref(),
-        server_verified.server_http_policy_audit.clone(),
-    )
-    .await
-    .ok_or_else(|| anyhow::anyhow!("cannot persist server HTTP policy audit"))?;
-    server_verified.server_http_policy_event_id = Some(server_policy_event_id);
-    record_server_configuration_audit(db_pool.as_ref(), &server_verified, &server_policy_event_id)
-        .await?;
+    let server_configuration_event_id =
+        record_server_configuration_audit(db_pool.as_ref(), &server_verified)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
+    server_verified.server_configuration_event_id = Some(server_configuration_event_id);
     record_http_policy_audits(
         db_pool.as_ref(),
         deployment_id,
         server_compiled_linked.http_policy_audits.clone(),
-        &server_policy_event_id,
+        &server_configuration_event_id,
     )
     .await?;
     upsert_backtrace_sources(
@@ -3769,41 +3768,6 @@ async fn spawn_tasks_and_threads(
         deployment_switch_manager,
     };
     Ok(server_init)
-}
-
-async fn record_server_configuration_audit(
-    db_pool: &dyn DbPool,
-    server_verified: &ServerVerified,
-    server_http_policy_event_id: &SystemEventId,
-) -> Result<(), anyhow::Error> {
-    let snapshot = serde_json::json!({
-        "format": "obelisk-server-configuration-v1",
-        "obelisk_version": PKG_VERSION,
-        "environment": server_verified.environment_audit,
-        "deployment_security": {
-            "exec": server_verified.allow_exec_activities.audit(),
-            "http_policy_event_id": server_http_policy_event_id,
-            "http_policy_hash": server_verified.server_http_policy_audit["server_policy_hash"],
-            "webui_http_policy_hash": server_verified.server_http_policy_audit["webui_server_policy_hash"],
-        },
-    });
-    let bytes = serde_json::to_vec(&snapshot)?;
-    let digest = concepts::cas::content_digest(&bytes);
-    crate::server::system_event_writer::record_with_cas(
-        db_pool,
-        concepts::storage::SystemEventCode::ServerConfigurationResolved,
-        None,
-        None,
-        serde_json::json!({
-            "obelisk_version": PKG_VERSION,
-            "server_http_policy_event_id": server_http_policy_event_id,
-        }),
-        digest,
-        bytes,
-    )
-    .await
-    .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
-    Ok(())
 }
 
 struct ServerInit {

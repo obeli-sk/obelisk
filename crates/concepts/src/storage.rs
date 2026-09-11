@@ -1528,7 +1528,6 @@ pub enum SystemEventCode {
     DeploymentSwitchStarted,
     DeploymentSwitchCompleted,
     DeploymentSwitchFailed,
-    ServerHttpPolicyApplied,
     ComponentHttpPolicyApplied,
     OutboundHttpDenied,
     AdminExecutionDeleteStarted,
@@ -1558,7 +1557,6 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "deployment.switch.started",
             Self::DeploymentSwitchCompleted => "deployment.switch.completed",
             Self::DeploymentSwitchFailed => "deployment.switch.failed",
-            Self::ServerHttpPolicyApplied => "server.http_policy.applied",
             Self::ComponentHttpPolicyApplied => "component.http_policy.applied",
             Self::OutboundHttpDenied => "outbound_http.denied",
             Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
@@ -1600,7 +1598,6 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "Deployment switch started",
             Self::DeploymentSwitchCompleted => "Deployment switch completed",
             Self::DeploymentSwitchFailed => "Deployment switch failed",
-            Self::ServerHttpPolicyApplied => "Server HTTP policy applied",
             Self::ComponentHttpPolicyApplied => "Component HTTP policy applied",
             Self::OutboundHttpDenied => "Outbound HTTP request denied",
             Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
@@ -1696,7 +1693,6 @@ impl SystemEvent {
             "deployment.switch.started" => SystemEventCode::DeploymentSwitchStarted.message(),
             "deployment.switch.completed" => SystemEventCode::DeploymentSwitchCompleted.message(),
             "deployment.switch.failed" => SystemEventCode::DeploymentSwitchFailed.message(),
-            "server.http_policy.applied" => SystemEventCode::ServerHttpPolicyApplied.message(),
             "component.http_policy.applied" => {
                 SystemEventCode::ComponentHttpPolicyApplied.message()
             }
@@ -1745,7 +1741,7 @@ pub struct SystemEventFilter {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpPolicyEventIds {
-    pub server_policy_event_id: SystemEventId,
+    pub server_configuration_event_id: SystemEventId,
     pub component_policy_event_id: SystemEventId,
 }
 
@@ -3771,7 +3767,6 @@ mod tests {
             SystemEventCode::DeploymentSwitchStarted,
             SystemEventCode::DeploymentSwitchCompleted,
             SystemEventCode::DeploymentSwitchFailed,
-            SystemEventCode::ServerHttpPolicyApplied,
             SystemEventCode::ComponentHttpPolicyApplied,
             SystemEventCode::OutboundHttpDenied,
             SystemEventCode::AdminExecutionDeleteStarted,

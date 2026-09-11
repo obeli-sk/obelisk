@@ -5717,11 +5717,11 @@ impl DbAdmin for SqlitePool {
         let server_policy_hash = server_policy_hash.to_owned();
         self.transaction(move |tx| {
             let ids = tx.query_row(
-                "SELECT event_id, json_extract(details, '$.server_policy_event_id') FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = ?1 AND json_extract(details, '$.component') = ?2 AND json_extract(details, '$.component_policy_hash') = ?3 AND json_extract(details, '$.server_policy_hash') = ?4 ORDER BY event_id DESC LIMIT 1",
+                "SELECT event_id, json_extract(details, '$.server_configuration_event_id') FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = ?1 AND json_extract(details, '$.component') = ?2 AND json_extract(details, '$.component_policy_hash') = ?3 AND json_extract(details, '$.server_policy_hash') = ?4 ORDER BY event_id DESC LIMIT 1",
                 rusqlite::params![deployment_id, component, component_policy_hash, server_policy_hash],
                 |row| Ok(HttpPolicyEventIds {
                     component_policy_event_id: row.get::<_, String>(0)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err)))?,
-                    server_policy_event_id: row.get::<_, String>(1)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(err)))?,
+                    server_configuration_event_id: row.get::<_, String>(1)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(err)))?,
                 }),
             ).optional()?;
             Ok(ids)
