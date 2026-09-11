@@ -295,6 +295,20 @@ impl args::Admin {
                 );
                 print_result(json, &response, &message)
             }
+            Self::ServerRunId { json, api_url } => {
+                let id: concepts::prefixed_ulid::ServerRunId = send_json(
+                    client
+                        .get(format!("{api_url}/v1/admin/server-run-id"))
+                        .header(ACCEPT, "application/json"),
+                )
+                .await?;
+                if json {
+                    println!("\"{id}\"");
+                } else {
+                    println!("{id}");
+                }
+                Ok(())
+            }
         }
     }
 }
