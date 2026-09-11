@@ -4,7 +4,7 @@ use crate::config::deployment::DurationConfig;
 use crate::config::server::RetentionTomlConfig;
 use crate::config::server::{GarbageCollectionTomlConfig, RetentionPolicyTomlConfig};
 use anyhow::{Context as _, bail};
-use concepts::storage::{DbPool, RetentionPolicy};
+use concepts::storage::{DbPool, RetentionPolicy, SystemEvent, SystemEventLevel};
 use executor::AbortOnDropHandle;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -78,13 +78,13 @@ fn duration(name: &str, value: DurationConfig) -> anyhow::Result<Duration> {
     Ok(Duration::from_secs(seconds))
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct CategoryStats {
     affected: u64,
     active: Duration,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct SweepStats {
     execution_retention: CategoryStats,
     deployment_retention: CategoryStats,
@@ -112,6 +112,57 @@ impl SweepStats {
             "Periodic garbage collection finished"
         );
     }
+
+    fn affected(self) -> u64 {
+        self.execution_retention
+            .affected
+            .saturating_add(self.deployment_retention.affected)
+            .saturating_add(self.system_event_retention.affected)
+            .saturating_add(self.execution_gc.affected)
+            .saturating_add(self.cas_gc.affected)
+    }
+
+    fn details(self, total: Duration) -> serde_json::Value {
+        serde_json::json!({
+            "total_ms": duration_millis(total),
+            "execution_retention": category_details(self.execution_retention),
+            "deployment_retention": category_details(self.deployment_retention),
+            "system_event_retention": category_details(self.system_event_retention),
+            "execution_gc": category_details(self.execution_gc),
+            "cas_gc": {
+                "affected": self.cas_gc.affected,
+                "active_ms": duration_millis(self.cas_gc.active),
+                "bytes_deleted": self.cas_bytes,
+            },
+        })
+    }
+}
+
+struct SweepFailure {
+    category: &'static str,
+    stats: SweepStats,
+    source: anyhow::Error,
+}
+
+impl SweepFailure {
+    fn new(category: &'static str, stats: SweepStats, source: impl Into<anyhow::Error>) -> Self {
+        Self {
+            category,
+            stats,
+            source: source.into(),
+        }
+    }
+}
+
+fn category_details(stats: CategoryStats) -> serde_json::Value {
+    serde_json::json!({
+        "affected": stats.affected,
+        "active_ms": duration_millis(stats.active),
+    })
+}
+
+fn duration_millis(duration: Duration) -> u64 {
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 pub(super) fn spawn(
@@ -150,9 +201,38 @@ pub(super) fn spawn(
                 _ = termination_watcher.changed() => break,
                 result = sweep => result,
             };
+            let total = started.elapsed();
             match result {
-                Ok(stats) => stats.log(started.elapsed()),
-                Err(err) => warn!("Periodic garbage collection failed: {err:#}"),
+                Ok(stats) => {
+                    stats.log(total);
+                    if stats.affected() > 0 {
+                        persist_event(
+                            &db_pool,
+                            SystemEventLevel::Info,
+                            "maintenance.gc.completed",
+                            "Periodic garbage collection completed",
+                            stats.details(total),
+                        )
+                        .await;
+                    }
+                }
+                Err(failure) => {
+                    warn!(
+                        category = failure.category,
+                        "Periodic garbage collection failed: {:#}", failure.source
+                    );
+                    let mut details = failure.stats.details(total);
+                    details["category"] = failure.category.into();
+                    details["error"] = format!("{:#}", failure.source).into();
+                    persist_event(
+                        &db_pool,
+                        SystemEventLevel::Warning,
+                        "maintenance.gc.failed",
+                        "Periodic garbage collection failed",
+                        details,
+                    )
+                    .await;
+                }
             }
         }
         debug!("Ending maintenance garbage collector");
@@ -164,22 +244,26 @@ async fn run_sweep(
     db_pool: &Arc<dyn DbPool>,
     deployment_switch_manager: &DeploymentSwitchManagerHandle,
     config: ValidatedConfig,
-) -> anyhow::Result<SweepStats> {
+) -> Result<SweepStats, Box<SweepFailure>> {
     let mut stats = SweepStats::default();
     if let Some(max_age) = config.executions {
         let cutoff = cutoff(max_age);
         loop {
             let started = std::time::Instant::now();
-            let result = db_pool
-                .admin_conn()
-                .await?
-                .retain_executions(
-                    RetentionPolicy::CreatedAtOrAfter(cutoff),
-                    config.batch_size,
-                    false,
-                    false,
-                )
-                .await?;
+            let result = async {
+                db_pool
+                    .admin_conn()
+                    .await?
+                    .retain_executions(
+                        RetentionPolicy::CreatedAtOrAfter(cutoff),
+                        config.batch_size,
+                        false,
+                        false,
+                    )
+                    .await
+            }
+            .await
+            .map_err(|source| Box::new(SweepFailure::new("execution_retention", stats, source)))?;
             stats.execution_retention.active += started.elapsed();
             stats.execution_retention.affected += result.deleted_execution_trees;
             delay_after_work(result.deleted_execution_trees, config.batch_delay).await;
@@ -192,17 +276,21 @@ async fn run_sweep(
         let cutoff = cutoff(max_age);
         loop {
             let started = std::time::Instant::now();
-            let result = db_pool
-                .admin_conn()
-                .await?
-                .retain_deployments(
-                    RetentionPolicy::CreatedAtOrAfter(cutoff),
-                    config.batch_size,
-                    true,
-                    false,
-                    false,
-                )
-                .await?;
+            let result = async {
+                db_pool
+                    .admin_conn()
+                    .await?
+                    .retain_deployments(
+                        RetentionPolicy::CreatedAtOrAfter(cutoff),
+                        config.batch_size,
+                        true,
+                        false,
+                        false,
+                    )
+                    .await
+            }
+            .await
+            .map_err(|source| Box::new(SweepFailure::new("deployment_retention", stats, source)))?;
             stats.deployment_retention.active += started.elapsed();
             stats.deployment_retention.affected += result.deleted_deployments;
             delay_after_work(result.deleted_deployments, config.batch_delay).await;
@@ -215,11 +303,17 @@ async fn run_sweep(
         let cutoff = cutoff(max_age);
         loop {
             let started = std::time::Instant::now();
-            let result = db_pool
-                .admin_conn()
-                .await?
-                .retain_system_events(cutoff, config.batch_size)
-                .await?;
+            let result = async {
+                db_pool
+                    .admin_conn()
+                    .await?
+                    .retain_system_events(cutoff, config.batch_size)
+                    .await
+            }
+            .await
+            .map_err(|source| {
+                Box::new(SweepFailure::new("system_event_retention", stats, source))
+            })?;
             stats.system_event_retention.active += started.elapsed();
             stats.system_event_retention.affected += result.deleted;
             delay_after_work(result.deleted, config.batch_delay).await;
@@ -230,11 +324,15 @@ async fn run_sweep(
     }
     loop {
         let started = std::time::Instant::now();
-        let result = db_pool
-            .admin_conn()
-            .await?
-            .gc_executions(config.batch_size)
-            .await?;
+        let result = async {
+            db_pool
+                .admin_conn()
+                .await?
+                .gc_executions(config.batch_size)
+                .await
+        }
+        .await
+        .map_err(|source| Box::new(SweepFailure::new("execution_gc", stats, source)))?;
         stats.execution_gc.active += started.elapsed();
         stats.execution_gc.affected += result.deleted_rows;
         delay_after_work(result.deleted_rows, config.batch_delay).await;
@@ -247,7 +345,9 @@ async fn run_sweep(
         let result = deployment_switch_manager
             .gc_cas(false, config.batch_size)
             .await
-            .map_err(|err| anyhow::anyhow!("CAS garbage collection failed: {err}"))?;
+            .map_err(|source| {
+                Box::new(SweepFailure::new("cas_gc", stats, anyhow::anyhow!(source)))
+            })?;
         stats.cas_gc.active += started.elapsed();
         stats.cas_gc.affected += result.deleted_blobs;
         stats.cas_bytes += result.deleted_bytes;
@@ -257,6 +357,26 @@ async fn run_sweep(
         }
     }
     Ok(stats)
+}
+
+async fn persist_event(
+    db_pool: &Arc<dyn DbPool>,
+    level: SystemEventLevel,
+    code: &'static str,
+    message: &'static str,
+    details: serde_json::Value,
+) {
+    let result = async {
+        db_pool
+            .admin_conn()
+            .await?
+            .append_system_event(SystemEvent::new(level, code, message, None, None, details))
+            .await
+    }
+    .await;
+    if let Err(err) = result {
+        warn!(code, "Cannot persist system event: {err}");
+    }
 }
 
 fn cutoff(max_age: Duration) -> chrono::DateTime<chrono::Utc> {
