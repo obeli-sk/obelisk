@@ -20,7 +20,7 @@ use concepts::{
     ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
     SupportedFunctionReturnValue,
     component_id::ComponentDigest,
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, SystemEventId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ServerRunId, SystemEventId},
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
@@ -347,7 +347,8 @@ pub(crate) mod admin {
     pub(crate) struct SystemEventResponse {
         #[schema(value_type = String)]
         pub(crate) event_id: SystemEventId,
-        pub(crate) server_run_id: String,
+        #[schema(value_type = String)]
+        pub(crate) server_run_id: ServerRunId,
         pub(crate) created_at: DateTime<Utc>,
         pub(crate) level: String,
         pub(crate) code: String,
@@ -381,7 +382,8 @@ pub(crate) mod admin {
 
     #[derive(Debug, Default, Deserialize, IntoParams)]
     pub(crate) struct SystemEventsQuery {
-        server_run_id: Option<String>,
+        #[param(value_type = Option<String>)]
+        server_run_id: Option<ServerRunId>,
         level: Option<String>,
         code: Option<String>,
         #[param(value_type = Option<String>)]

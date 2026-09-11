@@ -19,6 +19,7 @@ use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
+use crate::prefixed_ulid::ServerRunId;
 use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
@@ -1503,7 +1504,7 @@ impl SystemEventLevel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
     pub event_id: SystemEventId,
-    pub server_run_id: String,
+    pub server_run_id: ServerRunId,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
@@ -1624,16 +1625,14 @@ pub enum SystemEventValidationError {
     DetailsTooLarge,
 }
 
-static SERVER_RUN_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static SERVER_RUN_ID: std::sync::OnceLock<ServerRunId> = std::sync::OnceLock::new();
 
 #[must_use]
-pub fn initialize_server_run_id() -> String {
-    SERVER_RUN_ID
-        .get_or_init(|| format!("srv_{}", ulid::Ulid::new()))
-        .clone()
+pub fn initialize_server_run_id() -> ServerRunId {
+    *SERVER_RUN_ID.get_or_init(ServerRunId::generate)
 }
 
-fn server_run_id() -> String {
+fn server_run_id() -> ServerRunId {
     initialize_server_run_id()
 }
 
@@ -1731,7 +1730,7 @@ impl SystemEvent {
 #[derive(Debug, Clone, Default)]
 pub struct SystemEventFilter {
     pub event_id: Option<SystemEventId>,
-    pub server_run_id: Option<String>,
+    pub server_run_id: Option<ServerRunId>,
     pub level: Option<SystemEventLevel>,
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,

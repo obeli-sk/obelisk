@@ -232,7 +232,7 @@ impl args::Admin {
                     client
                         .get(format!("{api_url}/v1/admin/system-events"))
                         .query(&[
-                            ("server_run_id", server_run_id),
+                            ("server_run_id", server_run_id.map(|id| id.to_string())),
                             ("level", level),
                             ("code", code),
                         ])
