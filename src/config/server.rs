@@ -545,11 +545,6 @@ impl WasmGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    /// Deprecated: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]`
-    /// instead. When set, it overrides the per-workflow value for every workflow. Will be
-    /// removed in 0.42.
-    #[serde(default)]
-    pub(crate) lock_extension_leeway: Option<DurationConfig>,
     /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
     /// stops and returns that many writes as an advanceable prefix; advancing them and replaying
     /// again resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved
@@ -570,7 +565,6 @@ pub(crate) struct WorkflowsGlobalConfigToml {
 impl Default for WorkflowsGlobalConfigToml {
     fn default() -> Self {
         Self {
-            lock_extension_leeway: None,
             max_replay_captured_writes: default_max_replay_captured_writes(),
             max_events_per_run: default_max_events_per_run(),
             response_refresh_interval: default_response_refresh_interval(),

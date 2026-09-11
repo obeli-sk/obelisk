@@ -2143,9 +2143,6 @@ struct ServerVerifiedLaunch {
     engines: Engines,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
-    /// Deprecated server-wide override; when set, applies to every workflow. See
-    /// `WorkflowsGlobalConfigToml::lock_extension_leeway`.
-    deprecated_workflows_lock_extension_leeway: Option<Duration>,
     /// Bound on captured writes collected during a single replay pass. See
     /// `WorkflowsGlobalConfigToml::max_replay_captured_writes`.
     workflows_max_replay_captured_writes: usize,
@@ -2190,18 +2187,6 @@ impl ServerVerified {
             });
         }
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
-        // backcompat: 0.41 - `[workflows] lock_extension_leeway` moved to per-workflow config; remove this override in 0.42.
-        let deprecated_workflows_lock_extension_leeway: Option<Duration> = config
-            .workflows_global_config
-            .lock_extension_leeway
-            .map(Into::into);
-        if deprecated_workflows_lock_extension_leeway.is_some() {
-            warn!(
-                "`[workflows] lock_extension_leeway` is deprecated and will be removed in 0.42; \
-                 set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]` \
-                 instead. While set, it overrides the per-workflow value for every workflow."
-            );
-        }
         let workflows_max_replay_captured_writes =
             config.workflows_global_config.max_replay_captured_writes;
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
@@ -2281,7 +2266,6 @@ impl ServerVerified {
                 engines,
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
-                deprecated_workflows_lock_extension_leeway,
                 workflows_max_replay_captured_writes,
             },
             allow_exec_activities: config.allow_exec_activities,
@@ -2383,7 +2367,6 @@ impl ServerCompiledLinked {
             fuel,
             global_http_config,
             server_verified.build_semaphore,
-            server_verified.deprecated_workflows_lock_extension_leeway,
             server_verified.workflows_max_replay_captured_writes,
             termination_watcher,
             suppress_linking_errors,
@@ -4596,7 +4579,6 @@ async fn compile_and_link(
     fuel: Option<u64>,
     global_http_config: GlobalHttpConfig,
     build_semaphore: Option<u64>,
-    deprecated_workflows_lock_extension_leeway: Option<Duration>,
     workflows_max_replay_captured_writes: usize,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
@@ -4777,12 +4759,11 @@ async fn compile_and_link(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
-                    let leeway = deprecated_workflows_lock_extension_leeway
-                        .unwrap_or(workflow.lock_extension_leeway);
+                    let lock_extension_leeway = workflow.lock_extension_leeway;
                     prespawn_workflow_wasm(
                         workflow,
                         &engines,
-                        leeway,
+                        lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                     )
                     .map(|(worker, component_config, frame_files)| {
@@ -4803,13 +4784,12 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
-                    let leeway = deprecated_workflows_lock_extension_leeway
-                        .unwrap_or(workflow_js.lock_extension_leeway);
+                    let lock_extension_leeway = workflow_js.lock_extension_leeway;
                     prespawn_workflow_js(
                         workflow_js,
                         &engines,
                         workflow_js_runnable,
-                        leeway,
+                        lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                     )
                         .map(|(worker, component_config, frame_files)| {

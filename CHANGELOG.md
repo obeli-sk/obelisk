@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** *(config)* Removed deprecated deployment `component_digest` overrides. Component
   digests are always computed from component content and configuration.
+- **Breaking:** *(config)* Removed the deprecated server-wide
+  `[workflows].lock_extension_leeway`; configure it on each workflow component.
 
 ### Added
 
