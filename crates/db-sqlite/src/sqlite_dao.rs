@@ -5634,14 +5634,38 @@ impl DbAdmin for SqlitePool {
                 let details = serde_json::to_string(&event.details)
                     .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
                 tx.execute(
-                    "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key],
+                    "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string)],
                 )?;
                 Ok(())
             },
             TxType::Other,
             "append_system_event",
         ).await
+    }
+
+    async fn append_system_event_with_cas(
+        &self,
+        event: SystemEvent,
+        content: Vec<u8>,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                let digest = event.cas_digest.as_ref().expect("CAS digest must be set");
+                Self::upload_file_tx(tx, digest, &content)?;
+                let details = serde_json::to_string(&event.details).map_err(|err| {
+                    RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
+                })?;
+                tx.execute(
+                    "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string()],
+                )?;
+                Ok(())
+            },
+            TxType::MultipleWrites,
+            "append_system_event_with_cas",
+        )
+        .await
     }
 
     async fn list_system_events(
@@ -5651,7 +5675,7 @@ impl DbAdmin for SqlitePool {
         self.transaction(
             move |tx| {
                 let mut statement = tx.prepare(
-                    "SELECT event_id, created_at, level, code, execution_id, deployment_id, details FROM t_system_event
+                    "SELECT event_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
                      WHERE (?1 IS NULL OR level = ?1) AND (?2 IS NULL OR code = ?2)
                        AND (?3 IS NULL OR deployment_id = ?3) AND (?4 IS NULL OR event_id < ?4)
                      ORDER BY event_id DESC LIMIT ?5"
@@ -5668,6 +5692,7 @@ impl DbAdmin for SqlitePool {
                         level: match level.as_str() { "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
                         code: row.get(3)?,
                         dedupe_key: None,
+                        cas_digest: row.get::<_, Option<String>>(7)?.map(|digest| digest.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err)))?,
                         execution_id: row.get::<_, Option<String>>(4)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))?,
                         deployment_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
                         details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,
@@ -6014,9 +6039,9 @@ impl CasGc for SqlitePool {
                 let (referenced_blobs, orphan_blobs, deleted_bytes) = tx
                     .query_row(
                         "SELECT \
-                         COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                         COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source)), \
-                         COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT ?1)), 0) \
+                         COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
+                         COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
+                         COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT ?1)), 0) \
                          FROM t_file",
                         [i64::from(batch_size.max(1))],
                         |row| {
@@ -6033,7 +6058,7 @@ impl CasGc for SqlitePool {
                 } else {
                     tx.execute(
                         "DELETE FROM t_file WHERE rowid IN (SELECT rowid FROM t_file WHERE digest NOT IN \
-                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source) ORDER BY digest LIMIT ?1)",
+                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT ?1)",
                         [i64::from(batch_size.max(1))],
                     )
                     .map_err(RusqliteError::from)? as u64

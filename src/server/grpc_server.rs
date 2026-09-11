@@ -2021,7 +2021,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                 "limit must not exceed 1000",
             ));
         }
-        let events = self
+        let mut events = self
             .db_pool
             .admin_conn()
             .await
@@ -2035,6 +2035,8 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             })
             .await
             .to_status()?;
+        crate::server::system_event_writer::hydrate_cas_details(self.db_pool.as_ref(), &mut events)
+            .await;
         let next_cursor =
             (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
         Ok(tonic::Response::new(grpc_gen::ListSystemEventsResponse {

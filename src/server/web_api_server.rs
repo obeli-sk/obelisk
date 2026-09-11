@@ -401,7 +401,7 @@ pub(crate) mod admin {
         if limit == 0 || limit > 1000 {
             return Err(precondition("limit must be between 1 and 1000"));
         }
-        let events = state
+        let mut events = state
             .db_pool
             .admin_conn()
             .await
@@ -415,6 +415,11 @@ pub(crate) mod admin {
             })
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        crate::server::system_event_writer::hydrate_cas_details(
+            state.db_pool.as_ref(),
+            &mut events,
+        )
+        .await;
         let next_cursor =
             (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
         let events = events

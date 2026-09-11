@@ -1506,6 +1506,8 @@ pub struct SystemEvent {
     pub level: SystemEventLevel,
     pub code: String,
     pub dedupe_key: Option<String>,
+    #[serde(skip)]
+    pub cas_digest: Option<ContentDigest>,
     pub execution_id: Option<ExecutionId>,
     pub deployment_id: Option<DeploymentId>,
     pub details: serde_json::Value,
@@ -1515,6 +1517,8 @@ pub struct SystemEvent {
 pub enum SystemEventCode {
     ServerStartupCompleted,
     ServerStartupFailed,
+    ServerShutdownRequested,
+    ServerShutdownCompleted,
     DeploymentSubmitStarted,
     DeploymentSubmitCompleted,
     DeploymentSubmitFailed,
@@ -1541,6 +1545,8 @@ impl SystemEventCode {
         match self {
             Self::ServerStartupCompleted => "server.startup.completed",
             Self::ServerStartupFailed => "server.startup.failed",
+            Self::ServerShutdownRequested => "server.shutdown.requested",
+            Self::ServerShutdownCompleted => "server.shutdown.completed",
             Self::DeploymentSubmitStarted => "deployment.submit.started",
             Self::DeploymentSubmitCompleted => "deployment.submit.completed",
             Self::DeploymentSubmitFailed => "deployment.submit.failed",
@@ -1579,6 +1585,8 @@ impl SystemEventCode {
         match self {
             Self::ServerStartupCompleted => "Server startup completed",
             Self::ServerStartupFailed => "Server startup failed",
+            Self::ServerShutdownRequested => "Server shutdown requested",
+            Self::ServerShutdownCompleted => "Server shutdown completed",
             Self::DeploymentSubmitStarted => "Deployment submission started",
             Self::DeploymentSubmitCompleted => "Deployment submission completed",
             Self::DeploymentSubmitFailed => "Deployment submission failed",
@@ -1631,6 +1639,7 @@ impl SystemEvent {
             level: code.level(),
             code: code.as_str().to_owned(),
             dedupe_key: None,
+            cas_digest: None,
             execution_id,
             deployment_id,
             details,
@@ -1644,10 +1653,18 @@ impl SystemEvent {
     }
 
     #[must_use]
+    pub fn with_cas_digest(mut self, digest: ContentDigest) -> Self {
+        self.cas_digest = Some(digest);
+        self
+    }
+
+    #[must_use]
     pub fn message(&self) -> &str {
         match self.code.as_str() {
             "server.startup.completed" => SystemEventCode::ServerStartupCompleted.message(),
             "server.startup.failed" => SystemEventCode::ServerStartupFailed.message(),
+            "server.shutdown.requested" => SystemEventCode::ServerShutdownRequested.message(),
+            "server.shutdown.completed" => SystemEventCode::ServerShutdownCompleted.message(),
             "deployment.submit.started" => SystemEventCode::DeploymentSubmitStarted.message(),
             "deployment.submit.completed" => SystemEventCode::DeploymentSubmitCompleted.message(),
             "deployment.submit.failed" => SystemEventCode::DeploymentSubmitFailed.message(),
@@ -1714,6 +1731,11 @@ pub trait CasGc: Send + Sync {
 #[async_trait]
 pub trait DbAdmin: Send + Sync {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite>;
+    async fn append_system_event_with_cas(
+        &self,
+        event: SystemEvent,
+        content: Vec<u8>,
+    ) -> Result<(), DbErrorWrite>;
 
     async fn list_system_events(
         &self,
@@ -3683,6 +3705,8 @@ mod tests {
         for code in [
             SystemEventCode::ServerStartupCompleted,
             SystemEventCode::ServerStartupFailed,
+            SystemEventCode::ServerShutdownRequested,
+            SystemEventCode::ServerShutdownCompleted,
             SystemEventCode::DeploymentSubmitStarted,
             SystemEventCode::DeploymentSubmitCompleted,
             SystemEventCode::DeploymentSubmitFailed,

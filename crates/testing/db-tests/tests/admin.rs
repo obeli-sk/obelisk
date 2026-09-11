@@ -129,6 +129,44 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     db_close.close().await;
 }
 
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn system_event_cas_details_are_retained_with_the_event(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let cas = db_pool.cas_conn().await.unwrap();
+    let content = br#"{"policy":"large"}"#.to_vec();
+    let digest = concepts::cas::content_digest(&content);
+    let event = SystemEvent::new(
+        SystemEventCode::DeploymentHttpPolicyApplied,
+        None,
+        Some(DeploymentId::generate()),
+        serde_json::json!({"policy_digest": digest.to_string()}),
+    )
+    .unwrap()
+    .with_cas_digest(digest.clone());
+    let admin = db_pool.admin_conn().await.unwrap();
+    admin
+        .append_system_event_with_cas(event, content)
+        .await
+        .unwrap();
+
+    let gc = db_pool.cas_gc_conn().await.unwrap();
+    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 0);
+    assert!(cas.contains_blob(&digest).await.unwrap());
+
+    admin
+        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 100)
+        .await
+        .unwrap();
+    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 1);
+    assert!(!cas.contains_blob(&digest).await.unwrap());
+
+    drop((admin, gc, cas));
+    db_close.close().await;
+}
+
 async fn create_execution(
     db_pool: &dyn concepts::storage::DbPool,
     clock: &SimClock,

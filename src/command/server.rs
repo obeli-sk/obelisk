@@ -3445,13 +3445,30 @@ async fn record_http_policy_audits(
     deployment_id: DeploymentId,
     audits: impl IntoIterator<Item = serde_json::Value>,
 ) {
-    for details in audits {
-        crate::server::system_event_writer::record(
+    for mut policy in audits {
+        let object = policy
+            .as_object_mut()
+            .expect("HTTP policy audit must be an object");
+        let component = object
+            .remove("component")
+            .expect("HTTP policy audit must identify its component");
+        let policy_set_hash = object
+            .remove("policy_set_hash")
+            .expect("HTTP policy audit must have a hash");
+        let bytes = serde_json::to_vec(&policy).expect("HTTP policy audit must encode");
+        let digest = concepts::cas::content_digest(&bytes);
+        crate::server::system_event_writer::record_with_cas(
             db_pool,
             concepts::storage::SystemEventCode::DeploymentHttpPolicyApplied,
             None,
             Some(deployment_id),
-            details,
+            serde_json::json!({
+                "component": component,
+                "policy_set_hash": policy_set_hash,
+                "policy_digest": digest.to_string(),
+            }),
+            digest,
+            bytes,
         )
         .await;
     }
@@ -3696,6 +3713,16 @@ impl ServerInit {
             deployment_switch_manager,
         } = self;
 
+        let deployment_id = deployment_ctx.read().await.deployment_id;
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerShutdownRequested,
+            None,
+            Some(deployment_id),
+            serde_json::json!({"reason": "termination_requested"}),
+        )
+        .await;
+
         deployment_switch_manager.close().await;
 
         debug!("Closing executors");
@@ -3719,7 +3746,6 @@ impl ServerInit {
         .await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.
-        drop(db_pool);
         drop(timers_watcher);
         drop(cancel_watcher);
         drop(cancellation_driver);
@@ -3730,6 +3756,15 @@ impl ServerInit {
         drop(webhook_registry);
         drop(log_forwarder_sender);
         drop(log_db_forarder); // Some activity messages might not be stored.
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerShutdownCompleted,
+            None,
+            Some(deployment_id),
+            serde_json::json!({}),
+        )
+        .await;
+        drop(db_pool);
         debug!("Closing db");
         db_close.await;
     }
