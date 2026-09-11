@@ -1810,6 +1810,7 @@ pub(crate) async fn run_internal(
         Some(&deployment_resolved),
         RuntimeConfigAvailability::Strict,
     ) {
+        let (error, error_truncated) = bounded_system_event_text(&err.to_string());
         crate::server::system_event_writer::record(
             db_pool.as_ref(),
             concepts::storage::SystemEventCode::ServerStartupFailed,
@@ -1817,7 +1818,8 @@ pub(crate) async fn run_internal(
             Some(active_deployment_id),
             serde_json::json!({
                 "stage": "deployment_preflight",
-                "error": err.to_string(),
+                "error": error,
+                "error_truncated": error_truncated,
             }),
         )
         .await;
@@ -1920,15 +1922,6 @@ pub(crate) async fn run_internal(
         }
         SwitchError::Other(err) => err,
     })?;
-    crate::server::system_event_writer::record(
-        server_init.db_pool.as_ref(),
-        concepts::storage::SystemEventCode::ServerStartupCompleted,
-        None,
-        Some(active_deployment_id),
-        serde_json::json!({}),
-    )
-    .await;
-
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.server_verified.clone(),
         server_init.db_pool.clone(),
@@ -2037,9 +2030,32 @@ pub(crate) async fn run_internal(
                 .into_make_service()
             }
         };
-        let listener = TcpListener::bind(api_listening_addr)
-            .await
-            .with_context(|| format!("cannot bind to {api_listening_addr}"))?;
+        let listener = match TcpListener::bind(api_listening_addr).await {
+            Ok(listener) => listener,
+            Err(source) => {
+                crate::server::system_event_writer::record(
+                    server_init.db_pool.as_ref(),
+                    concepts::storage::SystemEventCode::ServerStartupFailed,
+                    None,
+                    Some(active_deployment_id),
+                    serde_json::json!({
+                        "stage": "api_bind",
+                        "api_listening_addr": api_listening_addr.to_string(),
+                        "error": source.to_string(),
+                    }),
+                )
+                .await;
+                return Err(source).with_context(|| format!("cannot bind to {api_listening_addr}"));
+            }
+        };
+        crate::server::system_event_writer::record(
+            server_init.db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerStartupCompleted,
+            None,
+            Some(active_deployment_id),
+            serde_json::json!({"api_listening_addr": api_listening_addr.to_string()}),
+        )
+        .await;
 
         axum::serve(listener, app_svc)
             .with_graceful_shutdown(async move {
@@ -2053,6 +2069,14 @@ pub(crate) async fn run_internal(
         // Normally Axum blocks before this point until all clients are disconnected.
         debug!("Server {api_listening_addr} has been closed");
     } else {
+        crate::server::system_event_writer::record(
+            server_init.db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerStartupCompleted,
+            None,
+            Some(active_deployment_id),
+            serde_json::json!({"api_listening_addr": null}),
+        )
+        .await;
         obelisk_is_ready();
         let _: Result<_, _> = termination_watcher.changed().await;
         server_init.close().await;
@@ -2789,19 +2813,25 @@ pub(crate) async fn submit_deployment(
         Err(err) => {
             info!(outcome = "error", error = %err, "Deployment submission finished");
             debug!(error = ?err, "Deployment submission error details");
-            let (kind, error, missing_secrets) = match err {
-                SubmitDeploymentError::Busy => ("busy", err.to_string(), None),
+            let (kind, error, missing_secrets, missing_secret_count) = match err {
+                SubmitDeploymentError::Busy => ("busy", err.to_string(), None, None),
                 SubmitDeploymentError::Conflict(source) => {
-                    ("conflict", format!("{source:#}"), None)
+                    ("conflict", format!("{source:#}"), None, None)
                 }
-                SubmitDeploymentError::Package(source) => ("package", format!("{source:?}"), None),
+                SubmitDeploymentError::Package(source) => {
+                    ("package", format!("{source:?}"), None, None)
+                }
                 SubmitDeploymentError::UnregisteredSecrets(names) => (
                     "unregistered_secrets",
                     err.to_string(),
-                    Some(names.iter().collect::<Vec<_>>()),
+                    Some(names.iter().take(32).collect::<Vec<_>>()),
+                    Some(names.len()),
                 ),
-                SubmitDeploymentError::Other(source) => ("validation", format!("{source:#}"), None),
+                SubmitDeploymentError::Other(source) => {
+                    ("validation", format!("{source:#}"), None, None)
+                }
             };
+            let (error, error_truncated) = bounded_system_event_text(&error);
             crate::server::system_event_writer::record(
                 event_db_pool.as_ref(),
                 concepts::storage::SystemEventCode::DeploymentSubmitFailed,
@@ -2810,7 +2840,9 @@ pub(crate) async fn submit_deployment(
                 serde_json::json!({
                     "kind": kind,
                     "error": error,
+                    "error_truncated": error_truncated,
                     "missing_secrets": missing_secrets,
+                    "missing_secret_count": missing_secret_count,
                 }),
             )
             .await;
@@ -3115,9 +3147,14 @@ pub(crate) async fn switch_deployment(
                 SwitchError::NotFound => ("not_found", "deployment not found".to_string()),
                 SwitchError::Other(source) => ("validation", format!("{source:#}")),
             };
+            let (error, error_truncated) = bounded_system_event_text(&error);
             (
                 concepts::storage::SystemEventCode::DeploymentSwitchFailed,
-                serde_json::json!({"kind": kind, "error": error}),
+                serde_json::json!({
+                    "kind": kind,
+                    "error": error,
+                    "error_truncated": error_truncated,
+                }),
             )
         }
     };
@@ -3130,6 +3167,12 @@ pub(crate) async fn switch_deployment(
     )
     .await;
     result
+}
+
+fn bounded_system_event_text(value: &str) -> (String, bool) {
+    const MAX_CHARS: usize = 2_000;
+    let truncated = value.chars().count() > MAX_CHARS;
+    (value.chars().take(MAX_CHARS).collect(), truncated)
 }
 
 async fn switch_deployment_inner(
