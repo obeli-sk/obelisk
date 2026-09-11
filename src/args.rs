@@ -156,6 +156,19 @@ pub(crate) enum Admin {
     Events(AdminEvents),
     #[command(subcommand)]
     Storage(AdminStorage),
+    /// Print the ID of the current server run.
+    ServerRunId {
+        /// Output as JSON instead of plain text.
+        #[arg(long)]
+        json: bool,
+        #[arg(
+            short,
+            long,
+            env = "OBELISK_API_URL",
+            default_value = "http://127.0.0.1:5005"
+        )]
+        api_url: String,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
