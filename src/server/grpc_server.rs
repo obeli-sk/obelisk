@@ -2143,6 +2143,15 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         }))
     }
 
+    async fn get_server_run_id(
+        &self,
+        _request: tonic::Request<grpc_gen::GetServerRunIdRequest>,
+    ) -> TonicRespResult<grpc_gen::GetServerRunIdResponse> {
+        Ok(tonic::Response::new(grpc_gen::GetServerRunIdResponse {
+            server_run_id: storage::initialize_server_run_id().to_string(),
+        }))
+    }
+
     async fn retain_system_events(
         &self,
         request: tonic::Request<grpc_gen::RetainSystemEventsRequest>,

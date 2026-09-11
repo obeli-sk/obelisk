@@ -141,6 +141,26 @@
         }
       }
     },
+    "/v1/admin/server-run-id": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "server_run_id",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/admin/storage": {
       "get": {
         "tags": [

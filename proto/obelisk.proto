@@ -61,6 +61,7 @@ service AdminRepository {
     rpc ListSystemEvents(ListSystemEventsRequest) returns (ListSystemEventsResponse);
     rpc GetSystemEvent(GetSystemEventRequest) returns (GetSystemEventResponse);
     rpc GetStorageStatus(GetStorageStatusRequest) returns (GetStorageStatusResponse);
+    rpc GetServerRunId(GetServerRunIdRequest) returns (GetServerRunIdResponse);
     rpc RetainSystemEvents(RetainSystemEventsRequest) returns (RetainSystemEventsResponse);
 }
 
@@ -1407,6 +1408,10 @@ message GetStorageStatusResponse {
     uint64 system_event_count = 4;
     optional uint64 cas_blob_count = 5;
     optional uint64 cas_bytes = 6;
+}
+message GetServerRunIdRequest {}
+message GetServerRunIdResponse {
+    string server_run_id = 1;
 }
 message RetainSystemEventsRequest {
     google.protobuf.Duration max_age = 1;

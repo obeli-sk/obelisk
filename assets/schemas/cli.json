@@ -1130,6 +1130,20 @@
               ]
             }
           ]
+        },
+        {
+          "name": "server-run-id",
+          "about": "Print the ID of the current server run",
+          "options": [
+            {
+              "name": "--json",
+              "help": "Output as JSON instead of plain text"
+            },
+            {
+              "name": "--api-url",
+              "short": "a"
+            }
+          ]
         }
       ]
     },

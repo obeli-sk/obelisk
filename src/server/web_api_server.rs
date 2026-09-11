@@ -120,6 +120,7 @@ pub(crate) struct WebApiState {
         admin::list_system_events,
         admin::get_system_event,
         admin::storage_status,
+        admin::server_run_id,
         admin::retain_system_events,
     ),
     components(schemas(
@@ -331,6 +332,7 @@ fn admin_router() -> Router<Arc<WebApiState>> {
             routing::post(admin::retain_system_events),
         )
         .route("/storage", routing::get(admin::storage_status))
+        .route("/server-run-id", routing::get(admin::server_run_id))
 }
 
 pub(crate) mod admin {
@@ -518,6 +520,14 @@ pub(crate) mod admin {
                 system_event_count: status.system_event_count,
             },
         ))
+    }
+
+    #[utoipa::path(get, path = "/v1/admin/server-run-id", tag = "admin", responses((status = 200, body = String)))]
+    pub(crate) async fn server_run_id() -> Response {
+        pretty_json_response(
+            StatusCode::OK,
+            &concepts::storage::initialize_server_run_id(),
+        )
     }
 
     #[utoipa::path(post, path = "/v1/admin/system-events/retain", tag = "admin", request_body = RetainSystemEventsRequest, responses((status = 200, body = RetainSystemEventsResponse)))]
