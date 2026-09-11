@@ -634,6 +634,7 @@ pub(crate) async fn run(
     params: RunParams,
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
+    let _server_run_id = concepts::storage::initialize_server_run_id();
     let _guard: Guard = init::init(&config)?;
     let deployment = if let Some(deployment_path) = deployment {
         Some(LocalDeployment::from_path(&deployment_path).await?)

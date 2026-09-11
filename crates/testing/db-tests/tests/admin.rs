@@ -42,13 +42,14 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let admin = db_pool.admin_conn().await.unwrap();
-    let first = SystemEvent::new(
+    let mut first = SystemEvent::new(
         SystemEventCode::AdminExecutionDeleteStarted,
         None,
         None,
         serde_json::json!({"version": "test"}),
     )
     .unwrap();
+    first.server_run_id = Some("srv_first".to_owned());
     let first_id = first.event_id.clone();
     admin.append_system_event(first).await.unwrap();
     assert_eq!(
@@ -67,13 +68,14 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
             .unwrap()
             .is_none()
     );
-    let second = SystemEvent::new(
+    let mut second = SystemEvent::new(
         SystemEventCode::MaintenanceGcFailed,
         None,
         None,
         serde_json::json!({"threshold_percent": 90}),
     )
     .unwrap();
+    second.server_run_id = Some("srv_second".to_owned());
     let second_id = second.event_id.clone();
     admin.append_system_event(second).await.unwrap();
 
@@ -87,6 +89,16 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         .unwrap();
     assert_eq!(warning.len(), 1);
     assert_eq!(warning[0].event_id, second_id);
+    let first_run = admin
+        .list_system_events(SystemEventFilter {
+            server_run_id: Some("srv_first".to_owned()),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(first_run.len(), 1);
+    assert_eq!(first_run[0].event_id, first_id);
     let first_page = admin
         .list_system_events(SystemEventFilter {
             limit: 1,

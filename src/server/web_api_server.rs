@@ -346,6 +346,7 @@ pub(crate) mod admin {
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct SystemEventResponse {
         pub(crate) event_id: String,
+        pub(crate) server_run_id: Option<String>,
         pub(crate) created_at: DateTime<Utc>,
         pub(crate) level: String,
         pub(crate) code: String,
@@ -379,6 +380,7 @@ pub(crate) mod admin {
 
     #[derive(Debug, Default, Deserialize, IntoParams)]
     pub(crate) struct SystemEventsQuery {
+        server_run_id: Option<String>,
         level: Option<String>,
         code: Option<String>,
         #[param(value_type = Option<String>)]
@@ -413,6 +415,7 @@ pub(crate) mod admin {
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
             .list_system_events(storage::SystemEventFilter {
                 event_id: None,
+                server_run_id: query.server_run_id,
                 level,
                 code: query.code,
                 deployment_id: query.deployment_id,
@@ -434,6 +437,7 @@ pub(crate) mod admin {
                 let message = event.message().to_owned();
                 SystemEventResponse {
                     event_id: event.event_id,
+                    server_run_id: event.server_run_id,
                     created_at: event.created_at,
                     level: event.level.as_str().into(),
                     code: event.code,
@@ -477,6 +481,7 @@ pub(crate) mod admin {
         let message = event.message().to_owned();
         let response = SystemEventResponse {
             event_id: event.event_id,
+            server_run_id: event.server_run_id,
             created_at: event.created_at,
             level: event.level.as_str().into(),
             code: event.code,

@@ -221,6 +221,7 @@ impl args::Admin {
                 print_result(json, &response, &message)
             }
             Self::Events(args::AdminEvents::List {
+                server_run_id,
                 level,
                 code,
                 limit,
@@ -230,7 +231,11 @@ impl args::Admin {
                 let response: SystemEventsResponse = send_json(
                     client
                         .get(format!("{api_url}/v1/admin/system-events"))
-                        .query(&[("level", level), ("code", code)])
+                        .query(&[
+                            ("server_run_id", server_run_id),
+                            ("level", level),
+                            ("code", code),
+                        ])
                         .query(&[("limit", limit)])
                         .header(ACCEPT, "application/json"),
                 )

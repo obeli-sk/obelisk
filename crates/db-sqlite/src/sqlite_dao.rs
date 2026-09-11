@@ -5634,8 +5634,8 @@ impl DbAdmin for SqlitePool {
                 let details = serde_json::to_string(&event.details)
                     .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
                 tx.execute(
-                    "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string)],
+                    "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id, event.server_run_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string)],
                 )?;
                 Ok(())
             },
@@ -5657,8 +5657,8 @@ impl DbAdmin for SqlitePool {
                     RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
                 })?;
                 tx.execute(
-                    "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string()],
+                    "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+                    rusqlite::params![event.event_id, event.server_run_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string()],
                 )?;
                 Ok(())
             },
@@ -5675,27 +5675,28 @@ impl DbAdmin for SqlitePool {
         self.transaction(
             move |tx| {
                 let mut statement = tx.prepare(
-                    "SELECT event_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
-                     WHERE (?1 IS NULL OR event_id = ?1) AND (?2 IS NULL OR level = ?2)
-                       AND (?3 IS NULL OR code = ?3) AND (?4 IS NULL OR deployment_id = ?4)
-                       AND (?5 IS NULL OR event_id < ?5) ORDER BY event_id DESC LIMIT ?6"
+                    "SELECT event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
+                     WHERE (?1 IS NULL OR event_id = ?1) AND (?2 IS NULL OR server_run_id = ?2)
+                       AND (?3 IS NULL OR level = ?3) AND (?4 IS NULL OR code = ?4)
+                       AND (?5 IS NULL OR deployment_id = ?5) AND (?6 IS NULL OR event_id < ?6)
+                     ORDER BY event_id DESC LIMIT ?7"
                 )?;
                 let rows = statement.query_map(rusqlite::params![
-                    filter.event_id, filter.level.map(SystemEventLevel::as_str), filter.code,
+                    filter.event_id, filter.server_run_id, filter.level.map(SystemEventLevel::as_str), filter.code,
                     filter.deployment_id.map(|id| id.to_string()), filter.before_event_id,
                     i64::from(filter.limit.clamp(1, 1000))
                 ], |row| {
-                    let level: String = row.get(2)?;
-                    let details: String = row.get(6)?;
+                    let level: String = row.get(3)?;
+                    let details: String = row.get(7)?;
                     Ok(SystemEvent {
-                        event_id: row.get(0)?, created_at: row.get(1)?,
+                        event_id: row.get(0)?, server_run_id: row.get(1)?, created_at: row.get(2)?,
                         level: match level.as_str() { "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
-                        code: row.get(3)?,
+                        code: row.get(4)?,
                         dedupe_key: None,
-                        cas_digest: row.get::<_, Option<String>>(7)?.map(|digest| digest.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err)))?,
-                        execution_id: row.get::<_, Option<String>>(4)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err)))?,
-                        deployment_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
-                        details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,
+                        cas_digest: row.get::<_, Option<String>>(8)?.map(|digest| digest.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err)))?,
+                        execution_id: row.get::<_, Option<String>>(5)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(err)))?,
+                        deployment_id: row.get::<_, Option<String>>(6)?.map(|id| id.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(err)))?,
+                        details: serde_json::from_str(&details).map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err)))?,
                     })
                 })?.collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)

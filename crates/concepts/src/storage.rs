@@ -1502,6 +1502,7 @@ impl SystemEventLevel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
     pub event_id: String,
+    pub server_run_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
@@ -1622,6 +1623,15 @@ pub enum SystemEventValidationError {
     DetailsTooLarge,
 }
 
+static SERVER_RUN_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[must_use]
+pub fn initialize_server_run_id() -> String {
+    SERVER_RUN_ID
+        .get_or_init(|| format!("srv_{}", ulid::Ulid::new()))
+        .clone()
+}
+
 impl SystemEvent {
     pub fn new(
         code: SystemEventCode,
@@ -1638,6 +1648,7 @@ impl SystemEvent {
         }
         Ok(Self {
             event_id: format!("sev_{}", ulid::Ulid::new()),
+            server_run_id: SERVER_RUN_ID.get().cloned(),
             created_at: Utc::now(),
             level: code.level(),
             code: code.as_str().to_owned(),
@@ -1713,6 +1724,7 @@ impl SystemEvent {
 #[derive(Debug, Clone, Default)]
 pub struct SystemEventFilter {
     pub event_id: Option<String>,
+    pub server_run_id: Option<String>,
     pub level: Option<SystemEventLevel>,
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,

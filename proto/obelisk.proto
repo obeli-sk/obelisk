@@ -1378,6 +1378,7 @@ message SystemEvent {
     optional ExecutionId execution_id = 6;
     optional DeploymentId deployment_id = 7;
     string details_json = 8;
+    optional string server_run_id = 9;
 }
 message ListSystemEventsRequest {
     optional SystemEventLevel level = 1;
@@ -1385,6 +1386,7 @@ message ListSystemEventsRequest {
     optional DeploymentId deployment_id = 3;
     optional string before_event_id = 4;
     uint32 limit = 5;
+    optional string server_run_id = 6;
 }
 message ListSystemEventsResponse {
     repeated SystemEvent events = 1;

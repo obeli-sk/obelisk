@@ -175,6 +175,9 @@ pub(crate) enum AdminEvents {
     },
     /// List persisted operator-visible system events.
     List {
+        /// Only show events emitted by this server run.
+        #[arg(long)]
+        server_run_id: Option<String>,
         #[arg(long)]
         level: Option<String>,
         #[arg(long)]
