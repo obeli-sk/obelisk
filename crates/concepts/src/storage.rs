@@ -1516,6 +1516,7 @@ pub struct SystemEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemEventCode {
+    ServerConfigurationResolved,
     ServerStartupCompleted,
     ServerStartupFailed,
     ServerShutdownRequested,
@@ -1545,6 +1546,7 @@ impl SystemEventCode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ServerConfigurationResolved => "server.configuration.resolved",
             Self::ServerStartupCompleted => "server.startup.completed",
             Self::ServerStartupFailed => "server.startup.failed",
             Self::ServerShutdownRequested => "server.shutdown.requested",
@@ -1586,6 +1588,7 @@ impl SystemEventCode {
     #[must_use]
     pub fn message(self) -> &'static str {
         match self {
+            Self::ServerConfigurationResolved => "Server configuration resolved",
             Self::ServerStartupCompleted => "Server startup completed",
             Self::ServerStartupFailed => "Server startup failed",
             Self::ServerShutdownRequested => "Server shutdown requested",
@@ -1679,6 +1682,9 @@ impl SystemEvent {
     #[must_use]
     pub fn message(&self) -> &str {
         match self.code.as_str() {
+            "server.configuration.resolved" => {
+                SystemEventCode::ServerConfigurationResolved.message()
+            }
             "server.startup.completed" => SystemEventCode::ServerStartupCompleted.message(),
             "server.startup.failed" => SystemEventCode::ServerStartupFailed.message(),
             "server.shutdown.requested" => SystemEventCode::ServerShutdownRequested.message(),
@@ -3750,6 +3756,7 @@ mod tests {
     #[test]
     fn system_event_codes_fit_storage_limits() {
         for code in [
+            SystemEventCode::ServerConfigurationResolved,
             SystemEventCode::ServerStartupCompleted,
             SystemEventCode::ServerStartupFailed,
             SystemEventCode::ServerShutdownRequested,

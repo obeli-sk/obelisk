@@ -270,6 +270,25 @@ impl JsonSchema for AllowExecActivities {
     }
 }
 
+impl AllowExecActivities {
+    pub(crate) fn audit(&self) -> serde_json::Value {
+        match self {
+            Self::Deny => serde_json::json!({"mode": "deny"}),
+            Self::AllowAny => serde_json::json!({"mode": "allow_any"}),
+            Self::Allowlist(entries) => serde_json::json!({
+                "mode": "allowlist",
+                "entries": entries.iter().map(|(name, digest)| {
+                    (name, digest.to_string())
+                }).collect::<BTreeMap<_, _>>(),
+            }),
+            Self::LegacyAllowlist(digests) => serde_json::json!({
+                "mode": "legacy_allowlist",
+                "digests": digests.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApiConfig {

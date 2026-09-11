@@ -48,6 +48,7 @@ pub(crate) struct SecretRegistry {
     public_allowed: HashSet<String>,
     /// Values captured for the public allowlist during startup.
     public_values: HashMap<String, String>,
+    environment_audit: serde_json::Value,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -64,6 +65,10 @@ impl SecretRegistry {
             sensitive: HashSet::default(),
             public_allowed: HashSet::default(),
             public_values: HashMap::default(),
+            environment_audit: serde_json::json!({
+                "public_env": {},
+                "secrets": {},
+            }),
         }
     }
 
@@ -95,6 +100,10 @@ impl SecretRegistry {
         self.values.get(name).cloned()
     }
 
+    pub(crate) fn environment_audit(&self) -> serde_json::Value {
+        self.environment_audit.clone()
+    }
+
     /// Build a registry directly from name -> value pairs, without touching the process
     /// environment. Every provided name is treated as sensitive. Test-only.
     #[cfg(test)]
@@ -108,6 +117,10 @@ impl SecretRegistry {
             sensitive,
             public_allowed: HashSet::default(),
             public_values: HashMap::default(),
+            environment_audit: serde_json::json!({
+                "public_env": {},
+                "secrets": {},
+            }),
         }
     }
 
@@ -140,9 +153,16 @@ impl SecretRegistry {
         let mut sensitive = HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN.to_string()]);
 
         let mut missing_env_vars = BTreeSet::new();
+        let mut secret_audit = std::collections::BTreeMap::new();
         for (logical_name, source) in secrets {
             match source {
                 SecretSourceToml::Env { env } => {
+                    let present = env_vars.lookup(&env).is_some()
+                        || was_legacy_token_wiped.is_some_and(|_| env == API_TOKEN_LEGACY);
+                    secret_audit.insert(
+                        logical_name.clone(),
+                        serde_json::json!({"env": env, "present": present}),
+                    );
                     let value = if let Some(value) = env_vars.lookup(&env) {
                         SecretString::from(value)
                     } else if let Some(value) = was_legacy_token_wiped
@@ -174,15 +194,23 @@ impl SecretRegistry {
         }
 
         let public_allowed: HashSet<_> = public_env.allowed.into_iter().collect();
-        let public_values = public_allowed
+        let public_values: HashMap<String, String> = public_allowed
             .iter()
             .filter_map(|name| env_vars.lookup(name).map(|value| (name.clone(), value)))
+            .collect();
+        let public_env_audit: std::collections::BTreeMap<_, _> = public_allowed
+            .iter()
+            .map(|name| (name.clone(), public_values.contains_key(name)))
             .collect();
         Ok(Self {
             values,
             sensitive,
             public_allowed,
             public_values,
+            environment_audit: serde_json::json!({
+                "public_env": public_env_audit,
+                "secrets": secret_audit,
+            }),
         })
     }
 }
@@ -282,6 +310,15 @@ mod tests {
             "s3cret"
         );
         assert!(registry.secret_lookup(SRC).is_none());
+        assert_eq!(
+            registry.environment_audit(),
+            serde_json::json!({
+                "public_env": {},
+                "secrets": {
+                    "LOGICAL": {"env": SRC, "present": true},
+                },
+            })
+        );
 
         // The source variable was wiped.
         assert!(std::env::var(SRC).is_err());
@@ -369,6 +406,10 @@ mod tests {
         assert_eq!(
             registry.deployment_env_lookup(ALLOWED).unwrap().as_deref(),
             Some("initial")
+        );
+        assert_eq!(
+            registry.environment_audit()["public_env"][ALLOWED],
+            serde_json::json!(true)
         );
         // SAFETY: test-only, unique var name, no concurrent access.
         unsafe { std::env::remove_var(ALLOWED) };

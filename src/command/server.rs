@@ -2125,6 +2125,7 @@ pub(crate) struct ServerVerified {
     global_http_config: GlobalHttpConfig,
     server_http_policy_audit: serde_json::Value,
     server_http_policy_event_id: Option<String>,
+    environment_audit: serde_json::Value,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
     /// dropped by resolution, and locate its per-entry advisories in `source_path`.
@@ -2274,6 +2275,7 @@ impl ServerVerified {
             "webui_server_policy_hash": webui_server_policy.as_ref().map(|(hash, _)| hash),
             "webui_server_policy": webui_server_policy.map(|(_, policy)| policy),
         });
+        let environment_audit = secret_registry.environment_audit();
 
         Ok(Self {
             launch: ServerVerifiedLaunch {
@@ -2301,6 +2303,7 @@ impl ServerVerified {
             global_http_config,
             server_http_policy_audit,
             server_http_policy_event_id: None,
+            environment_audit,
             server_outbound_allowed_hosts,
             source_path,
             secret_registry,
@@ -3639,6 +3642,8 @@ async fn spawn_tasks_and_threads(
     .await
     .ok_or_else(|| anyhow::anyhow!("cannot persist server HTTP policy audit"))?;
     server_verified.server_http_policy_event_id = Some(server_policy_event_id.clone());
+    record_server_configuration_audit(db_pool.as_ref(), &server_verified, &server_policy_event_id)
+        .await?;
     record_http_policy_audits(
         db_pool.as_ref(),
         deployment_id,
@@ -3765,6 +3770,44 @@ async fn spawn_tasks_and_threads(
         deployment_switch_manager,
     };
     Ok(server_init)
+}
+
+async fn record_server_configuration_audit(
+    db_pool: &dyn DbPool,
+    server_verified: &ServerVerified,
+    server_http_policy_event_id: &str,
+) -> Result<(), anyhow::Error> {
+    let server_run_id = concepts::storage::initialize_server_run_id();
+    let snapshot = serde_json::json!({
+        "format": "obelisk-server-configuration-v1",
+        "obelisk_version": PKG_VERSION,
+        "server_run_id": server_run_id,
+        "environment": server_verified.environment_audit,
+        "deployment_security": {
+            "exec": server_verified.allow_exec_activities.audit(),
+            "http_policy_event_id": server_http_policy_event_id,
+            "http_policy_hash": server_verified.server_http_policy_audit["server_policy_hash"],
+            "webui_http_policy_hash": server_verified.server_http_policy_audit["webui_server_policy_hash"],
+        },
+    });
+    let bytes = serde_json::to_vec(&snapshot)?;
+    let digest = concepts::cas::content_digest(&bytes);
+    crate::server::system_event_writer::record_with_cas(
+        db_pool,
+        concepts::storage::SystemEventCode::ServerConfigurationResolved,
+        None,
+        None,
+        serde_json::json!({
+            "obelisk_version": PKG_VERSION,
+            "server_run_id": server_run_id,
+            "server_http_policy_event_id": server_http_policy_event_id,
+        }),
+        digest,
+        bytes,
+    )
+    .await
+    .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
+    Ok(())
 }
 
 struct ServerInit {
