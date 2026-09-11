@@ -5965,7 +5965,7 @@ impl DbAdmin for PostgresConnection {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.client.lock().await.execute(
             "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-            &[&event.event_id, &event.server_run_id, &event.created_at, &event.level.as_str(), &event.code,
+            &[&event.event_id.to_string(), &event.server_run_id, &event.created_at, &event.level.as_str(), &event.code,
               &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &event.cas_digest.map(|digest| digest.to_string())],
         ).await?;
         Ok(())
@@ -5994,7 +5994,7 @@ impl DbAdmin for PostgresConnection {
         .await?;
         tx.execute(
             "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-            &[&event.event_id, &event.server_run_id, &event.created_at, &event.level.as_str(), &event.code,
+            &[&event.event_id.to_string(), &event.server_run_id, &event.created_at, &event.level.as_str(), &event.code,
               &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &digest.to_string()],
         ).await?;
         tx.commit().await?;
@@ -6011,8 +6011,8 @@ impl DbAdmin for PostgresConnection {
                AND ($3::text IS NULL OR level = $3) AND ($4::text IS NULL OR code = $4)
                AND ($5::text IS NULL OR deployment_id = $5) AND ($6::text IS NULL OR event_id < $6)
              ORDER BY event_id DESC LIMIT $7",
-            &[&filter.event_id, &filter.server_run_id, &filter.level.map(SystemEventLevel::as_str),
-              &filter.code, &filter.deployment_id.map(|id| id.to_string()), &filter.before_event_id,
+            &[&filter.event_id.map(|id| id.to_string()), &filter.server_run_id, &filter.level.map(SystemEventLevel::as_str),
+              &filter.code, &filter.deployment_id.map(|id| id.to_string()), &filter.before_event_id.map(|id| id.to_string()),
               &i64::from(filter.limit.clamp(1, 1000))],
         ).await?;
         rows.into_iter()
@@ -6021,7 +6021,9 @@ impl DbAdmin for PostgresConnection {
                 let execution_id: Option<String> = get(&row, 5)?;
                 let deployment_id: Option<String> = get(&row, 6)?;
                 Ok(SystemEvent {
-                    event_id: get(&row, 0)?,
+                    event_id: get::<String, _>(&row, 0)?.parse().map_err(|err| {
+                        consistency_db_err(format!("invalid system event ID: {err}"))
+                    })?,
                     server_run_id: get(&row, 1)?,
                     created_at: get(&row, 2)?,
                     level: match level.as_str() {
@@ -6064,15 +6066,19 @@ impl DbAdmin for PostgresConnection {
         let client = self.client.lock().await;
         let deployment_id = deployment_id.to_string();
         let component_row = client.query_opt(
-            "SELECT event_id, details->>'server_policy_event_id' FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = $1 AND details->>'component' = $2 AND details->>'component_policy_hash' = $3 AND details->>'server_policy_hash' = $4 ORDER BY event_id DESC LIMIT 1",
+            "SELECT event_id, details->>'server_configuration_event_id' FROM t_system_event WHERE code = 'component.http_policy.applied' AND deployment_id = $1 AND details->>'component' = $2 AND details->>'component_policy_hash' = $3 AND details->>'server_policy_hash' = $4 ORDER BY event_id DESC LIMIT 1",
             &[&deployment_id, &component, &component_policy_hash, &server_policy_hash],
         ).await?;
         let Some(component) = component_row else {
             return Ok(None);
         };
         Ok(Some(HttpPolicyEventIds {
-            component_policy_event_id: get(&component, 0)?,
-            server_policy_event_id: get(&component, 1)?,
+            component_policy_event_id: get::<String, _>(&component, 0)?.parse().map_err(|err| {
+                consistency_db_err(format!("invalid component policy event ID: {err}"))
+            })?,
+            server_configuration_event_id: get::<String, _>(&component, 1)?.parse().map_err(
+                |err| consistency_db_err(format!("invalid server configuration event ID: {err}")),
+            )?,
         }))
     }
 

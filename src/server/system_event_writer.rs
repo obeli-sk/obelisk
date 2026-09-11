@@ -1,6 +1,6 @@
 use concepts::{
     ContentDigest, ExecutionId,
-    prefixed_ulid::DeploymentId,
+    prefixed_ulid::{DeploymentId, SystemEventId},
     storage::{DbPool, SystemEvent, SystemEventCode},
 };
 use serde_json::Value;
@@ -34,7 +34,7 @@ pub(crate) async fn record_with_cas(
     details: Value,
     cas_digest: ContentDigest,
     cas_content: Vec<u8>,
-) -> Option<String> {
+) -> Option<SystemEventId> {
     let event = match SystemEvent::new(code, execution_id, deployment_id, details) {
         Ok(event) => event.with_cas_digest(cas_digest),
         Err(err) => {
@@ -42,7 +42,7 @@ pub(crate) async fn record_with_cas(
             return None;
         }
     };
-    let event_id = event.event_id.clone();
+    let event_id = event.event_id;
     let result = async {
         db_pool
             .admin_conn()

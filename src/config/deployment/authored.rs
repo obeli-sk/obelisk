@@ -17,13 +17,45 @@ use anyhow::{Context, anyhow, bail};
 use concepts::cas::Cas;
 use concepts::component_id::ComponentDigest;
 use concepts::{ContentDigest, FunctionFqn};
+use config::{ConfigBuilder, File, FileFormat, builder::AsyncState};
 use hashbrown::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::collections::BTreeMap;
 use std::fmt::Display;
+use std::path::Path;
 use std::str::FromStr;
+use tracing::info;
+
+pub(crate) async fn load_deployment_validated(
+    deployment_toml: &Path,
+) -> Result<DeploymentTomlValidated, anyhow::Error> {
+    if !deployment_toml.try_exists().unwrap_or_default() {
+        bail!("cannot find deployment file {deployment_toml:?}");
+    }
+    info!("Using deployment file {:?}", deployment_toml);
+    let deployment_dir = deployment_toml
+        .canonicalize()
+        .with_context(|| format!("error calling canonicalize on {deployment_toml:?}"))?
+        .parent()
+        .with_context(|| format!("error getting parent path of {deployment_toml:?}"))?
+        .to_path_buf();
+    let settings = ConfigBuilder::<AsyncState>::default()
+        .add_source(
+            File::from(deployment_toml)
+                .required(true)
+                .format(FileFormat::Toml),
+        )
+        .build()
+        .await?;
+    let deployment: DeploymentToml = settings
+        .try_deserialize()
+        .with_context(|| format!("cannot parse deployment file {deployment_toml:?}"))?;
+    deployment
+        .validate(&deployment_dir)
+        .with_context(|| format!("cannot validate {deployment_toml:?}"))
+}
 
 #[derive(Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]

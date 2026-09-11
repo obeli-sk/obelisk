@@ -21,6 +21,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::DeploymentId;
+use concepts::prefixed_ulid::SystemEventId;
 use concepts::storage;
 use concepts::storage::BacktraceFilter;
 use concepts::storage::Created;
@@ -2004,7 +2005,13 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .admin_conn()
             .await
             .map_err(map_to_status)?
-            .get_system_event(&request.into_inner().event_id)
+            .get_system_event(
+                request
+                    .into_inner()
+                    .event_id
+                    .parse::<SystemEventId>()
+                    .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?,
+            )
             .await
             .to_status()?
             .ok_or_else(|| tonic::Status::not_found("system event not found"))?;
@@ -2016,7 +2023,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         let message = event.message().to_owned();
         Ok(tonic::Response::new(grpc_gen::GetSystemEventResponse {
             event: Some(grpc_gen::SystemEvent {
-                event_id: event.event_id,
+                event_id: event.event_id.to_string(),
                 server_run_id: event.server_run_id,
                 created_at: Some(event.created_at.into()),
                 level: match event.level {
@@ -2072,7 +2079,11 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                 level,
                 code: request.code,
                 deployment_id: request.deployment_id.map(TryInto::try_into).transpose()?,
-                before_event_id: request.before_event_id,
+                before_event_id: request
+                    .before_event_id
+                    .map(|id| id.parse::<SystemEventId>())
+                    .transpose()
+                    .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?,
                 limit,
             })
             .await
@@ -2080,14 +2091,14 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         crate::server::system_event_writer::hydrate_cas_details(self.db_pool.as_ref(), &mut events)
             .await;
         let next_cursor =
-            (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
+            (events.len() == limit as usize).then(|| events.last().unwrap().event_id.to_string());
         Ok(tonic::Response::new(grpc_gen::ListSystemEventsResponse {
             events: events
                 .into_iter()
                 .map(|event| {
                     let message = event.message().to_owned();
                     grpc_gen::SystemEvent {
-                        event_id: event.event_id,
+                        event_id: event.event_id.to_string(),
                         server_run_id: event.server_run_id,
                         created_at: Some(event.created_at.into()),
                         level: match event.level {

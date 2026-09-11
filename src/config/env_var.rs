@@ -1,5 +1,19 @@
 use crate::config::secret_registry::{SecretRegistry, SecretViolation};
 use secrecy::SecretString;
+use std::collections::HashMap;
+
+/// Snapshot of the process environment taken during single-threaded startup.
+pub(crate) struct StartupEnvVars(HashMap<String, String>);
+
+impl StartupEnvVars {
+    pub(crate) fn capture() -> Self {
+        Self(std::env::vars().collect())
+    }
+
+    pub(crate) fn lookup(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+}
 
 pub use concepts::env_var::EnvVarConfig;
 
@@ -57,6 +71,38 @@ fn interpolate_env_vars_inner(
         },
         &|key| EnvVarError::Missing(key),
     )
+}
+
+pub(crate) fn interpolate_startup_env_vars(
+    input: &str,
+    env_vars: &StartupEnvVars,
+) -> Result<String, EnvVarError> {
+    interpolate_core(
+        input,
+        &|key| Ok::<_, EnvVarError>(env_vars.lookup(key)),
+        &|key| EnvVarError::Missing(key),
+    )
+}
+
+pub(crate) fn interpolate_startup_path_template(
+    input: &str,
+    synthetics: &[(&'static str, Option<String>)],
+    env_vars: &StartupEnvVars,
+) -> Result<String, anyhow::Error> {
+    let lookup = |key: &str| -> Result<Option<String>, anyhow::Error> {
+        Ok(match synthetics.iter().find(|(name, _)| *name == key) {
+            Some((_, value)) => value.clone(),
+            None => env_vars.lookup(key),
+        })
+    };
+    let on_missing = |key: String| {
+        if synthetics.iter().any(|(name, _)| *name == key) {
+            anyhow::anyhow!("path variable `${{{key}}}` is not available in this context")
+        } else {
+            anyhow::anyhow!("environment variable not set: `{key}`")
+        }
+    };
+    interpolate_core(input, &lookup, &on_missing)
 }
 
 /// Interpolate a path template, resolving synthetic path variables (e.g. `DATA_DIR`) before
@@ -174,9 +220,8 @@ mod tests {
     use super::*;
     use crate::config::secret_registry::SecretRegistry;
 
-    /// Interpolate against an empty registry (no secrets, plain process-env lookup).
     fn interp(input: &str) -> Result<String, EnvVarError> {
-        interpolate_env_vars_inner(input, &SecretRegistry::empty())
+        interpolate_startup_env_vars(input, &StartupEnvVars::capture())
     }
 
     #[test]
@@ -322,7 +367,7 @@ mod tests {
         input: &str,
         synthetics: &[(&'static str, Option<String>)],
     ) -> Result<String, anyhow::Error> {
-        interpolate_path_template(input, synthetics, &SecretRegistry::empty())
+        interpolate_startup_path_template(input, synthetics, &StartupEnvVars::capture())
     }
 
     #[test]

@@ -20,7 +20,7 @@ use concepts::{
     ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId, JoinSetKind,
     StrVariant, SupportedFunctionReturnValue,
     component_id::ComponentDigest,
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, SystemEventId},
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
@@ -345,7 +345,8 @@ pub(crate) mod admin {
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct SystemEventResponse {
-        pub(crate) event_id: String,
+        #[schema(value_type = String)]
+        pub(crate) event_id: SystemEventId,
         pub(crate) server_run_id: String,
         pub(crate) created_at: DateTime<Utc>,
         pub(crate) level: String,
@@ -385,7 +386,8 @@ pub(crate) mod admin {
         code: Option<String>,
         #[param(value_type = Option<String>)]
         deployment_id: Option<DeploymentId>,
-        before: Option<String>,
+        #[param(value_type = Option<String>)]
+        before: Option<SystemEventId>,
         limit: Option<u32>,
     }
 
@@ -430,7 +432,7 @@ pub(crate) mod admin {
         )
         .await;
         let next_cursor =
-            (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
+            (events.len() == limit as usize).then(|| events.last().unwrap().event_id.to_string());
         let events = events
             .into_iter()
             .map(|event| {
@@ -459,7 +461,7 @@ pub(crate) mod admin {
 
     #[utoipa::path(get, path = "/v1/admin/system-events/{event_id}", tag = "admin", responses((status = 200, body = SystemEventResponse), (status = 404)))]
     pub(crate) async fn get_system_event(
-        Path(event_id): Path<String>,
+        Path(event_id): Path<SystemEventId>,
         State(state): State<Arc<WebApiState>>,
     ) -> Result<Response, HttpResponse> {
         let event = state
@@ -467,7 +469,7 @@ pub(crate) mod admin {
             .admin_conn()
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .get_system_event(&event_id)
+            .get_system_event(event_id)
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
             .ok_or_else(|| HttpResponse::not_found(AcceptHeader::Json, "system event"))?;

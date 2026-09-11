@@ -19,6 +19,7 @@ use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
+use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::TimeDelta;
@@ -1501,7 +1502,7 @@ impl SystemEventLevel {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
-    pub event_id: String,
+    pub event_id: SystemEventId,
     pub server_run_id: String,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
@@ -1516,6 +1517,7 @@ pub struct SystemEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemEventCode {
+    ServerConfigurationResolved,
     ServerStartupCompleted,
     ServerStartupFailed,
     ServerShutdownRequested,
@@ -1526,7 +1528,6 @@ pub enum SystemEventCode {
     DeploymentSwitchStarted,
     DeploymentSwitchCompleted,
     DeploymentSwitchFailed,
-    ServerHttpPolicyApplied,
     ComponentHttpPolicyApplied,
     OutboundHttpDenied,
     AdminExecutionDeleteStarted,
@@ -1545,6 +1546,7 @@ impl SystemEventCode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::ServerConfigurationResolved => "server.configuration.resolved",
             Self::ServerStartupCompleted => "server.startup.completed",
             Self::ServerStartupFailed => "server.startup.failed",
             Self::ServerShutdownRequested => "server.shutdown.requested",
@@ -1555,7 +1557,6 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "deployment.switch.started",
             Self::DeploymentSwitchCompleted => "deployment.switch.completed",
             Self::DeploymentSwitchFailed => "deployment.switch.failed",
-            Self::ServerHttpPolicyApplied => "server.http_policy.applied",
             Self::ComponentHttpPolicyApplied => "component.http_policy.applied",
             Self::OutboundHttpDenied => "outbound_http.denied",
             Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
@@ -1586,6 +1587,7 @@ impl SystemEventCode {
     #[must_use]
     pub fn message(self) -> &'static str {
         match self {
+            Self::ServerConfigurationResolved => "Server configuration resolved",
             Self::ServerStartupCompleted => "Server startup completed",
             Self::ServerStartupFailed => "Server startup failed",
             Self::ServerShutdownRequested => "Server shutdown requested",
@@ -1596,7 +1598,6 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "Deployment switch started",
             Self::DeploymentSwitchCompleted => "Deployment switch completed",
             Self::DeploymentSwitchFailed => "Deployment switch failed",
-            Self::ServerHttpPolicyApplied => "Server HTTP policy applied",
             Self::ComponentHttpPolicyApplied => "Component HTTP policy applied",
             Self::OutboundHttpDenied => "Outbound HTTP request denied",
             Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
@@ -1651,7 +1652,7 @@ impl SystemEvent {
             return Err(SystemEventValidationError::DetailsTooLarge);
         }
         Ok(Self {
-            event_id: format!("sev_{}", ulid::Ulid::new()),
+            event_id: SystemEventId::generate(),
             server_run_id: server_run_id(),
             created_at: Utc::now(),
             level: code.level(),
@@ -1679,6 +1680,9 @@ impl SystemEvent {
     #[must_use]
     pub fn message(&self) -> &str {
         match self.code.as_str() {
+            "server.configuration.resolved" => {
+                SystemEventCode::ServerConfigurationResolved.message()
+            }
             "server.startup.completed" => SystemEventCode::ServerStartupCompleted.message(),
             "server.startup.failed" => SystemEventCode::ServerStartupFailed.message(),
             "server.shutdown.requested" => SystemEventCode::ServerShutdownRequested.message(),
@@ -1689,7 +1693,6 @@ impl SystemEvent {
             "deployment.switch.started" => SystemEventCode::DeploymentSwitchStarted.message(),
             "deployment.switch.completed" => SystemEventCode::DeploymentSwitchCompleted.message(),
             "deployment.switch.failed" => SystemEventCode::DeploymentSwitchFailed.message(),
-            "server.http_policy.applied" => SystemEventCode::ServerHttpPolicyApplied.message(),
             "component.http_policy.applied" => {
                 SystemEventCode::ComponentHttpPolicyApplied.message()
             }
@@ -1727,19 +1730,19 @@ impl SystemEvent {
 
 #[derive(Debug, Clone, Default)]
 pub struct SystemEventFilter {
-    pub event_id: Option<String>,
+    pub event_id: Option<SystemEventId>,
     pub server_run_id: Option<String>,
     pub level: Option<SystemEventLevel>,
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,
-    pub before_event_id: Option<String>,
+    pub before_event_id: Option<SystemEventId>,
     pub limit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpPolicyEventIds {
-    pub server_policy_event_id: String,
-    pub component_policy_event_id: String,
+    pub server_configuration_event_id: SystemEventId,
+    pub component_policy_event_id: SystemEventId,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1769,10 +1772,13 @@ pub trait DbAdmin: Send + Sync {
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead>;
 
-    async fn get_system_event(&self, event_id: &str) -> Result<Option<SystemEvent>, DbErrorRead> {
+    async fn get_system_event(
+        &self,
+        event_id: SystemEventId,
+    ) -> Result<Option<SystemEvent>, DbErrorRead> {
         Ok(self
             .list_system_events(SystemEventFilter {
-                event_id: Some(event_id.to_owned()),
+                event_id: Some(event_id),
                 limit: 1,
                 ..SystemEventFilter::default()
             })
@@ -3750,6 +3756,7 @@ mod tests {
     #[test]
     fn system_event_codes_fit_storage_limits() {
         for code in [
+            SystemEventCode::ServerConfigurationResolved,
             SystemEventCode::ServerStartupCompleted,
             SystemEventCode::ServerStartupFailed,
             SystemEventCode::ServerShutdownRequested,
@@ -3760,7 +3767,6 @@ mod tests {
             SystemEventCode::DeploymentSwitchStarted,
             SystemEventCode::DeploymentSwitchCompleted,
             SystemEventCode::DeploymentSwitchFailed,
-            SystemEventCode::ServerHttpPolicyApplied,
             SystemEventCode::ComponentHttpPolicyApplied,
             SystemEventCode::OutboundHttpDenied,
             SystemEventCode::AdminExecutionDeleteStarted,

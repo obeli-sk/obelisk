@@ -5,7 +5,6 @@ mod args;
 mod client;
 mod command;
 mod config;
-mod env_vars;
 mod init;
 mod javascript;
 mod oci;
@@ -24,6 +23,7 @@ use args::{
 use clap::Parser;
 use client::ClientStartup;
 use config::config_holder::ConfigHolder;
+use config::env_var::StartupEnvVars;
 use config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
 use config::server::ServerConfigToml;
 use directories::{BaseDirs, ProjectDirs};
@@ -200,24 +200,28 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         Subcommand::Generate(generate) => {
+            let env_vars = StartupEnvVars::capture();
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
                 PublicEnvToml::default(),
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
                 None,
+                &env_vars,
             )?);
             Box::pin(generate.run(secret_registry))
         }
 
         Subcommand::Component(ComponentArgs { command, token }) => {
             let client_startup = ClientStartup::new(token.api_token);
+            let env_vars = StartupEnvVars::capture();
             let secret_registry = Arc::new(SecretRegistry::resolve(
                 SecretsToml::new(),
                 PublicEnvToml::default(),
                 EnvVarSecretsCleanup::Noop,
                 RuntimeConfigAvailability::AllowUnavailable,
                 None,
+                &env_vars,
             )?);
             Box::pin(command.run(client_startup, secret_registry))
         }
@@ -262,7 +266,9 @@ fn prepare_server_startup(
         // Wipe it so that server config can be loaded.
         unsafe { std::env::remove_var(API_TOKEN_LEGACY) };
     }
-    let config = config_holder.load_config()?;
+    let mut config = config_holder.load_config()?;
+    let env_vars = StartupEnvVars::capture();
+    config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
 
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
         eprintln!(
@@ -276,6 +282,7 @@ fn prepare_server_startup(
         env_var_cleanup,
         runtime_config_availability,
         legacy_api_token.as_ref(),
+        &env_vars,
     )?);
     Ok(ServerStartup {
         config_holder,

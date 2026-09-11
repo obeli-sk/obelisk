@@ -1,10 +1,10 @@
-use super::deployment::DeploymentToml;
-use super::env_var::interpolate_path_template;
+use super::env_var::{
+    StartupEnvVars, interpolate_path_template, interpolate_startup_path_template,
+};
 use super::secret_registry::SecretRegistry;
 use super::server::ServerConfigToml;
-use crate::config::deployment::DeploymentTomlValidated;
 use anyhow::{Context as _, bail};
-use config::{Config, ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
+use config::{Config, Environment, File, FileFormat};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
@@ -31,6 +31,15 @@ pub(crate) struct PathPrefixes {
 }
 
 impl PathPrefixes {
+    pub(crate) fn resolve_server_path(
+        &self,
+        dir: &str,
+        env_vars: &StartupEnvVars,
+    ) -> Result<String, anyhow::Error> {
+        let dir = self.expand_home(dir)?;
+        interpolate_startup_path_template(&dir, &self.synthetic_dirs(), env_vars)
+    }
+
     pub(crate) async fn server_config_replace_path_prefix_mkdir(
         &self,
         dir: &str,
@@ -51,7 +60,12 @@ impl PathPrefixes {
         dir: &str,
         secret_registry: &SecretRegistry,
     ) -> Result<String, anyhow::Error> {
-        let dir = if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
+        let dir = self.expand_home(dir)?;
+        interpolate_path_template(&dir, &self.synthetic_dirs(), secret_registry)
+    }
+
+    fn expand_home(&self, dir: &str) -> Result<String, anyhow::Error> {
+        Ok(if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
             let home = self
                 .base_dirs
                 .as_ref()
@@ -60,8 +74,7 @@ impl PathPrefixes {
             home.join(suffix).to_string_lossy().into_owned()
         } else {
             dir.to_owned()
-        };
-        interpolate_path_template(&dir, &self.synthetic_dirs(), secret_registry)
+        })
     }
 
     /// Synthetic path variables and their values, or `None` when unavailable in this context.
@@ -170,30 +183,6 @@ pub(crate) fn server_config_template(trusted: bool) -> &'static str {
     } else {
         OBELISK_HELP_SERVER_TOML
     }
-}
-
-pub(crate) async fn load_deployment_validated(
-    deployment_toml: &Path,
-) -> Result<DeploymentTomlValidated, anyhow::Error> {
-    let exists = deployment_toml.try_exists().unwrap_or_default();
-    if !exists {
-        bail!("cannot find deployment file {deployment_toml:?}");
-    }
-    info!("Using deployment file {:?}", deployment_toml);
-    let deployment_dir = canonicalize_parent(deployment_toml)
-        .with_context(|| format!("cannot resolve parent of {deployment_toml:?}"))?;
-    let builder = ConfigBuilder::<AsyncState>::default().add_source(
-        File::from(deployment_toml)
-            .required(true)
-            .format(FileFormat::Toml),
-    );
-    let settings = builder.build().await?;
-    let deployment: DeploymentToml = settings
-        .try_deserialize()
-        .with_context(|| format!("cannot parse deployment file {deployment_toml:?}"))?;
-    deployment
-        .validate(&deployment_dir)
-        .with_context(|| format!("cannot validate {deployment_toml:?}"))
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

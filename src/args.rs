@@ -2,7 +2,7 @@ use crate::config::secret_registry::API_TOKEN;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, SystemEventId},
 };
 use secrecy::SecretString;
 
@@ -162,7 +162,7 @@ pub(crate) enum Admin {
 pub(crate) enum AdminEvents {
     /// Get one persisted system event by ID.
     Get {
-        event_id: String,
+        event_id: SystemEventId,
         #[arg(long)]
         json: bool,
         #[arg(

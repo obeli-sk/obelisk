@@ -7,7 +7,10 @@ use crate::config::deployment::{
     AllowedHostToml, ConfigName, DurationConfig, DurationConfigOptional, InflightSemaphore,
     ValueOrUnlimited,
 };
-use crate::config::env_var::{interpolate_env_vars_plaintext, interpolate_env_vars_secret};
+use crate::config::env_var::{
+    StartupEnvVars, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
+    interpolate_startup_env_vars,
+};
 use crate::config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
 use concepts::ContentDigest;
 use concepts::component_id::Digest;
@@ -27,6 +30,10 @@ pub(crate) struct ServerConfigToml {
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) source_path: Option<PathBuf>,
+    #[cfg(feature = "tokio-console")]
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) tokio_console_enabled: bool,
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
     /// Operator-owned secret registry. Maps a logical secret name to a source
@@ -75,6 +82,46 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+impl ServerConfigToml {
+    pub(crate) fn resolve_env_vars(
+        &mut self,
+        path_prefixes: &PathPrefixes,
+        env_vars: &StartupEnvVars,
+    ) -> Result<(), anyhow::Error> {
+        #[cfg(feature = "tokio-console")]
+        {
+            self.tokio_console_enabled = env_vars
+                .lookup("TOKIO_CONSOLE")
+                .and_then(|value| value.parse::<bool>().ok())
+                .unwrap_or_default();
+        }
+        if let DatabaseConfigToml::Postgres(postgres) = &mut self.database {
+            postgres.host = interpolate_startup_env_vars(&postgres.host, env_vars)?;
+            postgres.user = interpolate_startup_env_vars(&postgres.user, env_vars)?;
+            postgres.password = interpolate_startup_env_vars(&postgres.password, env_vars)?;
+            postgres.db_name = interpolate_startup_env_vars(&postgres.db_name, env_vars)?;
+        }
+        if let DatabaseConfigToml::Sqlite(sqlite) = &mut self.database
+            && let Some(directory) = &mut sqlite.directory
+        {
+            *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
+        }
+        if let Some(directory) = &mut self.wasm_global_config.cache_directory {
+            *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
+        }
+        if let Some(directory) = &mut self.wasm_global_config.codegen_cache.directory {
+            *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
+        }
+        for allowed_host in &mut self.outbound_http.allowed_hosts {
+            allowed_host.pattern = interpolate_startup_env_vars(&allowed_host.pattern, env_vars)?;
+            if let Some(regex) = &mut allowed_host.request_url_regex {
+                *regex = interpolate_startup_env_vars(regex, env_vars)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
@@ -220,6 +267,25 @@ impl JsonSchema for AllowExecActivities {
                 {"type": "array", "items": {"type": "string"}}
             ]
         })
+    }
+}
+
+impl AllowExecActivities {
+    pub(crate) fn audit(&self) -> serde_json::Value {
+        match self {
+            Self::Deny => serde_json::json!({"mode": "deny"}),
+            Self::AllowAny => serde_json::json!({"mode": "allow_any"}),
+            Self::Allowlist(entries) => serde_json::json!({
+                "mode": "allowlist",
+                "entries": entries.iter().map(|(name, digest)| {
+                    (name, digest.to_string())
+                }).collect::<BTreeMap<_, _>>(),
+            }),
+            Self::LegacyAllowlist(digests) => serde_json::json!({
+                "mode": "legacy_allowlist",
+                "digests": digests.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            }),
+        }
     }
 }
 

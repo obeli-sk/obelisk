@@ -2,7 +2,7 @@ use chrono::Duration;
 use concepts::{
     ComponentId, ExecutionId, JoinSetId, JoinSetKind, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     StrVariant,
-    prefixed_ulid::DeploymentId,
+    prefixed_ulid::{DeploymentId, SystemEventId},
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
@@ -50,11 +50,11 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     )
     .unwrap();
     first.server_run_id = "srv_01M281KSH954NC9NHNMCN09S6W".to_owned();
-    let first_id = first.event_id.clone();
+    let first_id = first.event_id;
     admin.append_system_event(first).await.unwrap();
     assert_eq!(
         admin
-            .get_system_event(&first_id)
+            .get_system_event(first_id)
             .await
             .unwrap()
             .unwrap()
@@ -63,7 +63,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     );
     assert!(
         admin
-            .get_system_event("sev_missing")
+            .get_system_event(SystemEventId::from_parts(0, 1))
             .await
             .unwrap()
             .is_none()
@@ -76,7 +76,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     )
     .unwrap();
     second.server_run_id = "srv_01M281KSH954NC9NHNMCN09S6X".to_owned();
-    let second_id = second.event_id.clone();
+    let second_id = second.event_id;
     admin.append_system_event(second).await.unwrap();
 
     let warning = admin
@@ -108,7 +108,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         .unwrap();
     let older = admin
         .list_system_events(SystemEventFilter {
-            before_event_id: Some(first_page[0].event_id.clone()),
+            before_event_id: Some(first_page[0].event_id),
             limit: 1,
             ..Default::default()
         })
@@ -160,12 +160,12 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn http_policy_event_ids_are_resolved(database: Database) {
+async fn http_policy_event_ids_resolve_server_configuration(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let admin = db_pool.admin_conn().await.unwrap();
     let server = SystemEvent::new(
-        SystemEventCode::ServerHttpPolicyApplied,
+        SystemEventCode::ServerConfigurationResolved,
         None,
         None,
         serde_json::json!({
@@ -174,7 +174,7 @@ async fn http_policy_event_ids_are_resolved(database: Database) {
         }),
     )
     .unwrap();
-    let server_id = server.event_id.clone();
+    let server_id = server.event_id;
     admin.append_system_event(server).await.unwrap();
     let deployment_id = DeploymentId::generate();
     let component = SystemEvent::new(
@@ -185,11 +185,11 @@ async fn http_policy_event_ids_are_resolved(database: Database) {
             "component": "caller",
             "component_policy_hash": "sha256:component",
             "server_policy_hash": "sha256:webui",
-            "server_policy_event_id": server_id,
+            "server_configuration_event_id": server_id,
         }),
     )
     .unwrap();
-    let component_id = component.event_id.clone();
+    let component_id = component.event_id;
     admin.append_system_event(component).await.unwrap();
 
     let ids = admin
@@ -197,7 +197,7 @@ async fn http_policy_event_ids_are_resolved(database: Database) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(ids.server_policy_event_id, server_id);
+    assert_eq!(ids.server_configuration_event_id, server_id);
     assert_eq!(ids.component_policy_event_id, component_id);
     drop(admin);
     db_close.close().await;
