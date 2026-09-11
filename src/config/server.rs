@@ -7,7 +7,10 @@ use crate::config::deployment::{
     AllowedHostToml, ConfigName, DurationConfig, DurationConfigOptional, InflightSemaphore,
     ValueOrUnlimited,
 };
-use crate::config::env_var::{interpolate_env_vars_plaintext, interpolate_env_vars_secret};
+use crate::config::env_var::{
+    StartupEnvVars, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
+    interpolate_startup_env_vars,
+};
 use crate::config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
 use concepts::ContentDigest;
 use concepts::component_id::Digest;
@@ -75,6 +78,39 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+impl ServerConfigToml {
+    pub(crate) fn resolve_env_vars(
+        &mut self,
+        path_prefixes: &PathPrefixes,
+        env_vars: &StartupEnvVars,
+    ) -> Result<(), anyhow::Error> {
+        if let DatabaseConfigToml::Postgres(postgres) = &mut self.database {
+            postgres.host = interpolate_startup_env_vars(&postgres.host, env_vars)?;
+            postgres.user = interpolate_startup_env_vars(&postgres.user, env_vars)?;
+            postgres.password = interpolate_startup_env_vars(&postgres.password, env_vars)?;
+            postgres.db_name = interpolate_startup_env_vars(&postgres.db_name, env_vars)?;
+        }
+        if let DatabaseConfigToml::Sqlite(sqlite) = &mut self.database
+            && let Some(directory) = &mut sqlite.directory
+        {
+            *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
+        }
+        if let Some(directory) = &mut self.wasm_global_config.cache_directory {
+            *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
+        }
+        if let Some(directory) = &mut self.wasm_global_config.codegen_cache.directory {
+            *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
+        }
+        for allowed_host in &mut self.outbound_http.allowed_hosts {
+            allowed_host.pattern = interpolate_startup_env_vars(&allowed_host.pattern, env_vars)?;
+            if let Some(regex) = &mut allowed_host.request_url_regex {
+                *regex = interpolate_startup_env_vars(regex, env_vars)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]

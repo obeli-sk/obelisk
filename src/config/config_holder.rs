@@ -1,4 +1,6 @@
-use super::env_var::interpolate_path_template;
+use super::env_var::{
+    StartupEnvVars, interpolate_path_template, interpolate_startup_path_template,
+};
 use super::secret_registry::SecretRegistry;
 use super::server::ServerConfigToml;
 use anyhow::{Context as _, bail};
@@ -29,6 +31,15 @@ pub(crate) struct PathPrefixes {
 }
 
 impl PathPrefixes {
+    pub(crate) fn resolve_server_path(
+        &self,
+        dir: &str,
+        env_vars: &StartupEnvVars,
+    ) -> Result<String, anyhow::Error> {
+        let dir = self.expand_home(dir)?;
+        interpolate_startup_path_template(&dir, &self.synthetic_dirs(), env_vars)
+    }
+
     pub(crate) async fn server_config_replace_path_prefix_mkdir(
         &self,
         dir: &str,
@@ -49,7 +60,12 @@ impl PathPrefixes {
         dir: &str,
         secret_registry: &SecretRegistry,
     ) -> Result<String, anyhow::Error> {
-        let dir = if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
+        let dir = self.expand_home(dir)?;
+        interpolate_path_template(&dir, &self.synthetic_dirs(), secret_registry)
+    }
+
+    fn expand_home(&self, dir: &str) -> Result<String, anyhow::Error> {
+        Ok(if let Some(suffix) = dir.strip_prefix(HOME_DIR_PREFIX) {
             let home = self
                 .base_dirs
                 .as_ref()
@@ -58,8 +74,7 @@ impl PathPrefixes {
             home.join(suffix).to_string_lossy().into_owned()
         } else {
             dir.to_owned()
-        };
-        interpolate_path_template(&dir, &self.synthetic_dirs(), secret_registry)
+        })
     }
 
     /// Synthetic path variables and their values, or `None` when unavailable in this context.
