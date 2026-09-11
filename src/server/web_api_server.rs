@@ -1881,7 +1881,7 @@ struct ExecutionResponsesParams {
     direction: PaginationDirectionSortedFromOldest,
 }
 
-fn parse_join_set_filter(join_set: String) -> Result<JoinSetId, String> {
+fn parse_join_set_filter(join_set: &str) -> Result<JoinSetId, String> {
     join_set
         .parse()
         .map_err(|err: concepts::JoinSetIdParseError| err.to_string())
@@ -1929,6 +1929,7 @@ async fn execution_responses(
         .map_err(|e| ErrorWrapper(e, accept))?;
     let join_set = params
         .join_set
+        .as_deref()
         .map(parse_join_set_filter)
         .transpose()
         .map_err(|err| HttpResponse::bad_request(accept, err))?;
@@ -5336,8 +5337,8 @@ mod tests {
 
     #[test]
     fn response_join_set_filter_requires_canonical_id() {
-        parse_join_set_filter("n:session-name".to_string()).unwrap();
-        parse_join_set_filter("session-name".to_string()).unwrap_err();
+        parse_join_set_filter("n:session-name").unwrap();
+        parse_join_set_filter("session-name").unwrap_err();
     }
 
     fn parse_dt(value: &str) -> DateTime<Utc> {

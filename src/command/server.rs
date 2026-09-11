@@ -24,7 +24,14 @@ use crate::config::deployment::ActivityStubExtInlineConfigVerified;
 use crate::config::deployment::ActivityWasmComponentConfigTomlExt as _;
 use crate::config::deployment::ActivityWasmConfigVerified;
 use crate::config::deployment::ComponentCommon;
-#[cfg(not(feature = "embed-assets"))] // Only the OCI fetch arms below use `.fetch()`.
+#[cfg(all(
+    not(feature = "embed-assets"),
+    any(
+        not(feature = "activity-js-local"),
+        not(feature = "workflow-js-local"),
+        not(feature = "webhook-js-local")
+    )
+))]
 use crate::config::deployment::ComponentLocationFetchExt as _;
 use crate::config::deployment::ComponentLocationToml;
 use crate::config::deployment::ComponentStdOutputToml;
