@@ -1,10 +1,8 @@
-use super::deployment::DeploymentToml;
 use super::env_var::interpolate_path_template;
 use super::secret_registry::SecretRegistry;
 use super::server::ServerConfigToml;
-use crate::config::deployment::DeploymentTomlValidated;
 use anyhow::{Context as _, bail};
-use config::{Config, ConfigBuilder, Environment, File, FileFormat, builder::AsyncState};
+use config::{Config, Environment, File, FileFormat};
 use directories::{BaseDirs, ProjectDirs};
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
@@ -170,30 +168,6 @@ pub(crate) fn server_config_template(trusted: bool) -> &'static str {
     } else {
         OBELISK_HELP_SERVER_TOML
     }
-}
-
-pub(crate) async fn load_deployment_validated(
-    deployment_toml: &Path,
-) -> Result<DeploymentTomlValidated, anyhow::Error> {
-    let exists = deployment_toml.try_exists().unwrap_or_default();
-    if !exists {
-        bail!("cannot find deployment file {deployment_toml:?}");
-    }
-    info!("Using deployment file {:?}", deployment_toml);
-    let deployment_dir = canonicalize_parent(deployment_toml)
-        .with_context(|| format!("cannot resolve parent of {deployment_toml:?}"))?;
-    let builder = ConfigBuilder::<AsyncState>::default().add_source(
-        File::from(deployment_toml)
-            .required(true)
-            .format(FileFormat::Toml),
-    );
-    let settings = builder.build().await?;
-    let deployment: DeploymentToml = settings
-        .try_deserialize()
-        .with_context(|| format!("cannot parse deployment file {deployment_toml:?}"))?;
-    deployment
-        .validate(&deployment_dir)
-        .with_context(|| format!("cannot validate {deployment_toml:?}"))
 }
 
 fn canonicalize_parent(path: &Path) -> Result<PathBuf, anyhow::Error> {

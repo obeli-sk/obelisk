@@ -309,8 +309,7 @@ async fn push_component(
     deployment_path: &std::path::Path,
     reference: &oci_client::Reference,
 ) -> anyhow::Result<()> {
-    let validated =
-        crate::config::config_holder::load_deployment_validated(deployment_path).await?;
+    let validated = crate::config::deployment::load_deployment_validated(deployment_path).await?;
     match find_component_for_push(&validated, component_name)? {
         ComponentPushData::Wasm { path, metadata } => oci::push(path, reference, &metadata).await,
         ComponentPushData::Js { source, metadata } => {
