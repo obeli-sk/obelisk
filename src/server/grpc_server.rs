@@ -21,6 +21,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::DeploymentId;
+use concepts::prefixed_ulid::ServerRunId;
 use concepts::prefixed_ulid::SystemEventId;
 use concepts::storage;
 use concepts::storage::BacktraceFilter;
@@ -2016,7 +2017,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         Ok(tonic::Response::new(grpc_gen::GetSystemEventResponse {
             event: Some(grpc_gen::SystemEvent {
                 event_id: event.event_id.to_string(),
-                server_run_id: event.server_run_id,
+                server_run_id: event.server_run_id.to_string(),
                 created_at: Some(event.created_at.into()),
                 level: match event.level {
                     storage::SystemEventLevel::Info => grpc_gen::SystemEventLevel::Info as i32,
@@ -2067,7 +2068,11 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .map_err(map_to_status)?
             .list_system_events(storage::SystemEventFilter {
                 event_id: None,
-                server_run_id: request.server_run_id,
+                server_run_id: request
+                    .server_run_id
+                    .map(|id| id.parse::<ServerRunId>())
+                    .transpose()
+                    .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?,
                 level,
                 code: request.code,
                 deployment_id: request.deployment_id.map(TryInto::try_into).transpose()?,
@@ -2091,7 +2096,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                     let message = event.message().to_owned();
                     grpc_gen::SystemEvent {
                         event_id: event.event_id.to_string(),
-                        server_run_id: event.server_run_id,
+                        server_run_id: event.server_run_id.to_string(),
                         created_at: Some(event.created_at.into()),
                         level: match event.level {
                             storage::SystemEventLevel::Info => {

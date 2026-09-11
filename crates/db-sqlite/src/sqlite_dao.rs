@@ -5635,7 +5635,7 @@ impl DbAdmin for SqlitePool {
                     .map_err(|err| RusqliteError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(err))))?;
                 tx.execute(
                     "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id.to_string(), event.server_run_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string)],
+                    rusqlite::params![event.event_id.to_string(), event.server_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, event.cas_digest.as_ref().map(ToString::to_string)],
                 )?;
                 Ok(())
             },
@@ -5658,7 +5658,7 @@ impl DbAdmin for SqlitePool {
                 })?;
                 tx.execute(
                     "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-                    rusqlite::params![event.event_id.to_string(), event.server_run_id, event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string()],
+                    rusqlite::params![event.event_id.to_string(), event.server_run_id.to_string(), event.created_at, event.level.as_str(), event.code, event.execution_id.as_ref().map(ToString::to_string), event.deployment_id.map(|id| id.to_string()), details, event.dedupe_key, digest.to_string()],
                 )?;
                 Ok(())
             },
@@ -5682,14 +5682,14 @@ impl DbAdmin for SqlitePool {
                      ORDER BY event_id DESC LIMIT ?7"
                 )?;
                 let rows = statement.query_map(rusqlite::params![
-                    filter.event_id.map(|id| id.to_string()), filter.server_run_id, filter.level.map(SystemEventLevel::as_str), filter.code,
+                    filter.event_id.map(|id| id.to_string()), filter.server_run_id.map(|id| id.to_string()), filter.level.map(SystemEventLevel::as_str), filter.code,
                     filter.deployment_id.map(|id| id.to_string()), filter.before_event_id.map(|id| id.to_string()),
                     i64::from(filter.limit.clamp(1, 1000))
                 ], |row| {
                     let level: String = row.get(3)?;
                     let details: String = row.get(7)?;
                     Ok(SystemEvent {
-                        event_id: row.get::<_, String>(0)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err)))?, server_run_id: row.get(1)?, created_at: row.get(2)?,
+                        event_id: row.get::<_, String>(0)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err)))?, server_run_id: row.get::<_, String>(1)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(err)))?, created_at: row.get(2)?,
                         level: match level.as_str() { "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
                         code: row.get(4)?,
                         dedupe_key: None,

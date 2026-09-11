@@ -2,7 +2,7 @@ use crate::config::secret_registry::API_TOKEN;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, SystemEventId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ServerRunId, SystemEventId},
 };
 use secrecy::SecretString;
 
@@ -177,7 +177,7 @@ pub(crate) enum AdminEvents {
     List {
         /// Only show events emitted by this server run.
         #[arg(long)]
-        server_run_id: Option<String>,
+        server_run_id: Option<ServerRunId>,
         #[arg(long)]
         level: Option<String>,
         #[arg(long)]
