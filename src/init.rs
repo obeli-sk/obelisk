@@ -10,11 +10,11 @@ use tracing_subscriber::Layer;
 use utils::panic_hook::tracing_panic_hook;
 
 #[cfg(feature = "tokio-console")]
-fn tokio_console_layer<S>() -> Option<impl tracing_subscriber::Layer<S>>
+fn tokio_console_layer<S>(enabled: bool) -> Option<impl tracing_subscriber::Layer<S>>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    if crate::env_vars::is_env_true(&crate::env_vars::SupportedEnvVar::TOKIO_CONSOLE) {
+    if enabled {
         // Run with
         // TOKIO_CONSOLE=true cargo run --features tokio-console
         // (tokio_unstable is enabled by default via .cargo/config.toml)
@@ -31,7 +31,7 @@ where
     }
 }
 #[cfg(not(feature = "tokio-console"))]
-fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
+fn tokio_console_layer(_enabled: bool) -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 
@@ -185,7 +185,16 @@ pub(crate) fn init(config: &ServerConfigToml) -> Result<Guard, anyhow::Error> {
     };
     tracing_subscriber::registry()
         .with(ErrorLayer::default())
-        .with(tokio_console_layer())
+        .with(tokio_console_layer({
+            #[cfg(feature = "tokio-console")]
+            {
+                config.tokio_console_enabled
+            }
+            #[cfg(not(feature = "tokio-console"))]
+            {
+                false
+            }
+        }))
         .with(tokio_tracing_otlp(config)?)
         .with(rolling_file_layer) // Must be before `out_layer`: https://github.com/tokio-rs/tracing/issues/3116
         .with(console_layer)

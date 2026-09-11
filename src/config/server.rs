@@ -30,6 +30,10 @@ pub(crate) struct ServerConfigToml {
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) source_path: Option<PathBuf>,
+    #[cfg(feature = "tokio-console")]
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) tokio_console_enabled: bool,
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
     /// Operator-owned secret registry. Maps a logical secret name to a source
@@ -86,6 +90,13 @@ impl ServerConfigToml {
         path_prefixes: &PathPrefixes,
         env_vars: &StartupEnvVars,
     ) -> Result<(), anyhow::Error> {
+        #[cfg(feature = "tokio-console")]
+        {
+            self.tokio_console_enabled = env_vars
+                .lookup("TOKIO_CONSOLE")
+                .and_then(|value| value.parse::<bool>().ok())
+                .unwrap_or_default();
+        }
         if let DatabaseConfigToml::Postgres(postgres) = &mut self.database {
             postgres.host = interpolate_startup_env_vars(&postgres.host, env_vars)?;
             postgres.user = interpolate_startup_env_vars(&postgres.user, env_vars)?;

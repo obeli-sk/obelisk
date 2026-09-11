@@ -5,7 +5,6 @@ mod args;
 mod client;
 mod command;
 mod config;
-mod env_vars;
 mod init;
 mod javascript;
 mod oci;
@@ -37,7 +36,6 @@ use std::sync::Arc;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> Result<(), anyhow::Error> {
-    env_vars::capture();
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("default tls provider must be installed");
