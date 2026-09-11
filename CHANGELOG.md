@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   activity names to content digests.
 - **Breaking:** *(api)* Removed the `hot_redeploy` REST request alias. Use `apply` when switching
   deployments without restarting.
+- **Breaking:** *(grpc)* Removed the deprecated `function_name_prefix` execution filter. Use the
+  structured `function_filter` field.
 
 ### Added
 

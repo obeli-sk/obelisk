@@ -118,7 +118,8 @@ message ListExecutionsRequest {
         bool including_cursor = 3;
     }
 
-    optional string function_name_prefix = 1 [deprecated = true];
+    reserved 1;
+    reserved "function_name_prefix";
 
     // Do not return child executions
     bool top_level_only = 2;
