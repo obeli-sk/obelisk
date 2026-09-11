@@ -19,6 +19,7 @@ use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::RunId;
+use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::TimeDelta;
@@ -1501,7 +1502,7 @@ impl SystemEventLevel {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
-    pub event_id: String,
+    pub event_id: SystemEventId,
     pub server_run_id: String,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
@@ -1654,7 +1655,7 @@ impl SystemEvent {
             return Err(SystemEventValidationError::DetailsTooLarge);
         }
         Ok(Self {
-            event_id: format!("sev_{}", ulid::Ulid::new()),
+            event_id: SystemEventId::generate(),
             server_run_id: server_run_id(),
             created_at: Utc::now(),
             level: code.level(),
@@ -1733,19 +1734,19 @@ impl SystemEvent {
 
 #[derive(Debug, Clone, Default)]
 pub struct SystemEventFilter {
-    pub event_id: Option<String>,
+    pub event_id: Option<SystemEventId>,
     pub server_run_id: Option<String>,
     pub level: Option<SystemEventLevel>,
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,
-    pub before_event_id: Option<String>,
+    pub before_event_id: Option<SystemEventId>,
     pub limit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpPolicyEventIds {
-    pub server_policy_event_id: String,
-    pub component_policy_event_id: String,
+    pub server_policy_event_id: SystemEventId,
+    pub component_policy_event_id: SystemEventId,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1775,10 +1776,13 @@ pub trait DbAdmin: Send + Sync {
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead>;
 
-    async fn get_system_event(&self, event_id: &str) -> Result<Option<SystemEvent>, DbErrorRead> {
+    async fn get_system_event(
+        &self,
+        event_id: SystemEventId,
+    ) -> Result<Option<SystemEvent>, DbErrorRead> {
         Ok(self
             .list_system_events(SystemEventFilter {
-                event_id: Some(event_id.to_owned()),
+                event_id: Some(event_id),
                 limit: 1,
                 ..SystemEventFilter::default()
             })

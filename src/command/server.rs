@@ -91,7 +91,7 @@ use concepts::cas::Cas;
 use concepts::cas::InMemoryCas;
 use concepts::component_id::ComponentDigest;
 use concepts::component_id::Digest;
-use concepts::prefixed_ulid::DeploymentId;
+use concepts::prefixed_ulid::{DeploymentId, SystemEventId};
 use concepts::storage::CreateRequest;
 use concepts::storage::DbErrorWrite;
 use concepts::storage::DbErrorWriteNonRetriable;
@@ -349,7 +349,6 @@ impl DeploymentSwitchManagerHandle {
             .inner
             .server_verified
             .server_http_policy_event_id
-            .clone()
             .expect("server policy event must be recorded before switching deployments");
         // Own the whole commit in a detached task: a dropped caller only stops observing the
         // result via `rx`, it cannot abort the switch. This covers the durable pre-critical
@@ -2124,7 +2123,7 @@ pub(crate) struct ServerVerified {
     max_transport_message_size_bytes: u64,
     global_http_config: GlobalHttpConfig,
     server_http_policy_audit: serde_json::Value,
-    server_http_policy_event_id: Option<String>,
+    server_http_policy_event_id: Option<SystemEventId>,
     environment_audit: serde_json::Value,
     /// The server's own `[[outbound_http.allowed_host]]` entries, verbatim. Kept so the
     /// `config_prepass::preflight` can report unregistered secret names before they are
@@ -3434,7 +3433,7 @@ async fn switch_hot_redeploy(
     webhook_registry: Arc<WebhookRegistry>,
     cancel_registry: CancelRegistry,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
-    server_policy_event_id: String,
+    server_policy_event_id: SystemEventId,
 ) -> Result<SwitchOutcome, SwitchError> {
     server_compiled_linked
         .runtime_config_availability
@@ -3495,7 +3494,7 @@ async fn record_http_policy_audits(
     db_pool: &dyn DbPool,
     deployment_id: DeploymentId,
     audits: impl IntoIterator<Item = serde_json::Value>,
-    server_policy_event_id: &str,
+    server_policy_event_id: &SystemEventId,
 ) -> Result<(), anyhow::Error> {
     for mut policy in audits {
         let object = policy
@@ -3539,7 +3538,7 @@ async fn record_http_policy_audits(
 async fn record_server_http_policy_audit(
     db_pool: &dyn DbPool,
     policy: serde_json::Value,
-) -> Option<String> {
+) -> Option<SystemEventId> {
     let server_policy_hash = policy["server_policy_hash"].clone();
     let webui_server_policy_hash = policy["webui_server_policy_hash"].clone();
     let policy = serde_json::json!({
@@ -3641,7 +3640,7 @@ async fn spawn_tasks_and_threads(
     )
     .await
     .ok_or_else(|| anyhow::anyhow!("cannot persist server HTTP policy audit"))?;
-    server_verified.server_http_policy_event_id = Some(server_policy_event_id.clone());
+    server_verified.server_http_policy_event_id = Some(server_policy_event_id);
     record_server_configuration_audit(db_pool.as_ref(), &server_verified, &server_policy_event_id)
         .await?;
     record_http_policy_audits(
@@ -3775,7 +3774,7 @@ async fn spawn_tasks_and_threads(
 async fn record_server_configuration_audit(
     db_pool: &dyn DbPool,
     server_verified: &ServerVerified,
-    server_http_policy_event_id: &str,
+    server_http_policy_event_id: &SystemEventId,
 ) -> Result<(), anyhow::Error> {
     let snapshot = serde_json::json!({
         "format": "obelisk-server-configuration-v1",
