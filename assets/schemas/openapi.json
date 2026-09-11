@@ -1642,7 +1642,7 @@
           {
             "name": "join_set",
             "in": "query",
-            "description": "Filter by an exact join-set ID (bare names select named join sets)",
+            "description": "Filter by an exact join-set ID",
             "required": false,
             "schema": {
               "type": "string"

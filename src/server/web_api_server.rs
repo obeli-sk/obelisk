@@ -17,8 +17,8 @@ use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId, JoinSetKind,
-    StrVariant, SupportedFunctionReturnValue,
+    ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
+    SupportedFunctionReturnValue,
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, SystemEventId},
     storage::{
@@ -1873,7 +1873,7 @@ pub(crate) mod logs {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ExecutionResponsesParams {
-    /// Filter by an exact join-set ID (bare names select named join sets)
+    /// Filter by an exact join-set ID
     join_set: Option<String>,
     /// Cursor for pagination
     cursor: Option<u32>,
@@ -1889,15 +1889,9 @@ struct ExecutionResponsesParams {
 }
 
 fn parse_join_set_filter(join_set: String) -> Result<JoinSetId, String> {
-    if join_set.contains(':') {
-        join_set
-            .parse()
-            .map_err(|err: concepts::JoinSetIdParseError| err.to_string())
-    } else {
-        // backcompat: 0.41.4 accepted bare names as named join-set IDs.
-        JoinSetId::new(JoinSetKind::Named, StrVariant::from(join_set))
-            .map_err(|err| err.to_string())
-    }
+    join_set
+        .parse()
+        .map_err(|err: concepts::JoinSetIdParseError| err.to_string())
 }
 
 /// Response containing execution responses
@@ -5348,11 +5342,9 @@ mod tests {
     }
 
     #[test]
-    fn response_join_set_filter_accepts_canonical_id_and_bare_named_id() {
-        assert_eq!(
-            parse_join_set_filter("n:session-name".to_string()).unwrap(),
-            parse_join_set_filter("session-name".to_string()).unwrap(),
-        );
+    fn response_join_set_filter_requires_canonical_id() {
+        parse_join_set_filter("n:session-name".to_string()).unwrap();
+        parse_join_set_filter("session-name".to_string()).unwrap_err();
     }
 
     fn parse_dt(value: &str) -> DateTime<Utc> {
