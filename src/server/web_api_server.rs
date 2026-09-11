@@ -419,15 +419,18 @@ pub(crate) mod admin {
             (events.len() == limit as usize).then(|| events.last().unwrap().event_id.clone());
         let events = events
             .into_iter()
-            .map(|event| SystemEventResponse {
-                event_id: event.event_id,
-                created_at: event.created_at,
-                level: event.level.as_str().into(),
-                code: event.code,
-                message: event.message,
-                execution_id: event.execution_id,
-                deployment_id: event.deployment_id,
-                details: event.details,
+            .map(|event| {
+                let message = event.message().to_owned();
+                SystemEventResponse {
+                    event_id: event.event_id,
+                    created_at: event.created_at,
+                    level: event.level.as_str().into(),
+                    code: event.code,
+                    message,
+                    execution_id: event.execution_id,
+                    deployment_id: event.deployment_id,
+                    details: event.details,
+                }
             })
             .collect();
         Ok(pretty_json_response(
@@ -711,6 +714,17 @@ pub(crate) mod admin {
                 "force_non_terminal requires delete_executions",
             ));
         }
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentDeleteStarted,
+            None,
+            Some(deployment_id),
+            json!({
+                "delete_executions": query.delete_executions,
+                "force_non_terminal": query.force_non_terminal,
+            }),
+        )
+        .await;
         let outcome = state
             .db_pool
             .admin_conn()
@@ -758,6 +772,14 @@ pub(crate) mod admin {
                 )));
             }
         };
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentDeleteCompleted,
+            None,
+            Some(deployment_id),
+            serde_json::to_value(&response).expect("cleanup response must serialize"),
+        )
+        .await;
         Ok(pretty_json_response(StatusCode::OK, &response))
     }
 
@@ -773,6 +795,21 @@ pub(crate) mod admin {
                 "force_non_terminal requires delete_executions",
             ));
         }
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentRetainStarted,
+            None,
+            None,
+            json!({
+                "retain_count": request.retain_count,
+                "max_age_seconds": request.max_age_seconds,
+                "batch_size": request.batch_size,
+                "delete_executions": request.delete_executions,
+                "force_non_terminal": request.force_non_terminal,
+                "dry_run": request.dry_run,
+            }),
+        )
+        .await;
         let result = state
             .db_pool
             .admin_conn()
@@ -787,6 +824,15 @@ pub(crate) mod admin {
             )
             .await
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        crate::server::system_event_writer::record(
+            state.db_pool.as_ref(),
+            SystemEventCode::AdminDeploymentRetainCompleted,
+            None,
+            None,
+            serde_json::to_value(CleanupResponse::from(result))
+                .expect("cleanup response must serialize"),
+        )
+        .await;
         Ok(pretty_json_response(
             StatusCode::OK,
             &CleanupResponse::from(result),

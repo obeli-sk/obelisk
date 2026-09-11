@@ -1505,7 +1505,6 @@ pub struct SystemEvent {
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
-    pub message: String,
     pub execution_id: Option<ExecutionId>,
     pub deployment_id: Option<DeploymentId>,
     pub details: serde_json::Value,
@@ -1517,6 +1516,10 @@ pub enum SystemEventCode {
     AdminExecutionDeleteCompleted,
     AdminExecutionRetainStarted,
     AdminExecutionRetainCompleted,
+    AdminDeploymentDeleteStarted,
+    AdminDeploymentDeleteCompleted,
+    AdminDeploymentRetainStarted,
+    AdminDeploymentRetainCompleted,
     MaintenanceGcCompleted,
     MaintenanceGcFailed,
 }
@@ -1529,6 +1532,10 @@ impl SystemEventCode {
             Self::AdminExecutionDeleteCompleted => "admin.execution.delete.completed",
             Self::AdminExecutionRetainStarted => "admin.execution.retain.started",
             Self::AdminExecutionRetainCompleted => "admin.execution.retain.completed",
+            Self::AdminDeploymentDeleteStarted => "admin.deployment.delete.started",
+            Self::AdminDeploymentDeleteCompleted => "admin.deployment.delete.completed",
+            Self::AdminDeploymentRetainStarted => "admin.deployment.retain.started",
+            Self::AdminDeploymentRetainCompleted => "admin.deployment.retain.completed",
             Self::MaintenanceGcCompleted => "maintenance.gc.completed",
             Self::MaintenanceGcFailed => "maintenance.gc.failed",
         }
@@ -1549,6 +1556,10 @@ impl SystemEventCode {
             Self::AdminExecutionDeleteCompleted => "Execution tree deletion completed",
             Self::AdminExecutionRetainStarted => "Execution retention started",
             Self::AdminExecutionRetainCompleted => "Execution retention completed",
+            Self::AdminDeploymentDeleteStarted => "Deployment deletion started",
+            Self::AdminDeploymentDeleteCompleted => "Deployment deletion completed",
+            Self::AdminDeploymentRetainStarted => "Deployment retention started",
+            Self::AdminDeploymentRetainCompleted => "Deployment retention completed",
             Self::MaintenanceGcCompleted => "Periodic garbage collection completed",
             Self::MaintenanceGcFailed => "Periodic garbage collection failed",
         }
@@ -1584,11 +1595,43 @@ impl SystemEvent {
             created_at: Utc::now(),
             level: code.level(),
             code: code.as_str().to_owned(),
-            message: message.to_owned(),
             execution_id,
             deployment_id,
             details,
         })
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self.code.as_str() {
+            "admin.execution.delete.started" => {
+                SystemEventCode::AdminExecutionDeleteStarted.message()
+            }
+            "admin.execution.delete.completed" => {
+                SystemEventCode::AdminExecutionDeleteCompleted.message()
+            }
+            "admin.execution.retain.started" => {
+                SystemEventCode::AdminExecutionRetainStarted.message()
+            }
+            "admin.execution.retain.completed" => {
+                SystemEventCode::AdminExecutionRetainCompleted.message()
+            }
+            "admin.deployment.delete.started" => {
+                SystemEventCode::AdminDeploymentDeleteStarted.message()
+            }
+            "admin.deployment.delete.completed" => {
+                SystemEventCode::AdminDeploymentDeleteCompleted.message()
+            }
+            "admin.deployment.retain.started" => {
+                SystemEventCode::AdminDeploymentRetainStarted.message()
+            }
+            "admin.deployment.retain.completed" => {
+                SystemEventCode::AdminDeploymentRetainCompleted.message()
+            }
+            "maintenance.gc.completed" => SystemEventCode::MaintenanceGcCompleted.message(),
+            "maintenance.gc.failed" => SystemEventCode::MaintenanceGcFailed.message(),
+            _ => &self.code,
+        }
     }
 }
 
@@ -3588,6 +3631,10 @@ mod tests {
             SystemEventCode::AdminExecutionDeleteCompleted,
             SystemEventCode::AdminExecutionRetainStarted,
             SystemEventCode::AdminExecutionRetainCompleted,
+            SystemEventCode::AdminDeploymentDeleteStarted,
+            SystemEventCode::AdminDeploymentDeleteCompleted,
+            SystemEventCode::AdminDeploymentRetainStarted,
+            SystemEventCode::AdminDeploymentRetainCompleted,
             SystemEventCode::MaintenanceGcCompleted,
             SystemEventCode::MaintenanceGcFailed,
         ] {

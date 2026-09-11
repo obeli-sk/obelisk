@@ -5964,8 +5964,8 @@ async fn delete_deployment_tx(
 impl DbAdmin for PostgresConnection {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.client.lock().await.execute(
-            "INSERT INTO t_system_event (event_id, created_at, level, code, message, execution_id, deployment_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-            &[&event.event_id, &event.created_at, &event.level.as_str(), &event.code, &event.message,
+            "INSERT INTO t_system_event (event_id, created_at, level, code, execution_id, deployment_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+            &[&event.event_id, &event.created_at, &event.level.as_str(), &event.code,
               &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details)],
         ).await?;
         Ok(())
@@ -5976,7 +5976,7 @@ impl DbAdmin for PostgresConnection {
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
         let rows = self.client.lock().await.query(
-            "SELECT event_id, created_at, level, code, message, execution_id, deployment_id, details FROM t_system_event
+            "SELECT event_id, created_at, level, code, execution_id, deployment_id, details FROM t_system_event
              WHERE ($1::text IS NULL OR level = $1) AND ($2::text IS NULL OR code = $2)
                AND ($3::text IS NULL OR deployment_id = $3) AND ($4::text IS NULL OR event_id < $4)
              ORDER BY event_id DESC LIMIT $5",
@@ -5987,8 +5987,8 @@ impl DbAdmin for PostgresConnection {
         rows.into_iter()
             .map(|row| {
                 let level: String = get(&row, 2)?;
-                let execution_id: Option<String> = get(&row, 5)?;
-                let deployment_id: Option<String> = get(&row, 6)?;
+                let execution_id: Option<String> = get(&row, 4)?;
+                let deployment_id: Option<String> = get(&row, 5)?;
                 Ok(SystemEvent {
                     event_id: get(&row, 0)?,
                     created_at: get(&row, 1)?,
@@ -5998,7 +5998,6 @@ impl DbAdmin for PostgresConnection {
                         _ => SystemEventLevel::Info,
                     },
                     code: get(&row, 3)?,
-                    message: get(&row, 4)?,
                     execution_id: execution_id
                         .map(|id| id.parse())
                         .transpose()
@@ -6010,7 +6009,7 @@ impl DbAdmin for PostgresConnection {
                             consistency_db_err(format!("invalid system event deployment id: {err}"))
                         },
                     )?,
-                    details: get::<Json<serde_json::Value>, _>(&row, 7)?.0,
+                    details: get::<Json<serde_json::Value>, _>(&row, 6)?.0,
                 })
             })
             .collect()
