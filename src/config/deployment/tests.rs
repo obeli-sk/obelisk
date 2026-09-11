@@ -364,7 +364,6 @@ mod activity_exec {
                 params: Some(vec![]),
                 return_type: Some("result<string, string>".into()),
             }),
-            component_digest: None,
             exec: ExecConfigToml::default(),
             max_retries: default_max_retries(),
             retry_exp_backoff: default_retry_exp_backoff(),
@@ -391,7 +390,6 @@ mod activity_exec {
                 params: Some(vec![]),
                 return_type: Some("result<string, string>".into()),
             }),
-            component_digest: None,
             exec: ExecConfigToml::default(),
             max_retries: default_max_retries(),
             retry_exp_backoff: default_retry_exp_backoff(),
@@ -569,7 +567,6 @@ mod script_location {
         let source = "export default 'owned content';";
         let digest = cas.write_blob(source.as_bytes()).await.unwrap();
 
-        // Bare relative path (implicit `${DEPLOYMENT_DIR}` prefix).
         let location = resolve_script_toml(
             javascript(
                 Some(ScriptLocationPathOrOci::Path("scripts/a.js".to_string())),
@@ -586,34 +583,6 @@ mod script_location {
             location,
             ScriptLocationResolved::Content { content, file_name }
                 if content == source && file_name == "scripts/a.js"
-        );
-    }
-
-    #[tokio::test]
-    async fn explicit_deployment_dir_prefix_is_owned() {
-        let cas = InMemoryCas::default();
-        let digest = cas
-            .write_blob(b"export default 'owned content';")
-            .await
-            .unwrap();
-
-        let location = resolve_script_toml(
-            javascript(
-                Some(ScriptLocationPathOrOci::Path(
-                    "${DEPLOYMENT_DIR}/scripts/a.js".to_string(),
-                )),
-                None,
-                BTreeMap::new(),
-            ),
-            "ignored.js".to_string(),
-            &cas,
-            Some(&digest),
-        )
-        .await
-        .unwrap();
-        assert_matches::assert_matches!(
-            location,
-            ScriptLocationResolved::Content { file_name, .. } if file_name == "scripts/a.js"
         );
     }
 
@@ -643,22 +612,20 @@ mod script_location {
     #[tokio::test]
     async fn parent_dir_escape_is_rejected() {
         let cas = InMemoryCas::default();
-        for raw in ["../escape.js", "${DEPLOYMENT_DIR}/../escape.js"] {
-            let err = resolve_script_toml(
-                javascript(
-                    Some(ScriptLocationPathOrOci::Path(raw.to_string())),
-                    None,
-                    BTreeMap::new(),
-                ),
-                "ignored.js".to_string(),
-                &cas,
+        let err = resolve_script_toml(
+            javascript(
+                Some(ScriptLocationPathOrOci::Path("../escape.js".to_string())),
                 None,
-            )
-            .await
-            .unwrap_err()
-            .to_string();
-            assert!(err.contains("`..`"), "unexpected error for `{raw}`: {err}");
-        }
+                BTreeMap::new(),
+            ),
+            "ignored.js".to_string(),
+            &cas,
+            None,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("`..`"), "unexpected error: {err}");
     }
 
     #[tokio::test]
@@ -754,7 +721,6 @@ mod export {
             name: ConfigName::new(StrVariant::from(name.to_string())).unwrap(),
             location,
             content_digest: None,
-            component_digest: None,
             ffqn: "ns:pkg/ifc.fn".parse().unwrap(),
             interface: FunctionInterfaceResolved::Inline(InlineFunctionInterfaceResolved {
                 params: Some(vec![]),
@@ -822,21 +788,8 @@ mod backtrace {
     use super::*;
 
     #[test]
-    fn wasm_deployment_dir_escape_rejected_but_subpath_ok() {
+    fn wasm_relative_subpath_is_resolved_and_escape_rejected() {
         let dir = std::path::Path::new("/dep");
-
-        let mut escape = "${DEPLOYMENT_DIR}/../evil.wasm".to_string();
-        let err = format!(
-            "{:#}",
-            DeploymentToml::expand_deployment_dir(&mut escape, dir).unwrap_err()
-        );
-        assert!(err.contains("`..`"), "unexpected error: {err}");
-
-        let mut ok = "${DEPLOYMENT_DIR}/components/a.wasm".to_string();
-        DeploymentToml::expand_deployment_dir(&mut ok, dir).unwrap();
-        assert_eq!(ok, "/dep/components/a.wasm");
-
-        // Bare relative paths are anchored to the deployment dir too.
         let mut bare = "components/a.wasm".to_string();
         DeploymentToml::expand_deployment_dir(&mut bare, dir).unwrap();
         assert_eq!(bare, "/dep/components/a.wasm");
@@ -861,29 +814,7 @@ mod backtrace {
     }
 
     #[test]
-    fn resolved_retains_relative_subpath() {
-        let digest = digest_of(b"SRC");
-        let component_files =
-            BTreeMap::from([("crates/foo/src/lib.rs".to_string(), digest.clone())]);
-
-        let mut bt = ComponentBacktraceConfig::default();
-        bt.frame_files_to_sources.insert(
-            ".../src/lib.rs".to_string(),
-            "${DEPLOYMENT_DIR}/crates/foo/src/lib.rs".to_string(),
-        );
-        let resolved = resolve_backtrace(&bt, &component_files).unwrap();
-        let src = resolved
-            .frame_files_to_sources
-            .get(".../src/lib.rs")
-            .unwrap();
-        assert_eq!(src.content_digest, digest);
-        assert_eq!(src.file_name, "crates/foo/src/lib.rs");
-    }
-
-    #[test]
-    fn bare_relative_source_is_deployment_dir_relative() {
-        // A bare relative backtrace source (no `${DEPLOYMENT_DIR}` prefix) resolves to the
-        // same deployment-relative file name as the explicit-prefix form.
+    fn relative_source_retains_subpath() {
         let digest = digest_of(b"SRC");
         let component_files =
             BTreeMap::from([("crates/foo/src/lib.rs".to_string(), digest.clone())]);
@@ -905,10 +836,8 @@ mod backtrace {
     #[test]
     fn source_parent_dir_escape_is_rejected() {
         let mut bt = ComponentBacktraceConfig::default();
-        bt.frame_files_to_sources.insert(
-            "frame".to_string(),
-            "${DEPLOYMENT_DIR}/../escape.rs".to_string(),
-        );
+        bt.frame_files_to_sources
+            .insert("frame".to_string(), "../escape.rs".to_string());
         let err = format!(
             "{:#}",
             resolve_backtrace(&bt, &BTreeMap::new()).unwrap_err()

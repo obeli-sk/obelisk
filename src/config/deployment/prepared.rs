@@ -1,7 +1,6 @@
 use crate::command::server::cas_deployment_dir;
 use crate::config::deployment::{
     DeploymentResolved, DeploymentToml, OCI_SCHEMA_PREFIX, sanitize_deployment_relative_path,
-    strip_deployment_dir_prefix,
 };
 use crate::config::file_provider::parse_wit_dir;
 use anyhow::{Context, bail, ensure};
@@ -1152,8 +1151,7 @@ fn deployment_owned_path(raw: &str) -> anyhow::Result<Option<String>> {
     if Path::new(raw).is_absolute() {
         bail!("absolute local paths are not allowed in deployment manifests: `{raw}`");
     }
-    let path = strip_deployment_dir_prefix(raw).unwrap_or(raw);
-    sanitize_deployment_relative_path(path).map(Some)
+    sanitize_deployment_relative_path(raw).map(Some)
 }
 
 fn content_digest(bytes: &[u8]) -> ContentDigest {

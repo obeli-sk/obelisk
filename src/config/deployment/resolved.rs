@@ -11,7 +11,7 @@ use super::{
     ConfigName, CronComponentConfigToml, DeploymentTomlValidated, DurationConfig, ExecConfigToml,
     FunctionInterfaceToml, InflightSemaphore, InlineFunctionInterfaceToml, JsParamToml,
     LockingStrategy, LogLevelToml, MethodsInput, ReplaceIn, ScriptLocationPathOrOci, WebhookRoute,
-    WebhookRouteDetail, sanitize_deployment_relative_path, strip_deployment_dir_prefix,
+    WebhookRouteDetail, sanitize_deployment_relative_path,
 };
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
@@ -57,20 +57,6 @@ use wasm_workers::{
         WorkflowConfigMode,
     },
 };
-
-// backcompat: accept component digest overrides until 0.42.
-fn warn_deprecated_component_digest_override(
-    component_name: &str,
-    component_digest: Option<&ComponentDigest>,
-) {
-    if let Some(component_digest) = component_digest {
-        warn!(
-            component_name,
-            %component_digest,
-            "`component_digest` override is deprecated and will be removed in 0.42"
-        );
-    }
-}
 
 // Components
 
@@ -381,21 +367,15 @@ impl ActivityExternalComponentConfigResolvedExt for ActivityExternalComponentCon
     ) -> Result<ActivityExternalConfigVerified, anyhow::Error> {
         match self {
             Self::File(file) => {
-                let component_digest_override = file.component_digest;
                 let expected_content_digest = file.content_digest;
                 let (common, content_digest, wasm_path) =
                     file.common.fetch(&wasm_cache_dir, &metadata_dir).await?;
-                warn_deprecated_component_digest_override(
-                    common.name.as_str(),
-                    component_digest_override.as_ref(),
-                );
                 verify_fetched_content_digest(
                     &content_digest,
                     expected_content_digest.as_ref(),
                     &common.location.to_string(),
                 )?;
-                let component_digest =
-                    component_digest_override.unwrap_or(ComponentDigest(content_digest.0));
+                let component_digest = ComponentDigest(content_digest.0);
                 let component_id = ComponentId::new(
                     ComponentType::Activity,
                     StrVariant::from(common.name),
@@ -509,10 +489,6 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             expected_content_digest.as_ref(),
             &common.location.to_string(),
         )?;
-        warn_deprecated_component_digest_override(
-            common.name.as_str(),
-            self.component_digest.as_ref(),
-        );
 
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
@@ -522,9 +498,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
         // Validate no collision between env_vars and secret env names
         validate_no_env_collision(&env_vars, &allowed_hosts)?;
 
-        let component_digest = self
-            .component_digest
-            .unwrap_or(ComponentDigest(content_digest.0));
+        let component_digest = ComponentDigest(content_digest.0);
         let component_id = ComponentId::new(
             ComponentType::Activity,
             StrVariant::from(common.name),
@@ -700,11 +674,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         )?;
         let parsed_params = verified.params;
         let return_type = verified.return_type;
-        warn_deprecated_component_digest_override(
-            self.name.as_str(),
-            self.component_digest.as_ref(),
-        );
-        let component_digest = self.component_digest.unwrap_or_else(|| {
+        let component_digest = {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_exec:");
             hasher.update(resolved_program.content_digest.0.0);
@@ -718,7 +688,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
             }
             let hash: [u8; 32] = hasher.finalize().into();
             ComponentDigest(Digest(hash))
-        });
+        };
         let component_id = ComponentId::new(
             ComponentType::Activity,
             StrVariant::from(self.name),
@@ -986,11 +956,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
             .await?;
-        warn_deprecated_component_digest_override(
-            self.name.as_str(),
-            self.component_digest.as_ref(),
-        );
-        let component_digest = self.component_digest.unwrap_or_else(|| {
+        let component_digest = {
             let mut hasher = Sha256::new();
             hasher.update(b"activity_js:");
             hash_js_graph(&mut hasher, &js_entry_path, &js_files);
@@ -1004,7 +970,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             }
             let hash: [u8; 32] = hasher.finalize().into();
             ComponentDigest(Digest(hash))
-        });
+        };
         let component_id = ComponentId::new(
             ComponentType::Activity,
             StrVariant::from(self.name),
@@ -1098,13 +1064,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         )
         .await?
         .unwrap_or(wasm_path);
-        warn_deprecated_component_digest_override(
-            common.name.as_str(),
-            self.component_digest.as_ref(),
-        );
-        let component_digest = self
-            .component_digest
-            .unwrap_or(ComponentDigest(content_digest.0));
+        let component_digest = ComponentDigest(content_digest.0);
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(common.name),
@@ -1190,11 +1150,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             .location
             .get_content(&wasm_cache_dir, self.content_digest.as_ref())
             .await?;
-        warn_deprecated_component_digest_override(
-            self.name.as_str(),
-            self.component_digest.as_ref(),
-        );
-        let component_digest = self.component_digest.unwrap_or_else(|| {
+        let component_digest = {
             let mut hasher = Sha256::new();
             hasher.update(b"workflow_js:");
             hash_js_graph(&mut hasher, &js_entry_path, &js_files);
@@ -1208,7 +1164,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             }
             let hash: [u8; 32] = hasher.finalize().into();
             ComponentDigest(Digest(hash))
-        });
+        };
         let component_id = ComponentId::new(
             ComponentType::Workflow,
             StrVariant::from(self.name),
@@ -1275,7 +1231,6 @@ pub(crate) async fn resolve_local_refs(
             .await?,
             name,
             content_digest: a.content_digest,
-            component_digest: a.component_digest,
             ffqn: a.ffqn,
             interface,
             exec: a.exec,
@@ -1294,7 +1249,6 @@ pub(crate) async fn resolve_local_refs(
         workflows_wasm.push(WorkflowWasmComponentConfigResolved {
             common: w.common,
             content_digest: w.content_digest,
-            component_digest: w.component_digest,
             exec: w.exec,
             retry_exp_backoff: w.retry_exp_backoff,
             blocking_strategy: w.blocking_strategy,
@@ -1324,7 +1278,6 @@ pub(crate) async fn resolve_local_refs(
             .await?,
             name,
             content_digest: w.content_digest,
-            component_digest: w.component_digest,
             ffqn: w.ffqn,
             interface,
             exec: w.exec,
@@ -1405,7 +1358,6 @@ pub(crate) async fn resolve_local_refs(
             content_digest: a.content_digest,
             ffqn: a.ffqn,
             interface,
-            component_digest: a.component_digest,
             exec: a.exec,
             max_retries: a.max_retries,
             retry_exp_backoff: a.retry_exp_backoff,
@@ -1608,7 +1560,7 @@ pub(crate) enum ModuleGraphResolution {
 /// Resolve a script source (JS or exec) TOML location to its resolved form.
 ///
 /// - inline `content` → `Content { content, file_name: default_file_name }` (owned).
-/// - a **relative** `Path` (bare, or `${DEPLOYMENT_DIR}/…`) → read + inline as `Content`,
+/// - a **relative** `Path` → read + inline as `Content`,
 ///   with `file_name` preserving the deployment-relative subpath (owned). `..` escapes error.
 /// - an **absolute** `Path` → rejected.
 /// - an `Oci` reference → `Oci { image }`.
@@ -1653,8 +1605,7 @@ pub(crate) async fn resolve_script_toml(
             if std::path::Path::new(&path).is_absolute() {
                 bail!("absolute local paths are not allowed in deployment manifests: `{path}`")
             }
-            let path = strip_deployment_dir_prefix(&path).unwrap_or(&path);
-            let path = sanitize_deployment_relative_path(path)?;
+            let path = sanitize_deployment_relative_path(&path)?;
             if let ModuleGraphResolution::JavaScript(component_files) = module_graph {
                 // `component_files` is the manifest's declared closure (`path -> digest`).
                 // Ensure the entry is in it (an entry-only manifest declares none), then walk
@@ -1736,12 +1687,9 @@ pub(crate) fn resolve_backtrace(
 ) -> anyhow::Result<ComponentBacktraceConfigResolved> {
     let mut frame_files_to_sources = HashMap::new();
     for (key, path) in &backtrace.frame_files_to_sources {
-        // Classify the source path like a script: a relative path (bare or
-        // `${DEPLOYMENT_DIR}/…`) is deployment-relative and its subpath is mirrored on export.
+        // Classify a relative source path as deployment-relative and mirror its subpath on export.
         // The pre-resolve validation pass already rejected absolute paths.
-        let file_name = if let Some(rest) = strip_deployment_dir_prefix(path) {
-            sanitize_deployment_relative_path(rest)?
-        } else if std::path::Path::new(path).is_absolute() {
+        let file_name = if std::path::Path::new(path).is_absolute() {
             unreachable!("absolute backtrace source `{path}` must be rejected before resolution")
         } else {
             sanitize_deployment_relative_path(path)?
@@ -2589,7 +2537,6 @@ pub struct ActivityJsComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
-    pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
     pub interface: FunctionInterfaceResolved,
     pub exec: ExecConfigToml,
@@ -2610,7 +2557,6 @@ pub struct ActivityExecComponentConfigResolved {
     pub content_digest: Option<ContentDigest>,
     pub ffqn: FunctionFqn,
     pub interface: FunctionInterfaceResolved,
-    pub component_digest: Option<ComponentDigest>,
     pub exec: ExecConfigToml,
     pub max_retries: u32,
     pub retry_exp_backoff: DurationConfig,
@@ -2630,7 +2576,6 @@ pub struct ActivityExecComponentConfigResolved {
 pub struct WorkflowWasmComponentConfigResolved {
     pub common: ComponentCommon,
     pub content_digest: Option<ContentDigest>,
-    pub component_digest: Option<ComponentDigest>,
     pub exec: ExecConfigToml,
     pub retry_exp_backoff: DurationConfig,
     pub blocking_strategy: BlockingStrategyConfigToml,
@@ -2647,7 +2592,6 @@ pub struct WorkflowJsComponentConfigResolved {
     pub name: ConfigName,
     pub location: ScriptLocationResolved,
     pub content_digest: Option<ContentDigest>,
-    pub component_digest: Option<ComponentDigest>,
     pub ffqn: FunctionFqn,
     pub interface: FunctionInterfaceResolved,
     pub exec: ExecConfigToml,

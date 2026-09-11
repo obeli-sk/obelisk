@@ -24,7 +24,14 @@ use crate::config::deployment::ActivityStubExtInlineConfigVerified;
 use crate::config::deployment::ActivityWasmComponentConfigTomlExt as _;
 use crate::config::deployment::ActivityWasmConfigVerified;
 use crate::config::deployment::ComponentCommon;
-#[cfg(not(feature = "embed-assets"))] // Only the OCI fetch arms below use `.fetch()`.
+#[cfg(all(
+    not(feature = "embed-assets"),
+    any(
+        not(feature = "activity-js-local"),
+        not(feature = "workflow-js-local"),
+        not(feature = "webhook-js-local")
+    )
+))]
 use crate::config::deployment::ComponentLocationFetchExt as _;
 use crate::config::deployment::ComponentLocationToml;
 use crate::config::deployment::ComponentStdOutputToml;
@@ -1169,26 +1176,6 @@ pub(crate) async fn deployment_verify_config(
                     );
                 }
             }
-            AllowExecActivities::LegacyAllowlist(allowed) => {
-                let rejected = exec_content_digest_lines(
-                    &deployment.activities_exec,
-                    &prepared_dirs.wasm_cache_dir,
-                )
-                .await?
-                .into_iter()
-                .filter(|(_, digest, _)| !allowed.contains(digest))
-                .map(|(_, _, line)| line)
-                .collect::<Vec<_>>();
-                if !rejected.is_empty() {
-                    bail!(
-                        "deployment contains exec activities, which run outside the WASM sandbox, \
-                         whose content digests are not in the `allow_exec_activities` allowlist \
-                         in server.toml; review each script, then allow it by adding its line under \
-                         `[allow_exec_activities]`:\n{}",
-                        rejected.join("\n")
-                    );
-                }
-            }
         }
     }
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
@@ -1408,8 +1395,8 @@ impl LocalDeployment {
 /// Root for parsing a stored manifest for resolution against the CAS.
 ///
 /// Empty on purpose: a stored (processed) manifest has no submitter host to anchor relative paths
-/// to. Deployment-owned references are addressed by content digest in the CAS, so a relative /
-/// `${DEPLOYMENT_DIR}` path validated against an empty root stays relative: a logical filename,
+/// to. Deployment-owned references are addressed by content digest in the CAS, so a relative
+/// path validated against an empty root stays relative: a logical filename,
 /// never a storage address. Those become concrete on-disk paths only later, in
 /// [`DeploymentRunnable::resolve`], which materializes their blobs from the CAS.
 pub(crate) fn cas_deployment_dir() -> std::path::PathBuf {
@@ -2143,9 +2130,6 @@ struct ServerVerifiedLaunch {
     engines: Engines,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
-    /// Deprecated server-wide override; when set, applies to every workflow. See
-    /// `WorkflowsGlobalConfigToml::lock_extension_leeway`.
-    deprecated_workflows_lock_extension_leeway: Option<Duration>,
     /// Bound on captured writes collected during a single replay pass. See
     /// `WorkflowsGlobalConfigToml::max_replay_captured_writes`.
     workflows_max_replay_captured_writes: usize,
@@ -2190,18 +2174,6 @@ impl ServerVerified {
             });
         }
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
-        // backcompat: 0.41 - `[workflows] lock_extension_leeway` moved to per-workflow config; remove this override in 0.42.
-        let deprecated_workflows_lock_extension_leeway: Option<Duration> = config
-            .workflows_global_config
-            .lock_extension_leeway
-            .map(Into::into);
-        if deprecated_workflows_lock_extension_leeway.is_some() {
-            warn!(
-                "`[workflows] lock_extension_leeway` is deprecated and will be removed in 0.42; \
-                 set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]` \
-                 instead. While set, it overrides the per-workflow value for every workflow."
-            );
-        }
         let workflows_max_replay_captured_writes =
             config.workflows_global_config.max_replay_captured_writes;
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
@@ -2281,7 +2253,6 @@ impl ServerVerified {
                 engines,
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
-                deprecated_workflows_lock_extension_leeway,
                 workflows_max_replay_captured_writes,
             },
             allow_exec_activities: config.allow_exec_activities,
@@ -2383,7 +2354,6 @@ impl ServerCompiledLinked {
             fuel,
             global_http_config,
             server_verified.build_semaphore,
-            server_verified.deprecated_workflows_lock_extension_leeway,
             server_verified.workflows_max_replay_captured_writes,
             termination_watcher,
             suppress_linking_errors,
@@ -4596,7 +4566,6 @@ async fn compile_and_link(
     fuel: Option<u64>,
     global_http_config: GlobalHttpConfig,
     build_semaphore: Option<u64>,
-    deprecated_workflows_lock_extension_leeway: Option<Duration>,
     workflows_max_replay_captured_writes: usize,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
@@ -4777,12 +4746,11 @@ async fn compile_and_link(
                 let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
                 let span = info_span!(parent: parent_span, "workflow_compile", component_id = %workflow.component_id());
                 span.in_scope(|| {
-                    let leeway = deprecated_workflows_lock_extension_leeway
-                        .unwrap_or(workflow.lock_extension_leeway);
+                    let lock_extension_leeway = workflow.lock_extension_leeway;
                     prespawn_workflow_wasm(
                         workflow,
                         &engines,
-                        leeway,
+                        lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                     )
                     .map(|(worker, component_config, frame_files)| {
@@ -4803,13 +4771,12 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
                 span.in_scope(|| {
-                    let leeway = deprecated_workflows_lock_extension_leeway
-                        .unwrap_or(workflow_js.lock_extension_leeway);
+                    let lock_extension_leeway = workflow_js.lock_extension_leeway;
                     prespawn_workflow_js(
                         workflow_js,
                         &engines,
                         workflow_js_runnable,
-                        leeway,
+                        lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                     )
                         .map(|(worker, component_config, frame_files)| {
@@ -6441,72 +6408,6 @@ mod tests {
         )
         .await?;
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn deployment_verify_rejects_digest_shared_across_component_types()
-    -> Result<(), anyhow::Error> {
-        test_utils::set_up();
-
-        let workspace = get_workspace_dir();
-        let project_dirs = crate::project_dirs();
-        let base_dirs = BaseDirs::new();
-        let config_holder = ConfigHolder::new(
-            project_dirs,
-            base_dirs,
-            Some(workspace.join("server-sqlite.toml")),
-        )?;
-        let config = config_holder.load_config()?;
-
-        let fixture = crate::command::test_support::target_aware_deployment_fixture(
-            &workspace,
-            "deployment-testing-wasm-local.toml",
-        )
-        .await?;
-        let (mut deployment, cas) = resolve_deployment_offline(fixture.path()).await?;
-        let shared_digest: ComponentDigest =
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                .parse()
-                .unwrap();
-        deployment.activities_wasm[0].component_digest = Some(shared_digest.clone());
-        deployment.workflows_wasm[0].component_digest = Some(shared_digest);
-
-        let prepared_dirs = prepare_dirs(
-            &config,
-            &PrepareDirsParams {
-                clean_cache: false,
-                clean_codegen_cache: false,
-            },
-            &config_holder.path_prefixes,
-            &SecretRegistry::empty(),
-        )
-        .await?;
-
-        let (_termination_sender, mut termination_watcher) = watch::channel(());
-        let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified =
-            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
-        let err = deployment_verify_config(
-            &server_verified,
-            &prepared_dirs,
-            deployment,
-            cas,
-            VerifyParams {
-                dir_params: PrepareDirsParams {
-                    clean_cache: false,
-                    clean_codegen_cache: false,
-                },
-                runtime_config_availability: RuntimeConfigAvailability::Strict,
-                suppress_type_checking_errors: false,
-                suppress_linking_errors: false,
-            },
-            &mut termination_watcher,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(err.to_string().contains("shared between component types"));
         Ok(())
     }
 

@@ -671,7 +671,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/cancel_child_error.js",
           "digest": "sha256:<REDACTED>",
-          "size": 1605
+          "size": 1394
         },
         "role": "js_entrypoint"
       }
@@ -705,7 +705,7 @@ expression: components
         "file": {
           "path": "crates/testing/test-programs/js/workflow/cancel_sleep_error.js",
           "digest": "sha256:<REDACTED>",
-          "size": 1175
+          "size": 1032
         },
         "role": "js_entrypoint"
       }

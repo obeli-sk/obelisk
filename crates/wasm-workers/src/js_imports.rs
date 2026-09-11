@@ -30,7 +30,6 @@ pub(crate) const WORKFLOW_BUILTIN_MODULES: &[BuiltinModule] = &[
             "stub",
             "JoinSetExhaustedError",
             "ChildError",
-            "ChildExecutionError",
         ],
     },
     BuiltinModule {
@@ -48,7 +47,6 @@ pub(crate) const WEBHOOK_BUILTIN_MODULES: &[BuiltinModule] = &[
             "get",
             "tryGet",
             "ChildError",
-            "ChildExecutionError",
         ],
     },
     BuiltinModule {

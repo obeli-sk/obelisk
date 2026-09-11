@@ -521,9 +521,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             show_derived: !request.top_level_only,
             hide_finished: request.hide_finished,
             execution_id_prefix: request.execution_id_prefix,
-            function_name_filter: request
-                .function_filter
-                .map(|filter| match filter.scope {
+            function_name_filter: request.function_filter.map(|filter| match filter.scope {
                     Some(
                         grpc_gen::list_executions_request::execution_function_filter::Scope::PackageName(package_name),
                     ) => FunctionNameFilter::PackageName(package_name),
@@ -534,12 +532,6 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                         grpc_gen::list_executions_request::execution_function_filter::Scope::FunctionName(function_name),
                     ) => FunctionNameFilter::FunctionName(function_name),
                     None => unreachable!("`scope` is set when `function_filter` is present"),
-                })
-                .or_else(|| {
-                    // Map deprecated `function_name_prefix` to a FunctionName.
-                    // If this is a package name with a version, the search will not find anything as the
-                    // FFQN contains the version behind the interface.
-                    request.function_name_prefix.map(FunctionNameFilter::FunctionName)
                 }),
             component_digest: request
                 .component_digest

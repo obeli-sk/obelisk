@@ -17,8 +17,8 @@ use axum_accept::AcceptExtractor;
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use concepts::{
-    ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId, JoinSetKind,
-    StrVariant, SupportedFunctionReturnValue,
+    ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
+    SupportedFunctionReturnValue,
     component_id::ComponentDigest,
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, SystemEventId},
     storage::{
@@ -1532,7 +1532,7 @@ pub(crate) mod logs {
         show_run_id: bool,
 
         // pagination
-        /// Opaque cursor for pagination. RFC 3339 timestamps are accepted for compatibility.
+        /// Opaque cursor for pagination
         cursor: Option<String>,
         /// Only include entries created after this timestamp.
         after: Option<DateTime<Utc>>,
@@ -1736,31 +1736,24 @@ pub(crate) mod logs {
         const DEFAULT_LENGTH: u16 = 20;
         const MAX_LENGTH_INCLUSIVE: u16 = 200;
 
-        let (cursor, legacy_after) = match params.cursor.as_deref() {
+        let cursor = match params.cursor.as_deref() {
             Some(cursor) => {
                 let opaque = BASE64_STANDARD
                     .decode(cursor)
                     .ok()
                     .and_then(|decoded| serde_json::from_slice::<LogCursor>(&decoded).ok());
-                let legacy_after = DateTime::parse_from_rfc3339(cursor)
-                    .ok()
-                    .map(|created_at| created_at.with_timezone(&Utc));
-                if opaque.is_none() && legacy_after.is_none() {
+                if opaque.is_none() {
                     return Err(HttpResponse {
                         status: StatusCode::BAD_REQUEST,
                         message: "invalid log cursor".to_string(),
                         accept,
                     });
                 }
-                (opaque, legacy_after)
+                opaque
             }
-            None => (None, None),
+            None => None,
         };
 
-        let (legacy_after, legacy_before) = match params.direction {
-            PaginationDirectionSortedFromOldest::Newer => (legacy_after, None),
-            PaginationDirectionSortedFromOldest::Older => (None, legacy_after),
-        };
         let filter = match (params.show_logs, params.show_streams) {
             (true, true) => LogFilter::show_combined(
                 params.level.into_iter().map(Into::into).collect(),
@@ -1780,7 +1773,7 @@ pub(crate) mod logs {
                 });
             }
         }
-        .with_created_bounds(params.after.or(legacy_after), legacy_before);
+        .with_created_bounds(params.after, None);
 
         let length = nonzero_page_length(
             MAX_LENGTH_INCLUSIVE.min(params.length.unwrap_or(DEFAULT_LENGTH)),
@@ -1873,7 +1866,7 @@ pub(crate) mod logs {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct ExecutionResponsesParams {
-    /// Filter by an exact join-set ID (bare names select named join sets)
+    /// Filter by an exact join-set ID
     join_set: Option<String>,
     /// Cursor for pagination
     cursor: Option<u32>,
@@ -1888,16 +1881,10 @@ struct ExecutionResponsesParams {
     direction: PaginationDirectionSortedFromOldest,
 }
 
-fn parse_join_set_filter(join_set: String) -> Result<JoinSetId, String> {
-    if join_set.contains(':') {
-        join_set
-            .parse()
-            .map_err(|err: concepts::JoinSetIdParseError| err.to_string())
-    } else {
-        // backcompat: 0.41.4 accepted bare names as named join-set IDs.
-        JoinSetId::new(JoinSetKind::Named, StrVariant::from(join_set))
-            .map_err(|err| err.to_string())
-    }
+fn parse_join_set_filter(join_set: &str) -> Result<JoinSetId, String> {
+    join_set
+        .parse()
+        .map_err(|err: concepts::JoinSetIdParseError| err.to_string())
 }
 
 /// Response containing execution responses
@@ -1942,6 +1929,7 @@ async fn execution_responses(
         .map_err(|e| ErrorWrapper(e, accept))?;
     let join_set = params
         .join_set
+        .as_deref()
         .map(parse_join_set_filter)
         .transpose()
         .map_err(|err| HttpResponse::bad_request(accept, err))?;
@@ -4703,7 +4691,7 @@ pub(crate) mod deployment {
         #[serde(default)]
         pub allow_unavailable_runtime_config: bool,
         /// Apply deployment without restart
-        #[serde(default, alias = "hot_redeploy")] // backcompat: 0.41.0
+        #[serde(default)]
         pub apply: bool,
     }
 
@@ -5348,11 +5336,9 @@ mod tests {
     }
 
     #[test]
-    fn response_join_set_filter_accepts_canonical_id_and_bare_named_id() {
-        assert_eq!(
-            parse_join_set_filter("n:session-name".to_string()).unwrap(),
-            parse_join_set_filter("session-name".to_string()).unwrap(),
-        );
+    fn response_join_set_filter_requires_canonical_id() {
+        parse_join_set_filter("n:session-name").unwrap();
+        parse_join_set_filter("session-name").unwrap_err();
     }
 
     fn parse_dt(value: &str) -> DateTime<Utc> {

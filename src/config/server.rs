@@ -191,8 +191,6 @@ pub(crate) enum AllowExecActivities {
     Deny,
     AllowAny,
     Allowlist(BTreeMap<String, ContentDigest>),
-    // backcompat: 0.40.x accepted an unnamed list of content digests.
-    LegacyAllowlist(Vec<ContentDigest>),
 }
 
 impl<'de> Deserialize<'de> for AllowExecActivities {
@@ -223,17 +221,6 @@ impl<'de> Deserialize<'de> for AllowExecActivities {
                 }
             }
 
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut digests = Vec::new();
-                while let Some(digest) = seq.next_element::<ContentDigest>()? {
-                    digests.push(digest);
-                }
-                Ok(AllowExecActivities::LegacyAllowlist(digests))
-            }
-
             fn visit_map<A: serde::de::MapAccess<'de>>(
                 self,
                 mut map: A,
@@ -262,9 +249,7 @@ impl JsonSchema for AllowExecActivities {
         schemars::json_schema!({
             "anyOf": [
                 {"type": "boolean"},
-                {"type": "object", "additionalProperties": {"type": "string"}},
-                // backcompat: 0.40.x accepted an unnamed list of content digests.
-                {"type": "array", "items": {"type": "string"}}
+                {"type": "object", "additionalProperties": {"type": "string"}}
             ]
         })
     }
@@ -280,10 +265,6 @@ impl AllowExecActivities {
                 "entries": entries.iter().map(|(name, digest)| {
                     (name, digest.to_string())
                 }).collect::<BTreeMap<_, _>>(),
-            }),
-            Self::LegacyAllowlist(digests) => serde_json::json!({
-                "mode": "legacy_allowlist",
-                "digests": digests.iter().map(ToString::to_string).collect::<Vec<_>>(),
             }),
         }
     }
@@ -545,11 +526,6 @@ impl WasmGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    /// Deprecated: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]`
-    /// instead. When set, it overrides the per-workflow value for every workflow. Will be
-    /// removed in 0.42.
-    #[serde(default)]
-    pub(crate) lock_extension_leeway: Option<DurationConfig>,
     /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
     /// stops and returns that many writes as an advanceable prefix; advancing them and replaying
     /// again resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved
@@ -570,7 +546,6 @@ pub(crate) struct WorkflowsGlobalConfigToml {
 impl Default for WorkflowsGlobalConfigToml {
     fn default() -> Self {
         Self {
-            lock_extension_leeway: None,
             max_replay_captured_writes: default_max_replay_captured_writes(),
             max_events_per_run: default_max_events_per_run(),
             response_refresh_interval: default_response_refresh_interval(),
@@ -1139,7 +1114,7 @@ mod tests {
             "sha256:abababababababababababababababababababababababababababababababab";
 
         #[test]
-        fn deserialize_bool_map_and_legacy_digest_list() {
+        fn deserialize_bool_and_map() {
             let actual: TestConfig = toml::from_str("allow = true").unwrap();
             assert_eq!(AllowExecActivities::AllowAny, actual.allow);
             let actual: TestConfig = toml::from_str("allow = false").unwrap();
@@ -1155,11 +1130,7 @@ mod tests {
                 )])),
                 actual.allow
             );
-            let actual: TestConfig = toml::from_str(&format!("allow = [\"{DIGEST}\"]")).unwrap();
-            assert_eq!(
-                AllowExecActivities::LegacyAllowlist(vec![DIGEST.parse().unwrap()]),
-                actual.allow
-            );
+            toml::from_str::<TestConfig>(&format!("allow = [\"{DIGEST}\"]")).unwrap_err();
         }
 
         #[test]

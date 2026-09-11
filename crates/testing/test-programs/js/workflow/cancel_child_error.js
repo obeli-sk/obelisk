@@ -3,10 +3,6 @@
 // `ChildError` whose `.cancelled` is true, `.failureKind` is `cancelled`
 // and `.value` is projected onto the child's string err type.
 export default function cancel_child_error() {
-    // Deprecated alias must stay the very same constructor.
-    if (obelisk.ChildExecutionError !== obelisk.ChildError) {
-        throw 'expected obelisk.ChildExecutionError to alias obelisk.ChildError';
-    }
     // A named join set gives the child a well-known id the test can reconstruct.
     const js = obelisk.createJoinSet({ name: 'cancel-set' });
     const childId = js.submit('testing:integration/workflow-sleep.sleep-cancellable', []);

@@ -127,12 +127,6 @@
           "additionalProperties": {
             "type": "string"
           }
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
         }
       ]
     },
@@ -742,18 +736,6 @@
     "WorkflowsGlobalConfigToml": {
       "type": "object",
       "properties": {
-        "lock_extension_leeway": {
-          "description": "Deprecated: set `lock_extension_leeway` on each `[[workflow_wasm]]` / `[[workflow_js]]`\ninstead. When set, it overrides the per-workflow value for every workflow. Will be\nremoved in 0.42.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DurationConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "max_replay_captured_writes": {
           "description": "Maximum number of captured writes a single replay pass returns. On reaching it, replay\nstops and returns that many writes as an advanceable prefix; advancing them and replaying\nagain resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved\n`joinNextTry` poll loop, whose replay never blocks) advanceable in bounded batches instead\nof collecting captured writes forever.",
           "type": "integer",
