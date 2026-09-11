@@ -1169,26 +1169,6 @@ pub(crate) async fn deployment_verify_config(
                     );
                 }
             }
-            AllowExecActivities::LegacyAllowlist(allowed) => {
-                let rejected = exec_content_digest_lines(
-                    &deployment.activities_exec,
-                    &prepared_dirs.wasm_cache_dir,
-                )
-                .await?
-                .into_iter()
-                .filter(|(_, digest, _)| !allowed.contains(digest))
-                .map(|(_, _, line)| line)
-                .collect::<Vec<_>>();
-                if !rejected.is_empty() {
-                    bail!(
-                        "deployment contains exec activities, which run outside the WASM sandbox, \
-                         whose content digests are not in the `allow_exec_activities` allowlist \
-                         in server.toml; review each script, then allow it by adding its line under \
-                         `[allow_exec_activities]`:\n{}",
-                        rejected.join("\n")
-                    );
-                }
-            }
         }
     }
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
