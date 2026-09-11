@@ -346,7 +346,7 @@ pub(crate) mod admin {
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
     pub(crate) struct SystemEventResponse {
         pub(crate) event_id: String,
-        pub(crate) server_run_id: Option<String>,
+        pub(crate) server_run_id: String,
         pub(crate) created_at: DateTime<Utc>,
         pub(crate) level: String,
         pub(crate) code: String,

@@ -49,7 +49,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         serde_json::json!({"version": "test"}),
     )
     .unwrap();
-    first.server_run_id = Some("srv_first".to_owned());
+    first.server_run_id = "srv_01M281KSH954NC9NHNMCN09S6W".to_owned();
     let first_id = first.event_id.clone();
     admin.append_system_event(first).await.unwrap();
     assert_eq!(
@@ -75,7 +75,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         serde_json::json!({"threshold_percent": 90}),
     )
     .unwrap();
-    second.server_run_id = Some("srv_second".to_owned());
+    second.server_run_id = "srv_01M281KSH954NC9NHNMCN09S6X".to_owned();
     let second_id = second.event_id.clone();
     admin.append_system_event(second).await.unwrap();
 
@@ -91,7 +91,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     assert_eq!(warning[0].event_id, second_id);
     let first_run = admin
         .list_system_events(SystemEventFilter {
-            server_run_id: Some("srv_first".to_owned()),
+            server_run_id: Some("srv_01M281KSH954NC9NHNMCN09S6W".to_owned()),
             limit: 100,
             ..Default::default()
         })

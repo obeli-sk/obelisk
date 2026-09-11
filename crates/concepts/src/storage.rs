@@ -1502,7 +1502,7 @@ impl SystemEventLevel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
     pub event_id: String,
-    pub server_run_id: Option<String>,
+    pub server_run_id: String,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
@@ -1632,6 +1632,10 @@ pub fn initialize_server_run_id() -> String {
         .clone()
 }
 
+fn server_run_id() -> String {
+    initialize_server_run_id()
+}
+
 impl SystemEvent {
     pub fn new(
         code: SystemEventCode,
@@ -1648,7 +1652,7 @@ impl SystemEvent {
         }
         Ok(Self {
             event_id: format!("sev_{}", ulid::Ulid::new()),
-            server_run_id: SERVER_RUN_ID.get().cloned(),
+            server_run_id: server_run_id(),
             created_at: Utc::now(),
             level: code.level(),
             code: code.as_str().to_owned(),

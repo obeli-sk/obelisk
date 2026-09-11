@@ -1378,7 +1378,7 @@ message SystemEvent {
     optional ExecutionId execution_id = 6;
     optional DeploymentId deployment_id = 7;
     string details_json = 8;
-    optional string server_run_id = 9;
+    string server_run_id = 9;
 }
 message ListSystemEventsRequest {
     optional SystemEventLevel level = 1;
