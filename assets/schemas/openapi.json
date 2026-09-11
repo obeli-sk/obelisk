@@ -169,6 +169,17 @@
         "operationId": "list_system_events",
         "parameters": [
           {
+            "name": "server_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "level",
             "in": "path",
             "required": true,
@@ -266,6 +277,29 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/admin/system-events/{event_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "get_system_event",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemEventResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
           }
         }
       }
@@ -3681,6 +3715,12 @@
           },
           "message": {
             "type": "string"
+          },
+          "server_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

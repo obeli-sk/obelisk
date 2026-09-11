@@ -1047,9 +1047,32 @@
           "name": "events",
           "subcommands": [
             {
+              "name": "get",
+              "about": "Get one persisted system event by ID",
+              "options": [
+                {
+                  "name": "--json"
+                },
+                {
+                  "name": "--api-url",
+                  "short": "a"
+                }
+              ],
+              "positionals": [
+                {
+                  "name": "event_id",
+                  "required": true
+                }
+              ]
+            },
+            {
               "name": "list",
               "about": "List persisted operator-visible system events",
               "options": [
+                {
+                  "name": "--server-run-id",
+                  "help": "Only show events emitted by this server run"
+                },
                 {
                   "name": "--level"
                 },
