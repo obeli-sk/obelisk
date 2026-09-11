@@ -15,7 +15,6 @@ use crate::args::TomlComponentType;
 use crate::config::env_var::EnvVarConfig;
 use anyhow::{Context, anyhow, bail};
 use concepts::cas::Cas;
-use concepts::component_id::ComponentDigest;
 use concepts::{ContentDigest, FunctionFqn};
 use config::{ConfigBuilder, File, FileFormat, builder::AsyncState};
 use hashbrown::HashMap;
@@ -564,11 +563,6 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
     pub(crate) component_files: BTreeMap<String, ContentDigest>,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) component_digest: Option<ComponentDigest>,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS function.
@@ -625,11 +619,6 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Each entry has a `name` and a WIT `type` (e.g. `string`, `u32`, `list<string>`).
     #[serde(flatten)]
     pub(crate) interface: FunctionInterfaceToml,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) component_digest: Option<ComponentDigest>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -681,11 +670,6 @@ pub(crate) struct WorkflowJsComponentConfigToml {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
     pub(crate) component_files: BTreeMap<String, ContentDigest>,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) component_digest: Option<ComponentDigest>,
     #[schemars(with = "String")]
     pub(crate) ffqn: FunctionFqn,
     /// Custom parameters for the JS workflow function.
@@ -722,11 +706,6 @@ pub(crate) struct WorkflowWasmComponentConfigToml {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(skip)]
     pub(crate) component_files: BTreeMap<String, ContentDigest>,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub(crate) component_digest: Option<ComponentDigest>,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
@@ -849,11 +828,6 @@ pub struct ActivityWasmComponentConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub content_digest: Option<ContentDigest>,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub component_digest: Option<ComponentDigest>,
     #[serde(default)]
     pub exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
@@ -893,11 +867,6 @@ pub struct ActivityExternalFileConfigToml {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<String>")]
     pub content_digest: Option<ContentDigest>,
-    /// Deprecated override of the auto-computed component digest used for locking.
-    /// This option will be removed in 0.42.
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    pub component_digest: Option<ComponentDigest>,
 }
 
 // Authored cron config. There is no separate resolved form; `DeploymentResolved` uses this

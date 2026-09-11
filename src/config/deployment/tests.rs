@@ -364,7 +364,6 @@ mod activity_exec {
                 params: Some(vec![]),
                 return_type: Some("result<string, string>".into()),
             }),
-            component_digest: None,
             exec: ExecConfigToml::default(),
             max_retries: default_max_retries(),
             retry_exp_backoff: default_retry_exp_backoff(),
@@ -391,7 +390,6 @@ mod activity_exec {
                 params: Some(vec![]),
                 return_type: Some("result<string, string>".into()),
             }),
-            component_digest: None,
             exec: ExecConfigToml::default(),
             max_retries: default_max_retries(),
             retry_exp_backoff: default_retry_exp_backoff(),
@@ -754,7 +752,6 @@ mod export {
             name: ConfigName::new(StrVariant::from(name.to_string())).unwrap(),
             location,
             content_digest: None,
-            component_digest: None,
             ffqn: "ns:pkg/ifc.fn".parse().unwrap(),
             interface: FunctionInterfaceResolved::Inline(InlineFunctionInterfaceResolved {
                 params: Some(vec![]),

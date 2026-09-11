@@ -92,14 +92,6 @@
             "null"
           ]
         },
-        "component_digest": {
-          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -566,14 +558,6 @@
             "string",
             "null"
           ]
-        },
-        "component_digest": {
-          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         }
       },
       "additionalProperties": false,
@@ -619,14 +603,6 @@
         },
         "content_digest": {
           "description": "Content digest of the JS source file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "component_digest": {
-          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"
@@ -752,14 +728,6 @@
         "ffqn": {
           "type": "string"
         },
-        "component_digest": {
-          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
           "default": {
@@ -853,14 +821,6 @@
             "string",
             "null"
           ]
-        },
-        "component_digest": {
-          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
         },
         "exec": {
           "$ref": "#/$defs/ExecConfigToml",
@@ -1011,14 +971,6 @@
         },
         "content_digest": {
           "description": "Content digest of the JS source file.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "component_digest": {
-          "description": "Deprecated override of the auto-computed component digest used for locking.\nThis option will be removed in 0.42.",
           "type": [
             "string",
             "null"

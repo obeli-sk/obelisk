@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** *(config)* Removed deprecated deployment `component_digest` overrides. Component
+  digests are always computed from component content and configuration.
+
 ### Added
 
 - *(admin)* Added operator-only gRPC and `/v1/admin` APIs, plus `obelisk admin` commands, for
