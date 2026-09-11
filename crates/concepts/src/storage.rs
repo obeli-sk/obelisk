@@ -1521,6 +1521,7 @@ pub enum SystemEventCode {
     DeploymentSwitchStarted,
     DeploymentSwitchCompleted,
     DeploymentSwitchFailed,
+    DeploymentHttpPolicyApplied,
     OutboundHttpDenied,
     AdminExecutionDeleteStarted,
     AdminExecutionDeleteCompleted,
@@ -1546,6 +1547,7 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "deployment.switch.started",
             Self::DeploymentSwitchCompleted => "deployment.switch.completed",
             Self::DeploymentSwitchFailed => "deployment.switch.failed",
+            Self::DeploymentHttpPolicyApplied => "deployment.http_policy.applied",
             Self::OutboundHttpDenied => "outbound_http.denied",
             Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
             Self::AdminExecutionDeleteCompleted => "admin.execution.delete.completed",
@@ -1583,6 +1585,7 @@ impl SystemEventCode {
             Self::DeploymentSwitchStarted => "Deployment switch started",
             Self::DeploymentSwitchCompleted => "Deployment switch completed",
             Self::DeploymentSwitchFailed => "Deployment switch failed",
+            Self::DeploymentHttpPolicyApplied => "Deployment HTTP policy applied",
             Self::OutboundHttpDenied => "Outbound HTTP request denied",
             Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
             Self::AdminExecutionDeleteCompleted => "Execution tree deletion completed",
@@ -1651,6 +1654,9 @@ impl SystemEvent {
             "deployment.switch.started" => SystemEventCode::DeploymentSwitchStarted.message(),
             "deployment.switch.completed" => SystemEventCode::DeploymentSwitchCompleted.message(),
             "deployment.switch.failed" => SystemEventCode::DeploymentSwitchFailed.message(),
+            "deployment.http_policy.applied" => {
+                SystemEventCode::DeploymentHttpPolicyApplied.message()
+            }
             "outbound_http.denied" => SystemEventCode::OutboundHttpDenied.message(),
             "admin.execution.delete.started" => {
                 SystemEventCode::AdminExecutionDeleteStarted.message()
@@ -3683,6 +3689,7 @@ mod tests {
             SystemEventCode::DeploymentSwitchStarted,
             SystemEventCode::DeploymentSwitchCompleted,
             SystemEventCode::DeploymentSwitchFailed,
+            SystemEventCode::DeploymentHttpPolicyApplied,
             SystemEventCode::OutboundHttpDenied,
             SystemEventCode::AdminExecutionDeleteStarted,
             SystemEventCode::AdminExecutionDeleteCompleted,

@@ -188,6 +188,7 @@ impl WasiHttpHooks for HttpHooks {
         self.http_client_traces.push((req, resp_trace_rx));
 
         // Apply HTTP policy (allowlist + placeholder replacement in headers and query params)
+        let attempted_url = request.uri().to_string();
         let http_policy_res = self.http_policy.apply(&mut request);
         if let Err(err) = http_policy_res {
             if let (
@@ -204,8 +205,14 @@ impl WasiHttpHooks for HttpHooks {
             ) = (self.deployment_id, self.db_pool.as_ref(), &err)
             {
                 let dedupe_key = format!(
-                    "{}|{}|{}|{}|{}|{denied_by:?}",
-                    self.component_name, method, scheme, host, port
+                    "{}|{}|{}|{}|{}|{}|{}",
+                    self.http_policy.policy_set_hash,
+                    self.component_name,
+                    method,
+                    scheme,
+                    host,
+                    port,
+                    denied_by.audit_name(),
                 );
                 let server_toml = matches!(
                     denied_by,
@@ -228,7 +235,9 @@ impl WasiHttpHooks for HttpHooks {
                         "scheme": scheme,
                         "host": host,
                         "port": port,
-                        "denied_by": format!("{denied_by:?}"),
+                        "url": attempted_url,
+                        "rejected_by": denied_by.audit_name(),
+                        "policy_set_hash": self.http_policy.policy_set_hash,
                         "server_toml": server_toml,
                     }),
                 )
@@ -402,6 +411,7 @@ mod tests {
                 secrets: Vec::new(),
             }],
             global_allowlist: Some(Vec::new()),
+            policy_set_hash: String::new(),
         };
         let message = generate_toml_snippet(
             &PolicyError::RequestDenied {

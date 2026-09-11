@@ -2297,6 +2297,7 @@ pub(crate) struct ServerCompiledLinked {
     supressed_errors: Option<String>,
     frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
     max_persisted_value_size_bytes: u64,
+    http_policy_audits: Vec<serde_json::Value>,
 }
 
 impl ServerCompiledLinked {
@@ -2309,6 +2310,7 @@ impl ServerCompiledLinked {
         suppress_linking_errors: bool,
     ) -> Result<Self, anyhow::Error> {
         trace!("Verified deployment: {deployment_verified:#?}");
+        let http_policy_audits = deployment_verified.http_policy_audits();
         let DeploymentVerified {
             runtime_config_availability,
             activities_wasm,
@@ -2389,6 +2391,7 @@ impl ServerCompiledLinked {
             supressed_errors: linked.supressed_errors,
             frame_files: linked.all_frame_files,
             max_persisted_value_size_bytes: server_verified.max_persisted_value_size_bytes,
+            http_policy_audits,
         })
     }
 
@@ -3421,6 +3424,7 @@ async fn switch_hot_redeploy(
             .map(|(http_server, (_instance, state))| (http_server.name.to_string(), state.clone())),
     );
 
+    let http_policy_audits = server_compiled_linked.http_policy_audits;
     *write_guard_ctx = spawn_deployment_context(
         deployment_id,
         server_compiled_linked.workers_linked,
@@ -3429,9 +3433,28 @@ async fn switch_hot_redeploy(
         &cancel_registry,
         &log_forwarder_sender,
     );
+    drop(write_guard_ctx);
+    record_http_policy_audits(db_pool.as_ref(), deployment_id, http_policy_audits).await;
 
     info!(%deployment_id, "Switched to new deployment");
     Ok(SwitchOutcome::Switched)
+}
+
+async fn record_http_policy_audits(
+    db_pool: &dyn DbPool,
+    deployment_id: DeploymentId,
+    audits: impl IntoIterator<Item = serde_json::Value>,
+) {
+    for details in audits {
+        crate::server::system_event_writer::record(
+            db_pool,
+            concepts::storage::SystemEventCode::DeploymentHttpPolicyApplied,
+            None,
+            Some(deployment_id),
+            details,
+        )
+        .await;
+    }
 }
 
 // Create seed cron executions if they don't already exist (same config = same ContentDigest)
@@ -3505,6 +3528,12 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
+    record_http_policy_audits(
+        db_pool.as_ref(),
+        deployment_id,
+        server_compiled_linked.http_policy_audits.clone(),
+    )
+    .await;
     upsert_backtrace_sources(
         db_pool.external_api_conn().await?.as_ref(),
         db_pool.cas_conn().await?.as_ref(),
@@ -3810,6 +3839,62 @@ pub(crate) struct DeploymentVerified {
 }
 
 impl DeploymentVerified {
+    fn http_policy_audits(&self) -> Vec<serde_json::Value> {
+        fn audit(
+            component_id: &ComponentId,
+            allowed_hosts: &[AllowedHostConfig],
+            global_http_config: &GlobalHttpConfig,
+        ) -> serde_json::Value {
+            let (policy_set_hash, mut details) =
+                wasm_workers::http_request_policy::audit_http_policy(
+                    allowed_hosts,
+                    global_http_config,
+                );
+            let object = details
+                .as_object_mut()
+                .expect("HTTP policy audit details must be an object");
+            object.insert(
+                "component".to_string(),
+                component_id.name.to_string().into(),
+            );
+            object.insert("policy_set_hash".to_string(), policy_set_hash.into());
+            details
+        }
+
+        self.activities_wasm
+            .iter()
+            .map(|activity| {
+                audit(
+                    activity.component_id(),
+                    &activity.activity_config.allowed_hosts,
+                    &activity.activity_config.global_http_config,
+                )
+            })
+            .chain(self.activities_js.iter().map(|activity| {
+                audit(
+                    activity.component_id(),
+                    &activity.activity_config.allowed_hosts,
+                    &activity.activity_config.global_http_config,
+                )
+            }))
+            .chain(self.webhooks_wasm_by_names.values().map(|webhook| {
+                let global = webhook_global_http_allowlist(
+                    webhook.is_webui,
+                    &webhook.allowed_hosts,
+                    &self.global_http_config,
+                );
+                audit(&webhook.component_id, &webhook.allowed_hosts, &global)
+            }))
+            .chain(self.webhooks_js_by_names.values().map(|webhook| {
+                audit(
+                    &webhook.component_id,
+                    &webhook.allowed_hosts,
+                    &self.global_http_config,
+                )
+            }))
+            .collect()
+    }
+
     fn validate_component_digests(&self) -> Result<(), anyhow::Error> {
         fn record_component_ids<'a>(
             component_ids_by_digest: &mut HashMap<ComponentDigest, ComponentId>,
