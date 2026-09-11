@@ -1464,6 +1464,13 @@ pub struct CasGcResult {
     pub orphan_blobs: u64,
     pub deleted_blobs: u64,
     pub deleted_bytes: u64,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemEventRetentionResult {
+    pub deleted: u64,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1572,7 +1579,7 @@ pub trait DbAdmin: Send + Sync {
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
-    ) -> Result<u64, DbErrorWrite>;
+    ) -> Result<SystemEventRetentionResult, DbErrorWrite>;
 
     async fn delete_execution_tree(
         &self,

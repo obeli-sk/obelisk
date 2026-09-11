@@ -505,7 +505,7 @@ pub(crate) mod admin {
         let cutoff = Utc::now()
             .checked_sub_signed(age)
             .ok_or_else(|| precondition("max_age_seconds is too large"))?;
-        let deleted = state
+        let result = state
             .db_pool
             .admin_conn()
             .await
@@ -516,8 +516,8 @@ pub(crate) mod admin {
         Ok(pretty_json_response(
             StatusCode::OK,
             &RetainSystemEventsResponse {
-                deleted,
-                has_more: deleted == u64::from(request.batch_size),
+                deleted: result.deleted,
+                has_more: result.has_more,
             },
         ))
     }

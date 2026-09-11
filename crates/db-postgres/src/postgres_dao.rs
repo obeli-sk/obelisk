@@ -30,8 +30,8 @@ use concepts::{
         RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd,
         ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED,
         STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError, SystemEvent,
-        SystemEventFilter, SystemEventLevel, TimeoutOutcome, Unlocked, Version, VersionType,
-        WasmBacktrace,
+        SystemEventFilter, SystemEventLevel, SystemEventRetentionResult, TimeoutOutcome, Unlocked,
+        Version, VersionType, WasmBacktrace,
     },
 };
 use db_common::{
@@ -6032,11 +6032,25 @@ impl DbAdmin for PostgresConnection {
         &self,
         created_before: DateTime<Utc>,
         limit: u32,
-    ) -> Result<u64, DbErrorWrite> {
-        Ok(self.client.lock().await.execute(
+    ) -> Result<SystemEventRetentionResult, DbErrorWrite> {
+        let limit = limit.clamp(1, 10_000);
+        let mut client = self.client.lock().await;
+        let tx = client.transaction().await?;
+        let eligible = tx
+            .query_one(
+                "SELECT COUNT(*) FROM t_system_event WHERE created_at < $1",
+                &[&created_before],
+            )
+            .await?;
+        let deleted = tx.execute(
             "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2)",
-            &[&created_before, &i64::from(limit.clamp(1, 10_000))]
-        ).await?)
+            &[&created_before, &i64::from(limit)]
+        ).await?;
+        tx.commit().await?;
+        Ok(SystemEventRetentionResult {
+            deleted,
+            has_more: get::<i64, _>(&eligible, 0)?.cast_unsigned() > u64::from(limit),
+        })
     }
 
     async fn delete_execution_tree(
@@ -6395,6 +6409,7 @@ impl CasGc for PostgresConnection {
             } else {
                 0
             },
+            has_more: orphan_blobs > u64::from(batch_size.max(1)),
         })
     }
 }

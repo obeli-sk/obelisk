@@ -94,13 +94,12 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         admin.get_storage_status().await.unwrap().system_event_count,
         2
     );
-    assert_eq!(
-        admin
-            .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 1)
-            .await
-            .unwrap(),
-        1
-    );
+    let retention = admin
+        .retain_system_events(chrono::Utc::now() + Duration::seconds(1), 1)
+        .await
+        .unwrap();
+    assert_eq!(retention.deleted, 1);
+    assert!(retention.has_more);
     assert_eq!(
         admin.get_storage_status().await.unwrap().system_event_count,
         1

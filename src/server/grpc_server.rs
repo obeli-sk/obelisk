@@ -2096,7 +2096,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                 storage::RetentionPolicy::Count(_) => unreachable!(),
             };
         validate_batch_size(request.batch_size)?;
-        let deleted = self
+        let result = self
             .db_pool
             .admin_conn()
             .await
@@ -2105,8 +2105,8 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .await
             .to_status()?;
         Ok(tonic::Response::new(grpc_gen::RetainSystemEventsResponse {
-            deleted,
-            has_more: deleted == u64::from(request.batch_size),
+            deleted: result.deleted,
+            has_more: result.has_more,
         }))
     }
 
