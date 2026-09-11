@@ -3777,11 +3777,9 @@ async fn record_server_configuration_audit(
     server_verified: &ServerVerified,
     server_http_policy_event_id: &str,
 ) -> Result<(), anyhow::Error> {
-    let server_run_id = concepts::storage::initialize_server_run_id();
     let snapshot = serde_json::json!({
         "format": "obelisk-server-configuration-v1",
         "obelisk_version": PKG_VERSION,
-        "server_run_id": server_run_id,
         "environment": server_verified.environment_audit,
         "deployment_security": {
             "exec": server_verified.allow_exec_activities.audit(),
@@ -3799,7 +3797,6 @@ async fn record_server_configuration_audit(
         None,
         serde_json::json!({
             "obelisk_version": PKG_VERSION,
-            "server_run_id": server_run_id,
             "server_http_policy_event_id": server_http_policy_event_id,
         }),
         digest,
