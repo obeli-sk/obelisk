@@ -3527,8 +3527,6 @@ async fn record_server_configuration_audit(
         None,
         serde_json::json!({
             "obelisk_version": PKG_VERSION,
-            "server_policy_hash": server_verified.server_http_policy_audit["server_policy_hash"],
-            "webui_server_policy_hash": server_verified.server_http_policy_audit["webui_server_policy_hash"],
         }),
         digest,
         bytes,
