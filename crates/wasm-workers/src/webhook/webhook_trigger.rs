@@ -56,9 +56,10 @@ use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::p2::bindings::ProxyPre;
+use wasmtime_wasi_http::p2::bindings::ProxyPre as ProxyPreP2;
 use wasmtime_wasi_http::p2::bindings::http::types::Scheme;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+use wasmtime_wasi_http::p3::bindings::ServicePre as ServicePreP3;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wasmtime_wasi_io::IoView;
 
@@ -243,6 +244,11 @@ pub struct WebhookEndpointCompiled {
     pub runnable_component: RunnableComponent,
 }
 
+enum WebhookProxyPre<T: 'static> {
+    P2(ProxyPreP2<T>),
+    P3(ServicePreP3<T>),
+}
+
 impl WebhookEndpointCompiled {
     pub fn new(
         config: WebhookEndpointConfig,
@@ -272,6 +278,11 @@ impl WebhookEndpointCompiled {
         // Link wasi-http
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link `wasmtime_wasi_http`", err))?;
+        wasmtime_wasi::p3::add_to_linker(&mut linker)
+            .map_err(|err| WasmFileError::linking_error("cannot link `wasmtime_wasi` p3", err))?;
+        wasmtime_wasi_http::p3::add_to_linker(&mut linker).map_err(|err| {
+            WasmFileError::linking_error("cannot link `wasmtime_wasi_http` p3", err)
+        })?;
         // Link log and types
         WebhookEndpointCtx::add_to_linker(&mut linker)?;
 
@@ -394,9 +405,17 @@ impl WebhookEndpointCompiled {
             .map_err(|err: wasmtime::Error| {
                 WasmFileError::linking_error("linking error while creating instantiate_pre", err)
             })?;
-        let proxy_pre = Arc::new(ProxyPre::new(proxy_pre).map_err(|err: wasmtime::Error| {
-            WasmFileError::linking_error("linking error while creating ProxyPre instance", err)
-        })?);
+        let proxy_pre = if let Ok(pre) = ServicePreP3::new(proxy_pre.clone()) {
+            WebhookProxyPre::P3(pre)
+        } else {
+            WebhookProxyPre::P2(ProxyPreP2::new(proxy_pre).map_err(|err: wasmtime::Error| {
+                WasmFileError::linking_error(
+                    "component does not export a WASIp2 or WASIp3 HTTP handler",
+                    err,
+                )
+            })?)
+        };
+        let proxy_pre = Arc::new(proxy_pre);
 
         Ok(WebhookEndpointInstanceLinked {
             config: Arc::new(self.config),
@@ -409,7 +428,7 @@ impl WebhookEndpointCompiled {
 #[derive(Clone, derive_more::Debug)]
 pub struct WebhookEndpointInstanceLinked {
     #[debug(skip)]
-    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx>>,
+    proxy_pre: Arc<WebhookProxyPre<WebhookEndpointCtx>>,
     config: Arc<WebhookEndpointConfig>,
     /// Set on JS webhooks; serialized `HashMap<String, Vec<(String, String)>>` passed
     /// to the runtime via the `__OBELISK_RESOLVED_IMPORTS__` env var.
@@ -449,7 +468,7 @@ impl WebhookEndpointInstanceLinked {
 #[derive(Clone, derive_more::Debug)]
 pub struct WebhookEndpointInstance {
     #[debug(skip)]
-    proxy_pre: Arc<ProxyPre<WebhookEndpointCtx>>,
+    proxy_pre: Arc<WebhookProxyPre<WebhookEndpointCtx>>,
     config: Arc<WebhookEndpointConfig>,
     #[debug(skip)]
     stdout: Option<StdOutputConfigWithSender>,
@@ -2265,7 +2284,6 @@ impl RequestHandler {
             let stderr = found_instance.stderr.as_ref().map(|stdoutput| {
                 stdoutput.build(&ExecutionId::TopLevel(self.execution_id), run_id)
             });
-            let (sender, receiver) = tokio::sync::oneshot::channel();
             let mut store = WebhookEndpointCtx::new(
                 self.deployment_id,
                 self.max_persisted_value_size_bytes,
@@ -2286,64 +2304,107 @@ impl RequestHandler {
                 run_id,
                 found_instance.logs_storage_config.clone(),
             );
-            let req = store
-                .data_mut()
-                .http()
-                .new_incoming_request(Scheme::Http, req)
-                .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?;
-            let out = store
-                .data_mut()
-                .http()
-                .new_response_outparam(sender)
-                .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
-            let proxy = found_instance
-                .proxy_pre
-                .instantiate_async(&mut store)
-                .await
-                .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
-
-            let task = utils::spawn::spawn_named("webhook_request", {
-                let assigned_fuel = found_instance.config.fuel;
-                async move {
-                    let _http_request_guard = http_request_guard;
-                    let result = proxy
-                        .wasi_http_incoming_handler()
-                        .call_handle(&mut store, req, out)
+            match found_instance.proxy_pre.as_ref() {
+                WebhookProxyPre::P2(proxy_pre) => {
+                    let (sender, receiver) = tokio::sync::oneshot::channel();
+                    let req = store
+                        .data_mut()
+                        .http()
+                        .new_incoming_request(Scheme::Http, req)
+                        .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?;
+                    let out = store
+                        .data_mut()
+                        .http()
+                        .new_response_outparam(sender)
+                        .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
+                    let proxy = proxy_pre
+                        .instantiate_async(&mut store)
                         .await
-                        .inspect_err(|err| debug!("Webhook instance finished with error: {err:?}"));
+                        .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
+                    let task = utils::spawn::spawn_named("webhook_request", {
+                        let assigned_fuel = found_instance.config.fuel;
+                        async move {
+                            let _http_request_guard = http_request_guard;
+                            let result = proxy
+                                .wasi_http_incoming_handler()
+                                .call_handle(&mut store, req, out)
+                                .await
+                                .inspect_err(|err| {
+                                    debug!("Webhook instance finished with error: {err:?}");
+                                });
+                            let ctx = store.into_data();
+                            ctx.close(result, assigned_fuel).await
+                        }
+                        .instrument(request_span)
+                    });
+                    match receiver.await {
+                        Ok(Ok(resp)) => Ok(resp),
+                        Ok(Err(err)) => Err(HandleRequestError::ErrorCode(err)),
+                        Err(_) => {
+                            let err = match task.await {
+                                Ok(result) => result.expect_err(
+                                    "if the receiver has an error, the task must have failed",
+                                ),
+                                Err(err) => err.into(),
+                            };
+                            if err.downcast_ref::<TimeoutError>().is_some() {
+                                Err(HandleRequestError::Timeout)
+                            } else {
+                                info!("Webhook task ended with ExecutionError - {err:?}");
+                                Err(HandleRequestError::ExecutionError(err.into()))
+                            }
+                        }
+                    }
+                }
+                WebhookProxyPre::P3(proxy_pre) => {
+                    let proxy = proxy_pre
+                        .instantiate_async(&mut store)
+                        .await
+                        .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
+                    let (req, request_io) = wasmtime_wasi_http::p3::Request::from_http(
+                        store.data_mut().http().hooks,
+                        req,
+                    );
+                    let assigned_fuel = found_instance.config.fuel;
+                    let result = store
+                        .run_concurrent(async |accessor| {
+                            let response = async {
+                                let response =
+                                    proxy.handle(accessor, req).await?.map_err(|err| {
+                                        wasmtime::format_err!("WASIp3 HTTP handler failed: {err:?}")
+                                    })?;
+                                let response = accessor
+                                    .with(|store| response.into_http(store, async { Ok(()) }))?;
+                                let (parts, body) = response.into_parts();
+                                let body = http_body_util::BodyExt::collect(body).await?.to_bytes();
+                                let body = UnsyncBoxBody::new(http_body_util::BodyExt::map_err(
+                                    http_body_util::Full::new(body),
+                                    |_| unreachable!(),
+                                ));
+                                wasmtime::Result::Ok(hyper::Response::from_parts(parts, body))
+                            };
+                            let (response, ()) = futures_util::try_join!(response, async {
+                                request_io.await.map_err(wasmtime::Error::from)
+                            })?;
+                            wasmtime::Result::Ok(response)
+                        })
+                        .await;
+                    let result = result.flatten();
                     let ctx = store.into_data();
-                    ctx.close(result, assigned_fuel).await
-                }
-                .instrument(request_span)
-            });
-            match receiver.await {
-                Ok(Ok(resp)) => {
-                    trace!("Streaming the response");
-                    Ok(resp)
-                }
-                Ok(Err(err)) => {
-                    debug!("Webhook instance sent error code {err:?}");
-                    Err(HandleRequestError::ErrorCode(err))
-                }
-                Err(_recv_err) => {
-                    // An error in the receiver (`RecvError`) only indicates that the
-                    // task exited before a response was sent (i.e., the sender was
-                    // dropped); it does not describe the underlying cause of failure.
-                    // Instead we retrieve and propagate the error from inside the task
-                    // which should more clearly tell the user what went wrong. Note
-                    // that we assume the task has already exited at this point so the
-                    // `await` should resolve immediately.
-                    let err = match task.await {
-                        Ok(r) => {
-                            r.expect_err("if the receiver has an error, the task must have failed")
-                        } //
-                        Err(e) => e.into(), // e.g. Panic
-                    };
-                    if err.downcast_ref::<TimeoutError>().is_some() {
-                        Err(HandleRequestError::Timeout)
-                    } else {
-                        info!("Webhook task ended with ExecutionError - {err:?}");
-                        Err(HandleRequestError::ExecutionError(err.into()))
+                    match result {
+                        Ok(response) => {
+                            ctx.close(Ok(()), assigned_fuel)
+                                .await
+                                .map_err(|err| HandleRequestError::ExecutionError(err.into()))?;
+                            Ok(response)
+                        }
+                        Err(err) => match ctx.close(Err(err), assigned_fuel).await {
+                            Ok(()) => unreachable!("closing a failed webhook must return an error"),
+                            Err(err) if err.downcast_ref::<TimeoutError>().is_some() => {
+                                Err(HandleRequestError::Timeout)
+                            }
+                            Err(err) => Err(HandleRequestError::ExecutionError(err.into())),
+                        },
                     }
                 }
             }
@@ -2394,6 +2455,60 @@ pub(crate) mod tests {
     pub(crate) fn compile_webhook(wasm_path: &str) -> RunnableComponent {
         let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
         RunnableComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint).unwrap()
+    }
+
+    #[tokio::test]
+    async fn wasip3_webhook_links_as_http_service() {
+        use crate::http_hooks::ConfigSectionHint;
+        use crate::testing_fn_registry::TestingFnRegistry;
+        use crate::webhook::webhook_trigger::{
+            WebhookEndpointCompiled, WebhookEndpointConfig, WebhookProxyPre,
+        };
+        use concepts::component_id::ComponentDigest;
+        use concepts::{ComponentId, StrVariant};
+        use std::sync::Arc;
+
+        let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+        let wasm_file = test_programs_wasip3_webhook_builder::TEST_PROGRAMS_WASIP3_WEBHOOK;
+        let runnable_component =
+            RunnableComponent::new(wasm_file, &engine, ComponentType::WebhookEndpoint).unwrap();
+        let component_id = ComponentId::new(
+            ComponentType::WebhookEndpoint,
+            StrVariant::empty(),
+            ComponentDigest(
+                utils::sha256sum::calculate_sha256_file(wasm_file)
+                    .await
+                    .unwrap()
+                    .0,
+            ),
+        )
+        .unwrap();
+        let linked = WebhookEndpointCompiled::new(
+            WebhookEndpointConfig {
+                component_id,
+                forward_stdout: None,
+                forward_stderr: None,
+                env_vars: Arc::from([]),
+                fuel: None,
+                backtrace_persist: false,
+                subscription_interruption: None,
+                logs_store_min_level: None,
+                allowed_hosts: Arc::from([]),
+                global_http_config: crate::http_request_policy::GlobalHttpConfig::default(),
+                secrets: Arc::new(crate::http_request_policy::NoSecrets),
+                js_config: None,
+                config_section_hint: ConfigSectionHint::WebhookEndpointWasm,
+            },
+            runnable_component,
+        )
+        .unwrap()
+        .link(
+            &engine,
+            TestingFnRegistry::new_from_components(vec![]).as_ref(),
+        )
+        .unwrap();
+
+        assert!(matches!(linked.proxy_pre.as_ref(), WebhookProxyPre::P3(_)));
     }
 
     pub(crate) mod fibo {

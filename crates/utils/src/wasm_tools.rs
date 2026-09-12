@@ -1157,7 +1157,11 @@ fn populate_ifcs_with_compatible_fns(
         };
         let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
         let mut fns = IndexMap::new();
-        for (function_name, function) in &ifc.functions {
+        for (function_name, function) in ifc.functions.iter().filter(|(_, function)| {
+            !function_uses_resources(resolve, function)
+                || (!processing_kind.is_export() && !ifc_fqn.starts_with("wasi:"))
+        }) {
+            let uses_resources = function_uses_resources(resolve, function);
             let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
             let return_type = if let Some(return_type) = function.result {
                 let mut printer = WitPrinter::default();
@@ -1184,9 +1188,8 @@ fn populate_ifcs_with_compatible_fns(
             };
 
             let return_type_valid = matches!(return_type, Some(ReturnType::Extendable(_)));
-            let export_supported = processing_kind.is_export()
-                && return_type_valid
-                && !function_uses_resources(resolve, function);
+            let export_supported =
+                processing_kind.is_export() && return_type_valid && !uses_resources;
 
             match (return_type, processing_kind.is_export(), export_supported) {
                 (Some(return_type @ ReturnType::Extendable(_)), true, true)

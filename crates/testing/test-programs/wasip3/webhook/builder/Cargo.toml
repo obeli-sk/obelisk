@@ -1,0 +1,18 @@
+[package]
+name = "test-programs-wasip3-webhook-builder"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[build-dependencies]
+obelisk-component-builder.workspace = true
+
+[features]
+default = ["obelisk-component-builder/genrs"]
+
+[lib]
+doctest = false

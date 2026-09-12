@@ -3586,6 +3586,8 @@ dependencies = [
  "test-programs-sleep-workflow-builder",
  "test-programs-stub-activity-builder",
  "test-programs-stub-workflow-builder",
+ "test-programs-wasip3-activity-builder",
+ "test-programs-wasip3-webhook-builder",
  "test-utils",
  "thiserror 2.0.20",
  "tokio",
@@ -5641,6 +5643,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-wasip3-activity"
+version = "0.42.0-rc.1"
+dependencies = [
+ "anyhow",
+ "wit-bindgen 0.62.0",
+ "wit-bindgen-rust",
+]
+
+[[package]]
+name = "test-programs-wasip3-activity-builder"
+version = "0.42.0-rc.1"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
+name = "test-programs-wasip3-webhook"
+version = "0.42.0-rc.1"
+dependencies = [
+ "wasip3",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "test-programs-wasip3-webhook-builder"
+version = "0.42.0-rc.1"
+dependencies = [
+ "obelisk-component-builder",
+]
+
+[[package]]
 name = "test-utils"
 version = "0.42.0-rc.1"
 dependencies = [
@@ -6524,6 +6557,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasip3"
+version = "0.9.0+wasi-0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1d5749fdf69bb9400562eba50f8f25f5cd800ef4b74300038b6f99ae7409674"
+dependencies = [
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
 name = "wasite"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6741,6 +6783,7 @@ dependencies = [
  "async-trait",
  "bitflags 2.13.2",
  "bumpalo",
+ "bytes",
  "cc",
  "encoding_rs",
  "futures",
@@ -7009,6 +7052,7 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tracing",
  "wasmtime",
  "wasmtime-wasi",
@@ -7506,6 +7550,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53cb4b5556c3a791e86838ea287782bdafa704d55b0e68b5b81a3a16b9ea5f4b"
 dependencies = [
  "bitflags 2.13.2",
+ "futures",
  "wit-bindgen-rust-macro",
 ]
 

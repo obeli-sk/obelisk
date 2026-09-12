@@ -66,12 +66,18 @@ impl ActivityWorkerCompiled {
         sleep: Arc<dyn Sleep>,
     ) -> Result<Self, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&engine);
-        // wasi
+        // wasi p2
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link wasi", err))?;
-        // wasi-http
+        // wasi-http p2
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
             .map_err(|err| WasmFileError::linking_error("cannot link wasi-http", err))?;
+        // wasi p3 (WASIp3, component model async ABI)
+        wasmtime_wasi::p3::add_to_linker(&mut linker)
+            .map_err(|err| WasmFileError::linking_error("cannot link wasi p3", err))?;
+        // wasi-http p3
+        wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+            .map_err(|err| WasmFileError::linking_error("cannot link wasi-http p3", err))?;
         // obelisk:log
         log_activities::obelisk::log::log::add_to_linker::<_, ActivityCtx>(&mut linker, |x| x)
             .map_err(|err| WasmFileError::linking_error("cannot link obelisk:log", err))?;
@@ -441,16 +447,16 @@ impl ActivityWorker {
             result_type,
         }: CallFuncParams,
     ) -> Result<Result<SupportedFunctionReturnValue, ResultParsingError>, wasmtime::Error> {
-        let mut results = vec![Val::Bool(false)];
-        let res = func
-            .call_async(&mut *store, &params, &mut results)
+        let res = store
+            .run_concurrent(async |accessor| {
+                let mut results = vec![Val::Bool(false)];
+                func.call_concurrent(accessor, &params, &mut results)
+                    .await?;
+                wasmtime::Result::Ok(results.into_iter().next().expect("results size is 1"))
+            })
             .await
-            .map(|()| {
-                (
-                    results.into_iter().next().expect("results size is 1"),
-                    result_type,
-                )
-            });
+            .flatten()
+            .map(|result| (result, result_type));
         res.map(|(val, r#type)| SupportedFunctionReturnValue::new(val, r#type))
     }
 
@@ -611,6 +617,10 @@ pub(crate) mod tests {
     pub const HTTP_GET_SUCCESSFUL_ACTIVITY: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_http_get_activity_builder::exports::testing::http::http_get::GET_SUCCESSFUL,
     );
+    // WASIp3 activity: sync export that awaits the async `wasi:clocks/monotonic-clock@0.3.0` import.
+    pub const WASIP3_SLEEP_AND_DOUBLE_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_wasip3_activity_builder::exports::testing::wasip3::sleeper::SLEEP_AND_DOUBLE,
+    ); // sleep-and-double: func(n: u64, sleep-millis: u64) -> result<u64, string>;
 
     pub const FIBO_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO,
@@ -1044,6 +1054,70 @@ pub(crate) mod tests {
         let fibo = assert_matches!(res,
             Some(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 }) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn wasip3_activity_sleep_and_double(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection().await.unwrap();
+        let (exec, _close_tx) = new_activity(
+            db_pool.clone(),
+            test_programs_wasip3_activity_builder::TEST_PROGRAMS_WASIP3_ACTIVITY,
+            sim_clock.clone_box(),
+            TokioSleep,
+            ComponentRetryConfig::ZERO,
+            locking_strategy,
+        )
+        .await;
+        // Create an execution: n = 21, sleep_millis = 10.
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let params = Params::from_json_values_test(vec![json!(21), json!(10)]);
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: WASIP3_SLEEP_AND_DOUBLE_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: exec.config.component_id.clone(),
+
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
+            })
+            .await
+            .unwrap();
+        let executed = exec
+            .tick_test_await(sim_clock.now(), RunId::generate())
+            .await;
+        assert_eq!(vec![execution_id.clone()], executed);
+        let res = db_connection
+            .wait_for_finished_result(
+                &execution_id,
+                Some(Box::pin(future::ready(TimeoutOutcome::Cancel))),
+            )
+            .await
+            .unwrap();
+        let ok = assert_matches!(res, SupportedFunctionReturnValue::Ok(ok) => ok);
+        assert_matches!(
+            ok,
+            Some(WastValWithType {
+                value: WastVal::U64(42),
+                ..
+            })
+        );
         drop(db_connection);
         db_close.close().await;
     }

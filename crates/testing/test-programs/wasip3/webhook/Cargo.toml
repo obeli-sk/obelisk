@@ -1,0 +1,16 @@
+[package]
+name = "test-programs-wasip3-webhook"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+wasip3.workspace = true
+wit-bindgen = { workspace = true, features = ["async-spawn"] }
+
+[lib]
+crate-type = ["cdylib"]
