@@ -248,6 +248,19 @@
                 wasm-tools
               ];
           };
+          # Builds the native WASIp3 fixtures published by push-test-components.
+          # Keep this separate from the stable toolchain used for Obelisk releases.
+          devShells.wasip3-components = pkgs.mkShell {
+            nativeBuildInputs = with pkgs;
+              [
+                (rust-bin.nightly."2026-09-12".default.override {
+                  targets = [ "wasm32-unknown-unknown" "wasm32-wasip2" "wasm32-wasip3" ];
+                })
+                pkg-config
+                protobuf
+                wasm-tools
+              ];
+          };
           devShells.cargo-zigbuild = pkgs.mkShell {
             nativeBuildInputs = with pkgs;
               [
