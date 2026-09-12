@@ -6104,21 +6104,21 @@ impl DbAdmin for PostgresConnection {
         let limit = limit.clamp(1, 10_000);
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let eligible = tx
-            .query_one(
-                "SELECT COUNT(*) FROM t_system_event WHERE created_at < $1",
-                &[&created_before],
+        let rows = tx
+            .query(
+                "SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2",
+                &[&created_before, &(i64::from(limit) + 1)],
             )
             .await?;
-        let deleted = tx.execute(
-            "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2)",
-            &[&created_before, &i64::from(limit)]
-        ).await?;
+        let has_more = rows.len() > limit as usize;
+        let deleted = tx
+            .execute(
+                "DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < $1 ORDER BY event_id LIMIT $2)",
+                &[&created_before, &i64::from(limit)],
+            )
+            .await?;
         tx.commit().await?;
-        Ok(SystemEventRetentionResult {
-            deleted,
-            has_more: get::<i64, _>(&eligible, 0)?.cast_unsigned() > u64::from(limit),
-        })
+        Ok(SystemEventRetentionResult { deleted, has_more })
     }
 
     async fn delete_execution_tree(

@@ -5770,15 +5770,15 @@ impl DbAdmin for SqlitePool {
         self.transaction(
             move |tx| {
                 let limit = limit.clamp(1, 10_000);
-                let eligible: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM t_system_event WHERE created_at < ?1",
-                    [created_before],
-                    |row| row.get(0),
-                )?;
+                let event_ids = tx
+                    .prepare("SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2")?
+                    .query_map(rusqlite::params![created_before, i64::from(limit) + 1], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let has_more = event_ids.len() > limit as usize;
                 let deleted = tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64;
                 Ok(SystemEventRetentionResult {
                     deleted,
-                    has_more: eligible.cast_unsigned() > u64::from(limit),
+                    has_more,
                 })
             },
             TxType::MultipleWrites, "retain_system_events"
