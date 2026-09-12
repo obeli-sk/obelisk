@@ -89,6 +89,9 @@ jobs:
         os:
           - ubuntu-24.04
           - ubuntu-24.04-arm
+        package:
+          - default
+          - obeliskLibcNix-embedded
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -106,8 +109,8 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           pushFilter: "(-rustc-|-cargo-|-rust-std-|-rust-src-|-clippy-|-rustfmt-|-rust-analyzer-|-llvm-tools-|-rust-docs-|-miri-)"
 
-      - name: Build default Nix package
-        run: nix build .#default
+      - name: Build Nix package
+        run: nix build '.#${{ matrix.package }}'
 
   cargo-publish:
     needs: validate-inputs
