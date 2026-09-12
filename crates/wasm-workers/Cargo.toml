@@ -86,10 +86,13 @@ workflow-js-runtime-builder.workspace = true
 
 async-trait.workspace = true
 insta.workspace = true
+oci-client.workspace = true
+oci-wasm.workspace = true
 reqwest.workspace = true
 rstest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+toml.workspace = true
 wiremock.workspace = true
 
 [lints]

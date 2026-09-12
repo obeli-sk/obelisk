@@ -706,7 +706,7 @@ pub(crate) mod tests {
 
     pub(crate) async fn new_activity(
         db_pool: Arc<dyn DbPool>,
-        wasm_path: &'static str,
+        wasm_path: &str,
         clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         retry_config: ComponentRetryConfig,
@@ -726,7 +726,7 @@ pub(crate) mod tests {
 
     pub(crate) async fn new_activity_with_config(
         db_pool: Arc<dyn DbPool>,
-        wasm_path: &'static str,
+        wasm_path: &str,
         clock_fn: Box<dyn ClockFn>,
         sleep: impl Sleep + 'static,
         config_fn: impl FnOnce(ComponentId) -> ActivityConfig,
@@ -1058,10 +1058,8 @@ pub(crate) mod tests {
         db_close.close().await;
     }
 
-    #[rstest]
-    #[tokio::test]
-    async fn wasip3_activity_sleep_and_double(
-        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+    async fn assert_wasip3_activity_sleep_and_double(
+        wasm_path: &str,
         locking_strategy: LockingStrategy,
     ) {
         test_utils::set_up();
@@ -1070,7 +1068,7 @@ pub(crate) mod tests {
         let db_connection = db_pool.connection().await.unwrap();
         let (exec, _close_tx) = new_activity(
             db_pool.clone(),
-            test_programs_wasip3_activity_builder::TEST_PROGRAMS_WASIP3_ACTIVITY,
+            wasm_path,
             sim_clock.clone_box(),
             TokioSleep,
             ComponentRetryConfig::ZERO,
@@ -1120,6 +1118,31 @@ pub(crate) mod tests {
         );
         drop(db_connection);
         db_close.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn wasip3_activity_sleep_and_double(
+        #[values(LockingStrategy::ByFfqns, LockingStrategy::ByComponentDigest)]
+        locking_strategy: LockingStrategy,
+    ) {
+        assert_wasip3_activity_sleep_and_double(
+            test_programs_wasip3_activity_builder::TEST_PROGRAMS_WASIP3_ACTIVITY,
+            locking_strategy,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn wasip3_activity_from_oci_sleep_and_double() {
+        let wasm_file =
+            crate::pull_test_component_from_oci("activity_wasm", "test_programs_wasip3_activity")
+                .await;
+        assert_wasip3_activity_sleep_and_double(
+            wasm_file.path().to_str().unwrap(),
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
     }
 
     #[tokio::test]

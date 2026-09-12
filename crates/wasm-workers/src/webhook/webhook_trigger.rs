@@ -2457,8 +2457,7 @@ pub(crate) mod tests {
         RunnableComponent::new(wasm_path, &engine, ComponentType::WebhookEndpoint).unwrap()
     }
 
-    #[tokio::test]
-    async fn wasip3_webhook_links_as_http_service() {
+    async fn assert_wasip3_webhook_links_as_http_service(wasm_file: &str) {
         use crate::http_hooks::ConfigSectionHint;
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
@@ -2469,7 +2468,6 @@ pub(crate) mod tests {
         use std::sync::Arc;
 
         let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
-        let wasm_file = test_programs_wasip3_webhook_builder::TEST_PROGRAMS_WASIP3_WEBHOOK;
         let runnable_component =
             RunnableComponent::new(wasm_file, &engine, ComponentType::WebhookEndpoint).unwrap();
         let component_id = ComponentId::new(
@@ -2509,6 +2507,24 @@ pub(crate) mod tests {
         .unwrap();
 
         assert!(matches!(linked.proxy_pre.as_ref(), WebhookProxyPre::P3(_)));
+    }
+
+    #[tokio::test]
+    async fn wasip3_webhook_links_as_http_service() {
+        assert_wasip3_webhook_links_as_http_service(
+            test_programs_wasip3_webhook_builder::TEST_PROGRAMS_WASIP3_WEBHOOK,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn wasip3_webhook_from_oci_links_as_http_service() {
+        let wasm_file = crate::pull_test_component_from_oci(
+            "webhook_endpoint_wasm",
+            "test_programs_wasip3_webhook",
+        )
+        .await;
+        assert_wasip3_webhook_links_as_http_service(wasm_file.path().to_str().unwrap()).await;
     }
 
     pub(crate) mod fibo {

@@ -23,6 +23,36 @@ pub mod testing_fn_registry;
 pub mod webhook;
 pub mod workflow;
 
+#[cfg(test)]
+async fn pull_test_component_from_oci(section: &str, name: &str) -> tempfile::NamedTempFile {
+    use oci_client::{Reference, secrets::RegistryAuth};
+    use oci_wasm::WasmClient;
+    use std::{io::Write, str::FromStr};
+
+    test_utils::set_up();
+    let deployment: toml::Value =
+        toml::from_str(include_str!("../../../deployment-testing-wasm-oci.toml")).unwrap();
+    let location = deployment[section]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|component| component["name"].as_str() == Some(name))
+        .unwrap()["location"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("oci://")
+        .unwrap();
+    let reference = Reference::from_str(location).unwrap();
+    let image = WasmClient::new(oci_client::Client::default())
+        .pull(&reference, &RegistryAuth::Anonymous)
+        .await
+        .unwrap();
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(&image.layers.into_iter().next().unwrap().data)
+        .unwrap();
+    file
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
     #[error("cannot decode: {0}")]
