@@ -65,6 +65,8 @@ skip = [
     # boa_interner requires phf 0.14 while tokio-postgres uses 0.13
     { name = "phf", version = "0.14" },
     { name = "phf_shared", version = "0.14" },
+    # reqwest 0.13.5 and oci-client 0.16.1 require base64 0.23; everything else uses 0.22
+    { name = "base64", version = "0.22" },
     # obelisk uses sha2 0.10 RustCrypto suite; postgres-protocol requires sha2 0.11
     { name = "sha2", version = "0.10" },
     { name = "digest", version = "0.10" },
@@ -78,9 +80,9 @@ skip = [
     { name = "wit-component", version = "0.244" },
     { name = "wit-parser", version = "0.244" },
     # wasm-compose 0.254 (wasmtime dep) uses wasm-tools 0.254, but its `wat` dep
-    # pulls in wasm-tools 0.258 — canonical is 0.254, 0.258 is skipped
-    { name = "wasm-encoder", version = "0.258" },
-    { name = "wast", version = "258" },
+    # pulls in wasm-tools 0.259 (canonical is 0.254, 0.259 is skipped)
+    { name = "wasm-encoder", version = "0.259" },
+    { name = "wast", version = "259" },
     # oci-spec (via oci-client) requires strum 0.27 and darling 0.20
     { name = "strum", version = "0.27" },
     { name = "strum_macros", version = "0.27" },
