@@ -1105,6 +1105,64 @@ fn function_uses_resources(resolve: &Resolve, function: &Function) -> bool {
             .is_some_and(|ty| type_uses_resources(resolve, ty, &mut visited))
 }
 
+fn function_uses_async_types(resolve: &Resolve, function: &Function) -> bool {
+    fn type_uses_async_types(
+        resolve: &Resolve,
+        ty: Type,
+        visited: &mut hashbrown::HashSet<TypeId>,
+    ) -> bool {
+        let Type::Id(id) = ty else {
+            return false;
+        };
+        if !visited.insert(id) {
+            return false;
+        }
+
+        match &resolve.types[id].kind {
+            TypeDefKind::Future(_) | TypeDefKind::Stream(_) => true,
+            TypeDefKind::Record(record) => record
+                .fields
+                .iter()
+                .any(|field| type_uses_async_types(resolve, field.ty, visited)),
+            TypeDefKind::Tuple(tuple) => tuple
+                .types
+                .iter()
+                .any(|ty| type_uses_async_types(resolve, *ty, visited)),
+            TypeDefKind::Variant(variant) => variant.cases.iter().any(|case| {
+                case.ty
+                    .is_some_and(|ty| type_uses_async_types(resolve, ty, visited))
+            }),
+            TypeDefKind::Option(ty)
+            | TypeDefKind::List(ty)
+            | TypeDefKind::FixedLengthList(ty, _)
+            | TypeDefKind::Type(ty) => type_uses_async_types(resolve, *ty, visited),
+            TypeDefKind::Result(result) => result
+                .ok
+                .iter()
+                .chain(result.err.iter())
+                .any(|ty| type_uses_async_types(resolve, *ty, visited)),
+            TypeDefKind::Map(key, value) => {
+                type_uses_async_types(resolve, *key, visited)
+                    || type_uses_async_types(resolve, *value, visited)
+            }
+            TypeDefKind::Resource
+            | TypeDefKind::Handle(_)
+            | TypeDefKind::Flags(_)
+            | TypeDefKind::Enum(_)
+            | TypeDefKind::Unknown => false,
+        }
+    }
+
+    let mut visited = hashbrown::HashSet::new();
+    function
+        .params
+        .iter()
+        .any(|param| type_uses_async_types(resolve, param.ty, &mut visited))
+        || function
+            .result
+            .is_some_and(|ty| type_uses_async_types(resolve, ty, &mut visited))
+}
+
 fn populate_ifcs_with_compatible_fns(
     resolve: &Resolve,
     ifc_ids: impl Iterator<Item = InterfaceId>,
@@ -1158,11 +1216,19 @@ fn populate_ifcs_with_compatible_fns(
         let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
         let mut fns = IndexMap::new();
         for (function_name, function) in ifc.functions.iter().filter(|(_, function)| {
-            !function_uses_resources(resolve, function)
-                || (!processing_kind.is_export() && !ifc_fqn.starts_with("wasi:"))
+            let supported_resource_usage = !function_uses_resources(resolve, function)
+                || (!processing_kind.is_export() && !ifc_fqn.starts_with("wasi:"));
+            let supported_async_type_usage =
+                processing_kind.is_export() || !function_uses_async_types(resolve, function);
+            supported_resource_usage && supported_async_type_usage
         }) {
             let uses_resources = function_uses_resources(resolve, function);
             let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.clone()));
+            if processing_kind.is_export() && function_uses_async_types(resolve, function) {
+                return Err(DecodeError::new_without_source(format!(
+                    "unsupported future or stream type in {ffqn}"
+                )));
+            }
             let return_type = if let Some(return_type) = function.result {
                 let mut printer = WitPrinter::default();
                 let wit_type = printer
@@ -1414,6 +1480,72 @@ pub(crate) mod tests {
 
         assert_eq!(exports.len(), 1);
         assert_eq!(exports[0].ffqn.to_string(), "test:resources/api.valid");
+    }
+
+    #[test]
+    fn async_types_are_ignored_in_imports() {
+        let wit = r"
+            package test:async-types;
+
+            interface dependency {
+                stream-input: func(value: stream<u8>);
+                future-output: func() -> future<u8>;
+                nested: func(value: option<stream<u8>>);
+                valid: func(value: string) -> string;
+            }
+
+            interface api {
+                valid: func(value: string) -> result<string, string>;
+            }
+
+            world test {
+                import dependency;
+                export api;
+            }
+        ";
+
+        let mut resolve = wit_parser::Resolve::default();
+        let group = wit_parser::UnresolvedPackageGroup::parse(PathBuf::new(), wit).unwrap();
+        let package_id = resolve.push_group(group).unwrap();
+        let world_id = resolve.select_world(&[package_id], None).unwrap();
+        let world = &resolve.worlds[world_id];
+        let imports = populate_ifcs_with_compatible_fns(
+            &resolve,
+            world_interfaces(world, ExOrIm::Imports),
+            ProcessingKind::Imports,
+        )
+        .unwrap()
+        .into_iter()
+        .flat_map(|interface| interface.fns.into_values())
+        .collect::<Vec<_>>();
+
+        assert_eq!(imports.len(), 1);
+        assert_eq!(
+            imports[0].ffqn.to_string(),
+            "test:async-types/dependency.valid"
+        );
+    }
+
+    #[test]
+    fn async_types_remain_unsupported_in_exports() {
+        let wit = r"
+            package test:async-types;
+
+            interface api {
+                invalid: func(value: stream<u8>);
+            }
+
+            world test {
+                export api;
+            }
+        ";
+
+        let err = WasmComponent::new_from_wit_string(wit, ComponentType::Activity).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("unsupported future or stream type")
+        );
     }
 
     #[rstest]
