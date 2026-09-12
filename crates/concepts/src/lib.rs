@@ -856,7 +856,7 @@ pub mod prefixed_ulid {
     impl<T> PrefixedUlid<T> {
         #[must_use]
         pub fn generate() -> Self {
-            Self::new(Ulid::new())
+            Self::new(Ulid::generate())
         }
 
         #[must_use]

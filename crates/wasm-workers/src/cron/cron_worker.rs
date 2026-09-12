@@ -220,7 +220,7 @@ mod tests {
     }
 
     fn parse_cron(expr: &str) -> CronOrOnce {
-        CronOrOnce::Cron(Box::new(croner::Cron::new(expr).parse().unwrap()))
+        CronOrOnce::Cron(Box::new(expr.parse::<croner::Cron>().unwrap()))
     }
 
     fn make_locked_event(now: DateTime<Utc>) -> Locked {
