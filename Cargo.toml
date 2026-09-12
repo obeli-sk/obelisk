@@ -245,7 +245,7 @@ async-trait = "0.1"
 axum = { version = "0.8.9", features = ["http2", "multipart"] }
 axum-accept = "0.0.7"
 axum-extra = { version = "0.12.6", features = ["query"] }
-base64 = "0.22.1"
+base64 = "0.22.1" # keep on 0.22 to match axum/tonic/hyper-util; only reqwest/oci pull 0.23
 bytes = "1.12.1"
 cargo_metadata = "0.23"
 cfg-if = "1.0.4"
@@ -258,7 +258,7 @@ config = { version = "0.15.25", default-features = false, features = [
 ] }
 console-subscriber = "0.5.0"
 const_format = "0.2.36"
-croner = "2"
+croner = "4"
 criterion = "0.8"
 crossterm = "0.29.0"
 deadpool-postgres = "0.14.2"
@@ -280,7 +280,7 @@ futures-concurrency = "7.7.1"
 futures-lite = "2.6.1"
 futures-util = "0.3.34"
 getrandom = "0.4"
-hashbrown = { version = "0.16.1", features = ["serde"] }
+hashbrown = { version = "0.17.1", features = ["serde"] }
 hdrhistogram = { version = "7.6.0", default-features = false }
 http = "1.5.0"
 http-body-util = "0.1"
@@ -289,17 +289,17 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 id-arena = "2.3.0"
 indexmap = { version = "2.14", features = ["serde"] }
 insta = { version = "1.48.0", features = ["json"] }
-itertools = "0.14"
-jsonwebtoken = { version = "10", default-features = false }
+itertools = "0.15"
+jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
 lazy_static = "1.5"
 libc = "0.2.189"
-oci-client = { version = "0.16.1", default-features = false }
-oci-wasm = { version = "0.4.0", default-features = false } # Dependent on matching oci-client
+oci-client = { version = "0.17.0", default-features = false }
+oci-wasm = { version = "0.6.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
 prost = "0.14.4"
 prost-wkt-types = "0.7"
 quote = "1"
-rand = "0.9"
+rand = "0.9" # postgres-protocol pulls rand 0.10; obelisk stays on 0.9 (0.10 reorganized the Rng traits)
 regex = "1.13"
 refinery = { package = "obeli-sk-refinery", version = "0.9.2-obeli-sk.1", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
@@ -314,7 +314,7 @@ rustls = { version = "0.23", default-features = false, features = [
     "tls12",
 ] }
 route-recognizer = "0.3.1"
-rstest = "0.26"
+rstest = "0.27"
 rusqlite = { version = "0.40.2", features = [
     "bundled",
     "chrono",
@@ -326,11 +326,11 @@ semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 serde_with = "3.23.0"
-hmac = "0.12.1"
-sha2 = "0.10.9"
+hmac = "0.12.1" # keep on the 0.10 digest suite; postgres-protocol pulls sha2/hmac 0.11
+sha2 = "0.10.9" # 0.11 switched output to hybrid-array::Array which breaks {:x} hashing
 subtle = "2.6.1"
 strum = { version = "0.28.0", features = ["derive"] }
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 tempfile = "3.27"
 thiserror = "2.0"
 tokio-postgres = { version = "0.7.18", features = ["with-chrono-0_4", "with-serde_json-1"] }
@@ -355,12 +355,12 @@ tonic-prost-build = "0.14.6"
 tonic-reflection = "0.14.6"
 tonic-web = "0.14.6"
 tower = "0.5.3"
-tower-http = { version = "0.6.11", features = ["trace", "cors"] }
+tower-http = { version = "0.6.11", features = ["trace", "cors"] } # keep in sync with reqwest's tower-http
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.5"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-ulid = { version = "1.2", features = ["serde"] }
+ulid = { version = "3.0", features = ["serde"] }
 url = "2.5.8"
 utoipa = { version = "5.5.0", features = ["chrono"] }
 utoipa-axum = "0.2.0"
@@ -372,7 +372,7 @@ wasmtime-wasi = "48.0.2"
 wasmtime-wasi-io = "48.0.2"
 wasmtime-wasi-http = "48.0.2"
 wasmtime-environ = "48.0.2"
-# wasm-tools
+# wasm-tools (keep in sync with wasmtime's pinned wasm-tools suite)
 wast = "254.0.0"
 wit-parser = "0.254.0"
 wasmparser = "0.254.0"
@@ -392,9 +392,9 @@ boa_runtime = { package="obeli-sk-boa-runtime" , version="1.0.0-obeli-sk.12", de
 # boa_runtime = { git = "https://github.com/obeli-sk/boa", package = "boa_runtime", rev = "9b145317", default-features = false, features = ["fetch"] }
 
 # testing components
-wasip2 = "1.0.4"
-wit-bindgen = "0.61.1"
-wit-bindgen-rust = "0.61.1"
+wasip2 = "2.0.0"
+wit-bindgen = "0.62.0"
+wit-bindgen-rust = "0.62.0"
 wstd = "0.6.8"
 
 # otlp

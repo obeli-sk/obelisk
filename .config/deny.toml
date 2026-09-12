@@ -60,25 +60,25 @@ skip = [
     { name = "hashbrown", version = "0.15" },
     { name = "hashbrown", version = "0.16.1" },
     { name = "foldhash", version = "0.1" },
-    # boa_engine requires itertools 0.15 while the workspace and wasmtime use 0.14
-    { name = "itertools", version = "0.15" },
+    # workspace and boa_engine use itertools 0.15 while prost-build and wasmtime use 0.14
+    { name = "itertools", version = "0.14" },
     # boa_interner requires phf 0.14 while tokio-postgres uses 0.13
     { name = "phf", version = "0.14" },
     { name = "phf_shared", version = "0.14" },
-    # reqwest 0.13.5 and oci-client 0.16.1 require base64 0.23; everything else uses 0.22
-    { name = "base64", version = "0.22" },
-    # obelisk uses sha2 0.10 RustCrypto suite; postgres-protocol requires sha2 0.11
+    # reqwest 0.13 and oci-client 0.17 require base64 0.23; everything else uses 0.22
+    { name = "base64", version = "0.23" },
+    # wasmtime's cranelift-codegen and boa_engine pin the sha2 0.10 suite; postgres-protocol requires sha2 0.11
     { name = "sha2", version = "0.10" },
     { name = "digest", version = "0.10" },
     { name = "block-buffer", version = "0.10" },
     { name = "crypto-common", version = "0.1" },
     { name = "cpufeatures", version = "0.2" },
-    # oci-wasm uses wit-component 0.244 (older wasm-tools suite)
-    { name = "wasmparser", version = "0.244" },
-    { name = "wasm-encoder", version = "0.244" },
-    { name = "wasm-metadata", version = "0.244" },
-    { name = "wit-component", version = "0.244" },
-    { name = "wit-parser", version = "0.244" },
+    # oci-wasm uses wit-component 0.253 (older wasm-tools suite)
+    { name = "wasmparser", version = "0.253" },
+    { name = "wasm-encoder", version = "0.253" },
+    { name = "wasm-metadata", version = "0.253" },
+    { name = "wit-component", version = "0.253" },
+    { name = "wit-parser", version = "0.253" },
     # wasm-compose 0.254 (wasmtime dep) uses wasm-tools 0.254, but its `wat` dep
     # pulls in wasm-tools 0.259 (canonical is 0.254, 0.259 is skipped)
     { name = "wasm-encoder", version = "0.259" },

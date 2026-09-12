@@ -1956,9 +1956,10 @@ impl CronComponentConfigTomlExt for CronComponentConfigToml {
             CronOrOnce::Once
         } else {
             CronOrOnce::Cron(Box::new(
-                croner::Cron::new(&self.schedule)
-                    .with_seconds_optional()
-                    .parse()
+                croner::parser::CronParser::builder()
+                    .seconds(croner::parser::Seconds::Optional)
+                    .build()
+                    .parse(&self.schedule)
                     .with_context(|| {
                         format!(
                             "invalid cron expression `{}` for schedule `{name}`",

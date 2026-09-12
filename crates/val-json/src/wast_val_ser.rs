@@ -737,7 +737,7 @@ impl<'de> DeserializeSeed<'de> for WastValDeserialize<'_> {
 pub mod params {
     use crate::{type_wrapper::TypeWrapper, wast_val::WastVal, wast_val_ser::WastValDeserialize};
     use core::fmt;
-    use itertools::{Itertools as _, Position};
+    use itertools::Itertools as _;
     use serde::{
         Deserializer,
         de::{Expected, SeqAccess, Visitor},
@@ -828,10 +828,10 @@ pub mod params {
             .with_position()
             .fold("[".to_string(), |mut acc, (pos, item)| {
                 acc.push_str(&item.clone());
-                if pos != Position::Last && pos != Position::Only {
-                    acc.push(',');
-                } else {
+                if pos.is_last {
                     acc.push(']');
+                } else {
+                    acc.push(',');
                 }
                 acc
             });
