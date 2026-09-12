@@ -1,0 +1,7 @@
+package testing:wasip3;
+
+/// Exercises the WASIp3 (component model async) ABI from an activity.
+interface sleeper {
+    /// Sleep for `sleep-millis` using the p3 async monotonic clock, then return `n * 2`.
+    sleep-and-double: async func(n: u64, sleep-millis: u64) -> result<u64, string>;
+}

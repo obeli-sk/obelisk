@@ -172,6 +172,10 @@ members = [
     "crates/testing/test-programs/http/webhook/builder",
     "crates/testing/test-programs/http/workflow",
     "crates/testing/test-programs/http/workflow/builder",
+    "crates/testing/test-programs/wasip3/activity",
+    "crates/testing/test-programs/wasip3/activity/builder",
+    "crates/testing/test-programs/wasip3/webhook",
+    "crates/testing/test-programs/wasip3/webhook/builder",
     "crates/testing/test-programs/serde/activity",
     "crates/testing/test-programs/serde/activity/builder",
     "crates/testing/test-programs/serde/workflow",
@@ -232,6 +236,8 @@ test-programs-sleep-activity-builder = { path = "crates/testing/test-programs/sl
 test-programs-sleep-workflow-builder = { path = "crates/testing/test-programs/sleep/workflow/builder" }
 test-programs-stub-activity-builder = { path = "crates/testing/test-programs/stub/activity/builder" }
 test-programs-stub-workflow-builder = { path = "crates/testing/test-programs/stub/workflow/builder" }
+test-programs-wasip3-activity-builder = { path = "crates/testing/test-programs/wasip3/activity/builder" }
+test-programs-wasip3-webhook-builder = { path = "crates/testing/test-programs/wasip3/webhook/builder" }
 test-utils = { path = "crates/testing/test-utils" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.42.0-rc.1" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.42.0-rc.1" }
@@ -368,10 +374,12 @@ wiremock = "0.6"
 
 # wasmtime
 wasmtime = { version = "48.0.2", features = ["memory-protection-keys"] }
-wasmtime-wasi = "48.0.2"
+# p3 enables the WASIp3 (component model async) modules used by wasi:http@0.3.0 activities/webhooks.
+wasmtime-wasi = { version = "48.0.2", features = ["p3"] }
 wasmtime-wasi-io = "48.0.2"
-wasmtime-wasi-http = "48.0.2"
+wasmtime-wasi-http = { version = "48.0.2", features = ["p3", "component-model-async"] }
 wasmtime-environ = "48.0.2"
+wasip3 = "0.9.0"
 # wasm-tools (keep in sync with wasmtime's pinned wasm-tools suite)
 wast = "254.0.0"
 wit-parser = "0.254.0"

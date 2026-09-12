@@ -32,11 +32,12 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Populate the nix store
-        run: nix develop --command echo
+        run: nix develop .#wasip3-components --command echo
 
-      - name: Add latest obelisk to PATH
+      - name: Build current obelisk
         run: |
-          ./scripts/get-latest-obelisk-bin-dir.sh >> "$GITHUB_PATH"
+          nix develop .#wasip3-components --command cargo build --bin obelisk
+          echo "$PWD/target/sandbox/debug" >> "$GITHUB_PATH"
 
       - name: Log in to Docker Hub
         run: |
@@ -47,7 +48,7 @@ jobs:
 
       - name: Push test components
         run: |
-          nix develop --command ./scripts/push-test-components.sh "$TAG"
+          nix develop .#wasip3-components --command ./scripts/push-test-components.sh "$TAG"
         env:
           TAG: ${{ github.event.inputs.tag }}
 

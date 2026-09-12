@@ -154,8 +154,12 @@ impl Engines {
     fn configure_common(
         mut dst_wasmtime_config: wasmtime::Config,
         config: EngineConfig,
+        component_model_async: bool,
     ) -> Result<Arc<Engine>, EngineError> {
         dst_wasmtime_config.wasm_component_model(true);
+        // Required by WASIp3 (wasi:http@0.3.0) activities and webhooks, which use the
+        // component model's async ABI. Left off for workflows to keep them on the sync ABI.
+        dst_wasmtime_config.wasm_component_model_async(component_model_async);
 
         dst_wasmtime_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
         dst_wasmtime_config.epoch_interruption(true);
@@ -182,7 +186,7 @@ impl Engines {
     }
 
     pub(crate) fn get_webhook_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        Self::configure_common(wasmtime::Config::new(), config)
+        Self::configure_common(wasmtime::Config::new(), config, true)
     }
 
     #[cfg(any(test, feature = "test"))]
@@ -191,7 +195,7 @@ impl Engines {
     }
 
     fn get_activity_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        Self::configure_common(wasmtime::Config::new(), config)
+        Self::configure_common(wasmtime::Config::new(), config, true)
     }
 
     #[cfg(any(test, feature = "test"))]
@@ -204,7 +208,7 @@ impl Engines {
         // https://bytecodealliance.zulipchat.com/#narrow/channel/206238-general/topic/Determinism.20of.20Wasm.20SIMD.20in.20Wasmtime
         wasmtime_config.cranelift_nan_canonicalization(true);
         wasmtime_config.relaxed_simd_deterministic(true);
-        Self::configure_common(wasmtime_config, config)
+        Self::configure_common(wasmtime_config, config, false)
     }
 
     pub fn new(engine_config: EngineConfig) -> Result<Self, EngineError> {
