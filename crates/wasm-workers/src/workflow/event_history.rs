@@ -254,6 +254,7 @@ impl EventHistory {
         max_replay_captured_writes: Option<usize>,
         max_events_per_run: Option<usize>,
         response_refresh_interval: Option<usize>,
+        processed_before: Option<&Version>,
     ) -> EventHistory {
         EventHistory {
             replaying_unfinished_execution,
@@ -264,7 +265,14 @@ impl EventHistory {
             index_delay_id_to_expires_at: IndexMap::default(),
             event_history: event_history
                 .into_iter()
-                .map(|(event, version)| (event, Unprocessed, version))
+                .map(|(event, version)| {
+                    let status = if processed_before.is_some_and(|before| version < *before) {
+                        Processed
+                    } else {
+                        Unprocessed
+                    };
+                    (event, status, version)
+                })
                 .collect(),
             responses: responses
                 .into_iter()
@@ -2748,6 +2756,13 @@ impl EventCallCursor {
 
     pub(crate) fn version(&self) -> &Version {
         &self.next_version
+    }
+
+    pub(crate) fn history_position(&self) -> Version {
+        self.replay_versions
+            .front()
+            .cloned()
+            .unwrap_or_else(|| self.next_version.clone())
     }
 
     /// True while there are still persisted events to replay before the cursor reaches the
@@ -5253,6 +5268,7 @@ mod tests {
             None,  // max_replay_captured_writes
             None,  // max_events_per_run
             None,  // response_refresh_interval
+            None,  // processed_before
         );
 
         (

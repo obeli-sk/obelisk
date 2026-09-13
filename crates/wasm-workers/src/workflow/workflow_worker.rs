@@ -48,6 +48,7 @@ use wasmtime::Store;
 use wasmtime::component::types::ComponentFunc;
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
+use wasmtime_wizer::{WasmtimeWizerComponent, Wizer};
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Hash)]
@@ -193,6 +194,8 @@ pub struct WorkflowWorkerCompiled {
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     exported_functions_noext: Vec<FunctionMetadata>,
     imported_functions: Vec<FunctionMetadata>,
+    snapshot_wasm_bytes: Option<Arc<[u8]>>,
+    exim: ExIm,
 }
 
 pub struct WorkflowWorkerLinked {
@@ -201,6 +204,9 @@ pub struct WorkflowWorkerLinked {
     clock_fn: Box<dyn ClockFn>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx>,
+    linker: wasmtime::component::Linker<WorkflowCtx>,
+    snapshot_wasm_bytes: Option<Arc<[u8]>>,
+    exim: ExIm,
     exported_functions_noext: Vec<FunctionMetadata>,
     fn_registry: Arc<dyn FunctionRegistry>,
 }
@@ -214,6 +220,9 @@ pub struct WorkflowWorker {
     clock_fn: Box<dyn ClockFn>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx>,
+    linker: wasmtime::component::Linker<WorkflowCtx>,
+    snapshot_wasm_bytes: Option<Arc<[u8]>>,
+    exim: ExIm,
     fn_registry: Arc<dyn FunctionRegistry>,
     pub(crate) cancel_registry: CancelRegistry,
     pub(crate) deadline_factory: Arc<dyn DeadlineTrackerFactory>,
@@ -230,13 +239,18 @@ impl WorkflowWorkerCompiled {
         engine: Arc<Engine>,
         clock_fn: Box<dyn ClockFn>,
     ) -> Result<Self, DecodeError> {
-        Self::new_with_config_inner(
+        let snapshot_wasm_bytes = config
+            .snapshot_every_n_events()
+            .map(|_| runnable_component.wasm_bytes.clone());
+        let mut compiled = Self::new_with_config_inner(
             runnable_component.wasmtime_component,
             &runnable_component.wasm_component.exim,
             config,
             engine,
             clock_fn,
-        )
+        )?;
+        compiled.snapshot_wasm_bytes = snapshot_wasm_bytes;
+        Ok(compiled)
     }
 
     pub(crate) fn new_with_config_inner(
@@ -322,6 +336,8 @@ impl WorkflowWorkerCompiled {
             exported_ffqn_to_index,
             exported_functions_noext,
             imported_functions,
+            snapshot_wasm_bytes: None,
+            exim: exim.clone(),
         })
     }
 
@@ -442,6 +458,9 @@ impl WorkflowWorkerCompiled {
             clock_fn: self.clock_fn,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             instance_pre,
+            linker,
+            snapshot_wasm_bytes: self.snapshot_wasm_bytes,
+            exim: self.exim,
             exported_functions_noext: self.exported_functions_noext,
             fn_registry,
         })
@@ -480,6 +499,9 @@ impl WorkflowWorkerLinked {
             clock_fn: self.clock_fn,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             instance_pre: self.instance_pre,
+            linker: self.linker,
+            snapshot_wasm_bytes: self.snapshot_wasm_bytes,
+            exim: self.exim,
             exported_functions_noext: self.exported_functions_noext,
             fn_registry: self.fn_registry,
             deadline_factory,
@@ -585,9 +607,13 @@ impl JoinSetCloseError {
 
 struct PrepareFuncFinished {
     store: Store<WorkflowCtx>,
+    instance: wasmtime::component::Instance,
     func: wasmtime::component::Func,
     component_func: ComponentFunc,
     params: Arc<[Val]>,
+    snapshot_source: Option<Vec<u8>>,
+    restored_snapshot_version: Option<Version>,
+    prepared_component_digest: Option<concepts::ContentDigest>,
 }
 
 struct ReplayInterrupt;
@@ -599,6 +625,10 @@ struct WorkflowWorkerView<'a> {
     clock_fn: Box<dyn ClockFn>,
     exported_ffqn_to_index: &'a hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: &'a InstancePre<WorkflowCtx>,
+    linker: &'a wasmtime::component::Linker<WorkflowCtx>,
+    snapshot_wasm_bytes: Option<&'a [u8]>,
+    db_pool: &'a Arc<dyn DbPool>,
+    exim: &'a ExIm,
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
     deadline_factory: &'a dyn DeadlineTrackerFactory,
@@ -748,14 +778,53 @@ impl WorkflowWorker {
     }
 
     async fn prepare_func(
-        ctx: WorkerContext,
+        mut ctx: WorkerContext,
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
-        view: WorkflowWorkerView<'_>,
+        view: &WorkflowWorkerView<'_>,
         backtrace_capture: BacktraceCapture,
         local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
+        let mut restored_snapshot_version = None;
+        let mut prepared_component_digest = None;
+        let mut snapshot_source = view.snapshot_wasm_bytes.map(<[u8]>::to_vec);
+        if let Some(base_wasm) = view.snapshot_wasm_bytes {
+            let digest = concepts::cas::content_digest(base_wasm);
+            prepared_component_digest = Some(digest.clone());
+            let load_started = now_tokio_instant();
+            let loaded = async {
+                let db = view.db_pool.connection().await?;
+                let cas = view.db_pool.cas_conn().await?;
+                utils::workflow_snapshot::load_latest_snapshot(
+                    cas.as_ref(),
+                    db.as_ref(),
+                    &ctx.execution_id,
+                    &view.config.component_id.component_digest,
+                    &digest,
+                )
+                .await
+            }
+            .await;
+            match loaded {
+                Ok(Some(snapshot)) => {
+                    let version = snapshot.metadata.version;
+                    snapshot_source = Some(snapshot.component);
+                    restored_snapshot_version = Some(version.clone());
+                    info!(
+                        version = version.0,
+                        remaining_events = ctx.event_history.iter().filter(|(_, event_version)| *event_version >= version).count(),
+                        elapsed = ?load_started.elapsed(),
+                        "Workflow snapshot loaded from CAS"
+                    );
+                }
+                Ok(None) => debug!("No compatible workflow snapshot found; replaying full history"),
+                Err(err) => warn!(
+                    ?err,
+                    "Cannot load workflow snapshot; replaying full history"
+                ),
+            }
+        }
         let deadline_tracker = match view.deadline_factory.create(
             ctx.locked_event.lock_expires_at,
             ctx.execution_interrupt_watcher,
@@ -801,21 +870,22 @@ impl WorkflowWorker {
             ctx.event_history,
             ctx.responses,
             seed,
-            view.clock_fn,
+            view.clock_fn.clone_box(),
             join_next_blocking_strategy,
             ctx.worker_span,
             backtrace_capture,
             deadline_tracker,
-            view.fn_registry,
-            view.cancel_registry,
+            view.fn_registry.clone(),
+            view.cancel_registry.clone(),
             ctx.locked_event,
             lock_extension,
             subscription_interruption,
-            view.logs_storage_config,
+            view.logs_storage_config.clone(),
             is_replay,
             view.config.max_replay_captured_writes(),
             max_events_per_run,
             response_refresh_interval,
+            restored_snapshot_version.clone(),
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -852,7 +922,73 @@ impl WorkflowWorker {
             }
         });
 
-        let instance = match view.instance_pre.instantiate_async(&mut store).await {
+        let dynamic_instance_pre;
+        let mut dynamic_exported_indexes = None;
+        let instance_pre = if let Some(wasm) = snapshot_source.as_deref() {
+            let (context, instrumented) = match Wizer::new().instrument_component(wasm) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    let workflow_ctx = store.into_data();
+                    return Err(WorkflowError::FatalError {
+                        err: FatalError::CannotInstantiate {
+                            reason: format!("cannot instrument snapshot component: {err}"),
+                            detail: Some(format!("{err:?}")),
+                        },
+                        version: workflow_ctx.version().clone(),
+                        db_connection: workflow_ctx.db_connection,
+                    });
+                }
+            };
+            let component = match wasmtime::component::Component::new(view.engine, instrumented) {
+                Ok(component) => component,
+                Err(err) => {
+                    let workflow_ctx = store.into_data();
+                    return Err(WorkflowError::FatalError {
+                        err: FatalError::CannotInstantiate {
+                            reason: format!("cannot compile snapshot component: {err}"),
+                            detail: Some(format!("{err:?}")),
+                        },
+                        version: workflow_ctx.version().clone(),
+                        db_connection: workflow_ctx.db_connection,
+                    });
+                }
+            };
+            dynamic_exported_indexes = Some(
+                match RunnableComponent::index_exported_functions(&component, view.exim) {
+                    Ok(indexes) => indexes,
+                    Err(err) => {
+                        let workflow_ctx = store.into_data();
+                        return Err(WorkflowError::FatalError {
+                            err: FatalError::CannotInstantiate {
+                                reason: format!("cannot index snapshot component exports: {err}"),
+                                detail: Some(format!("{err:?}")),
+                            },
+                            version: workflow_ctx.version().clone(),
+                            db_connection: workflow_ctx.db_connection,
+                        });
+                    }
+                },
+            );
+            dynamic_instance_pre = match view.linker.instantiate_pre(&component) {
+                Ok(instance_pre) => instance_pre,
+                Err(err) => {
+                    let workflow_ctx = store.into_data();
+                    return Err(WorkflowError::FatalError {
+                        err: FatalError::CannotInstantiate {
+                            reason: format!("cannot preinstantiate snapshot component: {err}"),
+                            detail: Some(format!("{err:?}")),
+                        },
+                        version: workflow_ctx.version().clone(),
+                        db_connection: workflow_ctx.db_connection,
+                    });
+                }
+            };
+            let _ = context;
+            &dynamic_instance_pre
+        } else {
+            view.instance_pre
+        };
+        let instance = match instance_pre.instantiate_async(&mut store).await {
             Ok(instance) => instance,
             Err(err) => {
                 // The epoch deadline callback can fire during instantiation (e.g. while running
@@ -891,7 +1027,12 @@ impl WorkflowWorker {
         };
 
         let func = {
-            let Some(fn_export_index) = view.exported_ffqn_to_index.get(&ctx.ffqn) else {
+            let exported_indexes = if snapshot_source.is_some() {
+                dynamic_exported_indexes.as_ref().unwrap()
+            } else {
+                view.exported_ffqn_to_index
+            };
+            let Some(fn_export_index) = exported_indexes.get(&ctx.ffqn) else {
                 let workflow_ctx = store.into_data();
                 let version = workflow_ctx.version().clone();
                 let db_connection = workflow_ctx.db_connection;
@@ -927,9 +1068,13 @@ impl WorkflowWorker {
         };
         Ok(PrepareFuncFinished {
             store,
+            instance,
             func,
             component_func,
             params,
+            snapshot_source,
+            restored_snapshot_version,
+            prepared_component_digest,
         })
     }
 
@@ -954,62 +1099,70 @@ impl WorkflowWorker {
                     Err(err) => Err(RunError::ResultParsingError(err, Box::new(workflow_ctx))),
                 }
             }
-            Err(err) => {
-                // Try to unpack `WorkflowFunctionError`
-                if let Some(err) = err
-                    .source()
-                    .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
-                {
-                    let worker_partial_result = err
-                        .clone()
-                        .into_worker_partial_result(workflow_ctx.version().clone());
-                    Err(RunError::WorkerPartialResult(
-                        worker_partial_result,
-                        Box::new(workflow_ctx),
-                    ))
-                } else if let Some(trap) = err
-                    .source()
-                    .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
-                {
-                    if *trap == wasmtime::Trap::OutOfFuel {
-                        Err(RunError::Trap {
-                            reason: format!(
-                                "total fuel consumed: {}",
-                                assigned_fuel
-                                    .expect("must have been set as it was the reason of trap")
-                            ),
-                            detail: None,
-                            workflow_ctx: Box::new(workflow_ctx),
-                            kind: TrapKind::OutOfFuel,
-                        })
-                    } else {
-                        Err(RunError::Trap {
-                            reason: trap.to_string(),
-                            detail: Some(format!("{err:?}")),
-                            workflow_ctx: Box::new(workflow_ctx),
-                            kind: TrapKind::Trap,
-                        })
-                    }
-                } else {
-                    Err(RunError::Trap {
-                        reason: err.to_string(),
-                        detail: Some(format!("{err:?}")),
-                        workflow_ctx: Box::new(workflow_ctx),
-                        kind: TrapKind::HostFunctionError,
-                    })
+            Err(err) => Err(Self::call_error(err, workflow_ctx, assigned_fuel)),
+        }
+    }
+
+    fn call_error(
+        err: wasmtime::Error,
+        workflow_ctx: WorkflowCtx,
+        assigned_fuel: Option<u64>,
+    ) -> RunError {
+        if let Some(err) = err
+            .source()
+            .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
+        {
+            let worker_partial_result = err
+                .clone()
+                .into_worker_partial_result(workflow_ctx.version().clone());
+            RunError::WorkerPartialResult(worker_partial_result, Box::new(workflow_ctx))
+        } else if let Some(trap) = err
+            .source()
+            .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
+        {
+            if *trap == wasmtime::Trap::OutOfFuel {
+                RunError::Trap {
+                    reason: format!(
+                        "total fuel consumed: {}",
+                        assigned_fuel.expect("must have been set as it was the reason of trap")
+                    ),
+                    detail: None,
+                    workflow_ctx: Box::new(workflow_ctx),
+                    kind: TrapKind::OutOfFuel,
                 }
+            } else {
+                RunError::Trap {
+                    reason: trap.to_string(),
+                    detail: Some(format!("{err:?}")),
+                    workflow_ctx: Box::new(workflow_ctx),
+                    kind: TrapKind::Trap,
+                }
+            }
+        } else {
+            RunError::Trap {
+                reason: err.to_string(),
+                detail: Some(format!("{err:?}")),
+                workflow_ctx: Box::new(workflow_ctx),
+                kind: TrapKind::HostFunctionError,
             }
         }
     }
 
     async fn call_func_convert_result(
         store: Store<WorkflowCtx>,
+        instance: wasmtime::component::Instance,
         func: wasmtime::component::Func,
         component_func: ComponentFunc,
         params: Arc<[Val]>,
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
         assigned_fuel: Option<u64>,
+        snapshot_interval: Option<usize>,
+        snapshot_wasm: Option<&[u8]>,
+        prepared_component_digest: Option<concepts::ContentDigest>,
+        restored_snapshot_version: Option<Version>,
+        db_pool: &Arc<dyn DbPool>,
+        component_id: &ComponentId,
     ) -> Result<
         (
             Either<WorkerResultOk, ReplayInterrupt>,
@@ -1019,7 +1172,96 @@ impl WorkflowWorker {
     > {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        let res = Self::call_func(store, func, component_func, params, assigned_fuel).await;
+        let res = if snapshot_interval.is_some() {
+            let mut store = store;
+            let snapshot_wasm = snapshot_wasm.expect("snapshot Wasm is configured with interval");
+            let prepared_component_digest =
+                prepared_component_digest.expect("prepared component digest is configured");
+            let mut last_snapshot_version = restored_snapshot_version;
+            loop {
+                let previous_position = store.data().history_position();
+                let result_types = component_func.results();
+                let mut results = vec![Val::Bool(false); result_types.len()];
+                let call_result = func.call_async(&mut store, &params, &mut results).await;
+                let current_position = store.data().history_position();
+                if call_result.is_ok() && current_position != previous_position {
+                    debug!(
+                        previous_version = previous_position.0,
+                        current_version = current_position.0,
+                        "Workflow reached a snapshot-safe history boundary"
+                    );
+                    if snapshot_due(
+                        snapshot_interval,
+                        &current_position,
+                        last_snapshot_version.as_ref(),
+                    ) {
+                        let started = now_tokio_instant();
+                        if let Err(err) = store.data_mut().flush().await {
+                            let workflow_ctx = store.into_data();
+                            break Err(RunError::WorkerPartialResult(
+                                WorkerPartialResult::DbError(err),
+                                Box::new(workflow_ctx),
+                            ));
+                        }
+                        let snapshot_result = async {
+                            let (context, _) = Wizer::new().instrument_component(snapshot_wasm)?;
+                            let bytes = Wizer::new()
+                                .snapshot_component(
+                                    &context,
+                                    &mut WasmtimeWizerComponent {
+                                        store: &mut store,
+                                        instance,
+                                    },
+                                )
+                                .await?;
+                            let cas = db_pool.cas_conn().await?;
+                            let db = db_pool.connection().await?;
+                            utils::workflow_snapshot::persist_snapshot(
+                                cas.as_ref(),
+                                db.as_ref(),
+                                store.data().execution_id.clone(),
+                                current_position.clone(),
+                                component_id.component_digest.clone(),
+                                prepared_component_digest.clone(),
+                                &bytes,
+                            )
+                            .await?;
+                            anyhow::Ok(())
+                        }
+                        .await;
+                        match snapshot_result {
+                            Ok(()) => {
+                                info!(
+                                    version = current_position.0,
+                                    elapsed = ?started.elapsed(),
+                                    "Workflow snapshot persisted to CAS"
+                                );
+                                last_snapshot_version = Some(current_position);
+                            }
+                            Err(err) => {
+                                warn!(
+                                    ?err,
+                                    "Cannot persist workflow snapshot; continuing execution"
+                                );
+                            }
+                        }
+                    }
+                    continue;
+                }
+                let workflow_ctx = store.into_data();
+                break match call_result {
+                    Ok(()) => match SupportedFunctionReturnValue::new_from_iterator(
+                        results.into_iter().zip(result_types),
+                    ) {
+                        Ok(result) => Ok((result, workflow_ctx)),
+                        Err(err) => Err(RunError::ResultParsingError(err, Box::new(workflow_ctx))),
+                    },
+                    Err(err) => Err(Self::call_error(err, workflow_ctx, assigned_fuel)),
+                };
+            }
+        } else {
+            Self::call_func(store, func, component_func, params, assigned_fuel).await
+        };
         let elapsed = elapsed.elapsed();
         let worker_result_refactored =
             Self::convert_result(res, worker_span, elapsed, execution_deadline).await;
@@ -1260,6 +1502,10 @@ impl WorkflowWorker {
             clock_fn: self.clock_fn.clone_box(),
             exported_ffqn_to_index: &self.exported_ffqn_to_index,
             instance_pre: &self.instance_pre,
+            linker: &self.linker,
+            snapshot_wasm_bytes: self.snapshot_wasm_bytes.as_deref(),
+            db_pool: &self.db_pool,
+            exim: &self.exim,
             fn_registry: self.fn_registry.clone(),
             cancel_registry: self.cancel_registry.clone(),
             deadline_factory: self.deadline_factory.as_ref(),
@@ -1375,23 +1621,33 @@ impl WorkflowWorker {
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
         let fuel = view.config.fuel;
+        let snapshot_interval = view.config.snapshot_every_n_events();
+        let db_pool = view.db_pool;
+        let component_id = &view.config.component_id;
         let prepare_finished = Self::prepare_func(
             ctx,
             db_connection,
             is_replay,
-            view,
+            &view,
             backtrace_capture,
             local_interrupt_watcher,
         )
         .await?;
         Self::call_func_convert_result(
             prepare_finished.store,
+            prepare_finished.instance,
             prepare_finished.func,
             prepare_finished.component_func,
             prepare_finished.params,
             &worker_span,
             execution_deadline,
             fuel,
+            snapshot_interval,
+            prepare_finished.snapshot_source.as_deref(),
+            prepare_finished.prepared_component_digest,
+            prepare_finished.restored_snapshot_version,
+            db_pool,
+            component_id,
         )
         .await
     }
@@ -1826,6 +2082,10 @@ impl Worker for WorkflowWorker {
             clock_fn: self.clock_fn.clone_box(),
             exported_ffqn_to_index: &self.exported_ffqn_to_index,
             instance_pre: &self.instance_pre,
+            linker: &self.linker,
+            snapshot_wasm_bytes: self.snapshot_wasm_bytes.as_deref(),
+            db_pool: &self.db_pool,
+            exim: &self.exim,
             fn_registry: self.fn_registry.clone(),
             cancel_registry: self.cancel_registry.clone(),
             deadline_factory: self.deadline_factory.as_ref(),
@@ -2252,6 +2512,72 @@ pub(crate) mod tests {
         .await
     }
 
+    async fn new_snapshotting_workflow_fibo(
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: Box<dyn ClockFn>,
+        fn_registry: &Arc<dyn FunctionRegistry>,
+        cancel_registry: CancelRegistry,
+    ) -> (ExecTaskAndClose, concepts::ContentDigest) {
+        let source = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
+        let source_bytes = tokio::fs::read(source).await.unwrap();
+        let digest = concepts::cas::content_digest(&source_bytes);
+        let output = tempfile::tempdir().unwrap();
+        let prepared =
+            utils::workflow_snapshot::prepare_component(source.as_ref(), &digest, output.path())
+                .await
+                .unwrap();
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (runnable_component, component_id) =
+            compile_workflow_with_engine(prepared.to_str().unwrap(), &workflow_engine).await;
+        let prepared_digest = concepts::cas::content_digest(&runnable_component.wasm_bytes);
+        let worker = WorkflowWorkerCompiled::new_with_config(
+            runnable_component,
+            WorkflowConfig {
+                component_id,
+                stub_wasi: false,
+                fuel: None,
+                mode: WorkflowConfigMode::Real {
+                    join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+                    lock_extension: None,
+                    max_events_per_run: usize::MAX,
+                    response_refresh_interval: usize::MAX,
+                    snapshot_every_n_events: Some(2),
+                },
+            },
+            workflow_engine,
+            clock_fn.clone_box(),
+        )
+        .unwrap()
+        .link(fn_registry.clone())
+        .unwrap()
+        .into_worker(
+            DEPLOYMENT_ID_DUMMY,
+            db_pool.clone(),
+            Arc::new(DeadlineTrackerFactoryTokio::new(
+                Duration::ZERO,
+                clock_fn.clone_box(),
+            )),
+            cancel_registry,
+            None,
+        );
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: LOCK_EXPIRY_WORKFLOW,
+            tick_sleep: TICK_SLEEP,
+            component_id: worker.config.component_id.clone(),
+            task_limiter_global: None,
+            task_limiter_local: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::WORKFLOW,
+            locking_strategy: LockingStrategy::ByComponentDigest,
+        };
+        (
+            ExecTask::new_all_ffqns_test(Arc::new(worker), exec_config, clock_fn, db_pool),
+            prepared_digest,
+        )
+    }
+
     #[expand_enum_database]
     #[rstest]
     #[tokio::test]
@@ -2266,6 +2592,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             join_next_blocking_strategy,
+            false,
         )
         .await;
         db_close.close().await;
@@ -2275,8 +2602,9 @@ pub(crate) mod tests {
         db_pool: Arc<dyn DbPool>,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        snapshots: bool,
     ) {
-        const INPUT_ITERATIONS: u32 = 1;
+        let input_iterations: u32 = if snapshots { 2 } else { 1 };
         test_utils::set_up();
         let fn_registry = TestingFnRegistry::new_from_components(vec![
             compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
@@ -2285,22 +2613,34 @@ pub(crate) mod tests {
                 .await,
         ]);
         let cancel_registry = CancelRegistry::new();
-        let (workflow_exec, _workflow_close_tx) = new_workflow_fibo(
-            db_pool.clone(),
-            sim_clock.clone_box(),
-            join_next_blocking_strategy,
-            &fn_registry,
-            cancel_registry,
-            LockingStrategy::ByComponentDigest,
-        )
-        .await;
+        let ((workflow_exec, _workflow_close_tx), prepared_digest) = if snapshots {
+            let (exec, digest) = new_snapshotting_workflow_fibo(
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                &fn_registry,
+                cancel_registry,
+            )
+            .await;
+            (exec, Some(digest))
+        } else {
+            let exec = new_workflow_fibo(
+                db_pool.clone(),
+                sim_clock.clone_box(),
+                join_next_blocking_strategy,
+                &fn_registry,
+                cancel_registry,
+                LockingStrategy::ByComponentDigest,
+            )
+            .await;
+            (exec, None)
+        };
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection_test().await.unwrap();
 
         let params =
-            Params::from_json_values_test(vec![json!(FIBO_10_INPUT), json!(INPUT_ITERATIONS)]);
+            Params::from_json_values_test(vec![json!(FIBO_10_INPUT), json!(input_iterations)]);
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -2373,6 +2713,31 @@ pub(crate) mod tests {
         };
         assert_eq!(1, executed_workflows.len());
 
+        if snapshots {
+            wait_for_pending_state_fn(
+                db_connection.as_ref(),
+                &execution_id,
+                |exe_history| {
+                    matches!(
+                        exe_history.pending_state,
+                        PendingState::BlockedByJoinSet(..)
+                    )
+                    .then_some(())
+                },
+                None,
+            )
+            .await
+            .unwrap();
+            let executed_activities = activity_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(1, executed_activities.len());
+            let restored_workflows = workflow_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            assert_eq!(1, restored_workflows.len());
+        }
+
         let res = db_connection
             .get_finished_result(&execution_id)
             .await
@@ -2382,6 +2747,38 @@ pub(crate) mod tests {
         let fibo = assert_matches!(res,
             WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 } => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
+        if snapshots {
+            let snapshot = db_connection
+                .get_latest_workflow_snapshot(
+                    &execution_id,
+                    &workflow_exec.config.component_id.component_digest,
+                    prepared_digest.as_ref().unwrap(),
+                )
+                .await
+                .unwrap()
+                .expect("snapshot metadata must be persisted");
+            let cas = db_pool.cas_conn().await.unwrap();
+            assert!(
+                cas.read_blob(&snapshot.snapshot_digest)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshotting_fibo_persists_to_cas_and_restores() {
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        fibo_workflow_should_submit_fibo_activity_inner(
+            db_pool.clone(),
+            sim_clock,
+            JoinNextBlockingStrategy::Interrupt,
+            true,
+        )
+        .await;
+        db_close.close().await;
     }
 
     /// Test for `submit_json` and `get_result_json` workflow functions.

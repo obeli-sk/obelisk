@@ -14,7 +14,6 @@ use walrus::{
 };
 use wasm_encoder::{Component, ComponentSection, Encode, reencode::ReencodeComponent};
 use wasmparser::{Parser, Payload, TypeRef};
-use wasmtime_wizer::Wizer;
 use wit_component::ComponentEncoder;
 
 const PREPARED_FORMAT_VERSION: u8 = 2;
@@ -106,7 +105,7 @@ impl ReencodeComponent for AsyncifyWorkflowModules {
         _parser: Parser,
         module: &[u8],
     ) -> Result<(), wasm_encoder::reencode::Error<Self::Error>> {
-        let transformed = if imports_obelisk_function(module).map_err(Self::user_error)? {
+        let transformed = if imports_durable_function(module).map_err(Self::user_error)? {
             self.transformed_modules += 1;
             let asyncified = asyncify(module).map_err(Self::user_error)?;
             wrap_durable_imports(&asyncified).map_err(Self::user_error)?
@@ -124,12 +123,22 @@ impl AsyncifyWorkflowModules {
     }
 }
 
-fn imports_obelisk_function(module: &[u8]) -> anyhow::Result<bool> {
+fn is_durable_import(module: &str, name: &str) -> bool {
+    module.contains(':')
+        && !module.starts_with("wasi:")
+        && !module.starts_with("obelisk:types/")
+        && !(module.starts_with("obelisk:workflow/workflow-support")
+            && name == "execution-id-generate")
+}
+
+fn imports_durable_function(module: &[u8]) -> anyhow::Result<bool> {
     for payload in Parser::new(0).parse_all(module) {
         if let Payload::ImportSection(imports) = payload? {
             for import in imports.into_imports() {
                 let import = import?;
-                if import.module.starts_with("obelisk:") && matches!(import.ty, TypeRef::Func(_)) {
+                if is_durable_import(import.module, import.name)
+                    && matches!(import.ty, TypeRef::Func(_))
+                {
                     return Ok(true);
                 }
             }
@@ -145,7 +154,7 @@ fn asyncify(module: &[u8]) -> anyhow::Result<Vec<u8>> {
     let status = std::process::Command::new("wasm-opt")
         .arg(input.path())
         .arg("--asyncify")
-        .arg("--pass-arg=asyncify-imports@obelisk:*")
+        .arg("--pass-arg=asyncify-imports@*")
         .arg("--pass-arg=asyncify-asserts")
         .arg("-O2")
         .arg("-o")
@@ -232,14 +241,13 @@ fn wrap_durable_imports(module: &[u8]) -> anyhow::Result<Vec<u8>> {
     let durable_imports: Vec<_> = module
         .imports
         .iter()
-        .filter_map(|import| {
-            if !import.module.starts_with("obelisk:") {
-                return None;
+        .filter_map(|import| match import.kind {
+            walrus::ImportKind::Function(function)
+                if is_durable_import(&import.module, &import.name) =>
+            {
+                Some(function)
             }
-            match import.kind {
-                walrus::ImportKind::Function(function) => Some(function),
-                _ => None,
-            }
+            _ => None,
         })
         .collect();
     let existing_functions: Vec<_> = module.funcs.iter_local().map(|(id, _)| id).collect();
@@ -516,8 +524,7 @@ pub async fn prepare_component(
     if reencoder.transformed_modules == 0 {
         bail!("workflow component contains no core module importing an Obelisk function");
     }
-    let asyncified = component.finish();
-    let (_, prepared) = Wizer::new().instrument_component(&asyncified)?;
+    let prepared = component.finish();
 
     let temporary_path = output_path.with_extension("wasm.tmp");
     tokio::fs::write(&temporary_path, prepared)

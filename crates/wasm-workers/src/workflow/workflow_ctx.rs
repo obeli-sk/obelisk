@@ -994,6 +994,10 @@ impl WorkflowCtx {
         self.event_call_cursor.version()
     }
 
+    pub(crate) fn history_position(&self) -> Version {
+        self.event_call_cursor.history_position()
+    }
+
     fn should_capture_backtrace(&self) -> bool {
         match self.backtrace_capture {
             BacktraceCapture::Disabled => false,
@@ -1026,6 +1030,7 @@ impl WorkflowCtx {
         max_replay_captured_writes: Option<usize>,
         max_events_per_run: Option<usize>,
         response_refresh_interval: Option<usize>,
+        replay_from: Option<Version>,
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -1033,7 +1038,16 @@ impl WorkflowCtx {
         wasi_ctx_builder.insecure_random_seed(0);
         let run_id = locked_event.run_id;
         let execution_id = db_connection.execution_id().clone();
-        let event_call_cursor = EventCallCursor::new(version, &event_history);
+        let replay_event_history: Vec<_> = event_history
+            .iter()
+            .filter(|(_, event_version)| {
+                replay_from
+                    .as_ref()
+                    .is_none_or(|from| *event_version >= *from)
+            })
+            .cloned()
+            .collect();
+        let event_call_cursor = EventCallCursor::new(version, &replay_event_history);
         Self {
             execution_id: execution_id.clone(),
             event_call_cursor,
@@ -1055,6 +1069,7 @@ impl WorkflowCtx {
                 max_replay_captured_writes,
                 max_events_per_run,
                 response_refresh_interval,
+                replay_from.as_ref(),
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -3604,6 +3619,7 @@ pub(crate) mod tests {
                 None, // max_replay_captured_writes
                 None, // max_events_per_run
                 None, // response_refresh_interval
+                None, // replay_from
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");

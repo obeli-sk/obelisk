@@ -3593,6 +3593,7 @@ name = "obeli-sk-wasm-workers"
 version = "0.42.0-rc.1"
 dependencies = [
  "activity-js-runtime-builder",
+ "anyhow",
  "arbitrary",
  "assert_matches",
  "async-trait",
