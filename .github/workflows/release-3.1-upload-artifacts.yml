@@ -126,9 +126,20 @@ jobs:
             exit 1
           fi
           ASSET_NAME="obelisk-${{ matrix.target }}.tar.gz"
-          if jq -e --arg name "$ASSET_NAME" '.assets[] | select(.name == $name)' release.json > /dev/null; then
+          if jq -e --arg name "$ASSET_NAME" \
+            '.assets[] | select(.name == $name and .state == "uploaded" and .size > 0)' \
+            release.json > /dev/null; then
             echo "asset_exists=true" >> $GITHUB_OUTPUT
           else
+            ASSET_ID=$(jq -r --arg name "$ASSET_NAME" \
+              '.assets[] | select(.name == $name) | .id' release.json)
+            if [ -n "$ASSET_ID" ]; then
+              curl --fail -L -X DELETE \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/obeli-sk/obelisk/releases/assets/$ASSET_ID"
+            fi
             echo "asset_exists=false" >> $GITHUB_OUTPUT
           fi
         env:
