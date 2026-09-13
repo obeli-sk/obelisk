@@ -3,7 +3,7 @@ use concepts::{
     ContentDigest, ExecutionId,
     cas::Cas,
     component_id::ComponentDigest,
-    storage::{DbConnection, Version, WorkflowSnapshot},
+    storage::{DbConnection, ResponseCursor, Version, WorkflowSnapshot},
 };
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
@@ -33,6 +33,7 @@ pub async fn persist_snapshot(
     version: Version,
     component_digest: ComponentDigest,
     prepared_component_digest: ContentDigest,
+    processed_response_cursors: Vec<ResponseCursor>,
     component: &[u8],
 ) -> anyhow::Result<WorkflowSnapshot> {
     let snapshot_digest = cas.write_blob(component).await?;
@@ -42,6 +43,7 @@ pub async fn persist_snapshot(
         component_digest,
         prepared_component_digest,
         snapshot_digest,
+        processed_response_cursors,
     };
     db.upsert_workflow_snapshot(metadata.clone()).await?;
     Ok(metadata)

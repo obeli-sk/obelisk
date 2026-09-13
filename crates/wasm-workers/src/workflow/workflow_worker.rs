@@ -798,6 +798,7 @@ impl WorkflowWorker {
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
         let mut restored_snapshot_version = None;
+        let mut restored_processed_response_cursors = Vec::new();
         let mut prepared_component_digest = None;
         let mut snapshot_source = view.snapshot_wasm_bytes.map(<[u8]>::to_vec);
         if let Some(base_wasm) = view.snapshot_wasm_bytes {
@@ -821,6 +822,8 @@ impl WorkflowWorker {
                 Ok(Some(snapshot)) => {
                     let version = snapshot.metadata.version;
                     snapshot_source = Some(snapshot.component);
+                    restored_processed_response_cursors =
+                        snapshot.metadata.processed_response_cursors;
                     restored_snapshot_version = Some(version.clone());
                     info!(
                         version = version.0,
@@ -897,6 +900,7 @@ impl WorkflowWorker {
             max_events_per_run,
             response_refresh_interval,
             restored_snapshot_version.clone(),
+            &restored_processed_response_cursors,
         );
 
         let mut store = Store::new(view.engine, workflow_ctx);
@@ -1237,6 +1241,7 @@ impl WorkflowWorker {
                                 current_position.clone(),
                                 component_id.component_digest.clone(),
                                 prepared_component_digest.clone(),
+                                store.data().processed_response_cursors(),
                                 &bytes,
                             )
                             .await?;

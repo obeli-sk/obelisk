@@ -255,6 +255,7 @@ impl EventHistory {
         max_events_per_run: Option<usize>,
         response_refresh_interval: Option<usize>,
         processed_before: Option<&Version>,
+        processed_response_cursors: &[ResponseCursor],
     ) -> EventHistory {
         EventHistory {
             replaying_unfinished_execution,
@@ -276,7 +277,14 @@ impl EventHistory {
                 .collect(),
             responses: responses
                 .into_iter()
-                .map(|event| (event, Unprocessed))
+                .map(|event| {
+                    let status = if processed_response_cursors.contains(&event.cursor) {
+                        Processed
+                    } else {
+                        Unprocessed
+                    };
+                    (event, status)
+                })
                 .collect(),
             join_next_blocking_strategy,
             worker_span,
@@ -595,6 +603,13 @@ impl EventHistory {
             .last()
             .map(|(resp, _)| resp.cursor)
             .unwrap_or(ResponseCursor(0))
+    }
+
+    pub(crate) fn processed_response_cursors(&self) -> Vec<ResponseCursor> {
+        self.responses
+            .iter()
+            .filter_map(|(response, status)| (*status == Processed).then_some(response.cursor))
+            .collect()
     }
 
     fn extend_responses(&mut self, next_responses: Vec<ResponseWithCursor>) {
@@ -5269,6 +5284,7 @@ mod tests {
             None,  // max_events_per_run
             None,  // response_refresh_interval
             None,  // processed_before
+            &[],   // processed_response_cursors
         );
 
         (

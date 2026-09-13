@@ -280,6 +280,9 @@ pub struct WorkflowSnapshot {
     pub prepared_component_digest: ContentDigest,
     /// Digest of the Wizer-produced snapshot component in the CAS.
     pub snapshot_digest: ContentDigest,
+    /// Responses already consumed by the guest at this checkpoint. Response
+    /// cursors are not necessarily consumed in order across join sets.
+    pub processed_response_cursors: Vec<ResponseCursor>,
 }
 
 #[derive(

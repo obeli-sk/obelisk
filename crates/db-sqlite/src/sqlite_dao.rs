@@ -6247,7 +6247,7 @@ impl DbConnection for SqlitePool {
         self.transaction(
             move |tx| {
                 tx.query_row(
-                    "SELECT version, snapshot_digest FROM t_workflow_snapshot \
+                    "SELECT version, snapshot_digest, processed_response_cursors FROM t_workflow_snapshot \
                      WHERE execution_id = :execution_id \
                        AND component_digest = :component_digest \
                        AND prepared_component_digest = :prepared_component_digest \
@@ -6258,12 +6258,22 @@ impl DbConnection for SqlitePool {
                         ":prepared_component_digest": prepared_component_digest.to_string(),
                     },
                     |row| {
+                        let encoded: Vec<u8> = row.get("processed_response_cursors")?;
+                        if !encoded.len().is_multiple_of(4) {
+                            return Err(consistency_rusqlite(
+                                "invalid workflow snapshot response cursor encoding",
+                            ));
+                        }
                         Ok(WorkflowSnapshot {
                             execution_id: execution_id.clone(),
                             version: Version::new(row.get("version")?),
                             component_digest: component_digest.clone(),
                             prepared_component_digest: prepared_component_digest.clone(),
                             snapshot_digest: row.get("snapshot_digest")?,
+                            processed_response_cursors: encoded
+                                .chunks_exact(4)
+                                .map(|bytes| ResponseCursor(u32::from_be_bytes(bytes.try_into().unwrap())))
+                                .collect(),
                         })
                     },
                 )
@@ -6285,18 +6295,23 @@ impl DbConnection for SqlitePool {
             move |tx| {
                 tx.execute(
                     "INSERT INTO t_workflow_snapshot \
-                     (execution_id, version, component_digest, prepared_component_digest, snapshot_digest) \
-                     VALUES (:execution_id, :version, :component_digest, :prepared_component_digest, :snapshot_digest) \
+                     (execution_id, version, component_digest, prepared_component_digest, snapshot_digest, processed_response_cursors) \
+                     VALUES (:execution_id, :version, :component_digest, :prepared_component_digest, :snapshot_digest, :processed_response_cursors) \
                      ON CONFLICT (execution_id, version) DO UPDATE SET \
                        component_digest = excluded.component_digest, \
                        prepared_component_digest = excluded.prepared_component_digest, \
-                       snapshot_digest = excluded.snapshot_digest",
+                       snapshot_digest = excluded.snapshot_digest, \
+                       processed_response_cursors = excluded.processed_response_cursors",
                     named_params! {
                         ":execution_id": snapshot.execution_id.to_string(),
                         ":version": snapshot.version.0,
                         ":component_digest": snapshot.component_digest,
                         ":prepared_component_digest": snapshot.prepared_component_digest.to_string(),
                         ":snapshot_digest": snapshot.snapshot_digest.to_string(),
+                        ":processed_response_cursors": snapshot.processed_response_cursors
+                            .iter()
+                            .flat_map(|cursor| cursor.0.to_be_bytes())
+                            .collect::<Vec<_>>(),
                     },
                 )?;
                 Ok(())

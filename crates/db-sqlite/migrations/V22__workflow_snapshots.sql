@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS t_workflow_snapshot (
     component_digest         BLOB    NOT NULL,
     prepared_component_digest TEXT   NOT NULL,
     snapshot_digest          TEXT    NOT NULL,
+    processed_response_cursors BLOB  NOT NULL,
 
     PRIMARY KEY (execution_id, version),
     FOREIGN KEY (execution_id) REFERENCES t_state(execution_id) ON DELETE CASCADE,

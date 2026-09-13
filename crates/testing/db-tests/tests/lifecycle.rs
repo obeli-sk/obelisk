@@ -4351,10 +4351,11 @@ async fn workflow_snapshot_returns_latest_compatible_version(database: Database)
         db_connection
             .upsert_workflow_snapshot(WorkflowSnapshot {
                 execution_id: execution_id.clone(),
-                version,
+                version: version.clone(),
                 component_digest: component_id.component_digest.clone(),
                 prepared_component_digest: prepared_digest.clone(),
                 snapshot_digest,
+                processed_response_cursors: vec![ResponseCursor(version.0)],
             })
             .await
             .unwrap();
@@ -4371,6 +4372,7 @@ async fn workflow_snapshot_returns_latest_compatible_version(database: Database)
         .unwrap();
     assert_eq!(Version::new(20), found.version);
     assert_eq!(latest_snapshot_digest, found.snapshot_digest);
+    assert_eq!(vec![ResponseCursor(20)], found.processed_response_cursors);
 
     let incompatible_prepared_digest = cas.write_blob(b"prepared-v2").await.unwrap();
     assert!(

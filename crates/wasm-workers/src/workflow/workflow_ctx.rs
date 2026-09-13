@@ -27,7 +27,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutionIdDerived};
 use concepts::storage::{
     self, DbErrorRead, DbErrorWrite, HistoryEventScheduleAt, Locked, LogEntry, LogInfoAppendRow,
-    LogLevel, ResponseWithCursor, Version, WasmBacktrace,
+    LogLevel, ResponseCursor, ResponseWithCursor, Version, WasmBacktrace,
 };
 use concepts::storage::{HistoryEvent, StubRetVal};
 use concepts::time::ClockFn;
@@ -998,6 +998,10 @@ impl WorkflowCtx {
         self.event_call_cursor.history_position()
     }
 
+    pub(crate) fn processed_response_cursors(&self) -> Vec<ResponseCursor> {
+        self.event_history.processed_response_cursors()
+    }
+
     fn should_capture_backtrace(&self) -> bool {
         match self.backtrace_capture {
             BacktraceCapture::Disabled => false,
@@ -1031,6 +1035,7 @@ impl WorkflowCtx {
         max_events_per_run: Option<usize>,
         response_refresh_interval: Option<usize>,
         replay_from: Option<Version>,
+        processed_response_cursors: &[ResponseCursor],
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
         wasi_ctx_builder.allow_tcp(false);
@@ -1070,6 +1075,7 @@ impl WorkflowCtx {
                 max_events_per_run,
                 response_refresh_interval,
                 replay_from.as_ref(),
+                processed_response_cursors,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -3620,6 +3626,7 @@ pub(crate) mod tests {
                 None, // max_events_per_run
                 None, // response_refresh_interval
                 None, // replay_from
+                &[],  // processed_response_cursors
             );
             for step in &self.steps {
                 info!("Processing step {step:?}");
