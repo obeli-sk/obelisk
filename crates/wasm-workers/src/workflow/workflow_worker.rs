@@ -646,6 +646,20 @@ struct PrepareFuncFinished {
 
 struct ReplayInterrupt;
 
+#[derive(Debug)]
+pub struct ReplayMeasurement {
+    pub response: ReplayResponse,
+    pub current_version: Version,
+    pub replayed_event_count: usize,
+    pub snapshot_version: Option<Version>,
+}
+
+pub(crate) struct ReplayExecutionMetadata {
+    pub(crate) current_version: Version,
+    pub(crate) replayed_event_count: usize,
+    pub(crate) snapshot_version: Option<Version>,
+}
+
 struct WorkflowWorkerView<'a> {
     deployment_id: DeploymentId,
     config: &'a WorkflowConfig,
@@ -679,6 +693,7 @@ impl WorkflowWorker {
         backtraces
     }
 
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn capture_replay_writes_from_log(
         &self,
         execution_id: ExecutionId,
@@ -687,12 +702,14 @@ impl WorkflowWorker {
         params: Params,
         db_conn: Box<dyn DbConnection>,
         backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
     ) -> Result<
         (
             Vec<InternalCapturedWrite>,
             Vec<BacktraceInfo>,
             Option<FatalError>,
             Box<dyn DbConnection>,
+            ReplayExecutionMetadata,
         ),
         ReplayInternalError,
     > {
@@ -708,6 +725,12 @@ impl WorkflowWorker {
         let parent = log.parent();
 
         let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
+        let current_version = log.next_version.clone();
+        let event_history: Vec<_> = log.event_history().collect();
+        let event_versions: Vec<_> = event_history
+            .iter()
+            .map(|(_, version)| version.clone())
+            .collect();
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty()
@@ -715,7 +738,7 @@ impl WorkflowWorker {
             component_digest: self.config.component_id.component_digest.clone(),
             ffqn,
             params,
-            event_history: log.event_history().collect(),
+            event_history,
             responses: log.responses,
             parent: parent.clone(),
             version: log.next_version.clone(),
@@ -739,19 +762,35 @@ impl WorkflowWorker {
             db_conn,
             parent,
             backtrace_capture,
+            allow_snapshot_restore,
         )
         .await
-        .map(|(writes, backtraces, replay_end, db_conn)| {
-            (
-                writes,
-                backtraces,
-                match replay_end {
-                    ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
-                    _ => None,
-                },
-                db_conn,
-            )
-        })
+        .map(
+            |(writes, backtraces, replay_end, db_conn, snapshot_version)| {
+                let replayed_event_count = event_versions
+                    .iter()
+                    .filter(|version| {
+                        snapshot_version
+                            .as_ref()
+                            .is_none_or(|from| *version >= from)
+                    })
+                    .count();
+                (
+                    writes,
+                    backtraces,
+                    match replay_end {
+                        ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
+                        _ => None,
+                    },
+                    db_conn,
+                    ReplayExecutionMetadata {
+                        current_version,
+                        replayed_event_count,
+                        snapshot_version,
+                    },
+                )
+            },
+        )
     }
 
     pub(crate) async fn advance_from_log(
@@ -1580,6 +1619,7 @@ impl WorkflowWorker {
     /// It can assume it is the only writer to its own and its children's execution log.
     /// In the worst case, e.g. on a race with an external stub response writer, the advance will
     /// fail, and the new replay will have to be issued.
+    #[expect(clippy::too_many_arguments)]
     async fn replay_internal(
         &self,
         ctx: WorkerContext,
@@ -1588,12 +1628,14 @@ impl WorkflowWorker {
         real_connection: Box<dyn DbConnection>,
         parent: Option<(ExecutionId, JoinSetId)>,
         backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
     ) -> Result<
         (
             Vec<InternalCapturedWrite>,
             Vec<BacktraceInfo>,
             ReplayPendingState,
             Box<dyn DbConnection>,
+            Option<Version>,
         ),
         ReplayInternalError,
     > {
@@ -1617,60 +1659,71 @@ impl WorkflowWorker {
         };
         let replay_db_connection =
             ReplayWorkflowDbConnection::new(execution_id, real_connection, parent);
-        let (finished, replay_db_connection, replay_outcome) = match Self::run_internal(
-            ctx,
-            Box::new(replay_db_connection),
-            Some(replay_kind),
-            view,
-            backtrace_capture,
-            tokio::sync::watch::channel(false).1, // replay is never interrupted here
-        )
-        .await
-        {
-            Ok((
-                Either::Left(WorkerResultOk::RunFinished(RunFinished {
-                    retval, version, ..
-                })),
-                db,
-            )) => Ok((Some((retval, version)), db, ReplayPendingState::Finished)),
-            Ok((Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher), db)) => {
-                Ok((None, db, ReplayPendingState::Blocked))
-            }
-            Ok((Either::Right(ReplayInterrupt), db)) => {
-                // Only first phase of stubbing leaves the execution in `PendingState::Locked`
-                Ok((None, db, ReplayPendingState::Locked))
-            }
-            Err(WorkflowError::FatalError {
-                err,
-                version,
-                db_connection,
-            }) => {
-                debug!("Replay finished with fatal error: {err:?}");
-                let retval = SupportedFunctionReturnValue::ExecutionFailure(
-                    FinishedExecutionFailure::from(&err),
-                );
+        let (finished, replay_db_connection, replay_outcome, snapshot_version) =
+            match Self::run_internal(
+                ctx,
+                Box::new(replay_db_connection),
+                Some(replay_kind),
+                view,
+                backtrace_capture,
+                tokio::sync::watch::channel(false).1, // replay is never interrupted here
+                allow_snapshot_restore,
+            )
+            .await
+            {
                 Ok((
+                    Either::Left(WorkerResultOk::RunFinished(RunFinished {
+                        retval, version, ..
+                    })),
+                    db,
+                    snapshot_version,
+                )) => Ok((
                     Some((retval, version)),
+                    db,
+                    ReplayPendingState::Finished,
+                    snapshot_version,
+                )),
+                Ok((
+                    Either::Left(WorkerResultOk::DbUpdatedByWorkerOrWatcher),
+                    db,
+                    snapshot_version,
+                )) => Ok((None, db, ReplayPendingState::Blocked, snapshot_version)),
+                Ok((Either::Right(ReplayInterrupt), db, snapshot_version)) => {
+                    // Only first phase of stubbing leaves the execution in `PendingState::Locked`
+                    Ok((None, db, ReplayPendingState::Locked, snapshot_version))
+                }
+                Err(WorkflowError::FatalError {
+                    err,
+                    version,
                     db_connection,
-                    ReplayPendingState::FinishedWithFailure(err),
-                ))
-            }
-            Err(WorkflowError::LimitReached { reason, version }) => {
-                Err(ReplayInternalError::LimitReached { reason, version })
-            }
-            Err(WorkflowError::DbError(db_error_write)) => {
-                Err(ReplayInternalError::DbError(db_error_write))
-            }
-            Err(WorkflowError::LockExpired(version)) => {
-                Err(ReplayInternalError::LockExpired(version))
-            }
-            // Replay uses a never-firing deadline tracker, so any interrupt here is a
-            // defensive `ExecutorClosing` (pause/cancel never reaches replay).
-            Err(
-                WorkflowError::ExecutionYielded { version, .. }
-                | WorkflowError::PauseOrCancel(version),
-            ) => Err(ReplayInternalError::ExecutorClosing(version)),
-        }?;
+                }) => {
+                    debug!("Replay finished with fatal error: {err:?}");
+                    let retval = SupportedFunctionReturnValue::ExecutionFailure(
+                        FinishedExecutionFailure::from(&err),
+                    );
+                    Ok((
+                        Some((retval, version)),
+                        db_connection,
+                        ReplayPendingState::FinishedWithFailure(err),
+                        None,
+                    ))
+                }
+                Err(WorkflowError::LimitReached { reason, version }) => {
+                    Err(ReplayInternalError::LimitReached { reason, version })
+                }
+                Err(WorkflowError::DbError(db_error_write)) => {
+                    Err(ReplayInternalError::DbError(db_error_write))
+                }
+                Err(WorkflowError::LockExpired(version)) => {
+                    Err(ReplayInternalError::LockExpired(version))
+                }
+                // Replay uses a never-firing deadline tracker, so any interrupt here is a
+                // defensive `ExecutorClosing` (pause/cancel never reaches replay).
+                Err(
+                    WorkflowError::ExecutionYielded { version, .. }
+                    | WorkflowError::PauseOrCancel(version),
+                ) => Err(ReplayInternalError::ExecutorClosing(version)),
+            }?;
 
         let Ok(mut replay_db_connection) = replay_db_connection
             .as_any()
@@ -1699,7 +1752,13 @@ impl WorkflowWorker {
             });
         }
         let (writes, backtraces, real_connection) = replay_db_connection.into_parts();
-        Ok((writes, backtraces, replay_outcome, real_connection))
+        Ok((
+            writes,
+            backtraces,
+            replay_outcome,
+            real_connection,
+            snapshot_version,
+        ))
     }
 
     // Returns the same `db_connection` it was supplied.
@@ -1710,10 +1769,12 @@ impl WorkflowWorker {
         view: WorkflowWorkerView<'_>,
         backtrace_capture: BacktraceCapture,
         local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
+        allow_snapshot_restore: bool,
     ) -> Result<
         (
             Either<WorkerResultOk, ReplayInterrupt>,
             Box<dyn WorkflowDbConnection>,
+            Option<Version>,
         ),
         WorkflowError,
     > {
@@ -1739,7 +1800,7 @@ impl WorkflowWorker {
             &view,
             backtrace_capture,
             local_interrupt_watcher,
-            true,
+            allow_snapshot_restore,
         )
         .await;
         let prepare_finished = match prepare_result {
@@ -1786,7 +1847,7 @@ impl WorkflowWorker {
             persist_snapshots,
         )
         .await;
-        match result {
+        let (result, used_snapshot_version) = match result {
             Err(WorkflowError::FatalError {
                 err,
                 version: _,
@@ -1807,28 +1868,32 @@ impl WorkflowWorker {
                     false,
                 )
                 .await?;
-                Self::call_func_convert_result(
-                    prepared.store,
-                    prepared.instance,
-                    prepared.func,
-                    prepared.component_func,
-                    prepared.params,
-                    &worker_span,
-                    execution_deadline,
-                    fuel,
-                    snapshot_interval,
-                    snapshot_max_size_bytes,
-                    prepared.snapshot_base.as_deref(),
-                    prepared.prepared_component_digest,
+                (
+                    Self::call_func_convert_result(
+                        prepared.store,
+                        prepared.instance,
+                        prepared.func,
+                        prepared.component_func,
+                        prepared.params,
+                        &worker_span,
+                        execution_deadline,
+                        fuel,
+                        snapshot_interval,
+                        snapshot_max_size_bytes,
+                        prepared.snapshot_base.as_deref(),
+                        prepared.prepared_component_digest,
+                        None,
+                        db_pool,
+                        component_id,
+                        persist_snapshots,
+                    )
+                    .await,
                     None,
-                    db_pool,
-                    component_id,
-                    persist_snapshots,
                 )
-                .await
             }
-            result => result,
-        }
+            result => (result, restored_snapshot_version),
+        };
+        result.map(|(outcome, db)| (outcome, db, used_snapshot_version))
     }
 
     #[instrument(skip_all, fields(%execution_id))]
@@ -1851,7 +1916,7 @@ impl WorkflowWorker {
             .map_err(DbErrorWrite::from)?;
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
-        let (writes, backtraces, _fatal_error, _db_conn) = self
+        let (writes, backtraces, _fatal_error, _db_conn, _metadata) = self
             .capture_replay_writes_from_log(
                 execution_id,
                 log,
@@ -1859,6 +1924,7 @@ impl WorkflowWorker {
                 params,
                 db_conn,
                 BacktraceCapture::Full,
+                true,
             )
             .await?;
         Ok(Self::collect_write_backtraces(writes, backtraces))
@@ -1915,6 +1981,26 @@ impl WorkflowWorker {
         execution_id: ExecutionId,
         backtrace_capture: BacktraceCapture,
     ) -> Result<ReplayResponse, ReplayError> {
+        Box::pin(self.replay_with_snapshot_restore(execution_id, backtrace_capture, true)).await
+    }
+
+    pub async fn replay_with_snapshot_restore(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
+    ) -> Result<ReplayResponse, ReplayError> {
+        Box::pin(self.measure_replay(execution_id, backtrace_capture, allow_snapshot_restore))
+            .await
+            .map(|measurement| measurement.response)
+    }
+
+    pub async fn measure_replay(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
+    ) -> Result<ReplayMeasurement, ReplayError> {
         assert!(
             self.deadline_factory.is_for_replay(),
             "replay() requires DeadlineTrackerFactoryForReplay"
@@ -1931,7 +2017,7 @@ impl WorkflowWorker {
         let already_finished_result = log.as_finished_result();
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
-        let (captured_writes, _backtraces, fatal_error, _db_conn) = self
+        let (captured_writes, _backtraces, fatal_error, _db_conn, metadata) = self
             .capture_replay_writes_from_log(
                 execution_id,
                 log,
@@ -1939,6 +2025,7 @@ impl WorkflowWorker {
                 params,
                 db_conn,
                 backtrace_capture,
+                allow_snapshot_restore,
             )
             .await?;
         // Drop replay-only metadata.
@@ -1946,7 +2033,17 @@ impl WorkflowWorker {
             .into_iter()
             .map(|write| write.write)
             .collect();
-        Self::transform_replay_to_response(captured_writes, fatal_error, already_finished_result)
+        let response = Self::transform_replay_to_response(
+            captured_writes,
+            fatal_error,
+            already_finished_result,
+        )?;
+        Ok(ReplayMeasurement {
+            response,
+            current_version: metadata.current_version,
+            replayed_event_count: metadata.replayed_event_count,
+            snapshot_version: metadata.snapshot_version,
+        })
     }
 
     pub(crate) fn transform_replay_to_response(
@@ -2016,7 +2113,7 @@ impl WorkflowWorker {
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (fresh_replay, _backtraces, _fatal_error, db_conn) = self
+        let (fresh_replay, _backtraces, _fatal_error, db_conn, _metadata) = self
             .capture_replay_writes_from_log(
                 execution_id,
                 log,
@@ -2024,6 +2121,7 @@ impl WorkflowWorker {
                 params,
                 db_conn,
                 backtrace_capture,
+                true,
             )
             .await?;
 
@@ -2063,8 +2161,8 @@ impl WorkflowWorker {
             can_be_retried: true, // avoid a warning in log
             ..ctx
         };
-        let (mut fresh_replay, _backtraces, replay_pending_state, db_conn) = self
-            .replay_internal(
+        let (mut fresh_replay, _backtraces, replay_pending_state, db_conn, _snapshot_version) =
+            self.replay_internal(
                 replay_ctx,
                 ReplayKind::Unfinished,
                 execution_id.clone(),
@@ -2074,6 +2172,7 @@ impl WorkflowWorker {
                     .map_err(|err| WorkerError::DbError(err.into()))?,
                 parent,
                 BacktraceCapture::Disabled,
+                true,
             )
             .await
             .map_err(|err| match err {
@@ -2282,6 +2381,7 @@ impl Worker for WorkflowWorker {
             view,
             BacktraceCapture::Disabled,
             local_interrupt_watcher,
+            true,
         )
         .await;
         worker_span.in_scope(|| {
@@ -2289,11 +2389,11 @@ impl Worker for WorkflowWorker {
                 info!("Workflow run finished with error: {workflow_err}");
             }
             match res {
-                Ok((Either::Left(ok), _)) => {
+                Ok((Either::Left(ok), _, _)) => {
                     info!("Workflow run finished: {ok}");
                     WorkerResult::Ok(ok)
                 }
-                Ok((Either::Right(_), _)) => unreachable!("not replaying"),
+                Ok((Either::Right(_), _, _)) => unreachable!("not replaying"),
                 // A pause or cancel already persisted its event out of band; append nothing.
                 Err(WorkflowError::PauseOrCancel(_version)) => {
                     info!("Workflow run interrupted by pause/cancel, db already updated");

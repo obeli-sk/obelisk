@@ -112,6 +112,7 @@ async fn until_terminated<T>(
         execution_submit_put,
         execution_submit_post,
         execution_replay,
+        execution_replay_measure,
         execution_advance,
         execution_persist_backtraces,
         execution_upgrade,
@@ -147,6 +148,7 @@ async fn until_terminated<T>(
         ExecutionStubPayload,
         RetVal,
         ReplayResponseSer,
+        ReplayMeasurementResponseSer,
         AdvanceRequestSer,
         AdvanceResponseSer,
         PersistBacktracesResponseSer,
@@ -262,6 +264,10 @@ fn v1_router(max_transport_message_size_bytes: usize) -> Router<Arc<WebApiState>
         .route(
             "/executions/{execution-id}/replay",
             routing::put(execution_replay),
+        )
+        .route(
+            "/executions/{execution-id}/replay/measure",
+            routing::put(execution_replay_measure),
         )
         .route(
             "/executions/{execution-id}/advance",
@@ -3089,6 +3095,76 @@ async fn execution_replay(
             deprecated_text_response((status, body))
         }
     })
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+struct ReplayMeasurementQuery {
+    /// Allow loading a compatible persisted snapshot; false forces a full replay.
+    #[serde(default = "default_true")]
+    use_snapshot: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct ReplayMeasurementResponseSer {
+    use_snapshot: bool,
+    snapshot_used: bool,
+    snapshot_version: Option<u32>,
+    replayed_event_count: u64,
+    current_version: u32,
+    elapsed_micros: u64,
+    outcome: ReplayResponseSer,
+}
+
+/// Measure a read-only replay with snapshot restoration explicitly allowed or bypassed.
+#[utoipa::path(
+    put,
+    path = "/v1/executions/{execution_id}/replay/measure",
+    tag = "executions",
+    params(
+        ("execution_id" = String, Path, description = "Execution ID to replay"),
+        ReplayMeasurementQuery
+    ),
+    responses(
+        (status = 200, description = "Replay measured", body = ReplayMeasurementResponseSer),
+        (status = 404, description = "Not found"),
+        (status = 422, description = "Replay failed")
+    )
+)]
+#[instrument(skip_all, fields(execution_id))]
+async fn execution_replay_measure(
+    Path(execution_id): Path<ExecutionId>,
+    Query(query): Query<ReplayMeasurementQuery>,
+    State(state): State<Arc<WebApiState>>,
+) -> Result<Response, HttpResponse> {
+    let accept = AcceptHeader::Json;
+    let started = std::time::Instant::now();
+    let replay_worker = get_replay_target(&state, &execution_id, accept).await?;
+    let measurement = Box::pin(until_terminated(
+        &state,
+        accept,
+        replay_worker.measure_replay(execution_id, BacktraceCapture::Disabled, query.use_snapshot),
+    ))
+    .await?
+    .map_err(|err| HttpResponse {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        message: format!("Replay error: {err}"),
+        accept,
+    })?;
+    let elapsed_micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let response = ReplayMeasurementResponseSer {
+        use_snapshot: query.use_snapshot,
+        snapshot_used: measurement.snapshot_version.is_some(),
+        snapshot_version: measurement.snapshot_version.map(|version| version.0),
+        replayed_event_count: u64::try_from(measurement.replayed_event_count).unwrap_or(u64::MAX),
+        current_version: measurement.current_version.0,
+        elapsed_micros,
+        outcome: ReplayResponseSer::from(measurement.response),
+    };
+    Ok(pretty_json_response(StatusCode::OK, &response))
 }
 
 /// Advance a paused execution by applying captured writes from a prior replay; set `persist_backtrace` to persist fresh backtraces.

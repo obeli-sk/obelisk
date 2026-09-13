@@ -3,7 +3,8 @@
 use crate::workflow::replay_advance::AdvanceResponse;
 use crate::workflow::workflow_js_worker::WorkflowJsWorker;
 use crate::workflow::workflow_worker::{
-    AdvanceError, BacktraceCapture, ReplayAdvanceable, ReplayError, ReplayResponse, WorkflowWorker,
+    AdvanceError, BacktraceCapture, ReplayAdvanceable, ReplayError, ReplayMeasurement,
+    ReplayResponse, WorkflowWorker,
 };
 use concepts::ComponentId;
 use concepts::ComponentType;
@@ -61,6 +62,58 @@ impl ReplayWorker {
         match self {
             Self::Wasm(worker) => Box::pin(worker.replay(execution_id, backtrace_capture)).await,
             Self::Js(worker) => Box::pin(worker.replay(execution_id, backtrace_capture)).await,
+        }
+    }
+
+    pub async fn replay_with_snapshot_restore(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
+    ) -> Result<ReplayResponse, ReplayError> {
+        match self {
+            Self::Wasm(worker) => {
+                Box::pin(worker.replay_with_snapshot_restore(
+                    execution_id,
+                    backtrace_capture,
+                    allow_snapshot_restore,
+                ))
+                .await
+            }
+            Self::Js(worker) => {
+                Box::pin(worker.replay_with_snapshot_restore(
+                    execution_id,
+                    backtrace_capture,
+                    allow_snapshot_restore,
+                ))
+                .await
+            }
+        }
+    }
+
+    pub async fn measure_replay(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
+    ) -> Result<ReplayMeasurement, ReplayError> {
+        match self {
+            Self::Wasm(worker) => {
+                Box::pin(worker.measure_replay(
+                    execution_id,
+                    backtrace_capture,
+                    allow_snapshot_restore,
+                ))
+                .await
+            }
+            Self::Js(worker) => {
+                Box::pin(worker.measure_replay(
+                    execution_id,
+                    backtrace_capture,
+                    allow_snapshot_restore,
+                ))
+                .await
+            }
         }
     }
 

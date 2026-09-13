@@ -4,7 +4,9 @@
 //! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
-use super::workflow_worker::{BacktraceCapture, WorkflowWorker, WorkflowWorkerCompiled};
+use super::workflow_worker::{
+    BacktraceCapture, ReplayMeasurement, WorkflowWorker, WorkflowWorkerCompiled,
+};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
@@ -227,7 +229,7 @@ impl WorkflowJsWorker {
             &self.resolved_imports,
             true,
         );
-        let (writes, backtraces, _fatal_error, _db_conn) = self
+        let (writes, backtraces, _fatal_error, _db_conn, _metadata) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -236,6 +238,7 @@ impl WorkflowJsWorker {
                 params,
                 db_conn,
                 BacktraceCapture::Full,
+                true,
             )
             .await?;
         Ok(WorkflowWorker::collect_write_backtraces(writes, backtraces))
@@ -567,6 +570,26 @@ impl WorkflowJsWorker {
         execution_id: ExecutionId,
         backtrace_capture: BacktraceCapture,
     ) -> Result<ReplayResponse, ReplayError> {
+        Box::pin(self.replay_with_snapshot_restore(execution_id, backtrace_capture, true)).await
+    }
+
+    pub async fn replay_with_snapshot_restore(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
+    ) -> Result<ReplayResponse, ReplayError> {
+        Box::pin(self.measure_replay(execution_id, backtrace_capture, allow_snapshot_restore))
+            .await
+            .map(|measurement| measurement.response)
+    }
+
+    pub async fn measure_replay(
+        &self,
+        execution_id: ExecutionId,
+        backtrace_capture: BacktraceCapture,
+        allow_snapshot_restore: bool,
+    ) -> Result<ReplayMeasurement, ReplayError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
             "replay() requires DeadlineTrackerFactoryForReplay"
@@ -591,7 +614,7 @@ impl WorkflowJsWorker {
             backtrace_capture != BacktraceCapture::Disabled,
         );
 
-        let (captured_writes, _backtraces, mut fatal_error, _db_conn) = self
+        let (captured_writes, _backtraces, mut fatal_error, _db_conn, metadata) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -600,6 +623,7 @@ impl WorkflowJsWorker {
                 params,
                 db_conn,
                 backtrace_capture,
+                allow_snapshot_restore,
             )
             .await?;
         // Drop replay-only metadata, unwrapping user retval or fatal error.
@@ -638,11 +662,17 @@ impl WorkflowJsWorker {
             })
             .collect();
 
-        WorkflowWorker::transform_replay_to_response(
+        let response = WorkflowWorker::transform_replay_to_response(
             captured_writes,
             fatal_error,
             already_finished_result,
-        )
+        )?;
+        Ok(ReplayMeasurement {
+            response,
+            current_version: metadata.current_version,
+            replayed_event_count: metadata.replayed_event_count,
+            snapshot_version: metadata.snapshot_version,
+        })
     }
 
     /// Advance a paused JS workflow by one interrupt boundary.
@@ -692,7 +722,7 @@ impl WorkflowJsWorker {
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (mut fresh_replay, _backtraces, _fatal_error, db_conn) = self
+        let (mut fresh_replay, _backtraces, _fatal_error, db_conn, _metadata) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -701,6 +731,7 @@ impl WorkflowJsWorker {
                 params,
                 db_conn,
                 backtrace_capture,
+                true,
             )
             .await
             .map_err(AdvanceError::from)?;
