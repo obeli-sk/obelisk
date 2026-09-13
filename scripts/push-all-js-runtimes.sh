@@ -32,3 +32,10 @@ if [ "$push_failed" -ne 0 ]; then
 fi
 
 scripts/update-embedded-assets-hash.sh
+git add \
+    crates/embedded-assets/activity-js-runtime-version.txt \
+    crates/embedded-assets/webhook-js-runtime-version.txt \
+    crates/embedded-assets/workflow-js-runtime-version.txt \
+    flake.nix
+
+git commit -m "chore: Push JS runtimes"
