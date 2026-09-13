@@ -6501,32 +6501,34 @@ impl CasGc for PostgresConnection {
     async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite> {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
-        let row = tx
-            .query_one(
-                "SELECT \
-                 COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
-                 COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
-                 COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT $1) candidates), 0)::bigint \
-                 FROM t_file",
-                &[&i64::from(batch_size.max(1))],
+        let limit = batch_size.clamp(1, 10_000);
+        let mut orphans = tx
+            .query(
+                "SELECT digest, size FROM t_file WHERE digest NOT IN \
+                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) \
+                 ORDER BY digest LIMIT $1",
+                &[&(i64::from(limit) + 1)],
             )
             .await?;
-        let referenced_blobs = row.get::<_, i64>(0).cast_unsigned();
-        let orphan_blobs = row.get::<_, i64>(1).cast_unsigned();
-        let deleted_bytes = row.get::<_, i64>(2).cast_unsigned();
+        let has_more = orphans.len() > limit as usize;
+        orphans.truncate(limit as usize);
+        let orphan_blobs = orphans.len() as u64;
+        let deleted_bytes = orphans
+            .iter()
+            .map(|row| row.get::<_, i64>(1).cast_unsigned())
+            .sum();
         let deleted_blobs = if dry_run {
             0
         } else {
-            tx.execute(
-                "DELETE FROM t_file WHERE ctid IN (SELECT ctid FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT $1)",
-                &[&i64::from(batch_size.max(1))],
-            )
-            .await?
+            let digests = orphans
+                .iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>();
+            tx.execute("DELETE FROM t_file WHERE digest = ANY($1)", &[&digests])
+                .await?
         };
         tx.commit().await?;
         Ok(CasGcResult {
-            referenced_blobs,
             orphan_blobs,
             deleted_blobs,
             deleted_bytes: if dry_run || deleted_blobs > 0 {
@@ -6534,7 +6536,7 @@ impl CasGc for PostgresConnection {
             } else {
                 0
             },
-            has_more: orphan_blobs > u64::from(batch_size.max(1)),
+            has_more,
         })
     }
 }

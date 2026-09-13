@@ -518,7 +518,6 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .gc_cas(true, 10)
         .await
         .unwrap();
-    assert_eq!(dry_run.referenced_blobs, 1);
     assert_eq!(dry_run.orphan_blobs, 2);
     assert_eq!(dry_run.deleted_blobs, 0);
     assert!(cas.contains_blob(&orphan_digest).await.unwrap());
@@ -530,6 +529,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
+    assert!(collected.has_more);
     assert!(cas.contains_blob(&referenced_digest).await.unwrap());
     assert_ne!(
         cas.contains_blob(&orphan_digest).await.unwrap(),
@@ -544,6 +544,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
+    assert!(!collected.has_more);
     assert!(!cas.contains_blob(&orphan_digest).await.unwrap());
     assert!(!cas.contains_blob(&second_orphan_digest).await.unwrap());
 
