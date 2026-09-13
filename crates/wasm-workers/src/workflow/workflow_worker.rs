@@ -622,7 +622,7 @@ struct PrepareFuncFinished {
     func: wasmtime::component::Func,
     component_func: ComponentFunc,
     params: Arc<[Val]>,
-    snapshot_source: Option<Vec<u8>>,
+    snapshot_base: Option<Vec<u8>>,
     restored_snapshot_version: Option<Version>,
     prepared_component_digest: Option<concepts::ContentDigest>,
 }
@@ -801,7 +801,8 @@ impl WorkflowWorker {
         let mut restored_snapshot_version = None;
         let mut restored_processed_response_cursors = Vec::new();
         let mut prepared_component_digest = None;
-        let mut snapshot_source = view.snapshot_wasm_bytes.map(<[u8]>::to_vec);
+        let snapshot_base = view.snapshot_wasm_bytes.map(<[u8]>::to_vec);
+        let mut snapshot_source = snapshot_base.clone();
         if let Some(base_wasm) = view.snapshot_wasm_bytes {
             let digest = concepts::cas::content_digest(base_wasm);
             prepared_component_digest = Some(digest.clone());
@@ -1091,7 +1092,7 @@ impl WorkflowWorker {
             func,
             component_func,
             params,
-            snapshot_source,
+            snapshot_base,
             restored_snapshot_version,
             prepared_component_digest,
         })
@@ -1267,6 +1268,7 @@ impl WorkflowWorker {
                                     ?err,
                                     "Cannot persist workflow snapshot; continuing execution"
                                 );
+                                last_snapshot_version = Some(current_position);
                             }
                         }
                     }
@@ -1696,7 +1698,7 @@ impl WorkflowWorker {
             execution_deadline,
             fuel,
             snapshot_interval,
-            prepare_finished.snapshot_source.as_deref(),
+            prepare_finished.snapshot_base.as_deref(),
             prepare_finished.prepared_component_digest,
             prepare_finished.restored_snapshot_version,
             db_pool,
@@ -1735,7 +1737,7 @@ impl WorkflowWorker {
                     execution_deadline,
                     fuel,
                     snapshot_interval,
-                    prepared.snapshot_source.as_deref(),
+                    prepared.snapshot_base.as_deref(),
                     prepared.prepared_component_digest,
                     None,
                     db_pool,
