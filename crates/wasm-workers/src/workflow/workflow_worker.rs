@@ -1229,7 +1229,10 @@ impl WorkflowWorker {
                         }
                         let snapshot_result = async {
                             let (context, _) = Wizer::new().instrument_component(snapshot_wasm)?;
-                            let bytes = Wizer::new()
+                            // Wizer lifts the full guest memory through a hostcall when extracting state.
+                            let hostcall_fuel = store.hostcall_fuel();
+                            store.set_hostcall_fuel(usize::MAX);
+                            let snapshot_result = Wizer::new()
                                 .snapshot_component(
                                     &context,
                                     &mut WasmtimeWizerComponent {
@@ -1237,7 +1240,9 @@ impl WorkflowWorker {
                                         instance,
                                     },
                                 )
-                                .await?;
+                                .await;
+                            store.set_hostcall_fuel(hostcall_fuel);
+                            let bytes = snapshot_result?;
                             let cas = db_pool.cas_conn().await?;
                             let db = db_pool.connection().await?;
                             utils::workflow_snapshot::persist_snapshot(
