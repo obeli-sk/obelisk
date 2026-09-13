@@ -2661,7 +2661,7 @@ pub(crate) mod tests {
         );
         let exec_config = ExecConfig {
             batch_size: 1,
-            lock_expiry: LOCK_EXPIRY_WORKFLOW,
+            lock_expiry: Duration::from_secs(30),
             tick_sleep: TICK_SLEEP,
             component_id: worker.config.component_id.clone(),
             task_limiter_global: None,
