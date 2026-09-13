@@ -2,6 +2,9 @@
 
 name: release-4-push-docker-image
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +15,11 @@ on:
         default: "latest"
       update_latest:
         description: "Update the Docker Hub latest tag"
+        required: true
+        type: boolean
+        default: true
+      publish_release:
+        description: "Publish the GitHub release after Docker images are uploaded"
         required: true
         type: boolean
         default: true
@@ -26,13 +34,28 @@ on:
         description: "Update the Docker Hub latest tag"
         required: true
         type: boolean
+      publish_release:
+        description: "Publish the GitHub release after Docker images are uploaded"
+        required: true
+        type: boolean
 
 defaults:
   run:
     shell: bash -xe {0}
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate inputs
+        run: |
+          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
+            echo "::error::update_latest requires publish_release"
+            exit 1
+          fi
+
   push-image:
+    needs: validate-inputs
     name: ${{ matrix.dockerfile }}
     runs-on: ubuntu-24.04
     strategy:
@@ -78,10 +101,10 @@ jobs:
       - name: Download and extract binary
         run: |
           mkdir tmp
-          cd tmp
-          wget -q https://github.com/obeli-sk/obelisk/releases/download/${TAG}/${{ matrix.tarfile }}
-          tar xvfz ${{ matrix.tarfile }}
+          gh release download "$TAG" --pattern '${{ matrix.tarfile }}' --dir tmp
+          tar xvfz "tmp/${{ matrix.tarfile }}" -C tmp
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.git-info.outputs.tag }}
 
       - name: Build and push docker image
@@ -103,44 +126,78 @@ jobs:
         env:
           VERSION: ${{ steps.git-info.outputs.version }}
 
-  verify-github-release:
+  publish-release:
     needs: push-image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: ${{ inputs.publish_release }}
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Publish GitHub release
+        if: ${{ inputs.publish_release }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          TAG="v$VERSION"
+          RELEASE_ID=$(curl --fail -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG" \
+            | jq -r .id)
+          curl --fail -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -d '{"draft":false}' \
+            "https://api.github.com/repos/obeli-sk/obelisk/releases/$RELEASE_ID"
+
+  verify-github-release:
+    needs: publish-release
+    if: ${{ inputs.publish_release }}
     uses: ./.github/workflows/release-5-verify-github-release.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
 
   verify-download-sh:
-    needs: push-image
-    if: ${{ inputs.update_latest }}
+    needs: publish-release
+    if: ${{ inputs.publish_release && inputs.update_latest }}
     uses: ./.github/workflows/release-5-verify-download-sh.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
 
   verify-run-nix:
-    needs: push-image
+    needs: publish-release
+    if: ${{ inputs.publish_release }}
     uses: ./.github/workflows/release-5-verify-run-nix.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
 
   verify-cargo-install:
-    needs: push-image
+    needs: publish-release
+    if: ${{ inputs.publish_release }}
     uses: ./.github/workflows/release-5-verify-cargo-install.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
 
   verify-cargo-binstall:
-    needs: push-image
+    needs: publish-release
+    if: ${{ inputs.publish_release }}
     uses: ./.github/workflows/release-5-verify-cargo-binstall.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
 
   verify-docker:
-    needs: push-image
+    needs: publish-release
+    if: ${{ inputs.publish_release }}
     uses: ./.github/workflows/release-5-verify-docker.yml
     secrets: inherit
     with:

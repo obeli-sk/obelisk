@@ -19,7 +19,7 @@ on:
         type: boolean
         default: true
       publish_release:
-        description: "Publish the GitHub release after all artifacts are uploaded"
+        description: "Publish the GitHub release after artifacts and Docker images are uploaded"
         required: true
         type: boolean
         default: true
@@ -35,7 +35,7 @@ on:
         required: true
         type: boolean
       publish_release:
-        description: "Publish the GitHub release after all artifacts are uploaded"
+        description: "Publish the GitHub release after artifacts and Docker images are uploaded"
         required: true
         type: boolean
 
@@ -168,7 +168,7 @@ jobs:
             --data-binary @archive.tar.gz \
             "https://uploads.github.com/repos/obeli-sk/obelisk/releases/${{ steps.release-info.outputs.release_id }}/assets?name=obelisk-${{ matrix.target }}.tar.gz"
 
-  publish-release:
+  verify-assets:
     needs: upload-assets
     runs-on: ubuntu-24.04
     steps:
@@ -176,10 +176,9 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Verify assets and optionally publish release
+      - name: Verify assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
           VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
           TAG="v$VERSION"
@@ -208,21 +207,11 @@ jobs:
             exit 1
           fi
 
-          if [ "$PUBLISH_RELEASE" = "true" ]; then
-            RELEASE_ID=$(jq -r .id release.json)
-            curl --fail -X PATCH \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              -d '{"draft":false}' \
-              "https://api.github.com/repos/obeli-sk/obelisk/releases/$RELEASE_ID"
-          fi
-
   call_child:
-    needs: publish-release
-    if: ${{ inputs.publish_release }}
+    needs: verify-assets
     uses: ./.github/workflows/release-4-push-docker-image.yml
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
       update_latest: ${{ inputs.update_latest }}
+      publish_release: ${{ inputs.publish_release }}

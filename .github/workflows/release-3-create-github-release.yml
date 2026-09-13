@@ -19,7 +19,7 @@ on:
         type: boolean
         default: true
       publish_release:
-        description: "Publish the GitHub release after all artifacts are uploaded"
+        description: "Publish the GitHub release after artifacts and Docker images are uploaded"
         required: true
         type: boolean
         default: true
@@ -35,7 +35,7 @@ on:
         required: true
         type: boolean
       publish_release:
-        description: "Publish the GitHub release after all artifacts are uploaded"
+        description: "Publish the GitHub release after artifacts and Docker images are uploaded"
         required: true
         type: boolean
 defaults:
