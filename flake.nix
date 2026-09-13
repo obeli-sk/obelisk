@@ -45,7 +45,7 @@
               nativeBuildInputs = with pkgs; [ skopeo jq cacert ];
               outputHashMode = "recursive";
               outputHashAlgo = "sha256";
-              outputHash = "sha256-UadL24AXRm7Mow8K9qWw6nRRKf5g3NANQ5SYHfdfmwA=";
+              outputHash = "sha256-iMRd6ugPu+YVB6usIbXergz0ZjbKUhi3SGJsrI0PylQ=";
               SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
               buildCommand = ''
                 mkdir -p "$out"
