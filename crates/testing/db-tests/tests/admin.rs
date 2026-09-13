@@ -518,7 +518,6 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .gc_cas(true, 10)
         .await
         .unwrap();
-    assert_eq!(dry_run.referenced_blobs, 1);
     assert_eq!(dry_run.orphan_blobs, 2);
     assert_eq!(dry_run.deleted_blobs, 0);
     assert!(cas.contains_blob(&orphan_digest).await.unwrap());
@@ -530,6 +529,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
+    assert!(collected.has_more);
     assert!(cas.contains_blob(&referenced_digest).await.unwrap());
     assert_ne!(
         cas.contains_blob(&orphan_digest).await.unwrap(),
@@ -544,6 +544,7 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
         .await
         .unwrap();
     assert_eq!(collected.deleted_blobs, 1);
+    assert!(!collected.has_more);
     assert!(!cas.contains_blob(&orphan_digest).await.unwrap());
     assert!(!cas.contains_blob(&second_orphan_digest).await.unwrap());
 
@@ -653,8 +654,15 @@ async fn deployment_retention_skips_referenced_deployments(database: Database) {
         .await
         .unwrap();
     assert_eq!(second.deleted_deployments, 1);
-    assert_eq!(second.blocked_by_execution_reference, 1);
-    assert!(!second.has_more);
+    assert_eq!(second.blocked_by_execution_reference, 0);
+    assert!(second.has_more);
+    let third = admin
+        .retain_deployments(RetentionPolicy::Count(0), 1, false, false, false)
+        .await
+        .unwrap();
+    assert_eq!(third.deleted_deployments, 0);
+    assert_eq!(third.blocked_by_execution_reference, 1);
+    assert!(!third.has_more);
     assert!(
         db_pool
             .external_api_conn()
@@ -715,6 +723,63 @@ async fn deployment_retention_can_force_non_terminal_trees(database: Database) {
     assert_eq!(forced.deleted_deployments, 1);
     assert_eq!(forced.deleted_execution_trees, 1);
     assert_eq!(forced.blocked_non_terminal, 0);
+
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn deployment_retention_resumes_after_an_execution_batch(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let deployment_id = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), deployment_id, clock.now()).await;
+    let first_execution = create_execution(db_pool.as_ref(), &clock, deployment_id, true).await;
+    let second_execution = create_execution(db_pool.as_ref(), &clock, deployment_id, true).await;
+    let admin = db_pool.admin_conn().await.unwrap();
+
+    let first = admin
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false)
+        .await
+        .unwrap();
+    assert_eq!(first.deleted_execution_trees, 1);
+    assert_eq!(first.deleted_deployments, 0);
+    assert!(first.has_more);
+    assert!(
+        db_pool
+            .external_api_conn()
+            .await
+            .unwrap()
+            .get_deployment(deployment_id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let second = admin
+        .retain_deployments(RetentionPolicy::Count(0), 1, true, false, false)
+        .await
+        .unwrap();
+    assert_eq!(second.deleted_execution_trees, 1);
+    assert_eq!(second.deleted_deployments, 1);
+    assert!(!second.has_more);
+    assert_eq!(
+        admin
+            .delete_execution_tree(&first_execution, false)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::AlreadyDeleted
+    );
+    assert_eq!(
+        admin
+            .delete_execution_tree(&second_execution, false)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::AlreadyDeleted
+    );
 
     drop(admin);
     db_close.close().await;

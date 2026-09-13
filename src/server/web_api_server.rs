@@ -1,3 +1,4 @@
+use crate::server::request_cancellation;
 use crate::{
     command::server::{self, PreparedDirs, ServerVerified, SubmitError, SubmitOutcome},
     server::web_api_server::{
@@ -61,6 +62,20 @@ pub(crate) struct WebApiState {
     pub(crate) subscription_interruption: Option<Duration>,
     pub(crate) prepared_dirs: PreparedDirs,
     pub(crate) deployment_switch_manager: crate::command::server::DeploymentSwitchManagerHandle,
+}
+
+async fn until_terminated<T>(
+    state: &WebApiState,
+    accept: AcceptHeader,
+    work: impl std::future::Future<Output = T>,
+) -> Result<T, HttpResponse> {
+    request_cancellation::until_terminated(state.termination_watcher.clone(), work)
+        .await
+        .map_err(|_| HttpResponse {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "server is shutting down".to_string(),
+            accept,
+        })
 }
 
 /// `OpenAPI` documentation for the Obelisk REST API
@@ -544,14 +559,17 @@ pub(crate) mod admin {
         let cutoff = Utc::now()
             .checked_sub_signed(age)
             .ok_or_else(|| precondition("max_age_seconds is too large"))?;
-        let result = state
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .retain_system_events(cutoff, request.batch_size)
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        let result = until_terminated(&state, AcceptHeader::Json, async {
+            state
+                .db_pool
+                .admin_conn()
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))?
+                .retain_system_events(cutoff, request.batch_size)
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))
+        })
+        .await??;
         Ok(pretty_json_response(
             StatusCode::OK,
             &RetainSystemEventsResponse {
@@ -688,14 +706,17 @@ pub(crate) mod admin {
             json!({"force_non_terminal": query.force_non_terminal}),
         )
         .await;
-        let outcome = state
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .delete_execution_tree(&execution_id, query.force_non_terminal)
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        let outcome = until_terminated(&state, AcceptHeader::Json, async {
+            state
+                .db_pool
+                .admin_conn()
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))?
+                .delete_execution_tree(&execution_id, query.force_non_terminal)
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))
+        })
+        .await??;
         let response = match outcome {
             DeleteExecutionTreeResult::Deleted => DeleteResponse {
                 deleted: true,
@@ -733,19 +754,22 @@ pub(crate) mod admin {
         validate_batch_size(request.batch_size)?;
         let retention = retention_policy(request.retain_count, request.max_age_seconds)?;
         crate::server::system_event_writer::record(state.db_pool.as_ref(), SystemEventCode::AdminExecutionRetainStarted, None, None, json!({"retain_count": request.retain_count, "max_age_seconds": request.max_age_seconds, "batch_size": request.batch_size, "force_non_terminal": request.force_non_terminal, "dry_run": request.dry_run})).await;
-        let result = state
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .retain_executions(
-                retention,
-                request.batch_size,
-                request.force_non_terminal,
-                request.dry_run,
-            )
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        let result = until_terminated(&state, AcceptHeader::Json, async {
+            state
+                .db_pool
+                .admin_conn()
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))?
+                .retain_executions(
+                    retention,
+                    request.batch_size,
+                    request.force_non_terminal,
+                    request.dry_run,
+                )
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))
+        })
+        .await??;
         crate::server::system_event_writer::record(
             state.db_pool.as_ref(),
             SystemEventCode::AdminExecutionRetainCompleted,
@@ -790,18 +814,21 @@ pub(crate) mod admin {
             }),
         )
         .await;
-        let outcome = state
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .delete_deployment(
-                deployment_id,
-                query.delete_executions,
-                query.force_non_terminal,
-            )
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        let outcome = until_terminated(&state, AcceptHeader::Json, async {
+            state
+                .db_pool
+                .admin_conn()
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))?
+                .delete_deployment(
+                    deployment_id,
+                    query.delete_executions,
+                    query.force_non_terminal,
+                )
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))
+        })
+        .await??;
         let response = match outcome {
             DeleteDeploymentResult::Deleted {
                 deleted_execution_trees,
@@ -875,20 +902,23 @@ pub(crate) mod admin {
             }),
         )
         .await;
-        let result = state
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
-            .retain_deployments(
-                retention,
-                request.batch_size,
-                request.delete_executions,
-                request.force_non_terminal,
-                request.dry_run,
-            )
-            .await
-            .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?;
+        let result = until_terminated(&state, AcceptHeader::Json, async {
+            state
+                .db_pool
+                .admin_conn()
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))?
+                .retain_deployments(
+                    retention,
+                    request.batch_size,
+                    request.delete_executions,
+                    request.force_non_terminal,
+                    request.dry_run,
+                )
+                .await
+                .map_err(|err| HttpResponse::from(ErrorWrapper(err, AcceptHeader::Json)))
+        })
+        .await??;
         crate::server::system_event_writer::record(
             state.db_pool.as_ref(),
             SystemEventCode::AdminDeploymentRetainCompleted,
@@ -3029,7 +3059,7 @@ async fn execution_replay(
     state: State<Arc<WebApiState>>,
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
-    let ser = replay_execution_internal(&state, &execution_id, accept).await?;
+    let ser = Box::pin(replay_execution_internal(&state, &execution_id, accept)).await?;
     let status = if matches!(ser, ReplayResponseSer::ReplayFailed { .. }) {
         StatusCode::CONFLICT
     } else {
@@ -3110,9 +3140,12 @@ async fn execution_advance(
     } else {
         BacktraceCapture::Disabled
     };
-    let advance_res = replay_worker
-        .advance(execution_id.clone(), captured_writes, backtrace_capture)
-        .await;
+    let advance_res = Box::pin(until_terminated(
+        &state,
+        accept,
+        replay_worker.advance(execution_id.clone(), captured_writes, backtrace_capture),
+    ))
+    .await?;
 
     let advance_response = match advance_res {
         Ok(ok) => ok,
@@ -3161,7 +3194,7 @@ async fn execution_advance(
             .db_pool
             .external_api_conn()
             .await
-            .map_err(|e| ErrorWrapper(e, accept))?
+            .map_err(|e| HttpResponse::from(ErrorWrapper(e, accept)))?
             .get_pending_state(&execution_id)
             .await
             .map_err(|e| ErrorWrapper(e, accept))?;
@@ -3208,14 +3241,17 @@ async fn execution_persist_backtraces(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     let replay_worker = get_replay_target(&state, &execution_id, accept).await?;
-    let persisted_backtrace_count = replay_worker
-        .persist_backtraces(execution_id.clone())
-        .await
-        .map_err(|err| HttpResponse {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: format!("Replay error: {err}"),
-            accept,
-        })?;
+    let persisted_backtrace_count = Box::pin(until_terminated(
+        &state,
+        accept,
+        replay_worker.persist_backtraces(execution_id.clone()),
+    ))
+    .await?
+    .map_err(|err| HttpResponse {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        message: format!("Replay error: {err}"),
+        accept,
+    })?;
     let persisted_backtrace_count =
         u32::try_from(persisted_backtrace_count).map_err(|_| HttpResponse {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -3306,9 +3342,12 @@ async fn replay_execution_internal(
 
     // Capture backtraces for the newly produced writes only; the already-persisted prefix
     // does not need them (and re-deriving them for a long log is expensive).
-    let replay_res = replay_worker
-        .replay(execution_id.clone(), BacktraceCapture::NewEventsOnly)
-        .await;
+    let replay_res = Box::pin(until_terminated(
+        state,
+        accept,
+        replay_worker.replay(execution_id.clone(), BacktraceCapture::NewEventsOnly),
+    ))
+    .await?;
     match replay_res {
         Ok(response) => Ok(ReplayResponseSer::from(response)),
         Err(err) => map_replay_err(err),
@@ -3360,9 +3399,12 @@ async fn execution_upgrade(
             .get(&payload.new)
             .ok_or_else(|| HttpResponse::not_found(accept, Some("new component")))?;
         // no backtrace capture on upgrade
-        let replay_res = replay_worker
-            .replay(execution_id.clone(), BacktraceCapture::Disabled)
-            .await;
+        let replay_res = Box::pin(until_terminated(
+            &state,
+            accept,
+            replay_worker.replay(execution_id.clone(), BacktraceCapture::Disabled),
+        ))
+        .await?;
         if let Err(err) = replay_res {
             info!("Replay failed: {err:?}");
             return Err(HttpResponse {
@@ -3372,21 +3414,24 @@ async fn execution_upgrade(
             });
         }
     }
-    state
-        .db_pool
-        .external_api_conn()
-        .await
-        .map_err(|e| ErrorWrapper(e, accept))?
-        .upgrade_execution_component(
-            &execution_id,
-            &payload.old,
-            &payload.new,
-            concepts::storage::ComponentUpgradeReason::Manual {
-                force: payload.skip_determinism_check,
-            },
-        )
-        .await
-        .map_err(|e| ErrorWrapper(e, accept))?;
+    until_terminated(&state, accept, async {
+        state
+            .db_pool
+            .external_api_conn()
+            .await
+            .map_err(|e| ErrorWrapper(e, accept))?
+            .upgrade_execution_component(
+                &execution_id,
+                &payload.old,
+                &payload.new,
+                concepts::storage::ComponentUpgradeReason::Manual {
+                    force: payload.skip_determinism_check,
+                },
+            )
+            .await
+            .map_err(|e| HttpResponse::from(ErrorWrapper(e, accept)))
+    })
+    .await??;
     Ok(HttpResponse {
         status: StatusCode::OK,
         message: "upgraded".to_string(),
@@ -4560,20 +4605,24 @@ pub(crate) mod deployment {
         };
 
         let mut termination_watcher = state.termination_watcher.clone();
-        let result = Box::pin(crate::command::server::submit_deployment(
-            state.server_verified.clone(),
-            &inputs.deployment_toml,
-            runtime_config_availability_from_bool(inputs.allow_unavailable_runtime_config),
-            Some("web-api".to_string()),
-            inputs.description,
-            deployment_id,
-            &state.prepared_dirs,
-            inputs.files,
-            state.db_pool.clone(),
-            &mut termination_watcher,
-            state.deployment_switch_manager.clone(),
-        ))
-        .await;
+        let result = super::until_terminated(
+            &state,
+            accept,
+            Box::pin(crate::command::server::submit_deployment(
+                state.server_verified.clone(),
+                &inputs.deployment_toml,
+                runtime_config_availability_from_bool(inputs.allow_unavailable_runtime_config),
+                Some("web-api".to_string()),
+                inputs.description,
+                deployment_id,
+                &state.prepared_dirs,
+                inputs.files,
+                state.db_pool.clone(),
+                &mut termination_watcher,
+                state.deployment_switch_manager.clone(),
+            )),
+        )
+        .await?;
 
         match result {
             Ok(_) => {}

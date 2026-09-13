@@ -7,6 +7,7 @@ use crate::command::server::SwitchDeploymentAction;
 use crate::command::server::{DeploymentContextHandle, DeploymentSwitchManagerHandle};
 use crate::config::deployment::strip_generated_deployment_metadata;
 use crate::server::deployment_summary;
+use crate::server::request_cancellation;
 use base64::Engine as _;
 use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
@@ -146,6 +147,15 @@ impl GrpcServer {
                 "cancelled execution must be an activity or cancellable workflow",
             )),
         }
+    }
+
+    async fn until_terminated<T>(
+        &self,
+        work: impl std::future::Future<Output = T>,
+    ) -> Result<T, tonic::Status> {
+        request_cancellation::until_terminated(self.termination_watcher.clone(), work)
+            .await
+            .map_err(|_| tonic::Status::cancelled("server is shutting down"))
     }
 }
 
@@ -900,9 +910,10 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
 
         // Capture backtraces for the newly produced writes only; the already-persisted prefix
         // does not need them (and re-deriving them for a long log is expensive).
-        let replay_res = replay_worker
-            .replay(execution_id.clone(), BacktraceCapture::NewEventsOnly)
-            .await;
+        let replay_res = Box::pin(self.until_terminated(
+            replay_worker.replay(execution_id.clone(), BacktraceCapture::NewEventsOnly),
+        ))
+        .await?;
         let outcome = match replay_res {
             Ok(ReplayResponse::Advanceable(replay)) => {
                 grpc_gen::replay_execution_response::Outcome::Advanceable(
@@ -986,13 +997,16 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 ))
             })?;
 
-        let persisted_backtrace_count =
-            match replay_worker.persist_backtraces(execution_id.clone()).await {
-                Ok(count) => count,
-                Err(err) => {
-                    return Err(tonic::Status::internal(format!("replay error: {err}")));
-                }
-            };
+        let persisted_backtrace_count = match Box::pin(
+            self.until_terminated(replay_worker.persist_backtraces(execution_id.clone())),
+        )
+        .await?
+        {
+            Ok(count) => count,
+            Err(err) => {
+                return Err(tonic::Status::internal(format!("replay error: {err}")));
+            }
+        };
         let persisted_backtrace_count = u32::try_from(persisted_backtrace_count)
             .map_err(|_| tonic::Status::resource_exhausted("too many backtraces persisted"))?;
 
@@ -1059,9 +1073,12 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         } else {
             BacktraceCapture::Disabled
         };
-        let advance_res = replay_worker
-            .advance(execution_id.clone(), expected, backtrace_capture)
-            .await;
+        let advance_res = Box::pin(self.until_terminated(replay_worker.advance(
+            execution_id.clone(),
+            expected,
+            backtrace_capture,
+        )))
+        .await?;
 
         let result = match advance_res {
             Ok(advance_response) => grpc_gen::advance_execution_response::Result::Success(
@@ -1137,29 +1154,33 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 tonic::Status::not_found(format!("new component '{new}' not found in registry"))
             })?;
             // no backtrace capture on upgrade
-            let replay_res = replay_worker
-                .replay(execution_id.clone(), BacktraceCapture::Disabled)
-                .await;
+            let replay_res = Box::pin(self.until_terminated(
+                replay_worker.replay(execution_id.clone(), BacktraceCapture::Disabled),
+            ))
+            .await?;
             if let Err(err) = replay_res {
                 info!("Replay failed: {err:?}");
                 return Err(tonic::Status::internal(format!("replay failed: {err}")));
             }
         }
 
-        self.db_pool
-            .external_api_conn()
-            .await
-            .map_err(map_to_status)?
-            .upgrade_execution_component(
-                &execution_id,
-                &old,
-                &new,
-                concepts::storage::ComponentUpgradeReason::Manual {
-                    force: request.skip_determinism_check,
-                },
-            )
-            .await
-            .to_status()?;
+        self.until_terminated(async {
+            self.db_pool
+                .external_api_conn()
+                .await
+                .map_err(map_to_status)?
+                .upgrade_execution_component(
+                    &execution_id,
+                    &old,
+                    &new,
+                    concepts::storage::ComponentUpgradeReason::Manual {
+                        force: request.skip_determinism_check,
+                    },
+                )
+                .await
+                .to_status()
+        })
+        .await??;
         Ok(tonic::Response::new(
             grpc_gen::UpgradeExecutionComponentResponse {},
         ))
@@ -1445,10 +1466,9 @@ pub(crate) async fn poll_status(
             _ = termination_watcher.changed() => {
                 debug!("Shutdown requested");
                 let _ = status_stream_sender
-                    .send(TonicResult::Err(tonic::Status::aborted(
+                    .try_send(TonicResult::Err(tonic::Status::aborted(
                         "server is shutting down",
-                    )))
-                    .await;
+                    )));
                 return;
             }
         }
@@ -1887,20 +1907,21 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 content: file.content,
             })
             .collect();
-        let result = Box::pin(server::submit_deployment(
-            self.server_verified.clone(),
-            &request.deployment_toml,
-            runtime_config_availability,
-            request.created_by.clone(),
-            request.description.clone(),
-            deployment_id,
-            &self.prepared_dirs,
-            supplied_files,
-            self.db_pool.clone(),
-            &mut termination_watcher,
-            self.deployment_switch_manager.clone(),
-        ))
-        .await;
+        let result = self
+            .until_terminated(Box::pin(server::submit_deployment(
+                self.server_verified.clone(),
+                &request.deployment_toml,
+                runtime_config_availability,
+                request.created_by.clone(),
+                request.description.clone(),
+                deployment_id,
+                &self.prepared_dirs,
+                supplied_files,
+                self.db_pool.clone(),
+                &mut termination_watcher,
+                self.deployment_switch_manager.clone(),
+            )))
+            .await?;
         let deployment_id = match result {
             Ok(deployment_id) => deployment_id,
             Err(server::SubmitDeploymentError::Busy) => {
@@ -2167,13 +2188,16 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             };
         validate_batch_size(request.batch_size)?;
         let result = self
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(map_to_status)?
-            .retain_system_events(created_before, request.batch_size)
-            .await
-            .to_status()?;
+            .until_terminated(async {
+                self.db_pool
+                    .admin_conn()
+                    .await
+                    .map_err(map_to_status)?
+                    .retain_system_events(created_before, request.batch_size)
+                    .await
+                    .to_status()
+            })
+            .await??;
         Ok(tonic::Response::new(grpc_gen::RetainSystemEventsResponse {
             deleted: result.deleted,
             has_more: result.has_more,
@@ -2204,13 +2228,16 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         )
         .await;
         let outcome = self
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(map_to_status)?
-            .delete_execution_tree(&execution_id, request.force_non_terminal)
-            .await
-            .to_status()?;
+            .until_terminated(async {
+                self.db_pool
+                    .admin_conn()
+                    .await
+                    .map_err(map_to_status)?
+                    .delete_execution_tree(&execution_id, request.force_non_terminal)
+                    .await
+                    .to_status()
+            })
+            .await??;
         let response = match outcome {
             storage::DeleteExecutionTreeResult::Deleted => grpc_gen::DeleteExecutionTreeResponse {
                 deleted: true,
@@ -2278,18 +2305,21 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         )
         .await;
         let result = self
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(map_to_status)?
-            .retain_executions(
-                retention,
-                request.batch_size,
-                request.force_non_terminal,
-                request.dry_run,
-            )
-            .await
-            .to_status()?;
+            .until_terminated(async {
+                self.db_pool
+                    .admin_conn()
+                    .await
+                    .map_err(map_to_status)?
+                    .retain_executions(
+                        retention,
+                        request.batch_size,
+                        request.force_non_terminal,
+                        request.dry_run,
+                    )
+                    .await
+                    .to_status()
+            })
+            .await??;
         crate::server::system_event_writer::record(
             self.db_pool.as_ref(),
             storage::SystemEventCode::AdminExecutionRetainCompleted,
@@ -2334,17 +2364,20 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         )
         .await;
         let outcome = self
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(map_to_status)?
-            .delete_deployment(
-                deployment_id,
-                request.delete_executions,
-                request.force_non_terminal,
-            )
-            .await
-            .to_status()?;
+            .until_terminated(async {
+                self.db_pool
+                    .admin_conn()
+                    .await
+                    .map_err(map_to_status)?
+                    .delete_deployment(
+                        deployment_id,
+                        request.delete_executions,
+                        request.force_non_terminal,
+                    )
+                    .await
+                    .to_status()
+            })
+            .await??;
         let response = match outcome {
             storage::DeleteDeploymentResult::Deleted {
                 deleted_execution_trees,
@@ -2436,19 +2469,22 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         )
         .await;
         let result = self
-            .db_pool
-            .admin_conn()
-            .await
-            .map_err(map_to_status)?
-            .retain_deployments(
-                retention,
-                request.batch_size,
-                request.delete_executions,
-                request.force_non_terminal,
-                request.dry_run,
-            )
-            .await
-            .to_status()?;
+            .until_terminated(async {
+                self.db_pool
+                    .admin_conn()
+                    .await
+                    .map_err(map_to_status)?
+                    .retain_deployments(
+                        retention,
+                        request.batch_size,
+                        request.delete_executions,
+                        request.force_non_terminal,
+                        request.dry_run,
+                    )
+                    .await
+                    .to_status()
+            })
+            .await??;
         crate::server::system_event_writer::record(
             self.db_pool.as_ref(),
             storage::SystemEventCode::AdminDeploymentRetainCompleted,

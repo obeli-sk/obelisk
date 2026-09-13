@@ -205,6 +205,9 @@ use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 use wasmtime::Engine;
 
+const REQUEST_CANCELLATION_GRACE_PERIOD: Duration = Duration::from_secs(1);
+const HTTP_SERVER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub(crate) struct DeploymentContext {
     pub(crate) deployment_id: DeploymentId,
     pub(crate) component_registry_ro: wasm_workers::registry::ComponentConfigRegistryRO,
@@ -654,9 +657,10 @@ pub(crate) async fn run(
     }
 
     let (termination_sender, termination_watcher) = watch::channel(());
-    utils::spawn::spawn_named("termination_notifier", async move {
+    let termination_notifier = utils::spawn::spawn_named("termination_notifier", async move {
         termination_notifier(termination_sender).await;
     });
+    let _termination_notifier_abort = AbortOnDropHandle::new(termination_notifier.abort_handle());
 
     let prepared_dirs = prepare_dirs(
         &config,
@@ -863,9 +867,10 @@ pub(crate) async fn verify(
         config
     };
     let engines = create_engines(&config, &prepared_dirs)?;
-    utils::spawn::spawn_named("termination_notifier", async move {
+    let termination_notifier = utils::spawn::spawn_named("termination_notifier", async move {
         termination_notifier(termination_sender).await;
     });
+    let _termination_notifier_abort = AbortOnDropHandle::new(termination_notifier.abort_handle());
     let mut db_pool = if !skip_db {
         verify_db_schema(
             &config.database,
@@ -2103,16 +2108,52 @@ pub(crate) async fn run_internal(
         )
         .await;
 
-        axum::serve(listener, app_svc)
-            .with_graceful_shutdown(async move {
-                info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
-                obelisk_is_ready();
-                let _: Result<_, _> = termination_watcher.changed().await;
-                server_init.close().await; // must be closed here, otherwise HTTP/gRPC streams will not be terminated and server will not exit `serve`.
-            })
-            .await
-            .with_context(|| format!("server error listening on {api_listening_addr}"))?;
-        // Normally Axum blocks before this point until all clients are disconnected.
+        let (graceful_shutdown_sender, graceful_shutdown_receiver) = oneshot::channel();
+        let mut http_server = utils::spawn::spawn_named("api_server", async move {
+            axum::serve(listener, app_svc)
+                .with_graceful_shutdown(async move {
+                    let _ = graceful_shutdown_receiver.await;
+                })
+                .await
+        });
+        let _http_server_abort = AbortOnDropHandle::new(http_server.abort_handle());
+        info!("Serving HTTP, gRPC and gRPC-Web requests at {api_listening_addr}");
+        obelisk_is_ready();
+
+        tokio::select! {
+            server_result = &mut http_server => {
+                server_init.close().await;
+                server_result
+                    .context("API server task failed")?
+                    .with_context(|| format!("server error listening on {api_listening_addr}"))?;
+            }
+            _ = termination_watcher.changed() => {
+                let _ = graceful_shutdown_sender.send(());
+                if let Ok(server_result) = tokio::time::timeout(
+                    REQUEST_CANCELLATION_GRACE_PERIOD,
+                    &mut http_server,
+                ).await {
+                    server_init.close().await;
+                    server_result
+                        .context("API server task failed")?
+                        .with_context(|| format!("server error listening on {api_listening_addr}"))?;
+                } else {
+                    server_init.close().await;
+                    if let Ok(server_result) = tokio::time::timeout(
+                        HTTP_SERVER_DRAIN_TIMEOUT,
+                        &mut http_server,
+                    ).await {
+                        server_result
+                            .context("API server task failed")?
+                            .with_context(|| format!("server error listening on {api_listening_addr}"))?;
+                    } else {
+                        warn!("Aborting API server drain after shutdown timeout");
+                        http_server.abort();
+                        let _ = http_server.await;
+                    }
+                }
+            }
+        }
         debug!("Server {api_listening_addr} has been closed");
     } else {
         crate::server::system_event_writer::record(

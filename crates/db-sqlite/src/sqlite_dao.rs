@@ -39,7 +39,7 @@ use db_common::{
     AppendNotifier, CombinedState, CombinedStateDTO, NotifierExecutionFinished, NotifierPendingAt,
     PendingFfqnSubscribersHolder, state_filter_to_sql, state_filters_now,
 };
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use rusqlite::{
     CachedStatement, Connection, OpenFlags, OptionalExtension, Row, ToSql, Transaction,
     TransactionBehavior, named_params,
@@ -5538,9 +5538,10 @@ impl SqlitePool {
     fn deployment_execution_roots_tx(
         tx: &Transaction<'_>,
         deployment_id: DeploymentId,
-    ) -> Result<HashSet<ExecutionId>, RusqliteError> {
-        tx.prepare("SELECT execution_id FROM t_state WHERE deployment_id = ?1 AND is_top_level = TRUE AND tombstoned = FALSE")?
-            .query_map([deployment_id.to_string()], |row| {
+        limit: u32,
+    ) -> Result<Vec<ExecutionId>, RusqliteError> {
+        tx.prepare("SELECT execution_id FROM t_state WHERE deployment_id = ?1 AND is_top_level = TRUE AND tombstoned = FALSE ORDER BY execution_id LIMIT ?2")?
+            .query_map(rusqlite::params![deployment_id.to_string(), i64::from(limit)], |row| {
                 row.get::<_, ExecutionId>(0)
             })?
             .map(|result| {
@@ -5554,6 +5555,7 @@ impl SqlitePool {
         deployment_id: DeploymentId,
         delete_executions: bool,
         force_non_terminal: bool,
+        root_limit: u32,
     ) -> Result<DeleteDeploymentResult, RusqliteError> {
         let status = tx
             .query_row(
@@ -5569,7 +5571,10 @@ impl SqlitePool {
             Some("inactive") => {}
             Some(other) => unreachable!("unknown deployment status {other}"),
         }
-        let roots = Self::deployment_execution_roots_tx(tx, deployment_id)?;
+        let mut roots =
+            Self::deployment_execution_roots_tx(tx, deployment_id, root_limit.saturating_add(1))?;
+        let has_more_roots = roots.len() > root_limit as usize;
+        roots.truncate(root_limit as usize);
         if !roots.is_empty() && !delete_executions {
             return Ok(DeleteDeploymentResult::Referenced {
                 execution_trees: roots.len() as u64,
@@ -5605,6 +5610,11 @@ impl SqlitePool {
                 let outcome = Self::delete_execution_tree_tx(tx, root, force_non_terminal)?;
                 debug_assert_eq!(outcome, DeleteExecutionTreeResult::Deleted);
             }
+        }
+        if has_more_roots {
+            return Ok(DeleteDeploymentResult::Deleted {
+                deleted_execution_trees: roots.len() as u64,
+            });
         }
         let id = deployment_id.to_string();
         tx.execute(
@@ -5770,15 +5780,15 @@ impl DbAdmin for SqlitePool {
         self.transaction(
             move |tx| {
                 let limit = limit.clamp(1, 10_000);
-                let eligible: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM t_system_event WHERE created_at < ?1",
-                    [created_before],
-                    |row| row.get(0),
-                )?;
+                let event_ids = tx
+                    .prepare("SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2")?
+                    .query_map(rusqlite::params![created_before, i64::from(limit) + 1], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let has_more = event_ids.len() > limit as usize;
                 let deleted = tx.execute("DELETE FROM t_system_event WHERE event_id IN (SELECT event_id FROM t_system_event WHERE created_at < ?1 ORDER BY event_id LIMIT ?2)", rusqlite::params![created_before, i64::from(limit)])? as u64;
                 Ok(SystemEventRetentionResult {
                     deleted,
-                    has_more: eligible.cast_unsigned() > u64::from(limit),
+                    has_more,
                 })
             },
             TxType::MultipleWrites, "retain_system_events"
@@ -5875,15 +5885,53 @@ impl DbAdmin for SqlitePool {
         delete_executions: bool,
         force_non_terminal: bool,
     ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
-        self.transaction(
-            move |tx| {
-                Self::delete_deployment_tx(tx, deployment_id, delete_executions, force_non_terminal)
-                    .map_err(DbErrorWrite::from)
-            },
-            TxType::MultipleWrites,
-            "delete_deployment",
-        )
-        .await
+        const ROOT_BATCH_SIZE: u32 = 1000;
+        let mut deleted_execution_trees = 0;
+        loop {
+            let result = self
+                .transaction(
+                    move |tx| {
+                        Self::delete_deployment_tx(
+                            tx,
+                            deployment_id,
+                            delete_executions,
+                            force_non_terminal,
+                            ROOT_BATCH_SIZE,
+                        )
+                        .map_err(DbErrorWrite::from)
+                    },
+                    TxType::MultipleWrites,
+                    "delete_deployment",
+                )
+                .await?;
+            match result {
+                DeleteDeploymentResult::Deleted {
+                    deleted_execution_trees: deleted,
+                } => {
+                    deleted_execution_trees += deleted;
+                    let deployment_exists = self
+                        .transaction(
+                            move |tx| {
+                                tx.query_row(
+                                    "SELECT EXISTS(SELECT 1 FROM t_deployment WHERE deployment_id = ?1)",
+                                    [deployment_id.to_string()],
+                                    |row| row.get::<_, bool>(0),
+                                )
+                                .map_err(DbErrorWrite::from)
+                            },
+                            TxType::Other,
+                            "delete_deployment_exists",
+                        )
+                        .await?;
+                    if !deployment_exists {
+                        return Ok(DeleteDeploymentResult::Deleted {
+                            deleted_execution_trees,
+                        });
+                    }
+                }
+                other => return Ok(other),
+            }
+        }
     }
 
     async fn retain_deployments(
@@ -5896,32 +5944,41 @@ impl DbAdmin for SqlitePool {
     ) -> Result<CleanupResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let ids = match retention {
+                let mut ids = match retention {
                     RetentionPolicy::Count(count) => tx.prepare(
                         "SELECT deployment_id FROM (\
                              SELECT deployment_id, created_at FROM t_deployment \
                              WHERE status = 'inactive' \
                              ORDER BY created_at DESC, deployment_id DESC LIMIT -1 OFFSET ?1\
-                         ) ORDER BY created_at ASC, deployment_id ASC",
+                         ) ORDER BY created_at ASC, deployment_id ASC LIMIT ?2",
                     )?
-                    .query_map([i64::from(count)], |row| {
+                    .query_map(rusqlite::params![i64::from(count), i64::from(batch_size) + 1], |row| {
                         row.get::<_, DeploymentId>(0)
                     })?
                     .collect::<Result<Vec<_>, _>>()?,
                     RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.prepare(
-                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < ?1 ORDER BY inactive_at ASC, deployment_id ASC",
-                    )?.query_map([cutoff], |row| row.get::<_, DeploymentId>(0))?
+                        "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < ?1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT ?2",
+                    )?.query_map(rusqlite::params![cutoff, i64::from(batch_size) + 1], |row| row.get::<_, DeploymentId>(0))?
                     .collect::<Result<Vec<_>, _>>()?,
                 };
+                let more_deployments = ids.len() > batch_size as usize;
+                ids.truncate(batch_size as usize);
                 let mut result = CleanupResult {
                     retained: match retention {
                         RetentionPolicy::Count(count) => u64::from(count),
                         RetentionPolicy::CreatedAtOrAfter(_) => 0,
                     },
+                    has_more: more_deployments,
                     ..Default::default()
                 };
                 for id in ids {
-                    let roots = Self::deployment_execution_roots_tx(tx, id)?;
+                    let mut roots = Self::deployment_execution_roots_tx(
+                        tx,
+                        id,
+                        batch_size.saturating_add(1),
+                    )?;
+                    let more_roots = roots.len() > batch_size as usize;
+                    roots.truncate(batch_size as usize);
                     if !roots.is_empty() && !delete_executions {
                         result.blocked_by_execution_reference += 1;
                     } else {
@@ -5938,26 +5995,34 @@ impl DbAdmin for SqlitePool {
                         }
                         if blocked {
                             result.blocked_non_terminal += 1;
-                            continue;
+                            break;
                         }
                         if result.deleted_deployments == u64::from(batch_size) {
                             result.has_more = true;
                             break;
                         }
-                        result.deleted_deployments += 1;
                         result.deleted_execution_trees += roots.len() as u64;
+                        if more_roots {
+                            result.has_more = true;
+                        } else {
+                            result.deleted_deployments += 1;
+                        }
                         if !dry_run {
                             let outcome = Self::delete_deployment_tx(
                                 tx,
                                 id,
                                 delete_executions,
                                 force_non_terminal,
+                                batch_size,
                             )?;
                             debug_assert!(matches!(
                                 outcome,
                                 DeleteDeploymentResult::Deleted { .. }
                             ));
                         }
+                    }
+                    if !roots.is_empty() {
+                        break;
                     }
                 }
                 Ok(result)
@@ -6061,39 +6126,37 @@ impl CasGc for SqlitePool {
     async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite> {
         self.transaction(
             move |tx| {
-                let (referenced_blobs, orphan_blobs, deleted_bytes) = tx
-                    .query_row(
-                        "SELECT \
-                         COUNT(*) FILTER (WHERE digest IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
-                         COUNT(*) FILTER (WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL)), \
-                         COALESCE((SELECT SUM(size) FROM (SELECT size FROM t_file WHERE digest NOT IN (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT ?1)), 0) \
-                         FROM t_file",
-                        [i64::from(batch_size.max(1))],
-                        |row| {
-                            Ok((
-                                row.get::<_, i64>(0)?.cast_unsigned(),
-                                row.get::<_, i64>(1)?.cast_unsigned(),
-                                row.get::<_, i64>(2)?.cast_unsigned(),
-                            ))
-                        },
-                    )
-                    .map_err(RusqliteError::from)?;
+                let limit = batch_size.clamp(1, 10_000);
+                let mut orphans = tx
+                    .prepare(
+                        "SELECT digest, size FROM t_file WHERE digest NOT IN \
+                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) \
+                         ORDER BY digest LIMIT ?1",
+                    )?
+                    .query_map([i64::from(limit) + 1], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let has_more = orphans.len() > limit as usize;
+                orphans.truncate(limit as usize);
+                let orphan_blobs = orphans.len() as u64;
+                let deleted_bytes = orphans
+                    .iter()
+                    .map(|(_, size)| size.cast_unsigned())
+                    .sum();
                 let deleted_blobs = if dry_run {
                     0
                 } else {
-                    tx.execute(
-                        "DELETE FROM t_file WHERE rowid IN (SELECT rowid FROM t_file WHERE digest NOT IN \
-                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) ORDER BY digest LIMIT ?1)",
-                        [i64::from(batch_size.max(1))],
-                    )
-                    .map_err(RusqliteError::from)? as u64
+                    let mut statement = tx.prepare("DELETE FROM t_file WHERE digest = ?1")?;
+                    orphans.iter().try_fold(0_u64, |deleted, (digest, _)| {
+                        Ok::<_, RusqliteError>(deleted + statement.execute([digest])? as u64)
+                    })?
                 };
                 Ok(CasGcResult {
-                    referenced_blobs,
                     orphan_blobs,
                     deleted_blobs,
                     deleted_bytes: if dry_run || deleted_blobs > 0 { deleted_bytes } else { 0 },
-                    has_more: orphan_blobs > u64::from(batch_size.max(1)),
+                    has_more,
                 })
             },
             TxType::MultipleWrites,

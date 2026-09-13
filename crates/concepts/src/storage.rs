@@ -1462,7 +1462,6 @@ pub enum DeleteDeploymentResult {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CasGcResult {
-    pub referenced_blobs: u64,
     pub orphan_blobs: u64,
     pub deleted_blobs: u64,
     pub deleted_bytes: u64,
