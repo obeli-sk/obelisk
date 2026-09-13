@@ -1224,6 +1224,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.workflows_max_events_per_run,
         server_verified.workflows_response_refresh_interval,
         server_verified.workflows_snapshot_every_n_events,
+        server_verified.workflows_snapshot_max_size_bytes,
         server_verified.api_addr_if_webui_enabled.clone(),
         server_verified.secret_registry.clone(),
         server_verified.global_http_config.clone(),
@@ -2199,6 +2200,7 @@ pub(crate) struct ServerVerified {
     workflows_max_events_per_run: usize,
     workflows_response_refresh_interval: usize,
     workflows_snapshot_every_n_events: Option<usize>,
+    workflows_snapshot_max_size_bytes: usize,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
     max_persisted_value_size_bytes: u64,
@@ -2272,10 +2274,21 @@ impl ServerVerified {
         let workflows_max_replay_captured_writes =
             config.workflows_global_config.max_replay_captured_writes;
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
-        let workflows_snapshot_every_n_events =
-            config.workflows_global_config.snapshot_every_n_events;
+        let workflows_snapshot_every_n_events = config
+            .workflows_global_config
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.every_n_events);
+        let workflows_snapshot_max_size_bytes = config
+            .workflows_global_config
+            .snapshot
+            .as_ref()
+            .map_or(0, |snapshot| snapshot.max_size_bytes);
         if workflows_snapshot_every_n_events == Some(0) {
-            bail!("`workflows.snapshot_every_n_events` must be greater than zero");
+            bail!("`workflows.snapshot.every_n_events` must be greater than zero");
+        }
+        if workflows_snapshot_every_n_events.is_some() && workflows_snapshot_max_size_bytes == 0 {
+            bail!("`workflows.snapshot.max_size_bytes` must be greater than zero");
         }
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
@@ -2363,6 +2376,7 @@ impl ServerVerified {
             workflows_max_events_per_run,
             workflows_response_refresh_interval,
             workflows_snapshot_every_n_events,
+            workflows_snapshot_max_size_bytes,
             api_addr_if_webui_enabled: if config.webui.enabled {
                 Some(config.api.listening_addr.to_string()) // `config.api.enabled` checked above
             } else {
@@ -4275,6 +4289,7 @@ impl DeploymentVerified {
         max_events_per_run: usize,
         response_refresh_interval: usize,
         snapshot_every_n_events: Option<usize>,
+        snapshot_max_size_bytes: usize,
         api_addr_if_webui_enabled: Option<String>,
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
@@ -4442,6 +4457,7 @@ impl DeploymentVerified {
                             max_events_per_run,
                             response_refresh_interval,
                             snapshot_every_n_events,
+                            snapshot_max_size_bytes,
                         )
                         .in_current_span(),
                 )
@@ -4587,6 +4603,7 @@ impl DeploymentVerified {
                                 max_events_per_run,
                                 response_refresh_interval,
                                 snapshot_every_n_events,
+                                snapshot_max_size_bytes,
                             ).await?
                         );
                     }
@@ -5714,6 +5731,7 @@ fn replay_workflow_config(
         mode: WorkflowConfigMode::Replay {
             max_replay_captured_writes,
             snapshot_every_n_events: real_config.snapshot_every_n_events(),
+            snapshot_max_size_bytes: real_config.snapshot_max_size_bytes(),
         },
     }
 }
@@ -6545,6 +6563,7 @@ mod tests {
             server_verified.workflows_max_events_per_run,
             server_verified.workflows_response_refresh_interval,
             server_verified.workflows_snapshot_every_n_events,
+            server_verified.workflows_snapshot_max_size_bytes,
             webui_enabled,
             server_verified.secret_registry,
             server_verified.global_http_config,

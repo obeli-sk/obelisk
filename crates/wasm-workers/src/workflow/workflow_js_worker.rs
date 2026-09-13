@@ -902,6 +902,7 @@ mod tests {
                 // `None` in tests means effectively unbounded.
                 max_replay_captured_writes: max_replay_captured_writes.unwrap_or(usize::MAX),
                 snapshot_every_n_events: None,
+                snapshot_max_size_bytes: 128 * 1024 * 1024,
             },
         };
         let compiled = WorkflowWorkerCompiled::new_with_config(
@@ -965,6 +966,7 @@ mod tests {
                 max_events_per_run: usize::MAX,
                 response_refresh_interval: usize::MAX,
                 snapshot_every_n_events: None,
+                snapshot_max_size_bytes: 128 * 1024 * 1024,
             },
         };
 
@@ -1046,6 +1048,7 @@ mod tests {
                 max_events_per_run: usize::MAX,
                 response_refresh_interval: usize::MAX,
                 snapshot_every_n_events: None,
+                snapshot_max_size_bytes: 128 * 1024 * 1024,
             },
         };
 
@@ -1435,6 +1438,7 @@ mod tests {
                 max_events_per_run,
                 response_refresh_interval,
                 snapshot_every_n_events: None,
+                snapshot_max_size_bytes: 128 * 1024 * 1024,
             },
         };
 

@@ -1030,6 +1030,7 @@ pub(crate) trait WorkflowWasmComponentConfigResolvedExt {
         max_events_per_run: usize,
         response_refresh_interval: usize,
         snapshot_every_n_events: Option<usize>,
+        snapshot_max_size_bytes: usize,
     ) -> Result<WorkflowConfigVerified, anyhow::Error>;
 }
 
@@ -1045,6 +1046,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         max_events_per_run: usize,
         response_refresh_interval: usize,
         snapshot_every_n_events: Option<usize>,
+        snapshot_max_size_bytes: usize,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
         if retry_exp_backoff == Duration::ZERO {
@@ -1095,6 +1097,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
                 max_events_per_run,
                 response_refresh_interval,
                 snapshot_every_n_events,
+                snapshot_max_size_bytes,
             },
         };
         let frame_files_to_sources: FrameFilesToSource = self
@@ -1134,6 +1137,7 @@ pub(crate) trait WorkflowJsComponentConfigResolvedExt {
         max_events_per_run: usize,
         response_refresh_interval: usize,
         snapshot_every_n_events: Option<usize>,
+        snapshot_max_size_bytes: usize,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error>;
 }
 
@@ -1149,6 +1153,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         max_events_per_run: usize,
         response_refresh_interval: usize,
         snapshot_every_n_events: Option<usize>,
+        snapshot_max_size_bytes: usize,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
         let verified = verify_function_interface(
             self.interface,
@@ -1198,6 +1203,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
                 max_events_per_run,
                 response_refresh_interval,
                 snapshot_every_n_events,
+                snapshot_max_size_bytes,
             },
         };
         let retry_config = ComponentRetryConfig {

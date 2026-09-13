@@ -24,7 +24,8 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason,
-    DbConnection, DbErrorWrite, DbPool, ExecutionLog, ExecutionRequest, Locked, Unlocked, Version,
+    DbConnection, DbErrorWrite, DbPool, ExecutionLog, ExecutionRequest, Locked,
+    OversizedWorkflowSnapshot, Unlocked, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -88,6 +89,7 @@ pub enum WorkflowConfigMode {
         max_events_per_run: usize,
         response_refresh_interval: usize,
         snapshot_every_n_events: Option<usize>,
+        snapshot_max_size_bytes: usize,
     },
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
     /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
@@ -95,6 +97,7 @@ pub enum WorkflowConfigMode {
     Replay {
         max_replay_captured_writes: usize,
         snapshot_every_n_events: Option<usize>,
+        snapshot_max_size_bytes: usize,
     },
 }
 
@@ -173,6 +176,20 @@ impl WorkflowConfig {
                 snapshot_every_n_events,
                 ..
             } => *snapshot_every_n_events,
+        }
+    }
+
+    #[must_use]
+    pub const fn snapshot_max_size_bytes(&self) -> usize {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                snapshot_max_size_bytes,
+                ..
+            }
+            | WorkflowConfigMode::Replay {
+                snapshot_max_size_bytes,
+                ..
+            } => *snapshot_max_size_bytes,
         }
     }
 
@@ -1179,6 +1196,7 @@ impl WorkflowWorker {
         execution_deadline: DateTime<Utc>,
         assigned_fuel: Option<u64>,
         snapshot_interval: Option<usize>,
+        snapshot_max_size_bytes: usize,
         snapshot_wasm: Option<&[u8]>,
         prepared_component_digest: Option<concepts::ContentDigest>,
         restored_snapshot_version: Option<Version>,
@@ -1200,6 +1218,42 @@ impl WorkflowWorker {
             let prepared_component_digest =
                 prepared_component_digest.expect("prepared component digest is configured");
             let mut last_snapshot_version = restored_snapshot_version;
+            let mut snapshot_size_exceeded = match db_pool.connection().await {
+                Ok(db) => match db
+                    .get_oversized_workflow_snapshot(
+                        &store.data().execution_id,
+                        &component_id.component_digest,
+                        &prepared_component_digest,
+                    )
+                    .await
+                {
+                    Ok(Some(snapshot))
+                        if snapshot.size_bytes
+                            > u64::try_from(snapshot_max_size_bytes)
+                                .expect("usize fits in u64 on supported targets") =>
+                    {
+                        warn!(
+                            attempted_version = snapshot.version.0,
+                            snapshot_size_bytes = snapshot.size_bytes,
+                            snapshot_max_size_bytes,
+                            "Workflow snapshotting remains disabled after an oversized snapshot"
+                        );
+                        true
+                    }
+                    Ok(Some(_) | None) => false,
+                    Err(err) => {
+                        warn!(?err, "Cannot load oversized workflow snapshot marker");
+                        false
+                    }
+                },
+                Err(err) => {
+                    warn!(
+                        ?err,
+                        "Cannot connect to load oversized workflow snapshot marker"
+                    );
+                    false
+                }
+            };
             loop {
                 let previous_position = store.data().history_position();
                 let result_types = component_func.results();
@@ -1213,6 +1267,7 @@ impl WorkflowWorker {
                         "Workflow reached a snapshot-safe history boundary"
                     );
                     if persist_snapshots
+                        && !snapshot_size_exceeded
                         && snapshot_due(
                             snapshot_interval,
                             &current_position,
@@ -1243,6 +1298,24 @@ impl WorkflowWorker {
                                 .await;
                             store.set_hostcall_fuel(hostcall_fuel);
                             let bytes = snapshot_result?;
+                            if bytes.len() > snapshot_max_size_bytes {
+                                snapshot_size_exceeded = true;
+                                let db = db_pool.connection().await?;
+                                db.upsert_oversized_workflow_snapshot(OversizedWorkflowSnapshot {
+                                    execution_id: store.data().execution_id.clone(),
+                                    version: current_position.clone(),
+                                    component_digest: component_id.component_digest.clone(),
+                                    prepared_component_digest: prepared_component_digest.clone(),
+                                    size_bytes: u64::try_from(bytes.len())
+                                        .expect("usize fits in u64 on supported targets"),
+                                })
+                                .await?;
+                                anyhow::bail!(
+                                    "workflow snapshot size {} exceeds configured maximum {} bytes",
+                                    bytes.len(),
+                                    snapshot_max_size_bytes
+                                );
+                            }
                             let cas = db_pool.cas_conn().await?;
                             let db = db_pool.connection().await?;
                             utils::workflow_snapshot::persist_snapshot(
@@ -1653,6 +1726,7 @@ impl WorkflowWorker {
         let execution_deadline = ctx.locked_event.lock_expires_at;
         let fuel = view.config.fuel;
         let snapshot_interval = view.config.snapshot_every_n_events();
+        let snapshot_max_size_bytes = view.config.snapshot_max_size_bytes();
         let persist_snapshots = view.config.persists_snapshots();
         let db_pool = view.db_pool;
         let component_id = &view.config.component_id;
@@ -1703,6 +1777,7 @@ impl WorkflowWorker {
             execution_deadline,
             fuel,
             snapshot_interval,
+            snapshot_max_size_bytes,
             prepare_finished.snapshot_base.as_deref(),
             prepare_finished.prepared_component_digest,
             prepare_finished.restored_snapshot_version,
@@ -1742,6 +1817,7 @@ impl WorkflowWorker {
                     execution_deadline,
                     fuel,
                     snapshot_interval,
+                    snapshot_max_size_bytes,
                     prepared.snapshot_base.as_deref(),
                     prepared.prepared_component_digest,
                     None,
@@ -2484,6 +2560,7 @@ pub(crate) mod tests {
                             max_events_per_run: usize::MAX,
                             response_refresh_interval: usize::MAX,
                             snapshot_every_n_events: None,
+                            snapshot_max_size_bytes: 128 * 1024 * 1024,
                         },
                     },
                     workflow_engine,
@@ -2524,6 +2601,7 @@ pub(crate) mod tests {
             mode: WorkflowConfigMode::Replay {
                 max_replay_captured_writes: usize::MAX, // effectively unbounded for tests
                 snapshot_every_n_events: None,
+                snapshot_max_size_bytes: 128 * 1024 * 1024,
             },
         };
         WorkflowWorkerCompiled::new_with_config(
@@ -2648,6 +2726,7 @@ pub(crate) mod tests {
                     max_events_per_run: usize::MAX,
                     response_refresh_interval: usize::MAX,
                     snapshot_every_n_events: Some(2),
+                    snapshot_max_size_bytes: 128 * 1024 * 1024,
                 },
             },
             workflow_engine,

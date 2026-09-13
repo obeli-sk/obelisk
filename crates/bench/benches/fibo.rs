@@ -203,6 +203,7 @@ mod bench {
                         max_events_per_run: usize::MAX,
                         response_refresh_interval: usize::MAX,
                         snapshot_every_n_events: None,
+                        snapshot_max_size_bytes: 128 * 1024 * 1024,
                     },
                 },
                 workflow_engine,

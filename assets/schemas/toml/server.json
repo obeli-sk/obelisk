@@ -736,14 +736,16 @@
     "WorkflowsGlobalConfigToml": {
       "type": "object",
       "properties": {
-        "snapshot_every_n_events": {
-          "description": "EXPERIMENTAL: Persist a resumable workflow snapshot after each configured number of history\nevents. Disabled when unset. The snapshot format and behavior may change.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "minimum": 1
+        "snapshot": {
+          "description": "EXPERIMENTAL: Workflow snapshot configuration. Disabled when unset.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowSnapshotConfigToml"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "max_replay_captured_writes": {
           "description": "Maximum number of captured writes a single replay pass returns. On reaching it, replay\nstops and returns that many writes as an advanceable prefix; advancing them and replaying\nagain resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved\n`joinNextTry` poll loop, whose replay never blocks) advanceable in bounded batches instead\nof collecting captured writes forever.",
@@ -768,6 +770,28 @@
         }
       },
       "additionalProperties": false
+    },
+    "WorkflowSnapshotConfigToml": {
+      "type": "object",
+      "properties": {
+        "every_n_events": {
+          "description": "Number of history events between resumable workflow snapshots.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        },
+        "max_size_bytes": {
+          "description": "Maximum persisted workflow snapshot size in bytes.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "default": 134217728
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "every_n_events"
+      ]
     },
     "TimersWatcherTomlConfig": {
       "type": "object",

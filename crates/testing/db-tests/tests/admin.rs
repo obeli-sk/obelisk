@@ -6,8 +6,8 @@ use concepts::{
     storage::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventCode, SystemEventFilter,
-        SystemEventLevel, Version, WorkflowSnapshot,
+        ExecutionRequest, OversizedWorkflowSnapshot, RetentionPolicy, SystemEvent, SystemEventCode,
+        SystemEventFilter, SystemEventLevel, Version, WorkflowSnapshot,
     },
     time::ClockFn,
 };
@@ -605,46 +605,104 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
-async fn workflow_snapshot_is_collected_after_execution(database: Database) {
+async fn workflow_snapshot_gc_keeps_latest_running_and_clears_finished(database: Database) {
     set_up();
     let clock = SimClock::default();
     let (_guard, db_pool, db_close) = database.set_up().await;
     let deployment_id = DeploymentId::generate();
     insert_deployment(db_pool.as_ref(), deployment_id, clock.now()).await;
-    let execution_id = create_execution(db_pool.as_ref(), &clock, deployment_id, true).await;
+    let execution_id = create_execution(db_pool.as_ref(), &clock, deployment_id, false).await;
     let cas = db_pool.cas_conn().await.unwrap();
-    let snapshot_digest = cas.write_blob(b"workflow snapshot").await.unwrap();
+    let old_snapshot_digest = cas.write_blob(b"old workflow snapshot").await.unwrap();
+    let snapshot_digest = cas.write_blob(b"latest workflow snapshot").await.unwrap();
     let component_id = ComponentId::dummy_workflow();
+    let prepared_component_digest = snapshot_digest.clone();
     let connection = db_pool.connection().await.unwrap();
+    for (version, digest) in [
+        (1, old_snapshot_digest.clone()),
+        (2, snapshot_digest.clone()),
+    ] {
+        connection
+            .upsert_workflow_snapshot(WorkflowSnapshot {
+                execution_id: execution_id.clone(),
+                version: Version::new(version),
+                component_digest: component_id.component_digest.clone(),
+                prepared_component_digest: prepared_component_digest.clone(),
+                snapshot_digest: digest,
+                processed_response_cursors: Vec::new(),
+            })
+            .await
+            .unwrap();
+    }
     connection
-        .upsert_workflow_snapshot(WorkflowSnapshot {
+        .upsert_oversized_workflow_snapshot(OversizedWorkflowSnapshot {
             execution_id: execution_id.clone(),
-            version: Version::new(2),
-            component_digest: component_id.component_digest,
-            prepared_component_digest: snapshot_digest.clone(),
-            snapshot_digest: snapshot_digest.clone(),
-            processed_response_cursors: Vec::new(),
+            version: Version::new(3),
+            component_digest: component_id.component_digest.clone(),
+            prepared_component_digest: prepared_component_digest.clone(),
+            size_bytes: 256 * 1024 * 1024,
         })
         .await
         .unwrap();
+    assert_eq!(
+        connection
+            .get_oversized_workflow_snapshot(
+                &execution_id,
+                &component_id.component_digest,
+                &prepared_component_digest,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        Version::new(3)
+    );
 
     let gc = db_pool.cas_gc_conn().await.unwrap();
-    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 0);
+    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 1);
+    assert!(!cas.contains_blob(&old_snapshot_digest).await.unwrap());
     assert!(cas.contains_blob(&snapshot_digest).await.unwrap());
 
-    let admin = db_pool.admin_conn().await.unwrap();
-    assert_eq!(
-        admin
-            .delete_execution_tree(&execution_id, false)
-            .await
-            .unwrap(),
-        DeleteExecutionTreeResult::Deleted
-    );
-    collect_execution_garbage(admin.as_ref()).await;
+    connection
+        .append(
+            execution_id.clone(),
+            Version::new(1),
+            AppendRequest {
+                created_at: clock.now(),
+                event: ExecutionRequest::Finished {
+                    retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                    http_client_traces: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 1);
     assert!(!cas.contains_blob(&snapshot_digest).await.unwrap());
+    assert!(
+        connection
+            .get_latest_workflow_snapshot(
+                &execution_id,
+                &component_id.component_digest,
+                &prepared_component_digest,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        connection
+            .get_oversized_workflow_snapshot(
+                &execution_id,
+                &component_id.component_digest,
+                &prepared_component_digest,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
 
-    drop((admin, connection, gc, cas));
+    drop((connection, gc, cas));
     db_close.close().await;
 }
 

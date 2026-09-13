@@ -285,6 +285,15 @@ pub struct WorkflowSnapshot {
     pub processed_response_cursors: Vec<ResponseCursor>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OversizedWorkflowSnapshot {
+    pub execution_id: ExecutionId,
+    pub version: Version,
+    pub component_digest: ComponentDigest,
+    pub prepared_component_digest: ContentDigest,
+    pub size_bytes: u64,
+}
+
 #[derive(
     Clone,
     Debug,
@@ -2754,6 +2763,18 @@ pub trait DbConnection: DbExecutor {
     async fn upsert_workflow_snapshot(
         &self,
         snapshot: WorkflowSnapshot,
+    ) -> Result<(), DbErrorWrite>;
+
+    async fn get_oversized_workflow_snapshot(
+        &self,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        prepared_component_digest: &ContentDigest,
+    ) -> Result<Option<OversizedWorkflowSnapshot>, DbErrorRead>;
+
+    async fn upsert_oversized_workflow_snapshot(
+        &self,
+        snapshot: OversizedWorkflowSnapshot,
     ) -> Result<(), DbErrorWrite>;
 
     /// Execution ids whose `lifecycle` is `cancelling`, for the cancellation driver

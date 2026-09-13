@@ -25,13 +25,14 @@ use concepts::{
         LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
         ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
         LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
-        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
-        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
-        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace, WorkflowSnapshot,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, OversizedWorkflowSnapshot,
+        Pagination, PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
+        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
+        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
+        StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
+        SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
+        WorkflowSnapshot,
     },
 };
 use db_common::{
@@ -4391,8 +4392,9 @@ impl DbConnection for PostgresConnection {
         &self,
         snapshot: WorkflowSnapshot,
     ) -> Result<(), DbErrorWrite> {
-        let client_guard = self.client.lock().await;
-        client_guard
+        let mut client_guard = self.client.lock().await;
+        let tx = client_guard.transaction().await?;
+        tx
             .execute(
                 "INSERT INTO t_workflow_snapshot \
                  (execution_id, version, component_digest, prepared_component_digest, snapshot_digest, processed_response_cursors) \
@@ -4416,6 +4418,58 @@ impl DbConnection for PostgresConnection {
                 ],
             )
             .await?;
+        tx.execute(
+            "DELETE FROM t_workflow_snapshot_oversized WHERE execution_id = $1",
+            &[&snapshot.execution_id.to_string()],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn get_oversized_workflow_snapshot(
+        &self,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        prepared_component_digest: &ContentDigest,
+    ) -> Result<Option<OversizedWorkflowSnapshot>, DbErrorRead> {
+        let client_guard = self.client.lock().await;
+        let row = client_guard
+            .query_opt(
+                "SELECT version, size_bytes FROM t_workflow_snapshot_oversized \
+                 WHERE execution_id = $1 AND component_digest = $2 AND prepared_component_digest = $3",
+                &[&execution_id.to_string(), &component_digest.as_slice(), &prepared_component_digest.to_string()],
+            )
+            .await?;
+        row.map(|row| {
+            Ok(OversizedWorkflowSnapshot {
+                execution_id: execution_id.clone(),
+                version: Version::try_from(get::<i64, _>(&row, "version")?)?,
+                component_digest: component_digest.clone(),
+                prepared_component_digest: prepared_component_digest.clone(),
+                size_bytes: get::<i64, _>(&row, "size_bytes")?.try_into().map_err(|_| {
+                    consistency_db_err("workflow snapshot size must be non-negative")
+                })?,
+            })
+        })
+        .transpose()
+    }
+
+    async fn upsert_oversized_workflow_snapshot(
+        &self,
+        snapshot: OversizedWorkflowSnapshot,
+    ) -> Result<(), DbErrorWrite> {
+        let client_guard = self.client.lock().await;
+        client_guard.execute(
+            "INSERT INTO t_workflow_snapshot_oversized \
+             (execution_id, version, component_digest, prepared_component_digest, size_bytes) \
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (execution_id) DO UPDATE SET \
+             version = EXCLUDED.version, component_digest = EXCLUDED.component_digest, \
+             prepared_component_digest = EXCLUDED.prepared_component_digest, size_bytes = EXCLUDED.size_bytes",
+            &[&snapshot.execution_id.to_string(), &i64::from(snapshot.version.0),
+              &snapshot.component_digest.as_slice(), &snapshot.prepared_component_digest.to_string(),
+              &i64::try_from(snapshot.size_bytes).map_err(|_| DbErrorWrite::from(consistency_db_err("workflow snapshot size exceeds i64")))?],
+        ).await?;
         Ok(())
     }
 
@@ -6581,11 +6635,36 @@ impl CasGc for PostgresConnection {
         let mut client_guard = self.client.lock().await;
         let tx = client_guard.transaction().await?;
         let limit = batch_size.clamp(1, 10_000);
+        if !dry_run {
+            tx.execute(
+                &format!(
+                    "DELETE FROM t_workflow_snapshot_oversized oversized WHERE EXISTS \
+                     (SELECT 1 FROM t_state s WHERE s.execution_id = oversized.execution_id AND s.state = '{STATE_FINISHED}')"
+                ),
+                &[],
+            )
+            .await?;
+            tx.execute(
+                &format!(
+                    "DELETE FROM t_workflow_snapshot ws WHERE \
+                     EXISTS (SELECT 1 FROM t_state s WHERE s.execution_id = ws.execution_id AND s.state = '{STATE_FINISHED}') OR \
+                     EXISTS (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = ws.execution_id AND newer.version > ws.version)"
+                ),
+                &[],
+            )
+            .await?;
+        }
         let mut orphans = tx
             .query(
-                "SELECT digest, size FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL UNION SELECT snapshot_digest FROM t_workflow_snapshot) \
-                 ORDER BY digest LIMIT $1",
+                &format!(
+                    "SELECT digest, size FROM t_file WHERE digest NOT IN \
+                     (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source \
+                      UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL \
+                      UNION SELECT ws.snapshot_digest FROM t_workflow_snapshot ws JOIN t_state s ON s.execution_id = ws.execution_id \
+                      WHERE s.state != '{STATE_FINISHED}' AND NOT EXISTS \
+                      (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = ws.execution_id AND newer.version > ws.version)) \
+                     ORDER BY digest LIMIT $1"
+                ),
                 &[&(i64::from(limit) + 1)],
             )
             .await?;

@@ -25,13 +25,14 @@ use concepts::{
         LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
         ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
         LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
-        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, Pagination, PendingState,
-        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
-        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
-        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
-        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
-        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType, WorkflowSnapshot,
+        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, OversizedWorkflowSnapshot,
+        Pagination, PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
+        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
+        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
+        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
+        StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
+        SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType,
+        WorkflowSnapshot,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -6127,12 +6128,34 @@ impl CasGc for SqlitePool {
         self.transaction(
             move |tx| {
                 let limit = batch_size.clamp(1, 10_000);
+                if !dry_run {
+                    tx.execute(
+                        &format!(
+                            "DELETE FROM t_workflow_snapshot_oversized WHERE EXISTS \
+                             (SELECT 1 FROM t_state s WHERE s.execution_id = t_workflow_snapshot_oversized.execution_id AND s.state = '{STATE_FINISHED}')"
+                        ),
+                        [],
+                    )?;
+                    tx.execute(
+                        &format!(
+                            "DELETE FROM t_workflow_snapshot WHERE \
+                             EXISTS (SELECT 1 FROM t_state s WHERE s.execution_id = t_workflow_snapshot.execution_id AND s.state = '{STATE_FINISHED}') OR \
+                             EXISTS (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = t_workflow_snapshot.execution_id AND newer.version > t_workflow_snapshot.version)"
+                        ),
+                        [],
+                    )?;
+                }
+                let orphan_query = format!(
+                    "SELECT digest, size FROM t_file WHERE digest NOT IN \
+                     (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source \
+                      UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL \
+                      UNION SELECT ws.snapshot_digest FROM t_workflow_snapshot ws JOIN t_state s ON s.execution_id = ws.execution_id \
+                      WHERE s.state != '{STATE_FINISHED}' AND NOT EXISTS \
+                      (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = ws.execution_id AND newer.version > ws.version)) \
+                     ORDER BY digest LIMIT ?1"
+                );
                 let mut orphans = tx
-                    .prepare(
-                        "SELECT digest, size FROM t_file WHERE digest NOT IN \
-                         (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL UNION SELECT snapshot_digest FROM t_workflow_snapshot) \
-                         ORDER BY digest LIMIT ?1",
-                    )?
+                    .prepare(&orphan_query)?
                     .query_map([i64::from(limit) + 1], |row| {
                         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
                     })?
@@ -6316,10 +6339,90 @@ impl DbConnection for SqlitePool {
                             .collect::<Vec<_>>(),
                     },
                 )?;
+                tx.execute(
+                    "DELETE FROM t_workflow_snapshot_oversized WHERE execution_id = ?1",
+                    [snapshot.execution_id.to_string()],
+                )?;
                 Ok(())
             },
             TxType::Other,
             "upsert_workflow_snapshot",
+        )
+        .await
+    }
+
+    async fn get_oversized_workflow_snapshot(
+        &self,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        prepared_component_digest: &ContentDigest,
+    ) -> Result<Option<OversizedWorkflowSnapshot>, DbErrorRead> {
+        let execution_id = execution_id.clone();
+        let component_digest = component_digest.clone();
+        let prepared_component_digest = prepared_component_digest.clone();
+        self.transaction(
+            move |tx| {
+                tx.query_row(
+                    "SELECT version, size_bytes FROM t_workflow_snapshot_oversized \
+                     WHERE execution_id = :execution_id AND component_digest = :component_digest \
+                       AND prepared_component_digest = :prepared_component_digest",
+                    named_params! {
+                        ":execution_id": execution_id.to_string(),
+                        ":component_digest": component_digest,
+                        ":prepared_component_digest": prepared_component_digest.to_string(),
+                    },
+                    |row| {
+                        Ok(OversizedWorkflowSnapshot {
+                            execution_id: execution_id.clone(),
+                            version: Version::new(row.get("version")?),
+                            component_digest: component_digest.clone(),
+                            prepared_component_digest: prepared_component_digest.clone(),
+                            size_bytes: row.get::<_, i64>("size_bytes")?.try_into().map_err(
+                                |_| {
+                                    consistency_rusqlite(
+                                        "workflow snapshot size must be non-negative",
+                                    )
+                                },
+                            )?,
+                        })
+                    },
+                )
+                .optional()
+                .map_err(DbErrorRead::from)
+            },
+            TxType::Other,
+            "get_oversized_workflow_snapshot",
+        )
+        .await
+    }
+
+    async fn upsert_oversized_workflow_snapshot(
+        &self,
+        snapshot: OversizedWorkflowSnapshot,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                tx.execute(
+                    "INSERT INTO t_workflow_snapshot_oversized \
+                     (execution_id, version, component_digest, prepared_component_digest, size_bytes) \
+                     VALUES (:execution_id, :version, :component_digest, :prepared_component_digest, :size_bytes) \
+                     ON CONFLICT (execution_id) DO UPDATE SET version = excluded.version, \
+                       component_digest = excluded.component_digest, \
+                       prepared_component_digest = excluded.prepared_component_digest, \
+                       size_bytes = excluded.size_bytes",
+                    named_params! {
+                        ":execution_id": snapshot.execution_id.to_string(),
+                        ":version": snapshot.version.0,
+                        ":component_digest": snapshot.component_digest,
+                        ":prepared_component_digest": snapshot.prepared_component_digest.to_string(),
+                        ":size_bytes": i64::try_from(snapshot.size_bytes)
+                            .map_err(|_| consistency_rusqlite("workflow snapshot size exceeds i64"))?,
+                    },
+                )?;
+                Ok(())
+            },
+            TxType::Other,
+            "upsert_oversized_workflow_snapshot",
         )
         .await
     }

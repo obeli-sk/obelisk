@@ -118,11 +118,14 @@
 
 ## Global Workflow Configuration
 # [workflows]
-# snapshot_every_n_events = 1000           # EXPERIMENTAL: Persist a resumable workflow snapshot after every N history events. Disabled by default; snapshot format and behavior may change.
 # subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
 # max_replay_captured_writes = 100         # Max captured writes a single replay pass returns; on reaching it replay stops and returns that many as an advanceable prefix (advance them, then replay again to resume). Keeps a non-terminating workflow (e.g. an unresolved `joinNextTry` poll loop) advanceable in bounded batches.
 # max_events_per_run = 100                 # Max history events a real workflow run writes before yielding and unlocking. Replay uses max_replay_captured_writes instead.
 # response_refresh_interval = 32           # Refresh responses from the database after this many newly written non-blocking events while a workflow remains running. Usually set lower than max_events_per_run. Replay ignores it.
+
+# [workflows.snapshot]                      # EXPERIMENTAL: Optional resumable workflow snapshots. Disabled when this table is absent; snapshot format and behavior may change.
+# every_n_events = 1000                    # Persist a snapshot after every N history events.
+# max_size_bytes = 134217728                # Maximum persisted snapshot size. Oversized attempts durably suppress more snapshots unless this limit is raised.
 
 # [wasm.codegen_cache]
 ## Defaults:

@@ -526,10 +526,8 @@ impl WasmGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    /// EXPERIMENTAL: Persist a resumable workflow snapshot after each configured number of history
-    /// events. Disabled when unset. The snapshot format and behavior may change.
-    #[schemars(range(min = 1))]
-    pub(crate) snapshot_every_n_events: Option<usize>,
+    /// EXPERIMENTAL: Workflow snapshot configuration. Disabled when unset.
+    pub(crate) snapshot: Option<WorkflowSnapshotConfigToml>,
     /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
     /// stops and returns that many writes as an advanceable prefix; advancing them and replaying
     /// again resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved
@@ -550,12 +548,28 @@ pub(crate) struct WorkflowsGlobalConfigToml {
 impl Default for WorkflowsGlobalConfigToml {
     fn default() -> Self {
         Self {
-            snapshot_every_n_events: None,
+            snapshot: None,
             max_replay_captured_writes: default_max_replay_captured_writes(),
             max_events_per_run: default_max_events_per_run(),
             response_refresh_interval: default_response_refresh_interval(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkflowSnapshotConfigToml {
+    /// Number of history events between resumable workflow snapshots.
+    #[schemars(range(min = 1))]
+    pub(crate) every_n_events: usize,
+    /// Maximum persisted workflow snapshot size in bytes.
+    #[serde(default = "default_snapshot_max_size_bytes")]
+    #[schemars(range(min = 1))]
+    pub(crate) max_size_bytes: usize,
+}
+
+const fn default_snapshot_max_size_bytes() -> usize {
+    128 * 1024 * 1024
 }
 
 const fn default_max_replay_captured_writes() -> usize {
