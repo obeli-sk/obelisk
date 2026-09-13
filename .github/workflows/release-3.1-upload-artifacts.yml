@@ -18,6 +18,11 @@ on:
         required: true
         type: boolean
         default: true
+      publish_release:
+        description: "Publish the GitHub release after all artifacts are uploaded"
+        required: true
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       ref:
@@ -27,6 +32,10 @@ on:
         default: "latest"
       update_latest:
         description: "Update the Docker Hub latest tag"
+        required: true
+        type: boolean
+      publish_release:
+        description: "Publish the GitHub release after all artifacts are uploaded"
         required: true
         type: boolean
 
@@ -43,7 +52,18 @@ defaults:
     shell: bash -xe {0}
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate inputs
+        run: |
+          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
+            echo "::error::update_latest requires publish_release"
+            exit 1
+          fi
+
   upload-assets:
+    needs: validate-inputs
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -101,30 +121,46 @@ jobs:
             https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG > release.json
           RELEASE_ID=$(jq -r '.id' release.json)
           echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+          if [ "$(jq -r .target_commitish release.json)" != "${{ steps.git-info.outputs.sha }}" ]; then
+            echo "::error::Release $TAG targets a different commit"
+            exit 1
+          fi
+          ASSET_NAME="obelisk-${{ matrix.target }}.tar.gz"
+          if jq -e --arg name "$ASSET_NAME" '.assets[] | select(.name == $name)' release.json > /dev/null; then
+            echo "asset_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "asset_exists=false" >> $GITHUB_OUTPUT
+          fi
         env:
           TAG: ${{ steps.git-info.outputs.tag }}
 
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Obelisk with Nix
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
         run: nix build '.#obeliskCross-${{ matrix.target }}'
 
       - name: Generate attestation for obelisk binary
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: 'result/bin/obelisk'
 
       - name: Create a tar.gz archive
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
         run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
 
       - name: Generate attestation for tar.gz
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: 'archive.tar.gz'
 
       - name: Upload the archive
+        if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
         run: |
           curl -v --fail -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -132,8 +168,59 @@ jobs:
             --data-binary @archive.tar.gz \
             "https://uploads.github.com/repos/obeli-sk/obelisk/releases/${{ steps.release-info.outputs.release_id }}/assets?name=obelisk-${{ matrix.target }}.tar.gz"
 
-  call_child:
+  publish-release:
     needs: upload-assets
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Verify assets and optionally publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
+          TAG="v$VERSION"
+          curl --fail -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG" > release.json
+
+          expected=$(printf '%s\n' \
+            x86_64-unknown-linux-gnu x86_64-unknown-linux-gnu-embedded \
+            x86_64-unknown-linux-musl x86_64-unknown-linux-musl-embedded \
+            aarch64-unknown-linux-gnu aarch64-unknown-linux-gnu-embedded \
+            aarch64-unknown-linux-musl aarch64-unknown-linux-musl-embedded \
+            x86_64-apple-darwin x86_64-apple-darwin-embedded \
+            aarch64-apple-darwin aarch64-apple-darwin-embedded \
+            | sed 's/^/obelisk-/; s/$/.tar.gz/' | sort)
+          actual=$(jq -r '.assets[].name' release.json | sort)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Release $TAG does not contain the expected asset set"
+            diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true
+            exit 1
+          fi
+          if jq -e '.assets[] | select(.state != "uploaded" or .size == 0)' release.json > /dev/null; then
+            echo "::error::Release $TAG contains an incomplete asset"
+            exit 1
+          fi
+
+          if [ "$PUBLISH_RELEASE" = "true" ]; then
+            RELEASE_ID=$(jq -r .id release.json)
+            curl --fail -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -d '{"draft":false}' \
+              "https://api.github.com/repos/obeli-sk/obelisk/releases/$RELEASE_ID"
+          fi
+
+  call_child:
+    needs: publish-release
+    if: ${{ inputs.publish_release }}
     uses: ./.github/workflows/release-4-push-docker-image.yml
     secrets: inherit
     with:

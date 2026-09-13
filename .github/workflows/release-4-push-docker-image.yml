@@ -112,6 +112,7 @@ jobs:
 
   verify-download-sh:
     needs: push-image
+    if: ${{ inputs.update_latest }}
     uses: ./.github/workflows/release-5-verify-download-sh.yml
     secrets: inherit
     with:
