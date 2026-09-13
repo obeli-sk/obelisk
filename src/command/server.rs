@@ -657,9 +657,10 @@ pub(crate) async fn run(
     }
 
     let (termination_sender, termination_watcher) = watch::channel(());
-    utils::spawn::spawn_named("termination_notifier", async move {
+    let termination_notifier = utils::spawn::spawn_named("termination_notifier", async move {
         termination_notifier(termination_sender).await;
     });
+    let _termination_notifier_abort = AbortOnDropHandle::new(termination_notifier.abort_handle());
 
     let prepared_dirs = prepare_dirs(
         &config,
@@ -866,9 +867,10 @@ pub(crate) async fn verify(
         config
     };
     let engines = create_engines(&config, &prepared_dirs)?;
-    utils::spawn::spawn_named("termination_notifier", async move {
+    let termination_notifier = utils::spawn::spawn_named("termination_notifier", async move {
         termination_notifier(termination_sender).await;
     });
+    let _termination_notifier_abort = AbortOnDropHandle::new(termination_notifier.abort_handle());
     let mut db_pool = if !skip_db {
         verify_db_schema(
             &config.database,

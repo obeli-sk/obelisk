@@ -543,13 +543,14 @@ pub async fn server(
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
     max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
-    server_termination_watcher: watch::Receiver<()>,
+    mut server_termination_watcher: watch::Receiver<()>,
 ) -> Result<(), WebhookServerError> {
     loop {
-        let (stream, _) = listener
-            .accept()
-            .await
-            .map_err(WebhookServerError::SocketError)?;
+        let (stream, _) = select! {
+            biased;
+            _ = server_termination_watcher.changed() => return Ok(()),
+            accepted = listener.accept() => accepted.map_err(WebhookServerError::SocketError)?,
+        };
         let stream_id = format!("{stream:?}");
         let stream = TokioIo::new(stream);
 
@@ -571,6 +572,7 @@ pub async fn server(
                 let connection_span = info_span!("connection", %http_server);
                 let max_inflight_requests = max_inflight_requests.clone();
                 let server_termination_watcher = server_termination_watcher.clone();
+                let mut connection_termination_watcher = server_termination_watcher.clone();
                 let log_forwarder_sender = log_forwarder_sender.clone();
                 async move {
                     let (connection_drop_sender, connection_drop_watcher) = watch::channel(());
@@ -615,6 +617,10 @@ pub async fn server(
                                     debug!(%http_server, "Deployment watcher dropped, gracefully shutting down connection");
                                     break conn.as_mut().await;
                                 }
+                            }
+                            _ = connection_termination_watcher.changed() => {
+                                debug!(%http_server, "Server shutdown requested, closing connection");
+                                break Ok(());
                             }
                         }
                     };

@@ -1466,10 +1466,9 @@ pub(crate) async fn poll_status(
             _ = termination_watcher.changed() => {
                 debug!("Shutdown requested");
                 let _ = status_stream_sender
-                    .send(TonicResult::Err(tonic::Status::aborted(
+                    .try_send(TonicResult::Err(tonic::Status::aborted(
                         "server is shutting down",
-                    )))
-                    .await;
+                    )));
                 return;
             }
         }
