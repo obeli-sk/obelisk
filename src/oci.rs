@@ -216,13 +216,13 @@ pub(crate) async fn pull_to_cache_dir(
             component_metadata,
         ));
     }
-    info!("Pulling image to {wasm_path:?}");
     pull_blob_to_file(
         client.client.as_ref(),
         image,
         &wasm_path,
         &layer,
         &content_digest,
+        "image",
     )
     .await
     .with_context(|| format!("Unable to pull image {image}"))?;
@@ -300,16 +300,22 @@ pub(crate) async fn pull_js_to_cache(
         });
     }
 
-    info!("Pulling JS source to {js_path:?}");
     let layer_desc = OciDescriptor {
         digest: layer.digest,
         size: layer.size,
         media_type: layer.media_type,
         ..Default::default()
     };
-    pull_blob_to_file(&raw_client, image, &js_path, &layer_desc, &content_digest)
-        .await
-        .with_context(|| format!("Unable to pull JS image {image}"))?;
+    pull_blob_to_file(
+        &raw_client,
+        image,
+        &js_path,
+        &layer_desc,
+        &content_digest,
+        "JS source",
+    )
+    .await
+    .with_context(|| format!("Unable to pull JS image {image}"))?;
 
     Ok(JsCacheResult {
         js_path,
@@ -387,16 +393,22 @@ pub(crate) async fn pull_exec_to_cache(
         });
     }
 
-    info!("Pulling exec script to {exec_path:?}");
     let layer_desc = OciDescriptor {
         digest: layer.digest,
         size: layer.size,
         media_type: layer.media_type,
         ..Default::default()
     };
-    pull_blob_to_file(&raw_client, image, &exec_path, &layer_desc, &content_digest)
-        .await
-        .with_context(|| format!("Unable to pull exec image {image}"))?;
+    pull_blob_to_file(
+        &raw_client,
+        image,
+        &exec_path,
+        &layer_desc,
+        &content_digest,
+        "exec script",
+    )
+    .await
+    .with_context(|| format!("Unable to pull exec image {image}"))?;
 
     // Set executable permissions on the cached file.
     #[cfg(unix)]
@@ -623,18 +635,19 @@ pub(crate) async fn push_exec(
 
 /// Pull a single blob layer to a local file, verifying the sha256 digest.
 /// Writes atomically via a temp file to avoid partial reads.
+#[instrument(skip_all, fields(%image))]
 async fn pull_blob_to_file(
     client: &oci_client::Client,
     image: &Reference,
     dest_path: &Path,
     layer: &OciDescriptor,
     requested_content_digest: &ContentDigest,
+    what: &'static str,
 ) -> anyhow::Result<()> {
-    debug!("Pulling blob: {:?}", image);
-
     let dest_dir = dest_path
         .parent()
         .context("dest_path must have a parent directory")?;
+    info!("Pulling {what} to {dest_path:?}");
     let temp_file = tempfile::NamedTempFile::new_in(dest_dir)?;
     let temp_path = temp_file.path().to_path_buf();
     temp_file.keep()?;
@@ -644,6 +657,7 @@ async fn pull_blob_to_file(
         client.pull_blob(image, layer, &mut buffer).await?;
         buffer.flush().await?;
     }
+    debug!("Calculating sha256 digest");
     let actual_content_digest = calculate_sha256_file(&temp_path).await?;
     if *requested_content_digest != actual_content_digest {
         let _ = tokio::fs::remove_file(&temp_path).await;
@@ -654,6 +668,7 @@ async fn pull_blob_to_file(
     tokio::fs::rename(&temp_path, dest_path)
         .await
         .with_context(|| format!("cannot rename {temp_path:?} to {dest_path:?}"))?;
+    debug!("Pulling blob done");
     Ok(())
 }
 
