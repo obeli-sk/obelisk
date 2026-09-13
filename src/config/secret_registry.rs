@@ -35,8 +35,16 @@ pub(crate) struct PublicEnvToml {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("environment variable `{0}` is not available to deployments")]
-pub(crate) struct SecretViolation(pub(crate) String);
+pub(crate) enum PublicEnvViolation {
+    #[error(
+        "environment variable `{0}` is not declared in server.toml `[public_env].allowed`; add it, or remove the deployment reference:\n\n[public_env]\nallowed = [\"{0}\"]"
+    )]
+    Undeclared(String),
+    #[error(
+        "environment variable `{0}` is registered as sensitive and cannot be exposed to deployments as plaintext; reference its logical secret name through an activity secret mechanism, or remove the plaintext reference"
+    )]
+    Sensitive(String),
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct SecretRegistry {
@@ -81,9 +89,14 @@ impl SecretRegistry {
     }
 
     /// Look up an operator-allowed public value captured during startup.
-    pub(crate) fn public_env_lookup(&self, name: &str) -> Result<Option<String>, SecretViolation> {
-        if self.sensitive.contains(name) || !self.public_allowed.contains(name) {
-            Err(SecretViolation(name.to_owned()))
+    pub(crate) fn public_env_lookup(
+        &self,
+        name: &str,
+    ) -> Result<Option<String>, PublicEnvViolation> {
+        if self.sensitive.contains(name) {
+            Err(PublicEnvViolation::Sensitive(name.to_owned()))
+        } else if !self.public_allowed.contains(name) {
+            Err(PublicEnvViolation::Undeclared(name.to_owned()))
         } else {
             Ok(self.public_values.get(name).cloned())
         }
@@ -92,8 +105,16 @@ impl SecretRegistry {
     pub(crate) fn deployment_env_lookup(
         &self,
         name: &str,
-    ) -> Result<Option<String>, SecretViolation> {
+    ) -> Result<Option<String>, PublicEnvViolation> {
         self.public_env_lookup(name)
+    }
+
+    pub(crate) fn public_env_is_allowed(&self, name: &str) -> bool {
+        self.public_allowed.contains(name) && !self.sensitive.contains(name)
+    }
+
+    pub(crate) fn public_env_is_sensitive(&self, name: &str) -> bool {
+        self.sensitive.contains(name)
     }
 
     pub(crate) fn secret_lookup(&self, name: &str) -> Option<SecretString> {

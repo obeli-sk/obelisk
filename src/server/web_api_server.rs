@@ -161,7 +161,7 @@ pub(crate) struct WebApiState {
         deployment::DeploymentSubmitErrorBody,
         deployment::GenericErrorBody,
         deployment::SubmitPackageErrorBody,
-        deployment::UnregisteredSecretsErrorBody,
+        deployment::MissingRuntimeConfigErrorBody,
         deployment::FileIssue,
         deployment::DigestMismatch,
         backtrace::BacktraceInfoSer,
@@ -4339,8 +4339,10 @@ pub(crate) mod deployment {
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
-    pub struct UnregisteredSecretsErrorBody {
+    pub struct MissingRuntimeConfigErrorBody {
         pub error: String,
+        #[serde(default)]
+        pub public_env: Vec<String>,
         pub secrets: Vec<String>,
     }
 
@@ -4353,7 +4355,7 @@ pub(crate) mod deployment {
     #[serde(untagged)]
     pub enum DeploymentSubmitErrorBody {
         InvalidConfig(GenericErrorBody),
-        UnregisteredSecrets(UnregisteredSecretsErrorBody),
+        MissingRuntimeConfig(MissingRuntimeConfigErrorBody),
     }
 
     impl From<&server::SubmitFileIssue> for FileIssue {
@@ -4589,21 +4591,19 @@ pub(crate) mod deployment {
                     accept,
                 });
             }
-            Err(server::SubmitDeploymentError::UnregisteredSecrets(names)) => {
+            Err(server::SubmitDeploymentError::MissingRuntimeConfig(missing)) => {
                 return Ok(match accept {
                     AcceptHeader::Json => pretty_json_response(
                         StatusCode::BAD_REQUEST,
-                        &UnregisteredSecretsErrorBody {
-                            error: "unregistered_secrets".to_string(),
-                            secrets: names.into_iter().collect(),
+                        &MissingRuntimeConfigErrorBody {
+                            error: "missing_runtime_config".to_string(),
+                            public_env: missing.public_env.into_iter().collect(),
+                            secrets: missing.secrets.into_iter().collect(),
                         },
                     ),
                     AcceptHeader::Text => HttpResponse {
                         status: StatusCode::BAD_REQUEST,
-                        message: format!(
-                            "deployment references unregistered server secrets: {}",
-                            names.into_iter().collect::<Vec<_>>().join(", ")
-                        ),
+                        message: missing.to_string(),
                         accept,
                     }
                     .into_response(),
@@ -4759,6 +4759,11 @@ pub(crate) mod deployment {
             crate::command::server::SwitchError::NotFound => {
                 HttpResponse::not_found(accept, Some("deployment"))
             }
+            crate::command::server::SwitchError::MissingRuntimeConfig(e) => HttpResponse {
+                status: StatusCode::BAD_REQUEST,
+                message: e.to_string(),
+                accept,
+            },
             crate::command::server::SwitchError::Other(e) => HttpResponse {
                 status: StatusCode::BAD_REQUEST,
                 message: format!("{e:#}"),

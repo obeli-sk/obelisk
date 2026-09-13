@@ -142,8 +142,7 @@ fn main() -> Result<(), anyhow::Error> {
             ))
         }
 
-        // `deployment verify` uses server configuration and compilation machinery locally, but
-        // never opens the database or uses its content-addressed store.
+        // `deployment verify` aliases `server verify --skip-db --deployment <PATH>`.
         Subcommand::Deployment(DeploymentArgs {
             command: Deployment::Verify(args),
             token: _,

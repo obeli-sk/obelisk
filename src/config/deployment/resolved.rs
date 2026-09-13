@@ -20,7 +20,9 @@ use crate::config::env_var::{
 use crate::config::file_provider::{
     parse_js_graph_from_cas, parse_wit_files_from_cas, read_package_blob, verify_content_digest,
 };
-use crate::config::secret_registry::{RestrictedSecretRegistry, SecretRegistry, SecretViolation};
+use crate::config::secret_registry::{
+    PublicEnvViolation, RestrictedSecretRegistry, SecretRegistry,
+};
 use crate::config::{content_digest_to_exec_file, wasm_cache_metadata_dir};
 use crate::oci;
 use anyhow::{Context, anyhow, bail, ensure};
@@ -2166,7 +2168,7 @@ pub(crate) fn resolve_env_vars_plaintext(
     secret_registry: &SecretRegistry,
 ) -> Result<Arc<[EnvVar]>, EnvVarError> {
     // A registered secret can never be forwarded to a guest as a plaintext env var, even
-    // with `ignore_missing`: `EnvVarError::Secret` is always fatal, only `Missing` is skipped.
+    // with `ignore_missing`: undeclared public env is always fatal, only `Missing` is skipped.
     let empty_if_missing = |key: String, err: EnvVarError| match err {
         EnvVarError::Missing(_) if ignore_missing => Ok(EnvVar {
             key,
@@ -2186,7 +2188,7 @@ pub(crate) fn resolve_env_vars_plaintext(
             EnvVarConfig::Key(key) => match secret_registry.deployment_env_lookup(&key) {
                 Ok(Some(val)) => Ok(EnvVar { key, val }),
                 Ok(None) => empty_if_missing(key.clone(), EnvVarError::Missing(key)),
-                Err(violation) => Err(EnvVarError::Secret(violation)),
+                Err(violation) => Err(EnvVarError::PublicEnv(violation)),
             },
         })
         .collect::<Result<_, _>>()
@@ -2199,7 +2201,7 @@ pub(crate) enum ResolveAllowedHostsError {
     #[error(transparent)]
     EnvVarsMissing(#[from] EnvVarsMissing),
     #[error(transparent)]
-    SecretViolation(#[from] SecretViolation),
+    PublicEnvViolation(#[from] PublicEnvViolation),
     #[error("cannot parse HTTP method `{0}`")]
     InvalidMethod(String),
     #[error("use `methods = \"*\"` to allow all methods, not `methods = [\"*\"]`")]
@@ -2298,7 +2300,7 @@ pub(crate) fn resolve_allowed_hosts(
                         EnvVarsMissing(vec![var]),
                     )));
                 }
-                Err(EnvVarError::Secret(violation)) => return Some(Err(violation.into())),
+                Err(EnvVarError::PublicEnv(violation)) => return Some(Err(violation.into())),
             };
             let request_url_regex = match entry.request_url_regex {
                 Some(pattern) => {
@@ -2315,7 +2317,7 @@ pub(crate) fn resolve_allowed_hosts(
                                 EnvVarsMissing(vec![var]),
                             )));
                         }
-                        Err(EnvVarError::Secret(violation)) => {
+                        Err(EnvVarError::PublicEnv(violation)) => {
                             return Some(Err(violation.into()));
                         }
                     };

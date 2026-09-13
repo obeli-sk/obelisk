@@ -1290,6 +1290,8 @@ message SubmitDeploymentErrorDetail {
     repeated FileIssue oversized_files = 5;
     // Secret names referenced by the deployment but absent from the server registry.
     repeated string unregistered_secrets = 6;
+    // Environment variables referenced by the deployment but absent from public_env.allowed.
+    repeated string undeclared_public_env = 7;
 }
 
 message FileIssue {

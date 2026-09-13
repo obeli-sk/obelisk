@@ -1849,6 +1849,9 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
                 "another deployment submit or switch is already running",
             ),
             server::SwitchError::NotFound => tonic::Status::not_found("deployment not found"),
+            server::SwitchError::MissingRuntimeConfig(e) => {
+                tonic::Status::failed_precondition(e.to_string())
+            }
             server::SwitchError::Other(e) => tonic::Status::failed_precondition(format!("{e:#}")),
         })?;
         info!(%deployment_id, "Deployment switch outcome: {outcome}");
@@ -1914,8 +1917,8 @@ impl grpc_gen::deployment_repository_server::DeploymentRepository for GrpcServer
             Err(server::SubmitDeploymentError::Package(pkg)) => {
                 return Err(submit_package_status(&pkg));
             }
-            Err(server::SubmitDeploymentError::UnregisteredSecrets(names)) => {
-                return Err(unregistered_secrets_status(names));
+            Err(server::SubmitDeploymentError::MissingRuntimeConfig(missing)) => {
+                return Err(missing_runtime_config_status(missing));
             }
         };
         tracing::Span::current().record("deployment_id", tracing::field::display(&deployment_id));
@@ -2572,6 +2575,7 @@ fn submit_package_status(pkg: &server::SubmitPackageError) -> tonic::Status {
             .map(file_issue_to_grpc)
             .collect(),
         unregistered_secrets: Vec::new(),
+        undeclared_public_env: Vec::new(),
     };
     let message = format!(
         "deployment package is incomplete or invalid: {} missing field(s), {} missing file(s), \
@@ -2589,15 +2593,18 @@ fn submit_package_status(pkg: &server::SubmitPackageError) -> tonic::Status {
     )
 }
 
-fn unregistered_secrets_status(names: std::collections::BTreeSet<String>) -> tonic::Status {
+fn missing_runtime_config_status(
+    missing: crate::command::server::MissingRuntimeConfigError,
+) -> tonic::Status {
     use prost::Message as _;
     let detail = grpc_gen::SubmitDeploymentErrorDetail {
-        unregistered_secrets: names.into_iter().collect(),
+        unregistered_secrets: missing.secrets.into_iter().collect(),
+        undeclared_public_env: missing.public_env.into_iter().collect(),
         ..Default::default()
     };
     tonic::Status::with_details(
         tonic::Code::FailedPrecondition,
-        "deployment references secrets that are not registered by the server",
+        "deployment references runtime configuration that is not declared by the server",
         detail.encode_to_vec().into(),
     )
 }

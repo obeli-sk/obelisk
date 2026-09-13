@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `${...}` interpolation in all deployment configuration values. Variables registered as secrets
   remain available only through their logical secret names. This prevents platform-provided
   variables, including sensitive Kubernetes values, from being exposed through `deployment.toml`.
+- *(config)* Deployment verification reports every undeclared public environment variable and
+  unregistered secret together with a sorted, pasteable `server.toml` snippet. `server verify
+  --fix` and its `deployment verify` alias update both `[public_env].allowed` and `[secrets]`.
+  Startup, submission, and deployment-switch failure events include the complete missing runtime
+  configuration lists.
 - **Breaking:** *(workflow-js, webhook-js)* Obelisk runtime APIs must now be imported from the
   versioned `obelisk:workflow@1.0.0` or `obelisk:webhook@1.0.0` synthetic modules. Dynamic
   `call` and `schedule` operations are available separately from the corresponding
