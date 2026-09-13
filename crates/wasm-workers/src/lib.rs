@@ -1,5 +1,5 @@
 use concepts::{ComponentType, FunctionFqn, FunctionMetadata, StrVariant};
-use std::{error::Error, fmt::Debug, path::Path};
+use std::{error::Error, fmt::Debug, path::Path, sync::Arc};
 use tracing::{debug, trace};
 use tracing_error::SpanTrace;
 use utils::wasm_tools::{self, DecodeError, ExIm, WasmComponent};
@@ -95,6 +95,8 @@ pub mod envvar {
 pub struct RunnableComponent {
     #[debug(skip)]
     pub wasmtime_component: wasmtime::component::Component,
+    #[debug(skip)]
+    pub wasm_bytes: Arc<[u8]>,
     pub wasm_component: WasmComponent,
 }
 impl RunnableComponent {
@@ -104,6 +106,9 @@ impl RunnableComponent {
         component_type: ComponentType,
     ) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
+        let wasm_bytes: Arc<[u8]> = std::fs::read(wasm_path)
+            .map_err(|err| DecodeError::new_with_source(format!("cannot read {wasm_path:?}"), err))?
+            .into();
         let wasm_component = WasmComponent::new(wasm_path, component_type)?;
         trace!("Decoding using wasmtime");
         let wasmtime_component = {
@@ -120,6 +125,7 @@ impl RunnableComponent {
         };
         Ok(Self {
             wasmtime_component,
+            wasm_bytes,
             wasm_component,
         })
     }

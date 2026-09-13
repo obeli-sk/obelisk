@@ -169,10 +169,18 @@ impl WorkflowConfig {
     }
 
     #[must_use]
-    pub fn snapshot_due(&self, history_event_count: usize) -> bool {
-        self.snapshot_every_n_events()
-            .is_some_and(|interval| history_event_count != 0 && history_event_count % interval == 0)
+    pub fn snapshot_due(&self, current: &Version, previous: Option<&Version>) -> bool {
+        snapshot_due(self.snapshot_every_n_events(), current, previous)
     }
+}
+
+fn snapshot_due(interval: Option<usize>, current: &Version, previous: Option<&Version>) -> bool {
+    interval.is_some_and(|interval| {
+        let interval = u64::try_from(interval).expect("usize fits in u64 on supported targets");
+        let current_bucket = u64::from(current.0) / interval;
+        let previous_bucket = previous.map_or(0, |version| u64::from(version.0) / interval);
+        current_bucket > previous_bucket
+    })
 }
 
 pub struct WorkflowWorkerCompiled {
@@ -1965,6 +1973,23 @@ pub(crate) mod tests {
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
     };
+
+    #[test]
+    fn snapshot_schedule_uses_crossed_history_boundaries() {
+        assert!(!snapshot_due(None, &Version::new(100), None));
+        assert!(!snapshot_due(Some(10), &Version::new(9), None));
+        assert!(snapshot_due(Some(10), &Version::new(10), None));
+        assert!(snapshot_due(
+            Some(10),
+            &Version::new(21),
+            Some(&Version::new(10))
+        ));
+        assert!(!snapshot_due(
+            Some(10),
+            &Version::new(29),
+            Some(&Version::new(21))
+        ));
+    }
     use insta::assert_json_snapshot;
     use rstest::rstest;
 

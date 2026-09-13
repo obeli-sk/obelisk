@@ -3659,6 +3659,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wasmtime-wasi-io",
+ "wasmtime-wizer",
  "webhook-js-runtime-builder",
  "wiremock",
  "wit-component 0.254.0",
