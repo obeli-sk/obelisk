@@ -7,7 +7,7 @@ use concepts::{
         AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
         DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
         ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventCode, SystemEventFilter,
-        SystemEventLevel,
+        SystemEventLevel, Version, WorkflowSnapshot,
     },
     time::ClockFn,
 };
@@ -599,6 +599,52 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
     );
     drop(admin);
     drop(cas);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn workflow_snapshot_is_collected_after_execution(database: Database) {
+    set_up();
+    let clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let deployment_id = DeploymentId::generate();
+    insert_deployment(db_pool.as_ref(), deployment_id, clock.now()).await;
+    let execution_id = create_execution(db_pool.as_ref(), &clock, deployment_id, true).await;
+    let cas = db_pool.cas_conn().await.unwrap();
+    let snapshot_digest = cas.write_blob(b"workflow snapshot").await.unwrap();
+    let component_id = ComponentId::dummy_workflow();
+    let connection = db_pool.connection().await.unwrap();
+    connection
+        .upsert_workflow_snapshot(WorkflowSnapshot {
+            execution_id: execution_id.clone(),
+            version: Version::new(2),
+            component_digest: component_id.component_digest,
+            prepared_component_digest: snapshot_digest.clone(),
+            snapshot_digest: snapshot_digest.clone(),
+            processed_response_cursors: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let gc = db_pool.cas_gc_conn().await.unwrap();
+    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 0);
+    assert!(cas.contains_blob(&snapshot_digest).await.unwrap());
+
+    let admin = db_pool.admin_conn().await.unwrap();
+    assert_eq!(
+        admin
+            .delete_execution_tree(&execution_id, false)
+            .await
+            .unwrap(),
+        DeleteExecutionTreeResult::Deleted
+    );
+    collect_execution_garbage(admin.as_ref()).await;
+    assert_eq!(gc.gc_cas(false, 100).await.unwrap().deleted_blobs, 1);
+    assert!(!cas.contains_blob(&snapshot_digest).await.unwrap());
+
+    drop((admin, connection, gc, cas));
     db_close.close().await;
 }
 

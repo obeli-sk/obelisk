@@ -31,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(workflow, experimental)* Optional workflow snapshots can persist resumable Wizer components to
   CAS every configured number of history events and continue replay from the latest snapshot.
   Enable the experimental feature with `[workflows].snapshot_every_n_events` in `server.toml`; it is
-  disabled by default. Snapshot format and behavior may change, and snapshot garbage collection is
-  not implemented yet.
+  disabled by default. Snapshot format and behavior may change. Snapshot blobs are garbage-collected
+  after their execution is deleted by retention or an explicit deletion.
 
 - *(admin)* Added operator-only gRPC and `/v1/admin` APIs, plus `obelisk admin` commands, for
   deleting one or more execution trees and inactive deployments and applying bounded retention

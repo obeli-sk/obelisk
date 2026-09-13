@@ -6584,7 +6584,7 @@ impl CasGc for PostgresConnection {
         let mut orphans = tx
             .query(
                 "SELECT digest, size FROM t_file WHERE digest NOT IN \
-                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL) \
+                 (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL UNION SELECT snapshot_digest FROM t_workflow_snapshot) \
                  ORDER BY digest LIMIT $1",
                 &[&(i64::from(limit) + 1)],
             )
