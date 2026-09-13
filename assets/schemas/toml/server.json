@@ -737,7 +737,7 @@
       "type": "object",
       "properties": {
         "snapshot_every_n_events": {
-          "description": "Persist a resumable workflow snapshot after each configured number of history events.\nDisabled when unset.",
+          "description": "EXPERIMENTAL: Persist a resumable workflow snapshot after each configured number of history\nevents. Disabled when unset. The snapshot format and behavior may change.",
           "type": [
             "integer",
             "null"

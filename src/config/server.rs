@@ -526,8 +526,8 @@ impl WasmGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    /// Persist a resumable workflow snapshot after each configured number of history events.
-    /// Disabled when unset.
+    /// EXPERIMENTAL: Persist a resumable workflow snapshot after each configured number of history
+    /// events. Disabled when unset. The snapshot format and behavior may change.
     #[schemars(range(min = 1))]
     pub(crate) snapshot_every_n_events: Option<usize>,
     /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
