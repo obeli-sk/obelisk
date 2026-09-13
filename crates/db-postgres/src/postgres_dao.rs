@@ -4419,6 +4419,14 @@ impl DbConnection for PostgresConnection {
             )
             .await?;
         tx.execute(
+            "DELETE FROM t_workflow_snapshot WHERE execution_id = $1 AND version != $2",
+            &[
+                &snapshot.execution_id.to_string(),
+                &i64::from(snapshot.version.0),
+            ],
+        )
+        .await?;
+        tx.execute(
             "DELETE FROM t_workflow_snapshot_oversized WHERE execution_id = $1",
             &[&snapshot.execution_id.to_string()],
         )

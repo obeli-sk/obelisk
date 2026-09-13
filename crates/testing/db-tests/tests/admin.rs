@@ -617,24 +617,57 @@ async fn workflow_snapshot_gc_keeps_latest_running_and_clears_finished(database:
     let old_snapshot_digest = cas.write_blob(b"old workflow snapshot").await.unwrap();
     let snapshot_digest = cas.write_blob(b"latest workflow snapshot").await.unwrap();
     let component_id = ComponentId::dummy_workflow();
+    let stale_prepared_component_digest = old_snapshot_digest.clone();
     let prepared_component_digest = snapshot_digest.clone();
     let connection = db_pool.connection().await.unwrap();
-    for (version, digest) in [
-        (1, old_snapshot_digest.clone()),
-        (2, snapshot_digest.clone()),
+    for (version, prepared_digest, snapshot_digest) in [
+        (
+            20,
+            stale_prepared_component_digest.clone(),
+            old_snapshot_digest.clone(),
+        ),
+        (
+            2,
+            prepared_component_digest.clone(),
+            snapshot_digest.clone(),
+        ),
     ] {
         connection
             .upsert_workflow_snapshot(WorkflowSnapshot {
                 execution_id: execution_id.clone(),
                 version: Version::new(version),
                 component_digest: component_id.component_digest.clone(),
-                prepared_component_digest: prepared_component_digest.clone(),
-                snapshot_digest: digest,
+                prepared_component_digest: prepared_digest,
+                snapshot_digest,
                 processed_response_cursors: Vec::new(),
             })
             .await
             .unwrap();
     }
+    assert!(
+        connection
+            .get_latest_workflow_snapshot(
+                &execution_id,
+                &component_id.component_digest,
+                &stale_prepared_component_digest,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        connection
+            .get_latest_workflow_snapshot(
+                &execution_id,
+                &component_id.component_digest,
+                &prepared_component_digest,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        Version::new(2)
+    );
     connection
         .upsert_oversized_workflow_snapshot(OversizedWorkflowSnapshot {
             execution_id: execution_id.clone(),

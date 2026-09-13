@@ -6354,6 +6354,14 @@ impl DbConnection for SqlitePool {
                     },
                 )?;
                 tx.execute(
+                    "DELETE FROM t_workflow_snapshot \
+                     WHERE execution_id = :execution_id AND version != :version",
+                    named_params! {
+                        ":execution_id": snapshot.execution_id.to_string(),
+                        ":version": snapshot.version.0,
+                    },
+                )?;
+                tx.execute(
                     "DELETE FROM t_workflow_snapshot_oversized WHERE execution_id = ?1",
                     [snapshot.execution_id.to_string()],
                 )?;
