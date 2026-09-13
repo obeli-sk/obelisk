@@ -33,8 +33,15 @@ impl Fetcher for WasiFetcher {
         for (name, value) in http_req.headers() {
             builder = builder.header(name.as_str(), value.to_str().map_err(to_js_err)?);
         }
+        let body_forbidden =
+            http_req.method() == http::Method::GET || http_req.method() == http::Method::HEAD;
         let body_bytes = http_req.into_body();
-        let wstd_req = builder.body(Body::from(body_bytes)).map_err(to_js_err)?;
+        let body = if body_forbidden && body_bytes.is_empty() {
+            Body::empty()
+        } else {
+            Body::from(body_bytes)
+        };
+        let wstd_req = builder.body(body).map_err(to_js_err)?;
 
         // Send via WASIp2 HTTP
         let response = Client::new().send(wstd_req).await.map_err(to_js_err)?;
