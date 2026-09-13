@@ -26,6 +26,7 @@ pub struct LoadedSnapshot {
 }
 
 /// Write snapshot bytes to the CAS before publishing their durable execution index.
+#[expect(clippy::too_many_arguments)]
 pub async fn persist_snapshot(
     cas: &dyn Cas,
     db: &dyn DbConnection,
@@ -126,11 +127,11 @@ impl AsyncifyWorkflowModules {
 }
 
 fn is_durable_import(module: &str, name: &str) -> bool {
-    module.contains(':')
-        && !module.starts_with("wasi:")
-        && !module.starts_with("obelisk:types/")
-        && !(module.starts_with("obelisk:workflow/workflow-support")
-            && name == "execution-id-generate")
+    if !module.contains(':') || module.starts_with("wasi:") || module.starts_with("obelisk:types/")
+    {
+        return false;
+    }
+    !module.starts_with("obelisk:workflow/workflow-support") || name != "execution-id-generate"
 }
 
 fn imports_durable_function(module: &[u8]) -> anyhow::Result<bool> {
@@ -210,7 +211,7 @@ fn wrap_durable_imports(module: &[u8]) -> anyhow::Result<Vec<u8>> {
         .memories
         .iter()
         .next()
-        .map(|memory| memory.id())
+        .map(walrus::Memory::id)
         .context("Asyncified workflow module has no linear memory")?;
     let memory_ty = module.memories.get_mut(memory);
     if memory_ty.memory64 || memory_ty.page_size_log2.is_some_and(|size| size != 16) {
@@ -348,7 +349,6 @@ fn wrap_durable_imports(module: &[u8]) -> anyhow::Result<Vec<u8>> {
                     }
                 },
             );
-        drop(body);
         let wrapper = builder.finish(param_locals, &mut module.funcs);
         for function_id in &existing_functions {
             let function = module.funcs.get_mut(*function_id).kind.unwrap_local_mut();
@@ -428,7 +428,6 @@ fn wrap_durable_imports(module: &[u8]) -> anyhow::Result<Vec<u8>> {
         for local in &result_locals {
             body.local_get(*local);
         }
-        drop(body);
         let boundary = builder.finish(param_locals, &mut module.funcs);
         module.exports.get_mut(export_id).item = walrus::ExportItem::Function(boundary);
     }
@@ -479,7 +478,6 @@ fn wrap_durable_imports(module: &[u8]) -> anyhow::Result<Vec<u8>> {
                     );
             },
         );
-    drop(body);
     module.start = Some(builder.finish(Vec::new(), &mut module.funcs));
     Ok(module.emit_wasm())
 }

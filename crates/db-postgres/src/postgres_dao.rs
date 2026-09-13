@@ -4376,8 +4376,10 @@ impl DbConnection for PostgresConnection {
                 prepared_component_digest: prepared_component_digest.clone(),
                 snapshot_digest: get(&row, "snapshot_digest")?,
                 processed_response_cursors: encoded
-                    .chunks_exact(4)
-                    .map(|bytes| ResponseCursor(u32::from_be_bytes(bytes.try_into().unwrap())))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|bytes| ResponseCursor(u32::from_be_bytes(*bytes)))
                     .collect(),
             })
         })

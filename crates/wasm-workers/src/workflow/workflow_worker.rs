@@ -903,7 +903,7 @@ impl WorkflowWorker {
             view.config.max_replay_captured_writes(),
             max_events_per_run,
             response_refresh_interval,
-            restored_snapshot_version.clone(),
+            restored_snapshot_version.as_ref(),
             &restored_processed_response_cursors,
         );
 
@@ -1118,12 +1118,12 @@ impl WorkflowWorker {
                     Err(err) => Err(RunError::ResultParsingError(err, Box::new(workflow_ctx))),
                 }
             }
-            Err(err) => Err(Self::call_error(err, workflow_ctx, assigned_fuel)),
+            Err(err) => Err(Self::call_error(&err, workflow_ctx, assigned_fuel)),
         }
     }
 
     fn call_error(
-        err: wasmtime::Error,
+        err: &wasmtime::Error,
         workflow_ctx: WorkflowCtx,
         assigned_fuel: Option<u64>,
     ) -> RunError {
@@ -1167,6 +1167,7 @@ impl WorkflowWorker {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn call_func_convert_result(
         store: Store<WorkflowCtx>,
         instance: wasmtime::component::Instance,
@@ -1279,7 +1280,7 @@ impl WorkflowWorker {
                         Ok(result) => Ok((result, workflow_ctx)),
                         Err(err) => Err(RunError::ResultParsingError(err, Box::new(workflow_ctx))),
                     },
-                    Err(err) => Err(Self::call_error(err, workflow_ctx, assigned_fuel)),
+                    Err(err) => Err(Self::call_error(&err, workflow_ctx, assigned_fuel)),
                 };
             }
         } else {
@@ -1788,7 +1789,7 @@ impl WorkflowWorker {
         &self,
         execution_id: ExecutionId,
     ) -> Result<usize, ReplayError> {
-        let captured = self.capture_backtraces(execution_id.clone()).await?;
+        let captured = Box::pin(self.capture_backtraces(execution_id.clone())).await?;
         let db_conn = self
             .db_pool
             .connection()
@@ -2150,7 +2151,7 @@ impl Worker for WorkflowWorker {
         if ctx.component_digest != self.config.component_id.component_digest {
             info!("Auto-upgrading execution");
             let stopwatch = std::time::Instant::now();
-            match self.auto_upgrade_locked(ctx).await? {
+            match Box::pin(self.auto_upgrade_locked(ctx)).await? {
                 AutoUpgradeOutcome::Succeeded => {
                     info!("Execution auto-upgraded in {:?}", stopwatch.elapsed());
                 }
@@ -2279,6 +2280,7 @@ pub mod test {
 }
 
 #[cfg(test)]
+#[allow(clippy::large_futures)]
 pub(crate) mod tests {
     use super::*;
     use crate::activity::activity_worker::test::{compile_activity, compile_activity_stub};

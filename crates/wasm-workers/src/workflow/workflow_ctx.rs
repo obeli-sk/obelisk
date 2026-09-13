@@ -1034,7 +1034,7 @@ impl WorkflowCtx {
         max_replay_captured_writes: Option<usize>,
         max_events_per_run: Option<usize>,
         response_refresh_interval: Option<usize>,
-        replay_from: Option<Version>,
+        replay_from: Option<&Version>,
         processed_response_cursors: &[ResponseCursor],
     ) -> Self {
         let mut wasi_ctx_builder = WasiCtxBuilder::new();
@@ -1045,11 +1045,7 @@ impl WorkflowCtx {
         let execution_id = db_connection.execution_id().clone();
         let replay_event_history: Vec<_> = event_history
             .iter()
-            .filter(|(_, event_version)| {
-                replay_from
-                    .as_ref()
-                    .is_none_or(|from| *event_version >= *from)
-            })
+            .filter(|(_, event_version)| replay_from.is_none_or(|from| *event_version >= *from))
             .cloned()
             .collect();
         let event_call_cursor = EventCallCursor::new(version, &replay_event_history);
@@ -1074,7 +1070,7 @@ impl WorkflowCtx {
                 max_replay_captured_writes,
                 max_events_per_run,
                 response_refresh_interval,
-                replay_from.as_ref(),
+                replay_from,
                 processed_response_cursors,
             ),
             rng: StdRng::seed_from_u64(seed),

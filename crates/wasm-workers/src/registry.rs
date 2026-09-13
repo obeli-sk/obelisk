@@ -59,8 +59,8 @@ impl ReplayWorker {
         backtrace_capture: BacktraceCapture,
     ) -> Result<ReplayResponse, ReplayError> {
         match self {
-            Self::Wasm(worker) => worker.replay(execution_id, backtrace_capture).await,
-            Self::Js(worker) => worker.replay(execution_id, backtrace_capture).await,
+            Self::Wasm(worker) => Box::pin(worker.replay(execution_id, backtrace_capture)).await,
+            Self::Js(worker) => Box::pin(worker.replay(execution_id, backtrace_capture)).await,
         }
     }
 
@@ -69,8 +69,8 @@ impl ReplayWorker {
         execution_id: ExecutionId,
     ) -> Result<usize, ReplayError> {
         match self {
-            Self::Wasm(worker) => worker.persist_backtraces(execution_id).await,
-            Self::Js(worker) => worker.persist_backtraces(execution_id).await,
+            Self::Wasm(worker) => Box::pin(worker.persist_backtraces(execution_id)).await,
+            Self::Js(worker) => Box::pin(worker.persist_backtraces(execution_id)).await,
         }
     }
 
@@ -82,14 +82,10 @@ impl ReplayWorker {
     ) -> Result<AdvanceResponse, AdvanceError> {
         match self {
             Self::Wasm(worker) => {
-                worker
-                    .advance(execution_id, requested, backtrace_capture)
-                    .await
+                Box::pin(worker.advance(execution_id, requested, backtrace_capture)).await
             }
             Self::Js(worker) => {
-                worker
-                    .advance(execution_id, requested, backtrace_capture)
-                    .await
+                Box::pin(worker.advance(execution_id, requested, backtrace_capture)).await
             }
         }
     }

@@ -246,7 +246,7 @@ impl WorkflowJsWorker {
         &self,
         execution_id: ExecutionId,
     ) -> Result<usize, ReplayError> {
-        let captured = self.capture_backtraces(execution_id.clone()).await?;
+        let captured = Box::pin(self.capture_backtraces(execution_id.clone())).await?;
         let db_conn = self
             .inner
             .db_pool
@@ -732,6 +732,7 @@ impl WorkflowJsWorker {
 }
 
 #[cfg(test)]
+#[allow(clippy::large_futures)]
 mod tests {
     use super::*;
     use crate::RunnableComponent;
