@@ -79,6 +79,10 @@ skip = [
     { name = "wasm-metadata", version = "0.253" },
     { name = "wit-component", version = "0.253" },
     { name = "wit-parser", version = "0.253" },
+    # walrus 0.27 (used for workflow snapshot instrumentation) uses wasm-tools 0.245 and gimli 0.32
+    { name = "gimli", version = "0.32" },
+    { name = "wasmparser", version = "0.245" },
+    { name = "wasm-encoder", version = "0.245" },
     # wasm-compose 0.254 (wasmtime dep) uses wasm-tools 0.254, but its `wat` dep
     # pulls in wasm-tools 0.259 (canonical is 0.254, 0.259 is skipped)
     { name = "wasm-encoder", version = "0.259" },
