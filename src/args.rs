@@ -533,7 +533,7 @@ pub(crate) enum Deployment {
         )]
         api_url: String,
     },
-    /// Verify a local deployment without accessing the server database.
+    /// Alias for `server verify --skip-db --deployment <PATH>`.
     Verify(DeploymentVerifyArgs),
 }
 
@@ -737,7 +737,7 @@ pub(crate) struct VerifyArgs {
     /// since with no database there is no active deployment to fall back to.
     #[arg(long, requires = "deployment")]
     pub(crate) skip_db: bool,
-    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds.
+    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
     #[arg(long, requires = "deployment")]
     pub(crate) fix: bool,
 }
@@ -763,7 +763,7 @@ pub(crate) struct DeploymentVerifyArgs {
     /// Do not fail when a component's imports/exports fail type checking against the deployment.
     #[arg(long)]
     pub(crate) suppress_type_checking_errors: bool,
-    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds.
+    /// Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds.
     #[arg(long)]
     pub(crate) fix: bool,
 }

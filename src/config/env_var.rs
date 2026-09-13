@@ -1,4 +1,4 @@
-use crate::config::secret_registry::{SecretRegistry, SecretViolation};
+use crate::config::secret_registry::{PublicEnvViolation, SecretRegistry};
 use secrecy::SecretString;
 use std::collections::HashMap;
 
@@ -23,12 +23,29 @@ pub(crate) enum EnvVarError {
     #[error("environment variable not set: `{0}`")]
     Missing(String),
     #[error(transparent)]
-    Secret(#[from] SecretViolation),
+    PublicEnv(#[from] PublicEnvViolation),
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("environment variables not set: `{0:?}`")]
 pub(crate) struct EnvVarsMissing(pub(crate) Vec<String>);
+
+pub(crate) fn collect_env_var_references(
+    input: &str,
+    names: &mut std::collections::BTreeSet<String>,
+) {
+    let mut remaining = input;
+    while let Some(start) = remaining.find("${") {
+        remaining = &remaining[start + 2..];
+        if let Some(close) = remaining.find('}') {
+            let expression = &remaining[..=close];
+            let key_end = expression.find([':', '-', '}']).unwrap_or(expression.len());
+            if key_end > 0 {
+                names.insert(expression[..key_end].to_string());
+            }
+        }
+    }
+}
 
 pub(crate) fn interpolate_env_vars_plaintext(
     input: &str,
@@ -233,7 +250,7 @@ mod tests {
         // Even though the secret exists, interpolating it as plaintext is refused.
         let err =
             interpolate_env_vars_plaintext("Bearer ${OPENAI_API_KEY}", &registry).unwrap_err();
-        assert!(matches!(err, EnvVarError::Secret(_)), "got {err:?}");
+        assert!(matches!(err, EnvVarError::PublicEnv(_)), "got {err:?}");
     }
 
     #[test]

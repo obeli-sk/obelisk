@@ -1,6 +1,6 @@
 mod config_prepass;
 mod maintenance_gc;
-pub(crate) use config_prepass::secret_scaffold_snippet;
+pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
 
 use crate::ServerStartup;
 use crate::args::shadow;
@@ -782,25 +782,40 @@ pub(crate) async fn verify(
     let (config_holder, config, secret_registry) = if fix
         && let Some(server_config_path) = config_holder.config_source.as_deref()
     {
-        // Add unregistered secrets
-        let mut unregistered = BTreeSet::new();
+        let mut unregistered_secrets = BTreeSet::new();
+        let mut undeclared_public_env = BTreeSet::new();
         config_prepass::collect_unregistered_allowed_host_secrets(
             &config.outbound_http.allowed_hosts,
             &secret_registry,
-            &mut unregistered,
+            &mut unregistered_secrets,
+        );
+        config_prepass::collect_unregistered_public_env_from_allowed_hosts(
+            &config.outbound_http.allowed_hosts,
+            &secret_registry,
+            &mut undeclared_public_env,
         );
         if let Some(deployment) = deployment_opt.as_ref() {
             config_prepass::collect_deployment_unregistered_secrets(
                 deployment,
                 &secret_registry,
-                &mut unregistered,
+                &mut unregistered_secrets,
+            );
+            config_prepass::collect_deployment_unregistered_public_env(
+                deployment,
+                &secret_registry,
+                &mut undeclared_public_env,
             );
         }
-        if !unregistered.is_empty() {
-            config_prepass::fix_server_secret_scaffolds(server_config_path, &unregistered).await?;
+        if !unregistered_secrets.is_empty() || !undeclared_public_env.is_empty() {
+            config_prepass::fix_server_runtime_config_scaffolds(
+                server_config_path,
+                &undeclared_public_env,
+                &unregistered_secrets,
+            )
+            .await?;
 
             warn!(
-                "Scaffolded `[secrets]` entries in {}: {unregistered:?}",
+                "Scaffolded runtime configuration in {}: public_env={undeclared_public_env:?}, secrets={unregistered_secrets:?}",
                 server_config_path.display()
             );
             // Reload server config
@@ -877,6 +892,19 @@ pub(crate) async fn verify(
         )
         .await?
     };
+    config_prepass::preflight_runtime_config(
+        &config.outbound_http.allowed_hosts,
+        Some(&deployment),
+        &secret_registry,
+        verify_params.runtime_config_availability,
+    )
+    .map_err(|err| {
+        if can_suggest_fix {
+            anyhow::anyhow!("{err}\nRun again with `--fix` to update server.toml.")
+        } else {
+            err.into()
+        }
+    })?;
     let server_verified = Box::pin(server_verify(config, engines, secret_registry)).await?;
     config_prepass::preflight(
         &server_verified,
@@ -885,13 +913,9 @@ pub(crate) async fn verify(
     )
     .map_err(|err| {
         if can_suggest_fix
-            && let config_prepass::PreflightError::UnregisteredSecrets(secret_err) = &err
+            && let config_prepass::PreflightError::MissingRuntimeConfig(config_err) = &err
         {
-            anyhow::anyhow!(
-                "{secret_err}. Add them to server.toml, or remove the references. Run again with \
-                 `--fix` to scaffold them:\n\n{}",
-                config_prepass::secret_scaffold_snippet(&secret_err.names)
-            )
+            anyhow::anyhow!("{config_err}\nRun again with `--fix` to update server.toml.")
         } else {
             err.into()
         }
@@ -1798,6 +1822,33 @@ pub(crate) async fn run_internal(
         }
     };
     let engines = create_engines(&config, &prepared_dirs)?;
+    if let Err(err) = config_prepass::preflight_runtime_config(
+        &config.outbound_http.allowed_hosts,
+        Some(&deployment_resolved),
+        &secret_registry,
+        RuntimeConfigAvailability::Strict,
+    ) {
+        let (error, error_truncated) = bounded_system_event_text(&err.to_string());
+        let missing_public_env_count = err.public_env.len();
+        let missing_secret_count = err.secrets.len();
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::ServerStartupFailed,
+            None,
+            Some(active_deployment_id),
+            serde_json::json!({
+                "stage": "deployment_preflight",
+                "error": error,
+                "error_truncated": error_truncated,
+                "missing_public_env": err.public_env,
+                "missing_public_env_count": missing_public_env_count,
+                "missing_secrets": err.secrets,
+                "missing_secret_count": missing_secret_count,
+            }),
+        )
+        .await;
+        return Err(err.into());
+    }
     let server_verified = server_verify(config, engines, secret_registry).await?;
     if let Err(err) = config_prepass::preflight(
         &server_verified,
@@ -1914,6 +1965,7 @@ pub(crate) async fn run_internal(
         SwitchError::NotFound => {
             anyhow::anyhow!("active deployment {active_deployment_id} not found during startup")
         }
+        SwitchError::MissingRuntimeConfig(err) => err.into(),
         SwitchError::Other(err) => err,
     })?;
     let grpc_server = Arc::new(GrpcServer::new(
@@ -2622,8 +2674,8 @@ pub(crate) enum SubmitDeploymentError {
     Conflict(anyhow::Error),
     #[display("deployment package validation failed")]
     Package(SubmitPackageError),
-    #[display("deployment references unregistered server secrets")]
-    UnregisteredSecrets(BTreeSet<String>),
+    #[display("deployment references missing server runtime configuration")]
+    MissingRuntimeConfig(config_prepass::MissingRuntimeConfigError),
     #[display("deployment processing failed")]
     Other(anyhow::Error),
 }
@@ -2637,8 +2689,8 @@ impl From<anyhow::Error> for SubmitDeploymentError {
 impl SubmitDeploymentError {
     fn from_preflight(err: config_prepass::PreflightError) -> Self {
         match err {
-            config_prepass::PreflightError::UnregisteredSecrets(err) => {
-                Self::UnregisteredSecrets(err.names)
+            config_prepass::PreflightError::MissingRuntimeConfig(err) => {
+                Self::MissingRuntimeConfig(err)
             }
             err @ config_prepass::PreflightError::MissingSecretReplacements(_) => {
                 Self::Other(err.into())
@@ -2835,11 +2887,11 @@ pub(crate) async fn submit_deployment(
                 SubmitDeploymentError::Package(source) => {
                     ("package", format!("{source:?}"), None, None)
                 }
-                SubmitDeploymentError::UnregisteredSecrets(names) => (
-                    "unregistered_secrets",
+                SubmitDeploymentError::MissingRuntimeConfig(missing) => (
+                    "missing_runtime_config",
                     err.to_string(),
-                    Some(names.iter().take(32).collect::<Vec<_>>()),
-                    Some(names.len()),
+                    Some(missing.secrets.iter().collect::<Vec<_>>()),
+                    Some(missing.secrets.len()),
                 ),
                 SubmitDeploymentError::Other(source) => {
                     ("validation", format!("{source:#}"), None, None)
@@ -2857,6 +2909,14 @@ pub(crate) async fn submit_deployment(
                     "error_truncated": error_truncated,
                     "missing_secrets": missing_secrets,
                     "missing_secret_count": missing_secret_count,
+                    "missing_public_env": match err {
+                        SubmitDeploymentError::MissingRuntimeConfig(missing) => Some(missing.public_env.iter().collect::<Vec<_>>()),
+                        _ => None,
+                    },
+                    "missing_public_env_count": match err {
+                        SubmitDeploymentError::MissingRuntimeConfig(missing) => Some(missing.public_env.len()),
+                        _ => None,
+                    },
                 }),
             )
             .await;
@@ -3086,6 +3146,8 @@ pub(crate) enum SwitchError {
     Busy,
     /// The requested deployment ID does not exist.
     NotFound,
+    /// Public environment variables or secrets required by the deployment are undeclared.
+    MissingRuntimeConfig(MissingRuntimeConfigError),
     /// Any other failure (verification, compilation, DB write, etc.).
     Other(anyhow::Error),
 }
@@ -3153,23 +3215,40 @@ pub(crate) async fn switch_deployment(
             serde_json::json!({"outcome": outcome.to_string()}),
         ),
         Err(err) => {
-            let (kind, error) = match err {
-                SwitchError::Busy => (
-                    "busy",
-                    "another deployment submit or switch is running".to_string(),
-                ),
-                SwitchError::NotFound => ("not_found", "deployment not found".to_string()),
-                SwitchError::Other(source) => ("validation", format!("{source:#}")),
-            };
-            let (error, error_truncated) = bounded_system_event_text(&error);
-            (
-                concepts::storage::SystemEventCode::DeploymentSwitchFailed,
-                serde_json::json!({
-                    "kind": kind,
-                    "error": error,
-                    "error_truncated": error_truncated,
-                }),
-            )
+            if let SwitchError::MissingRuntimeConfig(missing) = err {
+                let (error, error_truncated) = bounded_system_event_text(&missing.to_string());
+                (
+                    concepts::storage::SystemEventCode::DeploymentSwitchFailed,
+                    serde_json::json!({
+                        "kind": "missing_runtime_config",
+                        "error": error,
+                        "error_truncated": error_truncated,
+                        "missing_public_env": missing.public_env.iter().collect::<Vec<_>>(),
+                        "missing_public_env_count": missing.public_env.len(),
+                        "missing_secrets": missing.secrets.iter().collect::<Vec<_>>(),
+                        "missing_secret_count": missing.secrets.len(),
+                    }),
+                )
+            } else {
+                let (kind, error) = match err {
+                    SwitchError::Busy => (
+                        "busy",
+                        "another deployment submit or switch is running".to_string(),
+                    ),
+                    SwitchError::NotFound => ("not_found", "deployment not found".to_string()),
+                    SwitchError::MissingRuntimeConfig(_) => unreachable!(),
+                    SwitchError::Other(source) => ("validation", format!("{source:#}")),
+                };
+                let (error, error_truncated) = bounded_system_event_text(&error);
+                (
+                    concepts::storage::SystemEventCode::DeploymentSwitchFailed,
+                    serde_json::json!({
+                        "kind": kind,
+                        "error": error,
+                        "error_truncated": error_truncated,
+                    }),
+                )
+            }
         }
     };
     crate::server::system_event_writer::record(
@@ -3338,7 +3417,14 @@ async fn prepare_switch_deployment(
         Some(&target_deployment),
         verify_params.runtime_config_availability,
     )
-    .map_err(|err| SwitchError::Other(err.into()))?;
+    .map_err(|err| match err {
+        config_prepass::PreflightError::MissingRuntimeConfig(err) => {
+            SwitchError::MissingRuntimeConfig(err)
+        }
+        other @ config_prepass::PreflightError::MissingSecretReplacements(_) => {
+            SwitchError::Other(other.into())
+        }
+    })?;
     let compiled_linked = deployment_verify_config_compile_link(
         deployment_switch_manager.inner.server_verified.clone(),
         &deployment_switch_manager.inner.prepared_dirs,
@@ -6066,7 +6152,7 @@ mod tests {
     #[test]
     fn unregistered_secrets_collect_all_in_typed_error() {
         use crate::command::server::config_prepass::{
-            collect_unregistered_allowed_host_secrets, report_unregistered_secrets,
+            collect_unregistered_allowed_host_secrets, report_missing_runtime_config,
         };
         let entry = |secret: &str| AllowedHostToml {
             pattern: "api.example.com".to_string(),
@@ -6085,17 +6171,24 @@ mod tests {
             &secret_registry,
             &mut unregistered,
         );
-        let err = report_unregistered_secrets(
+        let public_env =
+            std::collections::BTreeSet::from(["PUBLIC_B".to_string(), "PUBLIC_A".to_string()]);
+        let err = report_missing_runtime_config(
+            &public_env,
             &unregistered,
-            "the deployment's outbound HTTP entries",
             RuntimeConfigAvailability::Strict,
         )
         .unwrap_err();
         let message = err.to_string();
 
         assert_eq!(
-            err.names,
+            err.secrets,
             std::collections::BTreeSet::from(["MISSING_A".to_string(), "MISSING_B".to_string()])
+        );
+        assert_eq!(err.public_env, public_env);
+        assert!(
+            message.contains("allowed = [\"PUBLIC_A\", \"PUBLIC_B\"]"),
+            "{message}"
         );
         assert!(message.contains("`MISSING_A`, `MISSING_B`"), "{message}");
         assert!(!message.contains("KNOWN"), "{message}");
@@ -6106,36 +6199,44 @@ mod tests {
     /// not a fatal error (activation re-checks strictly).
     #[test]
     fn unregistered_secrets_downgrade_to_warning_when_unavailable_allowed() {
-        use crate::command::server::config_prepass::report_unregistered_secrets;
+        use crate::command::server::config_prepass::report_missing_runtime_config;
         let mut unregistered = std::collections::BTreeSet::new();
         unregistered.insert("MISSING".to_string());
-        report_unregistered_secrets(
+        report_missing_runtime_config(
+            &std::collections::BTreeSet::new(),
             &unregistered,
-            "the deployment's outbound HTTP entries",
             RuntimeConfigAvailability::AllowUnavailable,
         )
         .expect("unavailable runtime config downgrades unregistered secrets to a warning");
     }
 
-    /// `--fix` appends a `[secrets]` scaffold for all specified names
+    /// `--fix` appends sorted public environment and secret scaffolds.
     #[tokio::test]
-    async fn fix_server_secret_scaffolds_appends_missing() {
-        use crate::command::server::config_prepass::fix_server_secret_scaffolds;
+    async fn fix_server_runtime_config_scaffolds_appends_missing_sorted() {
+        use crate::command::server::config_prepass::fix_server_runtime_config_scaffolds;
         use std::io::Write as _;
         let mut file = tempfile::NamedTempFile::new().unwrap();
         write!(file, "[secrets]\nEXISTING = {{ env = \"EXISTING_SRC\" }}\n").unwrap();
         let path = file.path();
 
-        let mut names = std::collections::BTreeSet::new();
-        names.insert("NEW_ONE".to_string());
-        fix_server_secret_scaffolds(path, &names).await.unwrap();
+        let public_env =
+            std::collections::BTreeSet::from(["PUBLIC_B".to_string(), "PUBLIC_A".to_string()]);
+        let secrets =
+            std::collections::BTreeSet::from(["SECRET_B".to_string(), "SECRET_A".to_string()]);
+        fix_server_runtime_config_scaffolds(path, &public_env, &secrets)
+            .await
+            .unwrap();
 
         let after = std::fs::read_to_string(path).unwrap();
         assert!(
             after.contains("EXISTING = { env = \"EXISTING_SRC\" }"),
             "{after}"
         );
-        assert!(after.contains("NEW_ONE = { env = \"NEW_ONE\" }"), "{after}");
+        assert!(
+            after.contains("allowed = [\"PUBLIC_A\", \"PUBLIC_B\"]"),
+            "{after}"
+        );
+        assert!(after.find("SECRET_A").unwrap() < after.find("SECRET_B").unwrap());
     }
 
     /// Missing replacements from several components are gathered into one report,

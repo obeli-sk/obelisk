@@ -8,8 +8,10 @@ use crate::config::deployment::{
     AllowedHostToml, ConfigName, DeploymentResolved, MethodsInput, ReplaceIn,
     allowed_host_fingerprint, resolve_allowed_hosts,
 };
+use crate::config::env_var::collect_env_var_references;
 use crate::config::secret_registry::SecretRegistry;
-use anyhow::{Context, bail};
+use anyhow::Context;
+use concepts::env_var::EnvVarConfig;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -18,25 +20,59 @@ use toml_edit::{DocumentMut, Item, Table, value};
 use tracing::warn;
 use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
 
-#[derive(Debug)]
-pub(super) struct UnregisteredSecretsError {
-    pub(super) names: BTreeSet<String>,
-    source_desc: String,
+#[derive(Debug, Default)]
+pub(crate) struct MissingRuntimeConfigError {
+    pub(crate) public_env: BTreeSet<String>,
+    pub(crate) secrets: BTreeSet<String>,
 }
 
-impl fmt::Display for UnregisteredSecretsError {
+impl fmt::Display for MissingRuntimeConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let list = self.names.iter().cloned().collect::<Vec<_>>().join("`, `");
+        let mut findings = Vec::new();
+        if !self.public_env.is_empty() {
+            findings.push(format!(
+                "environment variable(s) `{}` not declared in server.toml `[public_env].allowed`",
+                self.public_env
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("`, `")
+            ));
+        }
+        if !self.secrets.is_empty() {
+            findings.push(format!(
+                "secret(s) `{}` not registered in server.toml `[secrets]`",
+                self.secrets
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("`, `")
+            ));
+        }
         write!(
             formatter,
-            "{} reference(s) secret(s) `{list}` that are not registered in the server \
-             `[secrets]` table",
-            self.source_desc
+            "configuration references {}",
+            findings.join(" and ")
+        )?;
+        write!(
+            formatter,
+            ". Add them to server.toml, or remove the references:\n\n{}",
+            self.scaffold_snippet()
         )
     }
 }
 
-impl std::error::Error for UnregisteredSecretsError {}
+impl std::error::Error for MissingRuntimeConfigError {}
+
+impl MissingRuntimeConfigError {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.public_env.is_empty() && self.secrets.is_empty()
+    }
+
+    pub(crate) fn scaffold_snippet(&self) -> String {
+        runtime_config_scaffold_snippet(&self.public_env, &self.secrets)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -45,7 +81,7 @@ pub(super) struct MissingSecretReplacementsError(String);
 #[derive(Debug, thiserror::Error)]
 pub(super) enum PreflightError {
     #[error(transparent)]
-    UnregisteredSecrets(#[from] UnregisteredSecretsError),
+    MissingRuntimeConfig(#[from] MissingRuntimeConfigError),
     #[error(transparent)]
     MissingSecretReplacements(#[from] MissingSecretReplacementsError),
 }
@@ -218,7 +254,18 @@ pub(super) fn preflight(
     let mut missing_replacements = Vec::new();
     let mut uncovered_hosts = Vec::new();
     let mut unregistered = BTreeSet::new();
+    let mut undeclared_public_env = BTreeSet::new();
+    collect_unregistered_public_env_from_allowed_hosts(
+        &server_verified.server_outbound_allowed_hosts,
+        secret_registry,
+        &mut undeclared_public_env,
+    );
     if let Some(deployment) = deployment {
+        collect_deployment_unregistered_public_env(
+            deployment,
+            secret_registry,
+            &mut undeclared_public_env,
+        );
         let mut check = |section: &'static str, name: &ConfigName, hosts: &[AllowedHostToml]| {
             warnings.lint(hosts, ignore_missing_env_vars, secret_registry, false);
             collect_outbound_http_secret_replacements(
@@ -274,18 +321,96 @@ pub(super) fn preflight(
     warnings.emit();
     report_uncovered_outbound_http_hosts(&uncovered_hosts);
 
-    report_unregistered_secrets(
-        &server_unregistered,
-        "server.toml `[[outbound_http.allowed_host]]` entries",
-        RuntimeConfigAvailability::Strict,
-    )?;
-    report_unregistered_secrets(
-        &unregistered,
-        "the deployment's secret references",
-        availability,
-    )?;
+    unregistered.extend(server_unregistered);
+    report_missing_runtime_config(&undeclared_public_env, &unregistered, availability)?;
     report_missing_outbound_http_secret_replacements(&missing_replacements, availability)?;
     Ok(())
+}
+
+fn collect_env_vars(
+    env_vars: &[EnvVarConfig],
+    secret_registry: &SecretRegistry,
+    undeclared: &mut BTreeSet<String>,
+) {
+    let mut referenced = BTreeSet::new();
+    for env_var in env_vars {
+        match env_var {
+            EnvVarConfig::Key(key) => {
+                referenced.insert(key.clone());
+            }
+            EnvVarConfig::KeyValue { value, .. } => {
+                collect_env_var_references(value, &mut referenced);
+            }
+        }
+    }
+    undeclared.extend(referenced.into_iter().filter(|name| {
+        !secret_registry.public_env_is_allowed(name)
+            && !secret_registry.public_env_is_sensitive(name)
+    }));
+}
+
+pub(super) fn collect_unregistered_public_env_from_allowed_hosts(
+    entries: &[AllowedHostToml],
+    secret_registry: &SecretRegistry,
+    undeclared: &mut BTreeSet<String>,
+) {
+    let mut referenced = BTreeSet::new();
+    for entry in entries {
+        collect_env_var_references(&entry.pattern, &mut referenced);
+        if let Some(regex) = &entry.request_url_regex {
+            collect_env_var_references(regex, &mut referenced);
+        }
+    }
+    undeclared.extend(referenced.into_iter().filter(|name| {
+        !secret_registry.public_env_is_allowed(name)
+            && !secret_registry.public_env_is_sensitive(name)
+    }));
+}
+
+pub(super) fn collect_deployment_unregistered_public_env(
+    deployment: &DeploymentResolved,
+    secret_registry: &SecretRegistry,
+    undeclared: &mut BTreeSet<String>,
+) {
+    for component in &deployment.activities_wasm {
+        collect_env_vars(&component.env_vars, secret_registry, undeclared);
+    }
+    for component in &deployment.activities_js {
+        collect_env_vars(&component.env_vars, secret_registry, undeclared);
+    }
+    for component in &deployment.activities_exec {
+        collect_env_vars(&component.env_vars, secret_registry, undeclared);
+    }
+    for component in &deployment.webhooks_wasm {
+        collect_env_vars(&component.env_vars, secret_registry, undeclared);
+    }
+    for component in &deployment.webhooks_js {
+        collect_env_vars(&component.env_vars, secret_registry, undeclared);
+    }
+    for hosts in deployment_allowed_host_lists(deployment) {
+        collect_unregistered_public_env_from_allowed_hosts(hosts, secret_registry, undeclared);
+    }
+}
+
+pub(super) fn preflight_runtime_config(
+    server_allowed_hosts: &[AllowedHostToml],
+    deployment: Option<&DeploymentResolved>,
+    secret_registry: &SecretRegistry,
+    availability: RuntimeConfigAvailability,
+) -> Result<(), MissingRuntimeConfigError> {
+    let mut public_env = BTreeSet::new();
+    let mut secrets = BTreeSet::new();
+    collect_unregistered_public_env_from_allowed_hosts(
+        server_allowed_hosts,
+        secret_registry,
+        &mut public_env,
+    );
+    collect_unregistered_allowed_host_secrets(server_allowed_hosts, secret_registry, &mut secrets);
+    if let Some(deployment) = deployment {
+        collect_deployment_unregistered_public_env(deployment, secret_registry, &mut public_env);
+        collect_deployment_unregistered_secrets(deployment, secret_registry, &mut secrets);
+    }
+    report_missing_runtime_config(&public_env, &secrets, availability)
 }
 
 /// Every component's outbound HTTP `allowed_hosts`; used by `collect_deployment_unregistered_secrets`.
@@ -335,36 +460,46 @@ pub(super) fn collect_unregistered_allowed_host_secrets(
     }
 }
 
-/// Render a paste-able `[secrets]` block scaffolding each name as `X = { env = "X" }`.
-pub(crate) fn secret_scaffold_snippet(names: &BTreeSet<String>) -> String {
-    let mut table = Table::new();
-    for name in names {
-        let mut inline = toml_edit::InlineTable::new();
-        inline.insert("env", name.as_str().into());
-        table.insert(name, value(inline));
-    }
+pub(crate) fn runtime_config_scaffold_snippet(
+    public_env: &BTreeSet<String>,
+    secrets: &BTreeSet<String>,
+) -> String {
     let mut doc = DocumentMut::new();
-    doc["secrets"] = Item::Table(table);
+    if !public_env.is_empty() {
+        let mut values = toml_edit::Array::new();
+        for name in public_env {
+            values.push(name.as_str());
+        }
+        doc["public_env"]["allowed"] = value(values);
+    }
+    if !secrets.is_empty() {
+        let mut table = Table::new();
+        for name in secrets {
+            let mut inline = toml_edit::InlineTable::new();
+            inline.insert("env", name.as_str().into());
+            table.insert(name, value(inline));
+        }
+        doc["secrets"] = Item::Table(table);
+    }
     doc.to_string()
 }
 
-/// Emit a single finding for every unregistered secret `source_desc` references, with a
-/// `[secrets]` snippet. Fatal under strict availability, otherwise a warning.
-pub(super) fn report_unregistered_secrets(
-    unregistered: &BTreeSet<String>,
-    source_desc: &str,
+/// Emit one finding containing every undeclared public env var and unregistered secret.
+pub(super) fn report_missing_runtime_config(
+    public_env: &BTreeSet<String>,
+    secrets: &BTreeSet<String>,
     availability: RuntimeConfigAvailability,
-) -> Result<(), UnregisteredSecretsError> {
-    if unregistered.is_empty() {
+) -> Result<(), MissingRuntimeConfigError> {
+    let error = MissingRuntimeConfigError {
+        public_env: public_env.clone(),
+        secrets: secrets.clone(),
+    };
+    if error.is_empty() {
         return Ok(());
     }
-    let error = UnregisteredSecretsError {
-        names: unregistered.clone(),
-        source_desc: source_desc.to_string(),
-    };
     if availability == RuntimeConfigAvailability::AllowUnavailable {
         warn!(
-            "{error}\nSkipping these load-time secret checks because unavailable runtime \
+            "{error}\nSkipping these load-time runtime configuration checks because unavailable runtime \
              configuration is allowed; activation will enforce them strictly."
         );
         Ok(())
@@ -628,11 +763,12 @@ pub(super) fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboun
 }
 
 /// Append a `[secrets]` scaffold entry `X = { env = "X" }` for each name.
-pub(super) async fn fix_server_secret_scaffolds(
+pub(super) async fn fix_server_runtime_config_scaffolds(
     server_config_path: &Path,
-    names: &BTreeSet<String>,
+    public_env: &BTreeSet<String>,
+    secrets: &BTreeSet<String>,
 ) -> Result<(), anyhow::Error> {
-    if names.is_empty() {
+    if public_env.is_empty() && secrets.is_empty() {
         return Ok(());
     }
     let source = tokio::fs::read_to_string(server_config_path)
@@ -641,30 +777,68 @@ pub(super) async fn fix_server_secret_scaffolds(
     let mut doc = source
         .parse::<DocumentMut>()
         .context("cannot parse server config as TOML")?;
-    let table = doc
-        .as_table_mut()
-        .entry("secrets")
-        .or_insert_with(|| Item::Table(Table::new()))
-        .as_table_mut()
-        .context("`secrets` in server config is not a table")?;
-    for name in names {
-        if table.contains_key(name) {
-            bail!("secret {name} must not be present");
+
+    if !public_env.is_empty() {
+        let allowed = doc
+            .as_table_mut()
+            .entry("public_env")
+            .or_insert_with(|| Item::Table(Table::new()))
+            .as_table_mut()
+            .context("`public_env` in server config is not a table")?
+            .entry("allowed")
+            .or_insert_with(|| value(toml_edit::Array::new()))
+            .as_array_mut()
+            .context("`public_env.allowed` in server config is not an array")?;
+        for name in public_env {
+            if !allowed.iter().any(|item| item.as_str() == Some(name)) {
+                allowed.push(name.as_str());
+            }
         }
-        let mut inline = toml_edit::InlineTable::new();
-        inline.insert("env", name.as_str().into());
-        table.insert(name, value(inline));
     }
+
+    if !secrets.is_empty() {
+        let table = doc
+            .as_table_mut()
+            .entry("secrets")
+            .or_insert_with(|| Item::Table(Table::new()))
+            .as_table_mut()
+            .context("`secrets` in server config is not a table")?;
+        for name in secrets {
+            if !table.contains_key(name) {
+                let mut inline = toml_edit::InlineTable::new();
+                inline.insert("env", name.as_str().into());
+                table.insert(name, value(inline));
+            }
+        }
+    }
+
     tokio::fs::write(server_config_path, doc.to_string())
         .await
         .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
-
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_env_preflight_collects_all_references_sorted() {
+        let registry = SecretRegistry::empty();
+        let env_vars = vec![
+            EnvVarConfig::Key("VAR_C".to_string()),
+            EnvVarConfig::KeyValue {
+                key: "VALUE".to_string(),
+                value: "${VAR_B}/${VAR_A:-${VAR_D}}/${IGNORED".to_string(),
+            },
+        ];
+        let mut undeclared = BTreeSet::new();
+        collect_env_vars(&env_vars, &registry, &mut undeclared);
+        assert_eq!(
+            undeclared.into_iter().collect::<Vec<_>>(),
+            ["VAR_A", "VAR_B", "VAR_C", "VAR_D"]
+        );
+    }
 
     /// A resolver advisory is joined to its `[[*.allowed_host]]` block and annotated with `path:line`.
     #[test]
