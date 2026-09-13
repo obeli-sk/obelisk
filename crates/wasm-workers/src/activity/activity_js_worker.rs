@@ -1025,6 +1025,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_get_with_explicit_options_has_no_body() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/hello"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("fetch works"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch(params) {{
+                const resp = await fetch("{url}/hello", {{
+                    method: "GET",
+                    headers: {{}},
+                    redirect: "manual",
+                    signal: undefined,
+                }});
+                return await resp.text();
+            }}
+            "#
+        );
+
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
+        let worker = new_js_activity_worker_with_http(&js_source, ffqn.clone(), &allowed).await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "fetch works");
+    }
+
+    #[tokio::test]
     async fn fetch_post_json() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
