@@ -34,14 +34,7 @@ impl args::Component {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
-            args::Component::PrepareWorkflow {
-                input,
-                output_dir,
-                snapshot_interval,
-            } => {
-                if snapshot_interval == 0 {
-                    bail!("snapshot interval must be greater than zero");
-                }
+            args::Component::PrepareWorkflow { input, output_dir } => {
                 let bytes = tokio::fs::read(&input)
                     .await
                     .with_context(|| format!("cannot read {input:?}"))?;
@@ -52,13 +45,9 @@ impl args::Component {
                         .unwrap_or_else(|| std::path::Path::new("."))
                         .to_owned()
                 });
-                let prepared = utils::workflow_snapshot::prepare_component(
-                    &input,
-                    &digest,
-                    &output_dir,
-                    snapshot_interval,
-                )
-                .await?;
+                let prepared =
+                    utils::workflow_snapshot::prepare_component(&input, &digest, &output_dir)
+                        .await?;
                 println!("{}", prepared.display());
                 Ok(())
             }

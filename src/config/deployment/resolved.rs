@@ -1061,14 +1061,11 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             expected_content_digest.as_ref(),
             &common.location.to_string(),
         )?;
-        let wasm_path = if let Some(snapshot_every_n_events) = snapshot_every_n_events {
+        let wasm_path = if snapshot_every_n_events.is_some() {
             utils::workflow_snapshot::prepare_component(
                 &wasm_path,
                 &content_digest,
                 &wasm_cache_dir,
-                snapshot_every_n_events.try_into().context(
-                    "`workflows.snapshot_every_n_events` exceeds the supported u32 range",
-                )?,
             )
             .await?
         } else {

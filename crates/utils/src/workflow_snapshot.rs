@@ -17,7 +17,7 @@ use wasmparser::{Parser, Payload, TypeRef};
 use wasmtime_wizer::Wizer;
 use wit_component::ComponentEncoder;
 
-const PREPARED_FORMAT_VERSION: u8 = 1;
+const PREPARED_FORMAT_VERSION: u8 = 2;
 
 /// Snapshot metadata together with the component bytes fetched from the CAS.
 #[derive(Debug)]
@@ -93,7 +93,6 @@ impl ComponentSection for EmbeddedModule<'_> {
 
 struct AsyncifyWorkflowModules {
     transformed_modules: usize,
-    snapshot_interval: u32,
 }
 
 impl wasm_encoder::reencode::Reencode for AsyncifyWorkflowModules {
@@ -110,7 +109,7 @@ impl ReencodeComponent for AsyncifyWorkflowModules {
         let transformed = if imports_obelisk_function(module).map_err(Self::user_error)? {
             self.transformed_modules += 1;
             let asyncified = asyncify(module).map_err(Self::user_error)?;
-            wrap_durable_imports(&asyncified, self.snapshot_interval).map_err(Self::user_error)?
+            wrap_durable_imports(&asyncified).map_err(Self::user_error)?
         } else {
             module.to_vec()
         };
@@ -191,10 +190,7 @@ impl VisitorMut for ReplaceCalls {
     }
 }
 
-fn wrap_durable_imports(module: &[u8], snapshot_interval: u32) -> anyhow::Result<Vec<u8>> {
-    if snapshot_interval == 0 {
-        bail!("workflow snapshot interval must be greater than zero");
-    }
+fn wrap_durable_imports(module: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut module = ModuleConfig::new()
         .generate_name_section(false)
         .parse(module)
@@ -225,7 +221,6 @@ fn wrap_durable_imports(module: &[u8], snapshot_interval: u32) -> anyhow::Result
     let snapshot_end = snapshot_base
         .checked_add(65_536)
         .context("workflow memory is too large for a 32-bit snapshot stack")?;
-    const EVENT_COUNT_OFFSET: u32 = 8;
     const CHECKPOINT_ACTIVE_OFFSET: u32 = 12;
     const SAVED_RESULTS_OFFSET: u32 = 16;
     const ASYNCIFY_STACK_OFFSET: u32 = 4096;
@@ -327,57 +322,17 @@ fn wrap_durable_imports(module: &[u8], snapshot_interval: u32) -> anyhow::Result
                     }
                     forward
                         .i32_const(snapshot_base.cast_signed())
-                        .i32_const(snapshot_base.cast_signed())
-                        .load(
-                            memory,
-                            LoadKind::I32 { atomic: false },
-                            MemArg {
-                                align: 4,
-                                offset: EVENT_COUNT_OFFSET.into(),
-                            },
-                        )
                         .i32_const(1)
-                        .binop(BinaryOp::I32Add)
                         .store(
                             memory,
                             StoreKind::I32 { atomic: false },
                             MemArg {
                                 align: 4,
-                                offset: EVENT_COUNT_OFFSET.into(),
+                                offset: CHECKPOINT_ACTIVE_OFFSET.into(),
                             },
                         )
                         .i32_const(snapshot_base.cast_signed())
-                        .load(
-                            memory,
-                            LoadKind::I32 { atomic: false },
-                            MemArg {
-                                align: 4,
-                                offset: EVENT_COUNT_OFFSET.into(),
-                            },
-                        )
-                        .i32_const(snapshot_interval.cast_signed())
-                        .binop(BinaryOp::I32RemU)
-                        .i32_const(0)
-                        .binop(BinaryOp::I32Eq)
-                        .if_else(
-                            None,
-                            |checkpoint| {
-                                checkpoint
-                                    .i32_const(snapshot_base.cast_signed())
-                                    .i32_const(1)
-                                    .store(
-                                        memory,
-                                        StoreKind::I32 { atomic: false },
-                                        MemArg {
-                                            align: 4,
-                                            offset: CHECKPOINT_ACTIVE_OFFSET.into(),
-                                        },
-                                    )
-                                    .i32_const(snapshot_base.cast_signed())
-                                    .call(start_unwind);
-                            },
-                            |_| {},
-                        );
+                        .call(start_unwind);
                     for local in &result_locals {
                         forward.local_get(*local);
                     }
@@ -527,10 +482,9 @@ pub async fn prepare_component(
     component_path: &Path,
     input_digest: &ContentDigest,
     output_parent: &Path,
-    snapshot_interval: u32,
 ) -> anyhow::Result<PathBuf> {
     let output_path = output_parent.join(format!(
-        "{}_workflow-prepared-v{PREPARED_FORMAT_VERSION}-n{snapshot_interval}.wasm",
+        "{}_workflow-prepared-v{PREPARED_FORMAT_VERSION}.wasm",
         input_digest.with_infix("_")
     ));
     if output_path.exists() {
@@ -555,7 +509,6 @@ pub async fn prepare_component(
     let mut component = Component::new();
     let mut reencoder = AsyncifyWorkflowModules {
         transformed_modules: 0,
-        snapshot_interval,
     };
     reencoder
         .parse_component(&mut component, Parser::new(0), &component_input)
@@ -614,7 +567,7 @@ mod tests {
             "event",
             |caller: wasmtime::Caller<'_, Arc<Mutex<Vec<i32>>>>, value: i32| {
                 caller.data().lock().unwrap().push(value);
-                value
+                value + 10
             },
         )?;
         Ok(linker)
@@ -623,7 +576,7 @@ mod tests {
     #[tokio::test]
     async fn durable_wrapper_snapshots_and_resumes_without_repeating_host_call() {
         let core = wat::parse_str(WORKFLOW).unwrap();
-        let transformed = wrap_durable_imports(&asyncify(&core).unwrap(), 3).unwrap();
+        let transformed = wrap_durable_imports(&asyncify(&core).unwrap()).unwrap();
         let wizer = Wizer::new();
         let (context, instrumented) = wizer.instrument(&transformed).unwrap();
         let engine = Engine::default();
@@ -638,11 +591,11 @@ mod tests {
         let partial = instance
             .get_typed_func::<i32, i32>(&mut store, "workflow")
             .unwrap()
-            .call_async(&mut store, 5)
+            .call_async(&mut store, 1)
             .await
             .unwrap();
         assert_ne!(10, partial);
-        assert_eq!(&[0, 1, 2], calls_before.lock().unwrap().as_slice());
+        assert_eq!(&[0], calls_before.lock().unwrap().as_slice());
         let memory = instance.get_memory(&mut store, "memory").unwrap();
         assert_eq!(&[1, 0, 0, 0], &memory.data(&store)[65_548..65_552]);
 
@@ -669,11 +622,11 @@ mod tests {
         let result = instance
             .get_typed_func::<i32, i32>(&mut store, "workflow")
             .unwrap()
-            .call_async(&mut store, 5)
+            .call_async(&mut store, 1)
             .await
             .unwrap();
         assert_eq!(
-            (10, vec![3, 4]),
+            (10, Vec::new()),
             (result, calls_after.lock().unwrap().clone())
         );
     }

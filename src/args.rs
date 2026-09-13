@@ -777,9 +777,6 @@ pub(crate) enum Component {
         /// Directory for the digest-keyed prepared component.
         #[arg(long, short)]
         output_dir: Option<PathBuf>,
-        /// Number of durable calls between checkpoints.
-        #[arg(long, default_value_t = 1)]
-        snapshot_interval: u32,
     },
     /// List components.
     List {
