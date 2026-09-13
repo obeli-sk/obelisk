@@ -28,13 +28,12 @@ cargo check --package workflow-js-runtime-builder # triggers build.rs of workflo
 if [ "$TAG" != "dry-run" ]; then
     STRIPPED="target/wasm-cache/workflow_js_runtime_component.stripped.wasm"
     wasm-tools strip --all "target/wasm-cache/workflow_js_runtime_component.wasm" -o "$STRIPPED"
-    PREPARED=$(obelisk component prepare-workflow "$STRIPPED" --output-dir target/wasm-cache)
     TMP_TOML="workflow-deployment-for-push.toml"
     trap "rm -f $TMP_TOML" EXIT
     cat > "$TMP_TOML" <<EOF
 [[workflow_wasm]]
 name = "target_component"
-location = "$PREPARED"
+location = "$STRIPPED"
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
         target_component "oci://docker.io/getobelisk/workflow-js-runtime:$TAG")

@@ -34,23 +34,6 @@ impl args::Component {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
-            args::Component::PrepareWorkflow { input, output_dir } => {
-                let bytes = tokio::fs::read(&input)
-                    .await
-                    .with_context(|| format!("cannot read {input:?}"))?;
-                let digest = concepts::cas::content_digest(&bytes);
-                let output_dir = output_dir.unwrap_or_else(|| {
-                    input
-                        .parent()
-                        .unwrap_or_else(|| std::path::Path::new("."))
-                        .to_owned()
-                });
-                let prepared =
-                    utils::workflow_snapshot::prepare_component(&input, &digest, &output_dir)
-                        .await?;
-                println!("{}", prepared.display());
-                Ok(())
-            }
             args::Component::List {
                 api_url,
                 imports,
