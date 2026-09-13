@@ -890,6 +890,20 @@ impl TestServer {
         let _ = server_handle.await;
     }
 
+    async fn shutdown_with_timeout(self, timeout: Duration) {
+        let Self {
+            server_handle,
+            termination_sender,
+            ..
+        } = self;
+        drop(termination_sender);
+        tokio::time::timeout(timeout, server_handle)
+            .await
+            .expect("server shutdown timed out")
+            .expect("server task panicked")
+            .expect("server shutdown failed");
+    }
+
     async fn restart_with_persisted_value_limit(self, limit: i64) -> Self {
         let Self {
             ip,
@@ -3304,6 +3318,117 @@ async fn admin_cleanup_webapi() {
     assert_eq!(response.json::<Value>().await.unwrap()["deleted"], true);
 
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_finishes_with_rest_grpc_and_grpc_web_follow_streams_open() {
+    use prost::Message as _;
+
+    const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
+    let server = TestServer::start(test_addr!(129)).await;
+    let execution_id = server.generate_execution_id().await;
+    let submitted = server
+        .submit_paused_webapi(
+            &execution_id,
+            "testing:integration/workflow-add.add-workflow",
+            vec![json!(1), json!(2)],
+        )
+        .await;
+    assert_eq!(submitted.status(), reqwest::StatusCode::CREATED);
+
+    let rest_follow = server
+        .client
+        .put(format!(
+            "{}/v1/executions/{execution_id}?follow=true",
+            server.base_url
+        ))
+        .header("Accept", "application/json")
+        .json(&json!({
+            "ffqn": "testing:integration/workflow-add.add-workflow",
+            "params": [1, 2],
+            "paused": true,
+        }))
+        .send()
+        .await
+        .expect("REST follow request failed");
+    assert_eq!(rest_follow.status(), reqwest::StatusCode::OK);
+
+    let request = GetStatusRequest {
+        execution_id: Some(GrpcExecutionId {
+            id: execution_id.clone(),
+        }),
+        follow: true,
+        send_finished_status: true,
+    };
+    let mut grpc_client =
+        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap();
+    let grpc_follow = grpc_client
+        .get_status(request.clone())
+        .await
+        .expect("native gRPC follow request failed")
+        .into_inner();
+
+    let message = request.encode_to_vec();
+    let mut frame = Vec::with_capacity(message.len() + 5);
+    frame.push(0);
+    frame.extend_from_slice(
+        &u32::try_from(message.len())
+            .expect("gRPC-Web test request fits its frame length")
+            .to_be_bytes(),
+    );
+    frame.extend_from_slice(&message);
+    let grpc_web_follow = server
+        .client
+        .post(format!(
+            "{}/obelisk.ExecutionRepository/GetStatus",
+            server.base_url
+        ))
+        .header("content-type", "application/grpc-web+proto")
+        .header("x-grpc-web", "1")
+        .body(frame)
+        .send()
+        .await
+        .expect("gRPC-Web follow request failed");
+    assert_eq!(grpc_web_follow.status(), reqwest::StatusCode::OK);
+
+    // Keep every response body unconsumed to model slow clients with stream producers in flight.
+    let _open_streams = (rest_follow, grpc_follow, grpc_web_follow);
+    server.shutdown_with_timeout(SHUTDOWN_DEADLINE).await;
+}
+
+#[tokio::test]
+async fn disconnected_native_grpc_follow_does_not_delay_shutdown() {
+    const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
+    let server = TestServer::start(test_addr!(130)).await;
+    let execution_id = server.generate_execution_id().await;
+    let submitted = server
+        .submit_paused_webapi(
+            &execution_id,
+            "testing:integration/workflow-add.add-workflow",
+            vec![json!(1), json!(2)],
+        )
+        .await;
+    assert_eq!(submitted.status(), reqwest::StatusCode::CREATED);
+
+    let mut grpc_client =
+        ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+            .await
+            .unwrap();
+    let stream = grpc_client
+        .get_status(GetStatusRequest {
+            execution_id: Some(GrpcExecutionId { id: execution_id }),
+            follow: true,
+            send_finished_status: true,
+        })
+        .await
+        .expect("native gRPC follow request failed")
+        .into_inner();
+    drop(stream);
+    drop(grpc_client);
+
+    server.shutdown_with_timeout(SHUTDOWN_DEADLINE).await;
 }
 
 // ---- Activity: submit + result ----
