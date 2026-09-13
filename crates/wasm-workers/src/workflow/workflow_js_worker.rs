@@ -900,6 +900,7 @@ mod tests {
             mode: WorkflowConfigMode::Replay {
                 // `None` in tests means effectively unbounded.
                 max_replay_captured_writes: max_replay_captured_writes.unwrap_or(usize::MAX),
+                snapshot_every_n_events: None,
             },
         };
         let compiled = WorkflowWorkerCompiled::new_with_config(

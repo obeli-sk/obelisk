@@ -5713,6 +5713,7 @@ fn replay_workflow_config(
         fuel: real_config.fuel,
         mode: WorkflowConfigMode::Replay {
             max_replay_captured_writes,
+            snapshot_every_n_events: real_config.snapshot_every_n_events(),
         },
     }
 }

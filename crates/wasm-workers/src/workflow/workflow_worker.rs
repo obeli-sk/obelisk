@@ -92,7 +92,10 @@ pub enum WorkflowConfigMode {
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
     /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
     /// writes a single pass returns, keeping a non-terminating workflow advanceable in batches.
-    Replay { max_replay_captured_writes: usize },
+    Replay {
+        max_replay_captured_writes: usize,
+        snapshot_every_n_events: Option<usize>,
+    },
 }
 
 impl WorkflowConfig {
@@ -135,6 +138,7 @@ impl WorkflowConfig {
             WorkflowConfigMode::Real { .. } => None,
             WorkflowConfigMode::Replay {
                 max_replay_captured_writes,
+                ..
             } => Some(*max_replay_captured_writes),
         }
     }
@@ -164,9 +168,16 @@ impl WorkflowConfig {
             WorkflowConfigMode::Real {
                 snapshot_every_n_events,
                 ..
+            }
+            | WorkflowConfigMode::Replay {
+                snapshot_every_n_events,
+                ..
             } => *snapshot_every_n_events,
-            WorkflowConfigMode::Replay { .. } => None,
         }
+    }
+
+    fn persists_snapshots(&self) -> bool {
+        matches!(self.mode, WorkflowConfigMode::Real { .. })
     }
 
     #[must_use]
@@ -778,7 +789,7 @@ impl WorkflowWorker {
     }
 
     async fn prepare_func(
-        mut ctx: WorkerContext,
+        ctx: WorkerContext,
         db_connection: Box<dyn WorkflowDbConnection>,
         is_replay: Option<ReplayKind>,
         view: &WorkflowWorkerView<'_>,
@@ -1163,6 +1174,7 @@ impl WorkflowWorker {
         restored_snapshot_version: Option<Version>,
         db_pool: &Arc<dyn DbPool>,
         component_id: &ComponentId,
+        persist_snapshots: bool,
     ) -> Result<
         (
             Either<WorkerResultOk, ReplayInterrupt>,
@@ -1190,11 +1202,13 @@ impl WorkflowWorker {
                         current_version = current_position.0,
                         "Workflow reached a snapshot-safe history boundary"
                     );
-                    if snapshot_due(
-                        snapshot_interval,
-                        &current_position,
-                        last_snapshot_version.as_ref(),
-                    ) {
+                    if persist_snapshots
+                        && snapshot_due(
+                            snapshot_interval,
+                            &current_position,
+                            last_snapshot_version.as_ref(),
+                        )
+                    {
                         let started = now_tokio_instant();
                         if let Err(err) = store.data_mut().flush().await {
                             let workflow_ctx = store.into_data();
@@ -1622,6 +1636,7 @@ impl WorkflowWorker {
         let execution_deadline = ctx.locked_event.lock_expires_at;
         let fuel = view.config.fuel;
         let snapshot_interval = view.config.snapshot_every_n_events();
+        let persist_snapshots = view.config.persists_snapshots();
         let db_pool = view.db_pool;
         let component_id = &view.config.component_id;
         let prepare_finished = Self::prepare_func(
@@ -1648,6 +1663,7 @@ impl WorkflowWorker {
             prepare_finished.restored_snapshot_version,
             db_pool,
             component_id,
+            persist_snapshots,
         )
         .await
     }
@@ -2419,6 +2435,7 @@ pub(crate) mod tests {
             fuel: None,
             mode: WorkflowConfigMode::Replay {
                 max_replay_captured_writes: usize::MAX, // effectively unbounded for tests
+                snapshot_every_n_events: None,
             },
         };
         WorkflowWorkerCompiled::new_with_config(
