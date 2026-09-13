@@ -9,30 +9,30 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
-        CasGc, CasGcResult, CleanupResult, ComponentFileRole, ComponentMetadataRecord,
-        ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeleteDeploymentResult,
-        DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
-        DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
-        DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
-        ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
-        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
-        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
-        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, OversizedWorkflowSnapshot,
-        Pagination, PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
-        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
-        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
-        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
-        StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
-        SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
-        WorkflowSnapshot,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
+        CAS_GC_BATCH_SIZE_BYTES, CancelOutcome, CasGc, CasGcResult, CleanupResult,
+        ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
+        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
+        DbPool, DbPoolCloseable, DeleteDeploymentResult, DeleteExecutionTreeResult,
+        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
+        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
+        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
+        ExecutionGcResult, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
+        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse,
+        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
+        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
+        LogLevel, LogStreamType, OversizedWorkflowSnapshot, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace, WorkflowSnapshot,
     },
 };
 use db_common::{
@@ -6657,19 +6657,26 @@ impl CasGc for PostgresConnection {
         let mut orphans = tx
             .query(
                 &format!(
-                    "SELECT digest, size FROM t_file WHERE digest NOT IN \
+                    "WITH orphan AS (SELECT digest, size FROM t_file WHERE digest NOT IN \
                      (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source \
                       UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL \
                       UNION SELECT ws.snapshot_digest FROM t_workflow_snapshot ws JOIN t_state s ON s.execution_id = ws.execution_id \
                       WHERE s.state != '{STATE_FINISHED}' AND NOT EXISTS \
-                      (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = ws.execution_id AND newer.version > ws.version)) \
-                     ORDER BY digest LIMIT $1"
+                      (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = ws.execution_id AND newer.version > ws.version))), \
+                     measured AS (SELECT digest, size, COUNT(*) OVER () AS total_count, \
+                     CAST(SUM(size) OVER (ORDER BY digest) AS BIGINT) AS cumulative_size FROM orphan) \
+                     SELECT digest, size, total_count FROM measured \
+                     WHERE cumulative_size <= $2 OR cumulative_size = size ORDER BY digest LIMIT $1"
                 ),
-                &[&(i64::from(limit) + 1)],
+                &[
+                    &(i64::from(limit) + 1),
+                    &i64::try_from(CAS_GC_BATCH_SIZE_BYTES).unwrap(),
+                ],
             )
             .await?;
-        let has_more = orphans.len() > limit as usize;
+        let total_count = orphans.first().map_or(0, |row| row.get::<_, i64>(2));
         orphans.truncate(limit as usize);
+        let has_more = total_count > i64::try_from(orphans.len()).unwrap();
         let orphan_blobs = orphans.len() as u64;
         let deleted_bytes = orphans
             .iter()

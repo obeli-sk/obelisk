@@ -4,10 +4,11 @@ use concepts::{
     StrVariant,
     prefixed_ulid::{DeploymentId, ServerRunId, SystemEventId},
     storage::{
-        AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
-        DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest, OversizedWorkflowSnapshot, RetentionPolicy, SystemEvent, SystemEventCode,
-        SystemEventFilter, SystemEventLevel, Version, WorkflowSnapshot,
+        AppendRequest, CAS_GC_BATCH_SIZE_BYTES, CreateRequest, DbPoolCloseable,
+        DeleteDeploymentResult, DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord,
+        DeploymentStatus, ExecutionRequest, OversizedWorkflowSnapshot, RetentionPolicy,
+        SystemEvent, SystemEventCode, SystemEventFilter, SystemEventLevel, Version,
+        WorkflowSnapshot,
     },
     time::ClockFn,
 };
@@ -703,6 +704,33 @@ async fn workflow_snapshot_gc_keeps_latest_running_and_clears_finished(database:
     );
 
     drop((connection, gc, cas));
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cas_gc_batches_are_bounded_by_bytes(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let cas = db_pool.cas_conn().await.unwrap();
+    let blob_size = usize::try_from(CAS_GC_BATCH_SIZE_BYTES / 2 + 1).unwrap();
+    let first_digest = cas.write_blob(&vec![1; blob_size]).await.unwrap();
+    let second_digest = cas.write_blob(&vec![2; blob_size]).await.unwrap();
+    let gc = db_pool.cas_gc_conn().await.unwrap();
+
+    let first = gc.gc_cas(false, 100).await.unwrap();
+    assert_eq!(first.deleted_blobs, 1);
+    assert!(first.has_more);
+    assert_ne!(
+        cas.contains_blob(&first_digest).await.unwrap(),
+        cas.contains_blob(&second_digest).await.unwrap()
+    );
+    let second = gc.gc_cas(false, 100).await.unwrap();
+    assert_eq!(second.deleted_blobs, 1);
+    assert!(!second.has_more);
+
+    drop((gc, cas));
     db_close.close().await;
 }
 

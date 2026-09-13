@@ -1782,6 +1782,9 @@ pub trait CasGc: Send + Sync {
     async fn gc_cas(&self, dry_run: bool, batch_size: u32) -> Result<CasGcResult, DbErrorWrite>;
 }
 
+/// CAS GC byte budget per transaction; one larger blob is allowed so collection makes progress.
+pub const CAS_GC_BATCH_SIZE_BYTES: u64 = 16 * 1024 * 1024;
+
 #[async_trait]
 pub trait DbAdmin: Send + Sync {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite>;

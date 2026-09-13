@@ -346,7 +346,11 @@ async fn run_sweep(
             .gc_cas(false, config.batch_size)
             .await
             .map_err(|source| {
-                Box::new(SweepFailure::new("cas_gc", stats, anyhow::anyhow!(source)))
+                let source = match source {
+                    super::SubmitDeploymentError::Other(source) => source,
+                    source => anyhow::anyhow!(source.to_string()),
+                };
+                Box::new(SweepFailure::new("cas_gc", stats, source))
             })?;
         stats.cas_gc.active += started.elapsed();
         stats.cas_gc.affected += result.deleted_blobs;

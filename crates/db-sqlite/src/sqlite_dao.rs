@@ -9,30 +9,30 @@ use concepts::{
     prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
-        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo, CancelOutcome,
-        CasGc, CasGcResult, CleanupResult, ComponentFileRole, ComponentMetadataRecord,
-        ComponentUpgradeOutcome, ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead,
-        DbErrorReadWithTimeout, DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable,
-        DbExecutor, DbExternalApi, DbPool, DbPoolCloseable, DeleteDeploymentResult,
-        DeleteExecutionTreeResult, DeploymentComponentDetail, DeploymentComponentFileDetail,
-        DeploymentComponentFileRecord, DeploymentComponentRecord, DeploymentExecutionCounts,
-        DeploymentFileRecord, DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome,
-        ExecutionEvent, ExecutionGcResult, ExecutionListPagination, ExecutionRequest,
-        ExecutionWithState, ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock,
-        ExpiredTimer, HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds,
-        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LIFECYCLE_ACTIVE, LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle,
-        ListExecutionEventsResponse, ListExecutionsFilter, ListLogsResponse, ListResponsesResponse,
-        LockPendingResponse, Locked, LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow,
-        LogFilter, LogInfoAppendRow, LogLevel, LogStreamType, OversizedWorkflowSnapshot,
-        Pagination, PendingState, PendingStateBlockedByJoinSet, PendingStateFinishedError,
-        PendingStateFinishedResultKind, PendingStateMerged, RESULT_KIND_JSON_ERROR,
-        RESULT_KIND_JSON_OK, ResponseCursor, ResponseSubscriptionEnd, ResponseWithCursor,
-        RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET, STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT,
-        StorageStatus, SubscribeToResponsesError, SystemEvent, SystemEventFilter, SystemEventLevel,
-        SystemEventRetentionResult, TimeoutOutcome, Unlocked, Version, VersionType,
-        WorkflowSnapshot,
+        AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
+        CAS_GC_BATCH_SIZE_BYTES, CancelOutcome, CasGc, CasGcResult, CleanupResult,
+        ComponentFileRole, ComponentMetadataRecord, ComponentUpgradeOutcome,
+        ComponentUpgradeReason, CreateRequest, Created, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DbAdmin, DbConnection, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
+        DbErrorStubResponse, DbErrorWrite, DbErrorWriteNonRetriable, DbExecutor, DbExternalApi,
+        DbPool, DbPoolCloseable, DeleteDeploymentResult, DeleteExecutionTreeResult,
+        DeploymentComponentDetail, DeploymentComponentFileDetail, DeploymentComponentFileRecord,
+        DeploymentComponentRecord, DeploymentExecutionCounts, DeploymentFileRecord,
+        DeploymentRecord, DeploymentState, DeploymentStatus, EnqueueOutcome, ExecutionEvent,
+        ExecutionGcResult, ExecutionListPagination, ExecutionRequest, ExecutionWithState,
+        ExecutionWithStateRequestsResponses, ExpiredDelay, ExpiredLock, ExpiredTimer,
+        HISTORY_EVENT_TYPE_JOIN_NEXT, HistoryEvent, HttpPolicyEventIds, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LIFECYCLE_ACTIVE,
+        LIFECYCLE_CANCELLING, LIFECYCLE_PAUSED, Lifecycle, ListExecutionEventsResponse,
+        ListExecutionsFilter, ListLogsResponse, ListResponsesResponse, LockPendingResponse, Locked,
+        LockedBy, LockedExecution, LogCursor, LogEntry, LogEntryRow, LogFilter, LogInfoAppendRow,
+        LogLevel, LogStreamType, OversizedWorkflowSnapshot, Pagination, PendingState,
+        PendingStateBlockedByJoinSet, PendingStateFinishedError, PendingStateFinishedResultKind,
+        PendingStateMerged, RESULT_KIND_JSON_ERROR, RESULT_KIND_JSON_OK, ResponseCursor,
+        ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
+        STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
+        SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
+        TimeoutOutcome, Unlocked, Version, VersionType, WorkflowSnapshot,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -6146,32 +6146,46 @@ impl CasGc for SqlitePool {
                     )?;
                 }
                 let orphan_query = format!(
-                    "SELECT digest, size FROM t_file WHERE digest NOT IN \
+                    "WITH orphan AS (SELECT digest, size FROM t_file WHERE digest NOT IN \
                      (SELECT digest FROM t_deployment_file UNION SELECT digest FROM t_component_source \
                       UNION SELECT cas_digest FROM t_system_event WHERE cas_digest IS NOT NULL \
                       UNION SELECT ws.snapshot_digest FROM t_workflow_snapshot ws JOIN t_state s ON s.execution_id = ws.execution_id \
                       WHERE s.state != '{STATE_FINISHED}' AND NOT EXISTS \
-                      (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = ws.execution_id AND newer.version > ws.version)) \
-                     ORDER BY digest LIMIT ?1"
+                      (SELECT 1 FROM t_workflow_snapshot newer WHERE newer.execution_id = ws.execution_id AND newer.version > ws.version))), \
+                     measured AS (SELECT digest, size, COUNT(*) OVER () AS total_count, \
+                     SUM(size) OVER (ORDER BY digest) AS cumulative_size FROM orphan) \
+                     SELECT digest, size, total_count FROM measured \
+                     WHERE cumulative_size <= ?2 OR cumulative_size = size ORDER BY digest LIMIT ?1"
                 );
                 let mut orphans = tx
                     .prepare(&orphan_query)?
-                    .query_map([i64::from(limit) + 1], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                    })?
+                    .query_map(
+                        rusqlite::params![
+                            i64::from(limit) + 1,
+                            i64::try_from(CAS_GC_BATCH_SIZE_BYTES).unwrap()
+                        ],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, i64>(2)?,
+                            ))
+                        },
+                    )?
                     .collect::<Result<Vec<_>, _>>()?;
-                let has_more = orphans.len() > limit as usize;
+                let total_count = orphans.first().map_or(0, |(_, _, count)| *count);
                 orphans.truncate(limit as usize);
+                let has_more = total_count > i64::try_from(orphans.len()).unwrap();
                 let orphan_blobs = orphans.len() as u64;
                 let deleted_bytes = orphans
                     .iter()
-                    .map(|(_, size)| size.cast_unsigned())
+                    .map(|(_, size, _)| size.cast_unsigned())
                     .sum();
                 let deleted_blobs = if dry_run {
                     0
                 } else {
                     let mut statement = tx.prepare("DELETE FROM t_file WHERE digest = ?1")?;
-                    orphans.iter().try_fold(0_u64, |deleted, (digest, _)| {
+                    orphans.iter().try_fold(0_u64, |deleted, (digest, _, _)| {
                         Ok::<_, RusqliteError>(deleted + statement.execute([digest])? as u64)
                     })?
                 };
