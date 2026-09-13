@@ -795,6 +795,7 @@ impl WorkflowWorker {
         view: &WorkflowWorkerView<'_>,
         backtrace_capture: BacktraceCapture,
         local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
+        allow_snapshot_restore: bool,
     ) -> Result<PrepareFuncFinished, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
         let mut restored_snapshot_version = None;
@@ -806,6 +807,9 @@ impl WorkflowWorker {
             prepared_component_digest = Some(digest.clone());
             let load_started = now_tokio_instant();
             let loaded = async {
+                if !allow_snapshot_restore {
+                    return anyhow::Ok(None);
+                }
                 let db = view.db_pool.connection().await?;
                 let cas = view.db_pool.cas_conn().await?;
                 utils::workflow_snapshot::load_latest_snapshot(
@@ -1644,16 +1648,44 @@ impl WorkflowWorker {
         let persist_snapshots = view.config.persists_snapshots();
         let db_pool = view.db_pool;
         let component_id = &view.config.component_id;
-        let prepare_finished = Self::prepare_func(
+        let fallback_ctx = ctx.clone();
+        let fallback_interrupt_watcher = local_interrupt_watcher.clone();
+        let prepare_result = Self::prepare_func(
             ctx,
             db_connection,
             is_replay,
             &view,
             backtrace_capture,
             local_interrupt_watcher,
+            true,
         )
-        .await?;
-        Self::call_func_convert_result(
+        .await;
+        let prepare_finished = match prepare_result {
+            Ok(prepared) => prepared,
+            Err(WorkflowError::FatalError {
+                err,
+                version: _,
+                db_connection,
+            }) if snapshot_interval.is_some() => {
+                warn!(
+                    ?err,
+                    "Snapshot-based replay preparation failed; retrying full replay"
+                );
+                Self::prepare_func(
+                    fallback_ctx.clone(),
+                    db_connection,
+                    is_replay,
+                    &view,
+                    backtrace_capture,
+                    fallback_interrupt_watcher.clone(),
+                    false,
+                )
+                .await?
+            }
+            Err(err) => return Err(err),
+        };
+        let restored_snapshot_version = prepare_finished.restored_snapshot_version.clone();
+        let result = Self::call_func_convert_result(
             prepare_finished.store,
             prepare_finished.instance,
             prepare_finished.func,
@@ -1670,7 +1702,49 @@ impl WorkflowWorker {
             component_id,
             persist_snapshots,
         )
-        .await
+        .await;
+        match result {
+            Err(WorkflowError::FatalError {
+                err,
+                version: _,
+                db_connection,
+            }) if restored_snapshot_version.is_some() => {
+                warn!(
+                    ?err,
+                    snapshot_version = restored_snapshot_version.unwrap().0,
+                    "Snapshot-based replay failed; retrying full replay"
+                );
+                let prepared = Self::prepare_func(
+                    fallback_ctx,
+                    db_connection,
+                    is_replay,
+                    &view,
+                    backtrace_capture,
+                    fallback_interrupt_watcher,
+                    false,
+                )
+                .await?;
+                Self::call_func_convert_result(
+                    prepared.store,
+                    prepared.instance,
+                    prepared.func,
+                    prepared.component_func,
+                    prepared.params,
+                    &worker_span,
+                    execution_deadline,
+                    fuel,
+                    snapshot_interval,
+                    prepared.snapshot_source.as_deref(),
+                    prepared.prepared_component_digest,
+                    None,
+                    db_pool,
+                    component_id,
+                    persist_snapshots,
+                )
+                .await
+            }
+            result => result,
+        }
     }
 
     #[instrument(skip_all, fields(%execution_id))]
@@ -2615,6 +2689,7 @@ pub(crate) mod tests {
             sim_clock,
             join_next_blocking_strategy,
             false,
+            false,
         )
         .await;
         db_close.close().await;
@@ -2625,6 +2700,7 @@ pub(crate) mod tests {
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         snapshots: bool,
+        corrupt_snapshot_before_restore: bool,
     ) {
         let input_iterations: u32 = if snapshots { 2 } else { 1 };
         test_utils::set_up();
@@ -2754,6 +2830,30 @@ pub(crate) mod tests {
                 .tick_test_await(sim_clock.now(), RunId::generate())
                 .await;
             assert_eq!(1, executed_activities.len());
+            if corrupt_snapshot_before_restore {
+                let snapshot = db_connection
+                    .get_latest_workflow_snapshot(
+                        &execution_id,
+                        &workflow_exec.config.component_id.component_digest,
+                        prepared_digest.as_ref().unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let cas = db_pool.cas_conn().await.unwrap();
+                utils::workflow_snapshot::persist_snapshot(
+                    cas.as_ref(),
+                    db_connection.as_ref(),
+                    execution_id.clone(),
+                    snapshot.version,
+                    snapshot.component_digest,
+                    snapshot.prepared_component_digest,
+                    snapshot.processed_response_cursors,
+                    b"not a WebAssembly component",
+                )
+                .await
+                .unwrap();
+            }
             let restored_workflows = workflow_exec
                 .tick_test_await(sim_clock.now(), RunId::generate())
                 .await;
@@ -2797,6 +2897,22 @@ pub(crate) mod tests {
             db_pool.clone(),
             sim_clock,
             JoinNextBlockingStrategy::Interrupt,
+            true,
+            false,
+        )
+        .await;
+        db_close.close().await;
+    }
+
+    #[tokio::test]
+    async fn invalid_snapshot_falls_back_to_full_replay() {
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        fibo_workflow_should_submit_fibo_activity_inner(
+            db_pool.clone(),
+            sim_clock,
+            JoinNextBlockingStrategy::Interrupt,
+            true,
             true,
         )
         .await;

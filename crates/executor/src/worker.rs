@@ -53,7 +53,7 @@ pub struct RunFinished {
     pub http_client_traces: Option<Vec<HttpClientTrace>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
     pub metadata: ExecutionMetadata,

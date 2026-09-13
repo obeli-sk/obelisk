@@ -4387,6 +4387,21 @@ async fn workflow_snapshot_returns_latest_compatible_version(database: Database)
             .is_none()
     );
 
+    let mut upgraded_component_digest = component_id.component_digest.clone();
+    upgraded_component_digest.0.0[0] ^= 1;
+    assert!(
+        db_connection
+            .get_latest_workflow_snapshot(
+                &execution_id,
+                &upgraded_component_digest,
+                &prepared_digest,
+            )
+            .await
+            .unwrap()
+            .is_none(),
+        "a snapshot created by the pre-upgrade component must not be selected"
+    );
+
     drop(cas);
     drop(db_connection);
     db_close.close().await;
