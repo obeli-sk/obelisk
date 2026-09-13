@@ -108,7 +108,7 @@ impl Generate {
                 skip_local,
                 prune,
             } => {
-                let results = generate_wit_deps(
+                let results = Box::pin(generate_wit_deps(
                     project_dirs(),
                     BaseDirs::new(),
                     deployment,
@@ -119,7 +119,7 @@ impl Generate {
                         prune,
                     },
                     secret_registry,
-                )
+                ))
                 .await?;
                 print_generated_path_statuses(&results, json)?;
                 Ok(())
