@@ -5871,11 +5871,12 @@ async fn delete_execution_tree_tx(
 async fn deployment_execution_roots_tx(
     tx: &tokio_postgres::Transaction<'_>,
     deployment_id: DeploymentId,
-) -> Result<HashSet<ExecutionId>, DbErrorWrite> {
+    limit: u32,
+) -> Result<Vec<ExecutionId>, DbErrorWrite> {
     Ok(tx
         .query(
-            "SELECT execution_id FROM t_state WHERE deployment_id = $1 AND is_top_level = TRUE AND tombstoned = FALSE",
-            &[&deployment_id.to_string()],
+            "SELECT execution_id FROM t_state WHERE deployment_id = $1 AND is_top_level = TRUE AND tombstoned = FALSE ORDER BY execution_id LIMIT $2",
+            &[&deployment_id.to_string(), &i64::from(limit)],
         )
         .await?
         .into_iter()
@@ -5892,6 +5893,7 @@ async fn delete_deployment_tx(
     deployment_id: DeploymentId,
     delete_executions: bool,
     force_non_terminal: bool,
+    root_limit: u32,
 ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
     let status = tx
         .query_opt(
@@ -5911,7 +5913,10 @@ async fn delete_deployment_tx(
             ));
         }
     }
-    let roots = deployment_execution_roots_tx(tx, deployment_id).await?;
+    let mut roots =
+        deployment_execution_roots_tx(tx, deployment_id, root_limit.saturating_add(1)).await?;
+    let has_more_roots = roots.len() > root_limit as usize;
+    roots.truncate(root_limit as usize);
     if !roots.is_empty() && !delete_executions {
         return Ok(DeleteDeploymentResult::Referenced {
             execution_trees: roots.len() as u64,
@@ -5936,6 +5941,11 @@ async fn delete_deployment_tx(
             let outcome = delete_execution_tree_tx(tx, root, force_non_terminal).await?;
             debug_assert_eq!(outcome, DeleteExecutionTreeResult::Deleted);
         }
+    }
+    if has_more_roots {
+        return Ok(DeleteDeploymentResult::Deleted {
+            deleted_execution_trees: roots.len() as u64,
+        });
     }
     let id = deployment_id.to_string();
     tx.execute(
@@ -6201,12 +6211,41 @@ impl DbAdmin for PostgresConnection {
         delete_executions: bool,
         force_non_terminal: bool,
     ) -> Result<DeleteDeploymentResult, DbErrorWrite> {
+        const ROOT_BATCH_SIZE: u32 = 1000;
         let mut client = self.client.lock().await;
-        let tx = client.transaction().await?;
-        let result =
-            delete_deployment_tx(&tx, deployment_id, delete_executions, force_non_terminal).await?;
-        tx.commit().await?;
-        Ok(result)
+        let mut deleted_execution_trees = 0;
+        loop {
+            let tx = client.transaction().await?;
+            let result = delete_deployment_tx(
+                &tx,
+                deployment_id,
+                delete_executions,
+                force_non_terminal,
+                ROOT_BATCH_SIZE,
+            )
+            .await?;
+            tx.commit().await?;
+            match result {
+                DeleteDeploymentResult::Deleted {
+                    deleted_execution_trees: deleted,
+                } => {
+                    deleted_execution_trees += deleted;
+                    let exists = client
+                        .query_one(
+                            "SELECT EXISTS(SELECT 1 FROM t_deployment WHERE deployment_id = $1)",
+                            &[&deployment_id.to_string()],
+                        )
+                        .await?
+                        .get::<_, bool>(0);
+                    if !exists {
+                        return Ok(DeleteDeploymentResult::Deleted {
+                            deleted_execution_trees,
+                        });
+                    }
+                }
+                other => return Ok(other),
+            }
+        }
     }
 
     async fn retain_deployments(
@@ -6219,25 +6258,28 @@ impl DbAdmin for PostgresConnection {
     ) -> Result<CleanupResult, DbErrorWrite> {
         let mut client = self.client.lock().await;
         let tx = client.transaction().await?;
-        let rows = match retention {
+        let mut rows = match retention {
             RetentionPolicy::Count(count) => tx.query(
                 "SELECT deployment_id FROM (\
                      SELECT deployment_id, created_at FROM t_deployment \
                      WHERE status = 'inactive' \
                      ORDER BY created_at DESC, deployment_id DESC OFFSET $1\
-                 ) retained ORDER BY created_at ASC, deployment_id ASC",
-                &[&i64::from(count)],
+                 ) retained ORDER BY created_at ASC, deployment_id ASC LIMIT $2",
+                &[&i64::from(count), &(i64::from(batch_size) + 1)],
             ).await?,
             RetentionPolicy::CreatedAtOrAfter(cutoff) => tx.query(
-                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC",
-                &[&cutoff],
+                "SELECT deployment_id FROM t_deployment WHERE status = 'inactive' AND inactive_at < $1 ORDER BY inactive_at ASC, deployment_id ASC LIMIT $2",
+                &[&cutoff, &(i64::from(batch_size) + 1)],
             ).await?,
         };
+        let more_deployments = rows.len() > batch_size as usize;
+        rows.truncate(batch_size as usize);
         let mut result = CleanupResult {
             retained: match retention {
                 RetentionPolicy::Count(count) => u64::from(count),
                 RetentionPolicy::CreatedAtOrAfter(_) => 0,
             },
+            has_more: more_deployments,
             ..Default::default()
         };
         for row in rows {
@@ -6245,7 +6287,10 @@ impl DbAdmin for PostgresConnection {
                 .get::<_, String>(0)
                 .parse::<DeploymentId>()
                 .expect("database deployment id must be valid");
-            let roots = deployment_execution_roots_tx(&tx, id).await?;
+            let mut roots =
+                deployment_execution_roots_tx(&tx, id, batch_size.saturating_add(1)).await?;
+            let more_roots = roots.len() > batch_size as usize;
+            roots.truncate(batch_size as usize);
             if !roots.is_empty() && !delete_executions {
                 result.blocked_by_execution_reference += 1;
             } else {
@@ -6261,19 +6306,31 @@ impl DbAdmin for PostgresConnection {
                 }
                 if blocked {
                     result.blocked_non_terminal += 1;
+                    break;
                 } else if result.deleted_deployments == u64::from(batch_size) {
                     result.has_more = true;
                     break;
+                }
+                result.deleted_execution_trees += roots.len() as u64;
+                if more_roots {
+                    result.has_more = true;
                 } else {
                     result.deleted_deployments += 1;
-                    result.deleted_execution_trees += roots.len() as u64;
-                    if !dry_run {
-                        let outcome =
-                            delete_deployment_tx(&tx, id, delete_executions, force_non_terminal)
-                                .await?;
-                        debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
-                    }
                 }
+                if !dry_run {
+                    let outcome = delete_deployment_tx(
+                        &tx,
+                        id,
+                        delete_executions,
+                        force_non_terminal,
+                        batch_size,
+                    )
+                    .await?;
+                    debug_assert!(matches!(outcome, DeleteDeploymentResult::Deleted { .. }));
+                }
+            }
+            if !roots.is_empty() {
+                break;
             }
         }
         tx.commit().await?;
