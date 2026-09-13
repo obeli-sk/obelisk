@@ -2849,7 +2849,7 @@
             "$ref": "#/components/schemas/GenericErrorBody"
           },
           {
-            "$ref": "#/components/schemas/UnregisteredSecretsErrorBody"
+            "$ref": "#/components/schemas/MissingRuntimeConfigErrorBody"
           }
         ]
       },
@@ -3335,6 +3335,30 @@
           "stderr"
         ]
       },
+      "MissingRuntimeConfigErrorBody": {
+        "type": "object",
+        "required": [
+          "error",
+          "secrets"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "public_env": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "PaginationDirectionSortedFromLatest": {
         "type": "string",
         "enum": [
@@ -3759,24 +3783,6 @@
               "string",
               "null"
             ]
-          }
-        }
-      },
-      "UnregisteredSecretsErrorBody": {
-        "type": "object",
-        "required": [
-          "error",
-          "secrets"
-        ],
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "secrets": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         }
       }

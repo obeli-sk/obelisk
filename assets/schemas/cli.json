@@ -109,7 +109,7 @@
             },
             {
               "name": "--fix",
-              "help": "Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds"
+              "help": "Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds"
             }
           ]
         }
@@ -862,7 +862,7 @@
         },
         {
           "name": "verify",
-          "about": "Verify a local deployment without accessing the server database",
+          "about": "Alias for `server verify --skip-db --deployment <PATH>`",
           "options": [
             {
               "name": "--clean-cache",
@@ -899,7 +899,7 @@
             },
             {
               "name": "--fix",
-              "help": "Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and add missing secret scaffolds"
+              "help": "Clean generated deployment metadata and, when `--server-config` is passed, fix its exec allowlist and missing runtime configuration scaffolds"
             }
           ]
         }
