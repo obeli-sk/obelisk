@@ -231,6 +231,7 @@
             nativeBuildInputs = with pkgs;
               [
                 actionlint
+                binaryen
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-audit
                 cargo-deny

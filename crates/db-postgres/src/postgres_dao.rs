@@ -31,7 +31,7 @@ use concepts::{
         ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
         SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace,
+        TimeoutOutcome, Unlocked, Version, VersionType, WasmBacktrace, WorkflowSnapshot,
     },
 };
 use db_common::{
@@ -4338,6 +4338,66 @@ impl DbConnection for PostgresConnection {
 
         tx.commit().await?;
         Ok(res)
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get_latest_workflow_snapshot(
+        &self,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        prepared_component_digest: &ContentDigest,
+    ) -> Result<Option<WorkflowSnapshot>, DbErrorRead> {
+        let client_guard = self.client.lock().await;
+        let row = client_guard
+            .query_opt(
+                "SELECT version, snapshot_digest FROM t_workflow_snapshot \
+                 WHERE execution_id = $1 AND component_digest = $2 \
+                   AND prepared_component_digest = $3 \
+                 ORDER BY version DESC LIMIT 1",
+                &[
+                    &execution_id.to_string(),
+                    &component_digest.as_slice(),
+                    &prepared_component_digest.to_string(),
+                ],
+            )
+            .await?;
+        row.map(|row| {
+            Ok(WorkflowSnapshot {
+                execution_id: execution_id.clone(),
+                version: Version::try_from(get::<i64, _>(&row, "version")?)?,
+                component_digest: component_digest.clone(),
+                prepared_component_digest: prepared_component_digest.clone(),
+                snapshot_digest: get(&row, "snapshot_digest")?,
+            })
+        })
+        .transpose()
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn upsert_workflow_snapshot(
+        &self,
+        snapshot: WorkflowSnapshot,
+    ) -> Result<(), DbErrorWrite> {
+        let client_guard = self.client.lock().await;
+        client_guard
+            .execute(
+                "INSERT INTO t_workflow_snapshot \
+                 (execution_id, version, component_digest, prepared_component_digest, snapshot_digest) \
+                 VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT (execution_id, version) DO UPDATE SET \
+                   component_digest = EXCLUDED.component_digest, \
+                   prepared_component_digest = EXCLUDED.prepared_component_digest, \
+                   snapshot_digest = EXCLUDED.snapshot_digest",
+                &[
+                    &snapshot.execution_id.to_string(),
+                    &i64::from(snapshot.version.0),
+                    &snapshot.component_digest.as_slice(),
+                    &snapshot.prepared_component_digest.to_string(),
+                    &snapshot.snapshot_digest.to_string(),
+                ],
+            )
+            .await?;
+        Ok(())
     }
 
     #[instrument(level = Level::DEBUG, skip(self))]

@@ -31,7 +31,7 @@ use concepts::{
         ResponseSubscriptionEnd, ResponseWithCursor, RetentionPolicy, STATE_BLOCKED_BY_JOIN_SET,
         STATE_FINISHED, STATE_LOCKED, STATE_PENDING_AT, StorageStatus, SubscribeToResponsesError,
         SystemEvent, SystemEventFilter, SystemEventLevel, SystemEventRetentionResult,
-        TimeoutOutcome, Unlocked, Version, VersionType,
+        TimeoutOutcome, Unlocked, Version, VersionType, WorkflowSnapshot,
     },
 };
 use conversions::{JsonWrapper, consistency_db_err, consistency_rusqlite, from_generic_error};
@@ -6230,6 +6230,79 @@ impl DbConnection for SqlitePool {
             move |tx| Self::get(tx, &execution_id),
             TxType::Other, // read only
             "get",
+        )
+        .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get_latest_workflow_snapshot(
+        &self,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        prepared_component_digest: &ContentDigest,
+    ) -> Result<Option<WorkflowSnapshot>, DbErrorRead> {
+        let execution_id = execution_id.clone();
+        let component_digest = component_digest.clone();
+        let prepared_component_digest = prepared_component_digest.clone();
+        self.transaction(
+            move |tx| {
+                tx.query_row(
+                    "SELECT version, snapshot_digest FROM t_workflow_snapshot \
+                     WHERE execution_id = :execution_id \
+                       AND component_digest = :component_digest \
+                       AND prepared_component_digest = :prepared_component_digest \
+                     ORDER BY version DESC LIMIT 1",
+                    named_params! {
+                        ":execution_id": execution_id.to_string(),
+                        ":component_digest": component_digest,
+                        ":prepared_component_digest": prepared_component_digest.to_string(),
+                    },
+                    |row| {
+                        Ok(WorkflowSnapshot {
+                            execution_id: execution_id.clone(),
+                            version: Version::new(row.get("version")?),
+                            component_digest: component_digest.clone(),
+                            prepared_component_digest: prepared_component_digest.clone(),
+                            snapshot_digest: row.get("snapshot_digest")?,
+                        })
+                    },
+                )
+                .optional()
+                .map_err(DbErrorRead::from)
+            },
+            TxType::Other,
+            "get_latest_workflow_snapshot",
+        )
+        .await
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn upsert_workflow_snapshot(
+        &self,
+        snapshot: WorkflowSnapshot,
+    ) -> Result<(), DbErrorWrite> {
+        self.transaction(
+            move |tx| {
+                tx.execute(
+                    "INSERT INTO t_workflow_snapshot \
+                     (execution_id, version, component_digest, prepared_component_digest, snapshot_digest) \
+                     VALUES (:execution_id, :version, :component_digest, :prepared_component_digest, :snapshot_digest) \
+                     ON CONFLICT (execution_id, version) DO UPDATE SET \
+                       component_digest = excluded.component_digest, \
+                       prepared_component_digest = excluded.prepared_component_digest, \
+                       snapshot_digest = excluded.snapshot_digest",
+                    named_params! {
+                        ":execution_id": snapshot.execution_id.to_string(),
+                        ":version": snapshot.version.0,
+                        ":component_digest": snapshot.component_digest,
+                        ":prepared_component_digest": snapshot.prepared_component_digest.to_string(),
+                        ":snapshot_digest": snapshot.snapshot_digest.to_string(),
+                    },
+                )?;
+                Ok(())
+            },
+            TxType::Other,
+            "upsert_workflow_snapshot",
         )
         .await
     }

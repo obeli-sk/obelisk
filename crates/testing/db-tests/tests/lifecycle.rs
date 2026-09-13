@@ -11,7 +11,7 @@ use concepts::storage::{
     JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, LockedBy, LockedExecution,
     Pagination, PendingState, PendingStateBlockedByJoinSet, PendingStateCancelling,
     PendingStateLocked, PendingStatePaused, PendingStatePendingAt, ResponseCursor, TimeoutOutcome,
-    Unlocked, Version, VersionType, WasmBacktrace,
+    Unlocked, Version, VersionType, WasmBacktrace, WorkflowSnapshot,
 };
 use concepts::storage::{
     DbErrorWrite, DbPoolCloseable, DeploymentRecord, DeploymentStatus, EnqueueOutcome,
@@ -4309,6 +4309,84 @@ async fn source_file_upsert_replaces_existing_mapping(database: Database) {
 
     drop(cas);
     drop(api_conn);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn workflow_snapshot_returns_latest_compatible_version(database: Database) {
+    set_up();
+    let sim_clock = SimClock::default();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let db_connection = db_pool.connection().await.unwrap();
+    let cas = db_pool.cas_conn().await.unwrap();
+    let execution_id = ExecutionId::generate();
+    let component_id = ComponentId::dummy_activity();
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: execution_id.clone(),
+            ffqn: SOME_FFQN,
+            params: Params::empty(),
+            parent: None,
+            metadata: concepts::ExecutionMetadata::empty(),
+            scheduled_at: sim_clock.now(),
+            component_id: component_id.clone(),
+            deployment_id: DEPLOYMENT_ID_DUMMY,
+            scheduled_by: None,
+            paused: false,
+            max_persisted_value_size_bytes: 64,
+        })
+        .await
+        .unwrap();
+
+    let prepared_digest = cas.write_blob(b"prepared-v1").await.unwrap();
+    let old_snapshot_digest = cas.write_blob(b"snapshot-at-10").await.unwrap();
+    let latest_snapshot_digest = cas.write_blob(b"snapshot-at-20").await.unwrap();
+    for (version, snapshot_digest) in [
+        (Version::new(10), old_snapshot_digest),
+        (Version::new(20), latest_snapshot_digest.clone()),
+    ] {
+        db_connection
+            .upsert_workflow_snapshot(WorkflowSnapshot {
+                execution_id: execution_id.clone(),
+                version,
+                component_digest: component_id.component_digest.clone(),
+                prepared_component_digest: prepared_digest.clone(),
+                snapshot_digest,
+            })
+            .await
+            .unwrap();
+    }
+
+    let found = db_connection
+        .get_latest_workflow_snapshot(
+            &execution_id,
+            &component_id.component_digest,
+            &prepared_digest,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(Version::new(20), found.version);
+    assert_eq!(latest_snapshot_digest, found.snapshot_digest);
+
+    let incompatible_prepared_digest = cas.write_blob(b"prepared-v2").await.unwrap();
+    assert!(
+        db_connection
+            .get_latest_workflow_snapshot(
+                &execution_id,
+                &component_id.component_digest,
+                &incompatible_prepared_digest,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    drop(cas);
+    drop(db_connection);
     db_close.close().await;
 }
 

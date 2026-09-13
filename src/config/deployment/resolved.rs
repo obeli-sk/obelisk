@@ -1029,6 +1029,7 @@ pub(crate) trait WorkflowWasmComponentConfigResolvedExt {
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
         response_refresh_interval: usize,
+        snapshot_every_n_events: Option<usize>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error>;
 }
 
@@ -1043,6 +1044,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
         response_refresh_interval: usize,
+        snapshot_every_n_events: Option<usize>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
         if retry_exp_backoff == Duration::ZERO {
@@ -1059,13 +1061,25 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             expected_content_digest.as_ref(),
             &common.location.to_string(),
         )?;
-        let wasm_path = WasmComponent::convert_core_module_to_component(
-            &wasm_path,
-            &content_digest,
-            &wasm_cache_dir,
-        )
-        .await?
-        .unwrap_or(wasm_path);
+        let wasm_path = if let Some(snapshot_every_n_events) = snapshot_every_n_events {
+            utils::workflow_snapshot::prepare_component(
+                &wasm_path,
+                &content_digest,
+                &wasm_cache_dir,
+                snapshot_every_n_events.try_into().context(
+                    "`workflows.snapshot_every_n_events` exceeds the supported u32 range",
+                )?,
+            )
+            .await?
+        } else {
+            WasmComponent::convert_core_module_to_component(
+                &wasm_path,
+                &content_digest,
+                &wasm_cache_dir,
+            )
+            .await?
+            .unwrap_or(wasm_path)
+        };
         let component_digest = ComponentDigest(content_digest.0);
         let component_id = ComponentId::new(
             ComponentType::Workflow,
@@ -1083,6 +1097,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
                 lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
                 max_events_per_run,
                 response_refresh_interval,
+                snapshot_every_n_events,
             },
         };
         let frame_files_to_sources: FrameFilesToSource = self
@@ -1121,6 +1136,7 @@ pub(crate) trait WorkflowJsComponentConfigResolvedExt {
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
         response_refresh_interval: usize,
+        snapshot_every_n_events: Option<usize>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error>;
 }
 
@@ -1135,6 +1151,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
         response_refresh_interval: usize,
+        snapshot_every_n_events: Option<usize>,
     ) -> Result<WorkflowJsConfigVerified, anyhow::Error> {
         let verified = verify_function_interface(
             self.interface,
@@ -1183,6 +1200,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
                 lock_extension: self.lock_extension.then_some(self.exec.lock_expiry.into()),
                 max_events_per_run,
                 response_refresh_interval,
+                snapshot_every_n_events,
             },
         };
         let retry_config = ComponentRetryConfig {

@@ -15,6 +15,11 @@ if ! command -v wasm-tools >/dev/null; then
     exit 1
 fi
 
+if ! command -v wasm-opt >/dev/null; then
+    echo "error: wasm-opt from Binaryen must be on PATH" >&2
+    exit 1
+fi
+
 TAG="$1"
 OUTPUT_FILE="${2:-crates/embedded-assets/workflow-js-runtime-version.txt}"
 
@@ -23,12 +28,13 @@ cargo check --package workflow-js-runtime-builder # triggers build.rs of workflo
 if [ "$TAG" != "dry-run" ]; then
     STRIPPED="target/wasm-cache/workflow_js_runtime_component.stripped.wasm"
     wasm-tools strip --all "target/wasm-cache/workflow_js_runtime_component.wasm" -o "$STRIPPED"
+    PREPARED=$(obelisk component prepare-workflow "$STRIPPED" --output-dir target/wasm-cache --snapshot-interval 1)
     TMP_TOML="workflow-deployment-for-push.toml"
     trap "rm -f $TMP_TOML" EXIT
     cat > "$TMP_TOML" <<EOF
 [[workflow_wasm]]
 name = "target_component"
-location = "$STRIPPED"
+location = "$PREPARED"
 EOF
     OUTPUT=$(obelisk component push --deployment "$TMP_TOML" \
         target_component "oci://docker.io/getobelisk/workflow-js-runtime:$TAG")

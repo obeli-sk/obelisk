@@ -962,6 +962,7 @@ mod tests {
                 lock_extension: Some(Duration::from_secs(1)),
                 max_events_per_run: usize::MAX,
                 response_refresh_interval: usize::MAX,
+                snapshot_every_n_events: None,
             },
         };
 
@@ -1042,6 +1043,7 @@ mod tests {
                 lock_extension: None,
                 max_events_per_run: usize::MAX,
                 response_refresh_interval: usize::MAX,
+                snapshot_every_n_events: None,
             },
         };
 
@@ -1430,6 +1432,7 @@ mod tests {
                 lock_extension: None,
                 max_events_per_run,
                 response_refresh_interval,
+                snapshot_every_n_events: None,
             },
         };
 

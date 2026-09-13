@@ -1223,6 +1223,7 @@ pub(crate) async fn deployment_verify_config(
         server_verified.database_subscription_interruption,
         server_verified.workflows_max_events_per_run,
         server_verified.workflows_response_refresh_interval,
+        server_verified.workflows_snapshot_every_n_events,
         server_verified.api_addr_if_webui_enabled.clone(),
         server_verified.secret_registry.clone(),
         server_verified.global_http_config.clone(),
@@ -2197,6 +2198,7 @@ pub(crate) struct ServerVerified {
     database_subscription_interruption: Option<Duration>,
     workflows_max_events_per_run: usize,
     workflows_response_refresh_interval: usize,
+    workflows_snapshot_every_n_events: Option<usize>,
     api_addr_if_webui_enabled: Option<String>,
     max_deployment_file_bytes: u32,
     max_persisted_value_size_bytes: u64,
@@ -2270,6 +2272,11 @@ impl ServerVerified {
         let workflows_max_replay_captured_writes =
             config.workflows_global_config.max_replay_captured_writes;
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
+        let workflows_snapshot_every_n_events =
+            config.workflows_global_config.snapshot_every_n_events;
+        if workflows_snapshot_every_n_events == Some(0) {
+            bail!("`workflows.snapshot_every_n_events` must be greater than zero");
+        }
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
         }
@@ -2355,6 +2362,7 @@ impl ServerVerified {
             database_subscription_interruption,
             workflows_max_events_per_run,
             workflows_response_refresh_interval,
+            workflows_snapshot_every_n_events,
             api_addr_if_webui_enabled: if config.webui.enabled {
                 Some(config.api.listening_addr.to_string()) // `config.api.enabled` checked above
             } else {
@@ -4266,6 +4274,7 @@ impl DeploymentVerified {
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
         response_refresh_interval: usize,
+        snapshot_every_n_events: Option<usize>,
         api_addr_if_webui_enabled: Option<String>,
         secret_registry: Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
@@ -4432,6 +4441,7 @@ impl DeploymentVerified {
                             subscription_interruption,
                             max_events_per_run,
                             response_refresh_interval,
+                            snapshot_every_n_events,
                         )
                         .in_current_span(),
                 )
@@ -4576,6 +4586,7 @@ impl DeploymentVerified {
                                 subscription_interruption,
                                 max_events_per_run,
                                 response_refresh_interval,
+                                snapshot_every_n_events,
                             ).await?
                         );
                     }
@@ -6532,6 +6543,7 @@ mod tests {
             server_verified.database_subscription_interruption,
             server_verified.workflows_max_events_per_run,
             server_verified.workflows_response_refresh_interval,
+            server_verified.workflows_snapshot_every_n_events,
             webui_enabled,
             server_verified.secret_registry,
             server_verified.global_http_config,

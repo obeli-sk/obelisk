@@ -770,6 +770,17 @@ pub(crate) struct DeploymentVerifyArgs {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Component {
+    /// Prepare a workflow component for runtime snapshots.
+    PrepareWorkflow {
+        /// Core Wasm module or component to prepare.
+        input: PathBuf,
+        /// Directory for the digest-keyed prepared component.
+        #[arg(long, short)]
+        output_dir: Option<PathBuf>,
+        /// Number of durable calls between checkpoints.
+        #[arg(long, default_value_t = 1)]
+        snapshot_interval: u32,
+    },
     /// List components.
     List {
         /// Address of the obelisk server

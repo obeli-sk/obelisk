@@ -86,6 +86,7 @@ pub enum WorkflowConfigMode {
         lock_extension: Option<Duration>,
         max_events_per_run: usize,
         response_refresh_interval: usize,
+        snapshot_every_n_events: Option<usize>,
     },
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always
     /// runs with the `Interrupt` strategy. `max_replay_captured_writes` bounds how many captured
@@ -154,6 +155,23 @@ impl WorkflowConfig {
             } => Some(*response_refresh_interval),
             WorkflowConfigMode::Replay { .. } => None,
         }
+    }
+
+    #[must_use]
+    pub fn snapshot_every_n_events(&self) -> Option<usize> {
+        match &self.mode {
+            WorkflowConfigMode::Real {
+                snapshot_every_n_events,
+                ..
+            } => *snapshot_every_n_events,
+            WorkflowConfigMode::Replay { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn snapshot_due(&self, history_event_count: usize) -> bool {
+        self.snapshot_every_n_events()
+            .is_some_and(|interval| history_event_count != 0 && history_event_count % interval == 0)
     }
 }
 
@@ -2076,6 +2094,7 @@ pub(crate) mod tests {
                             lock_extension: None,
                             max_events_per_run: usize::MAX,
                             response_refresh_interval: usize::MAX,
+                            snapshot_every_n_events: None,
                         },
                     },
                     workflow_engine,

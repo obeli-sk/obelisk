@@ -29,7 +29,11 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-error.workspace = true
+tempfile.workspace = true
+walrus.workspace = true
+wasm-encoder.workspace = true
 wasmparser.workspace = true
+wasmtime-wizer.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
 
@@ -39,7 +43,9 @@ concepts = { workspace = true, features = ["test"] }
 insta.workspace = true
 rstest.workspace = true
 serde.workspace = true
-tempfile.workspace = true
+wasmtime.workspace = true
+wasmtime-wizer = { workspace = true, features = ["wasmtime"] }
+wat = "1.259.0"
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-webhook-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true

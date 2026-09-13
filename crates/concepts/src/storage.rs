@@ -268,6 +268,20 @@ impl From<&Version> for usize {
 #[error("version must be u32")]
 pub struct VersionParseError;
 
+/// Durable metadata for a workflow checkpoint whose bytes live in the CAS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowSnapshot {
+    pub execution_id: ExecutionId,
+    /// First history version that still needs to be replayed after restoring this snapshot.
+    pub version: Version,
+    /// Digest of the exact component supplied by the user.
+    pub component_digest: ComponentDigest,
+    /// Digest of the prepared component used to create the snapshot.
+    pub prepared_component_digest: ContentDigest,
+    /// Digest of the Wizer-produced snapshot component in the CAS.
+    pub snapshot_digest: ContentDigest,
+}
+
 #[derive(
     Clone,
     Debug,
@@ -2724,6 +2738,20 @@ pub struct ExecutionWithStateRequestsResponses {
 pub trait DbConnection: DbExecutor {
     /// Get execution log.
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbErrorRead>;
+
+    /// Find the newest compatible workflow snapshot for an execution.
+    async fn get_latest_workflow_snapshot(
+        &self,
+        execution_id: &ExecutionId,
+        component_digest: &ComponentDigest,
+        prepared_component_digest: &ContentDigest,
+    ) -> Result<Option<WorkflowSnapshot>, DbErrorRead>;
+
+    /// Record a snapshot after its bytes have been persisted to the CAS.
+    async fn upsert_workflow_snapshot(
+        &self,
+        snapshot: WorkflowSnapshot,
+    ) -> Result<(), DbErrorWrite>;
 
     /// Execution ids whose `lifecycle` is `cancelling`, for the cancellation driver
     /// to advance. Ordered oldest-first, capped at `batch_size`. Unlike the executor
