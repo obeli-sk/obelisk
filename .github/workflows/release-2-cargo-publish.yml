@@ -24,7 +24,12 @@ on:
         type: boolean
         default: false
       update_latest:
-        description: "Update the Docker Hub latest tag (ignored when stopping after step 2)"
+        description: "Update the Docker Hub latest tag (requires publishing the release)"
+        required: true
+        type: boolean
+        default: true
+      publish_release:
+        description: "Publish the GitHub release after all artifacts are uploaded"
         required: true
         type: boolean
         default: true
@@ -54,7 +59,11 @@ on:
         required: true
         type: boolean
       update_latest:
-        description: "Update the Docker Hub latest tag (ignored when stopping after step 2)"
+        description: "Update the Docker Hub latest tag (requires publishing the release)"
+        required: true
+        type: boolean
+      publish_release:
+        description: "Publish the GitHub release after all artifacts are uploaded"
         required: true
         type: boolean
       packages:
@@ -76,10 +85,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Validate inputs
-        if: ${{ inputs.dry_run && !inputs.stop_after_step_2 }}
         run: |
-          echo "::error::dry_run requires stop_after_step_2"
-          exit 1
+          if [ "${{ inputs.dry_run }}" = "true" ] && [ "${{ inputs.stop_after_step_2 }}" != "true" ]; then
+            echo "::error::dry_run requires stop_after_step_2"
+            exit 1
+          fi
+          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
+            echo "::error::update_latest requires publish_release"
+            exit 1
+          fi
 
   cachix-push:
     needs: validate-inputs
@@ -164,3 +178,4 @@ jobs:
     with:
       ref: ${{ inputs.ref }}
       update_latest: ${{ inputs.update_latest }}
+      publish_release: ${{ inputs.publish_release }}
