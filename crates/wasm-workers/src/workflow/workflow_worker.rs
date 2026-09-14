@@ -595,6 +595,12 @@ impl WorkflowWorker {
         backtraces
     }
 
+    #[instrument(
+        skip_all,
+        name = "workflow replay",
+        fields(%execution_id, replayed_event_count, replay_duration_ms)
+    )]
+    #[expect(clippy::type_complexity)]
     pub(crate) async fn capture_replay_writes_from_log(
         &self,
         execution_id: ExecutionId,
@@ -612,6 +618,7 @@ impl WorkflowWorker {
         ),
         ReplayInternalError,
     > {
+        let started = now_tokio_instant();
         let replay_kind = if log.is_finished() {
             ReplayKind::Finished
         } else {
@@ -624,6 +631,9 @@ impl WorkflowWorker {
         let parent = log.parent();
 
         let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
+        let event_history: Vec<_> = log.event_history().collect();
+        let replayed_event_count = event_history.len();
+        Span::current().record("replayed_event_count", replayed_event_count);
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
             metadata: ExecutionMetadata::empty()
@@ -631,7 +641,7 @@ impl WorkflowWorker {
             component_digest: self.config.component_id.component_digest.clone(),
             ffqn,
             params,
-            event_history: log.event_history().collect(),
+            event_history,
             responses: log.responses,
             parent: parent.clone(),
             version: log.next_version.clone(),
@@ -648,26 +658,39 @@ impl WorkflowWorker {
             execution_interrupt_watcher,
         };
 
-        self.replay_internal(
-            ctx,
-            replay_kind,
-            execution_id,
-            db_conn,
-            parent,
-            backtrace_capture,
-        )
-        .await
-        .map(|(writes, backtraces, replay_end, db_conn)| {
-            (
-                writes,
-                backtraces,
-                match replay_end {
-                    ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
-                    _ => None,
-                },
+        let result = self
+            .replay_internal(
+                ctx,
+                replay_kind,
+                execution_id,
                 db_conn,
+                parent,
+                backtrace_capture,
             )
-        })
+            .await
+            .map(|(writes, backtraces, replay_end, db_conn)| {
+                (
+                    writes,
+                    backtraces,
+                    match replay_end {
+                        ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
+                        _ => None,
+                    },
+                    db_conn,
+                )
+            });
+        let replay_duration = started.elapsed();
+        Span::current().record(
+            "replay_duration_ms",
+            tracing::field::display(replay_duration.as_millis()),
+        );
+        info!(
+            replayed_event_count,
+            duration = ?replay_duration,
+            success = result.is_ok(),
+            "Execution replay completed"
+        );
+        result
     }
 
     pub(crate) async fn advance_from_log(
