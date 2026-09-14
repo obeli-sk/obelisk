@@ -8,7 +8,9 @@ use super::workflow_worker::{BacktraceCapture, WorkflowWorker, WorkflowWorkerCom
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
-use crate::workflow::replay_advance::{AdvanceError, ReplayAdvanceable, ReplayResponse};
+#[cfg(test)]
+use crate::workflow::replay_advance::ReplayResponse;
+use crate::workflow::replay_advance::{AdvanceError, MeasuredReplayResponse, ReplayAdvanceable};
 use crate::workflow::replay_advance::{AdvanceResponse, ReplayError};
 use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use async_trait::async_trait;
@@ -227,7 +229,7 @@ impl WorkflowJsWorker {
             &self.resolved_imports,
             true,
         );
-        let (writes, backtraces, _fatal_error, _db_conn) = self
+        let (writes, backtraces, _fatal_error, _db_conn, _measurements) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -566,7 +568,7 @@ impl WorkflowJsWorker {
         &self,
         execution_id: ExecutionId,
         backtrace_capture: BacktraceCapture,
-    ) -> Result<ReplayResponse, ReplayError> {
+    ) -> Result<MeasuredReplayResponse, ReplayError> {
         assert!(
             self.inner.deadline_factory.is_for_replay(),
             "replay() requires DeadlineTrackerFactoryForReplay"
@@ -591,7 +593,7 @@ impl WorkflowJsWorker {
             backtrace_capture != BacktraceCapture::Disabled,
         );
 
-        let (captured_writes, _backtraces, mut fatal_error, _db_conn) = self
+        let (captured_writes, _backtraces, mut fatal_error, _db_conn, measurements) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -642,6 +644,7 @@ impl WorkflowJsWorker {
             captured_writes,
             fatal_error,
             already_finished_result,
+            measurements,
         )
     }
 
@@ -692,7 +695,7 @@ impl WorkflowJsWorker {
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (mut fresh_replay, _backtraces, _fatal_error, db_conn) = self
+        let (mut fresh_replay, _backtraces, _fatal_error, db_conn, _measurements) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -2846,7 +2849,7 @@ mod tests {
             .await
         }
         .unwrap();
-        assert_matches!(replay, ReplayResponse::Finished { .. });
+        assert_matches!(replay.response, ReplayResponse::Finished { .. });
         drop(db_connection);
         db_close.close().await;
     }
@@ -3041,7 +3044,7 @@ mod tests {
             .await
         }
         .unwrap();
-        assert_matches!(replay, ReplayResponse::Finished { .. });
+        assert_matches!(replay.response, ReplayResponse::Finished { .. });
         drop(db_connection);
         db_close.close().await;
     }
@@ -4676,7 +4679,8 @@ mod tests {
             .await
             .unwrap();
 
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         info!("Stage 1 replay: {replay:?}");
         assert!(
             replay.get_return_value().is_some(),
@@ -4713,7 +4717,8 @@ mod tests {
             .await
             .unwrap();
 
-        let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
+        let replay2 =
+            assert_matches!(replay2.response, ReplayResponse::Advanceable(replay2) => replay2);
         info!("Stage 2 replay: {replay2:?}");
         assert!(
             replay2.get_return_value().is_some(),
@@ -4754,7 +4759,8 @@ mod tests {
             .await
             .unwrap();
 
-        let result = assert_matches!(replay3, ReplayResponse::Finished { result } => result);
+        let result =
+            assert_matches!(replay3.response, ReplayResponse::Finished { result } => result);
         info!("Stage 3 replay result: {result:?}");
         drop(db_connection);
         db_close.close().await;
@@ -4844,7 +4850,8 @@ mod tests {
             .await
             .unwrap();
 
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         // With FlushedCache interruption, replay stops after the first cache flush.
         // The first flush covers JoinSetCreate and child execution submit.
         assert_eq!(2, replay.history_events().len());
@@ -4870,7 +4877,8 @@ mod tests {
             .await
             .unwrap();
 
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         let retval = replay
             .get_return_value()
             .expect("retval should be computed");
@@ -4966,7 +4974,8 @@ mod tests {
             .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         assert_eq!(replay.captured_writes.len(), MAX);
 
         // Advancing the prefix persists it; a fresh replay resumes past the tip and yields the next
@@ -4979,7 +4988,8 @@ mod tests {
             .replay(execution_id, BacktraceCapture::Disabled)
             .await
             .unwrap();
-        let replay2 = assert_matches!(replay2, ReplayResponse::Advanceable(replay2) => replay2);
+        let replay2 =
+            assert_matches!(replay2.response, ReplayResponse::Advanceable(replay2) => replay2);
         assert_eq!(replay2.captured_writes.len(), MAX);
 
         drop(db_connection);
@@ -5598,7 +5608,8 @@ mod tests {
             .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         assert_matches!(
             log_recv.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -5701,7 +5712,8 @@ mod tests {
                 .replay(execution_id.clone(), BacktraceCapture::Disabled)
                 .await
                 .unwrap();
-            let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+            let replay =
+                assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
             assert_eq!(replay.captured_writes.len(), expected_len);
 
             replay_worker
@@ -5724,7 +5736,7 @@ mod tests {
             .replay(execution_id, BacktraceCapture::Disabled)
             .await
             .unwrap();
-        assert_matches!(replay, ReplayResponse::Blocked);
+        assert_matches!(replay.response, ReplayResponse::Blocked);
     }
 
     struct WorkflowJsAdvanceHarness {
@@ -5766,7 +5778,7 @@ mod tests {
                 .replay(harness.execution_id.clone(), BacktraceCapture::Disabled)
                 .await
                 .unwrap();
-            let replay = match replay {
+            let replay = match replay.response {
                 ReplayResponse::Advanceable(replay) => replay,
                 ReplayResponse::Finished {
                     result: finished_result,
@@ -5952,7 +5964,8 @@ mod tests {
             .await
             .unwrap();
 
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
         let replayed_child_created_at = requested
             .captured_writes
@@ -6094,7 +6107,8 @@ mod tests {
             .await
             .unwrap();
 
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
         let replayed_child_scheduled_at = requested
             .captured_writes

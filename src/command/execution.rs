@@ -567,15 +567,15 @@ async fn replay(
     if json {
         return print_json(&response);
     }
-    match response {
-        ReplayResponseSer::Advanceable { captured_writes } => {
+    match response.outcome {
+        crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
             println!("outcome: advanceable, {} writes", captured_writes.len());
         }
-        ReplayResponseSer::Finished { retval } => {
+        crate::server::web_api_server::ReplayOutcomeSer::Finished { retval } => {
             println!("outcome: finished\nresult: {retval}");
         }
-        ReplayResponseSer::Blocked => println!("outcome: blocked"),
-        ReplayResponseSer::ReplayFailed {
+        crate::server::web_api_server::ReplayOutcomeSer::Blocked => println!("outcome: blocked"),
+        crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
             error,
             captured_writes,
         } => {
@@ -692,18 +692,20 @@ fn replay_to_advanceable_request(
     replay: ReplayResponseSer,
     force: bool,
 ) -> anyhow::Result<AdvanceRequestSer> {
-    match replay {
-        ReplayResponseSer::Advanceable { captured_writes } => Ok(AdvanceRequestSer {
-            captured_writes,
-            persist_backtrace: true,
-        }),
-        ReplayResponseSer::Finished { .. } => {
+    match replay.outcome {
+        crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
+            Ok(AdvanceRequestSer {
+                captured_writes,
+                persist_backtrace: true,
+            })
+        }
+        crate::server::web_api_server::ReplayOutcomeSer::Finished { .. } => {
             bail!("execution is already finished")
         }
-        ReplayResponseSer::Blocked => {
+        crate::server::web_api_server::ReplayOutcomeSer::Blocked => {
             bail!("execution is blocked")
         }
-        ReplayResponseSer::ReplayFailed {
+        crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
             error,
             captured_writes,
         } => {

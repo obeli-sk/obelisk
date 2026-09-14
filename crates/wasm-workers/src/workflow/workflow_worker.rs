@@ -9,7 +9,8 @@ use crate::workflow::caching_db_connection::{
 };
 use crate::workflow::deadline_tracker::{EpochCallbackError, InterruptKind};
 pub use crate::workflow::replay_advance::{
-    AdvanceError, ReplayAdvanceable, ReplayError, ReplayResponse,
+    AdvanceError, MeasuredReplayResponse, ReplayAdvanceable, ReplayError, ReplayMeasurements,
+    ReplayResponse,
 };
 use crate::workflow::replay_advance::{AdvanceFromLogError, AdvanceResponse, ReplayInternalError};
 use crate::workflow::replay_db_proxy::{
@@ -615,6 +616,7 @@ impl WorkflowWorker {
             Vec<BacktraceInfo>,
             Option<FatalError>,
             Box<dyn DbConnection>,
+            ReplayMeasurements,
         ),
         ReplayInternalError,
     > {
@@ -632,7 +634,8 @@ impl WorkflowWorker {
 
         let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         let event_history: Vec<_> = log.event_history().collect();
-        let replayed_event_count = event_history.len();
+        let replayed_event_count =
+            u64::try_from(event_history.len()).expect("event count must fit");
         Span::current().record("replayed_event_count", replayed_event_count);
         let ctx = WorkerContext {
             execution_id: execution_id.clone(),
@@ -667,19 +670,24 @@ impl WorkflowWorker {
                 parent,
                 backtrace_capture,
             )
-            .await
-            .map(|(writes, backtraces, replay_end, db_conn)| {
-                (
-                    writes,
-                    backtraces,
-                    match replay_end {
-                        ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
-                        _ => None,
-                    },
-                    db_conn,
-                )
-            });
+            .await;
         let replay_duration = started.elapsed();
+        let success = result.is_ok();
+        let result = result.map(|(writes, backtraces, replay_end, db_conn)| {
+            (
+                writes,
+                backtraces,
+                match replay_end {
+                    ReplayPendingState::FinishedWithFailure(fatal_error) => Some(fatal_error),
+                    _ => None,
+                },
+                db_conn,
+                ReplayMeasurements {
+                    replayed_event_count,
+                    replay_duration,
+                },
+            )
+        });
         Span::current().record(
             "replay_duration_ms",
             tracing::field::display(replay_duration.as_millis()),
@@ -687,7 +695,7 @@ impl WorkflowWorker {
         info!(
             replayed_event_count,
             duration = ?replay_duration,
-            success = result.is_ok(),
+            success,
             "Execution replay completed"
         );
         result
@@ -1413,7 +1421,7 @@ impl WorkflowWorker {
             .map_err(DbErrorWrite::from)?;
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
-        let (writes, backtraces, _fatal_error, _db_conn) = self
+        let (writes, backtraces, _fatal_error, _db_conn, _measurements) = self
             .capture_replay_writes_from_log(
                 execution_id,
                 log,
@@ -1476,7 +1484,7 @@ impl WorkflowWorker {
         &self,
         execution_id: ExecutionId,
         backtrace_capture: BacktraceCapture,
-    ) -> Result<ReplayResponse, ReplayError> {
+    ) -> Result<MeasuredReplayResponse, ReplayError> {
         assert!(
             self.deadline_factory.is_for_replay(),
             "replay() requires DeadlineTrackerFactoryForReplay"
@@ -1493,7 +1501,7 @@ impl WorkflowWorker {
         let already_finished_result = log.as_finished_result();
         let ffqn = log.ffqn().clone();
         let params = log.params().clone();
-        let (captured_writes, _backtraces, fatal_error, _db_conn) = self
+        let (captured_writes, _backtraces, fatal_error, _db_conn, measurements) = self
             .capture_replay_writes_from_log(
                 execution_id,
                 log,
@@ -1508,27 +1516,41 @@ impl WorkflowWorker {
             .into_iter()
             .map(|write| write.write)
             .collect();
-        Self::transform_replay_to_response(captured_writes, fatal_error, already_finished_result)
+        Self::transform_replay_to_response(
+            captured_writes,
+            fatal_error,
+            already_finished_result,
+            measurements,
+        )
     }
 
     pub(crate) fn transform_replay_to_response(
         captured_writes: Vec<CapturedDbWrite>,
         fatal_error: Option<FatalError>,
         already_finished_result: Option<SupportedFunctionReturnValue>,
-    ) -> Result<ReplayResponse, ReplayError> {
+        measurements: ReplayMeasurements,
+    ) -> Result<MeasuredReplayResponse, ReplayError> {
         if let Some(err) = fatal_error {
             Err(ReplayError::ReplayFailed {
-                err,
+                err: Box::new(err),
                 captured_writes,
+                measurements: Box::new(measurements),
             })
         } else if !captured_writes.is_empty() {
-            Ok(ReplayResponse::Advanceable(ReplayAdvanceable {
-                captured_writes,
-            }))
+            Ok(MeasuredReplayResponse {
+                response: ReplayResponse::Advanceable(ReplayAdvanceable { captured_writes }),
+                measurements,
+            })
         } else if let Some(result) = already_finished_result {
-            Ok(ReplayResponse::Finished { result })
+            Ok(MeasuredReplayResponse {
+                response: ReplayResponse::Finished { result },
+                measurements,
+            })
         } else {
-            Ok(ReplayResponse::Blocked)
+            Ok(MeasuredReplayResponse {
+                response: ReplayResponse::Blocked,
+                measurements,
+            })
         }
     }
 
@@ -1578,7 +1600,7 @@ impl WorkflowWorker {
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (fresh_replay, _backtraces, _fatal_error, db_conn) = self
+        let (fresh_replay, _backtraces, _fatal_error, db_conn, _measurements) = self
             .capture_replay_writes_from_log(
                 execution_id,
                 log,
@@ -4204,7 +4226,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
 
-            let replay = match replay {
+            let replay = match replay.response {
                 ReplayResponse::Advanceable(replay) => replay,
                 ReplayResponse::Finished { .. } => {
                     return db_connection.get(&harness.execution_id).await.unwrap();
@@ -4967,7 +4989,8 @@ pub(crate) mod tests {
             .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         debug!("Preview after creation: {replay:?}");
         assert!(
             replay.get_return_value().is_none(),
@@ -5023,7 +5046,8 @@ pub(crate) mod tests {
             .replay(execution_id, BacktraceCapture::Disabled)
             .await
             .unwrap();
-        let result = assert_matches!(replay, ReplayResponse::Finished { result } => result);
+        let result =
+            assert_matches!(replay.response, ReplayResponse::Finished { result } => result);
         assert_matches!(result, SupportedFunctionReturnValue::Ok(_));
     }
 
@@ -5086,7 +5110,8 @@ pub(crate) mod tests {
             .replay(execution_id.clone(), BacktraceCapture::Disabled)
             .await
             .unwrap();
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         assert_matches!(
             log_recv.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -5364,7 +5389,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
 
-            let replay = match replay {
+            let replay = match replay.response {
                 ReplayResponse::Advanceable(replay) => replay,
                 ReplayResponse::Finished {
                     result: finished_result,
@@ -5528,7 +5553,8 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         assert!(
             !replay.captured_writes.is_empty(),
             "paused workflow should have captured writes"
@@ -5744,7 +5770,8 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let replay = assert_matches!(replay, ReplayResponse::Advanceable(replay) => replay);
+        let replay =
+            assert_matches!(replay.response, ReplayResponse::Advanceable(replay) => replay);
         let mut requested = replay.clone();
         assert!(requested.captured_writes.iter().any(|write| matches!(
             write,

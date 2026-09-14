@@ -3405,7 +3405,7 @@
           }
         }
       },
-      "ReplayResponseSer": {
+      "ReplayOutcomeSer": {
         "oneOf": [
           {
             "type": "object",
@@ -3480,6 +3480,30 @@
                 "enum": [
                   "replay_failed"
                 ]
+              }
+            }
+          }
+        ]
+      },
+      "ReplayResponseSer": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReplayOutcomeSer"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "replay_duration_ms": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Time spent executing the workflow replay after loading its execution log.",
+                "minimum": 0
+              },
+              "replayed_event_count": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Number of persisted history events supplied to the workflow replay.",
+                "minimum": 0
               }
             }
           }

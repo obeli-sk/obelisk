@@ -914,34 +914,42 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
             replay_worker.replay(execution_id.clone(), BacktraceCapture::NewEventsOnly),
         ))
         .await?;
-        let outcome = match replay_res {
-            Ok(ReplayResponse::Advanceable(replay)) => {
-                grpc_gen::replay_execution_response::Outcome::Advanceable(
-                    grpc_gen::replay_execution_response::Advanceable {
-                        captured_writes: replay
-                            .captured_writes
-                            .into_iter()
-                            .map(grpc_mapping::captured_write_to_grpc)
-                            .collect(),
-                    },
-                )
+        let (outcome, measurements) = match replay_res {
+            Ok(measured) => {
+                let outcome = match measured.response {
+                    ReplayResponse::Advanceable(replay) => {
+                        grpc_gen::replay_execution_response::Outcome::Advanceable(
+                            grpc_gen::replay_execution_response::Advanceable {
+                                captured_writes: replay
+                                    .captured_writes
+                                    .into_iter()
+                                    .map(grpc_mapping::captured_write_to_grpc)
+                                    .collect(),
+                            },
+                        )
+                    }
+                    ReplayResponse::Finished { result } => {
+                        grpc_gen::replay_execution_response::Outcome::Finished(
+                            grpc_gen::replay_execution_response::Finished {
+                                result: Some(grpc_gen::SupportedFunctionResult::from(result)),
+                            },
+                        )
+                    }
+                    ReplayResponse::Blocked => {
+                        grpc_gen::replay_execution_response::Outcome::Blocked(
+                            grpc_gen::replay_execution_response::Blocked {},
+                        )
+                    }
+                };
+                (outcome, measured.measurements)
             }
-            Ok(ReplayResponse::Finished { result }) => {
-                grpc_gen::replay_execution_response::Outcome::Finished(
-                    grpc_gen::replay_execution_response::Finished {
-                        result: Some(grpc_gen::SupportedFunctionResult::from(result)),
-                    },
-                )
-            }
-            Ok(ReplayResponse::Blocked) => grpc_gen::replay_execution_response::Outcome::Blocked(
-                grpc_gen::replay_execution_response::Blocked {},
-            ),
             Err(wasm_workers::workflow::workflow_worker::ReplayError::ReplayFailed {
                 err,
                 captured_writes,
+                measurements,
             }) => {
                 info!("Replay failed: {err:?}");
-                grpc_gen::replay_execution_response::Outcome::ReplayFailed(
+                let outcome = grpc_gen::replay_execution_response::Outcome::ReplayFailed(
                     grpc_gen::replay_execution_response::ReplayFailed {
                         error: err.to_string(),
                         captured_writes: captured_writes
@@ -949,7 +957,8 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                             .map(grpc_mapping::captured_write_to_grpc)
                             .collect(),
                     },
-                )
+                );
+                (outcome, *measurements)
             }
             Err(err) => {
                 info!("Replay error: {err:?}");
@@ -958,6 +967,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
         };
         Ok(tonic::Response::new(grpc_gen::ReplayExecutionResponse {
             outcome: Some(outcome),
+            replayed_event_count: measurements.replayed_event_count,
+            replay_duration: Some(
+                prost_wkt_types::Duration::try_from(measurements.replay_duration)
+                    .expect("replay duration must fit protobuf Duration"),
+            ),
         }))
     }
 

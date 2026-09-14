@@ -979,6 +979,10 @@ message ReplayExecutionResponse {
     Blocked blocked = 3;
     ReplayFailed replay_failed = 4;
   }
+  // Number of persisted history events supplied to the workflow replay.
+  uint64 replayed_event_count = 5;
+  // Time spent executing the workflow replay after loading its execution log.
+  google.protobuf.Duration replay_duration = 6;
 }
 
 message PersistExecutionBacktracesRequest {

@@ -1612,6 +1612,15 @@ impl TestExecutionClient {
                 let replay_resp = server.replay(execution_id).await;
                 assert_eq!(replay_resp.status().as_u16(), 200);
                 let replay_body: Value = replay_resp.json().await.unwrap();
+                assert_eq!(
+                    0,
+                    replay_body["replayed_event_count"]
+                        .as_u64()
+                        .expect("replayed_event_count must be a number")
+                );
+                replay_body["replay_duration_ms"]
+                    .as_u64()
+                    .expect("replay_duration_ms must be a number");
                 match replay_body["type"]
                     .as_str()
                     .expect("replay response type must be set")
@@ -1642,6 +1651,13 @@ impl TestExecutionClient {
                     .await
                     .unwrap()
                     .into_inner();
+                assert_eq!(0, replay_resp.replayed_event_count);
+                let replay_duration = replay_resp
+                    .replay_duration
+                    .as_ref()
+                    .expect("replay_duration must be set");
+                assert!(replay_duration.seconds >= 0);
+                assert!(replay_duration.nanos >= 0);
                 match replay_resp.outcome.expect("replay outcome must be set") {
                     grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(
                         advanceable,
@@ -1963,6 +1979,12 @@ impl TestServer {
                 .await
                 .unwrap()
                 .into_inner();
+            if ffqn == "testing:integration/workflow-call-stub.call-stub" {
+                assert_eq!(
+                    u64::try_from(steps * 2).unwrap(),
+                    replay.replayed_event_count
+                );
+            }
             let captured_writes = match replay.outcome.expect("replay outcome must be set") {
                 grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(advanceable) => {
                     advanceable.captured_writes
@@ -2053,15 +2075,24 @@ impl TestServer {
                 "unexpected replay status: {replay_status}"
             );
             let replay_body: ReplayResponseSer = replay.json().await.unwrap();
-            let captured_writes = match replay_body {
-                ReplayResponseSer::Advanceable { captured_writes }
-                | ReplayResponseSer::ReplayFailed {
-                    captured_writes, ..
+            if ffqn == "testing:integration/workflow-call-stub.call-stub" {
+                assert_eq!(
+                    u64::try_from(steps * 2).unwrap(),
+                    replay_body.replayed_event_count
+                );
+            }
+            let captured_writes = match replay_body.outcome {
+                crate::server::web_api_server::ReplayOutcomeSer::Advanceable {
+                    captured_writes,
+                }
+                | crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
+                    captured_writes,
+                    ..
                 } => captured_writes,
-                ReplayResponseSer::Finished { retval: _ } => {
+                crate::server::web_api_server::ReplayOutcomeSer::Finished { retval: _ } => {
                     panic!("should have been returned as `advance` response first");
                 }
-                ReplayResponseSer::Blocked => {
+                crate::server::web_api_server::ReplayOutcomeSer::Blocked => {
                     unreachable!("blocked state is not created by any test")
                 }
             };

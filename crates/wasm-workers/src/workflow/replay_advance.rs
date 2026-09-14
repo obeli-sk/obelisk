@@ -9,6 +9,7 @@ use concepts::{
     },
 };
 use executor::worker::FatalError;
+use std::time::Duration;
 
 /// Replay outcome for a workflow execution.
 #[derive(Debug, Clone)]
@@ -22,6 +23,18 @@ pub enum ReplayResponse {
     },
     /// Replay did not capture any writes and the execution is not finished.
     Blocked,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ReplayMeasurements {
+    pub replayed_event_count: u64,
+    pub replay_duration: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct MeasuredReplayResponse {
+    pub response: ReplayResponse,
+    pub measurements: ReplayMeasurements,
 }
 
 /// Preview writes captured by replay that can be supplied to `advance`.
@@ -189,8 +202,9 @@ pub enum ReplayError {
     /// `captured_writes` is non-empty iff execution has not finished yet, and therefore can be advanced to an execution error.
     #[error("fatal error: {err}")]
     ReplayFailed {
-        err: FatalError,
+        err: Box<FatalError>,
         captured_writes: Vec<CapturedDbWrite>,
+        measurements: Box<ReplayMeasurements>,
     },
 }
 

@@ -2702,8 +2702,22 @@ impl TryFrom<CapturedWriteSer> for concepts::storage::CapturedDbWrite {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub(crate) struct ReplayResponseSer {
+    #[serde(flatten)]
+    pub(crate) outcome: ReplayOutcomeSer,
+    /// Number of persisted history events supplied to the workflow replay.
+    // backcompat: Accept replay responses from servers older than 0.42.
+    #[serde(default)]
+    pub(crate) replayed_event_count: u64,
+    /// Time spent executing the workflow replay after loading its execution log.
+    // backcompat: Accept replay responses from servers older than 0.42.
+    #[serde(default)]
+    pub(crate) replay_duration_ms: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum ReplayResponseSer {
+pub(crate) enum ReplayOutcomeSer {
     Advanceable {
         captured_writes: Vec<CapturedWriteSer>,
     },
@@ -2717,25 +2731,40 @@ pub(crate) enum ReplayResponseSer {
     },
 }
 
-impl From<wasm_workers::workflow::workflow_worker::ReplayResponse> for ReplayResponseSer {
-    fn from(value: wasm_workers::workflow::workflow_worker::ReplayResponse) -> Self {
-        match value {
-            wasm_workers::workflow::workflow_worker::ReplayResponse::Advanceable(replay) => {
-                Self::Advanceable {
-                    captured_writes: replay
-                        .captured_writes
-                        .into_iter()
-                        .map(CapturedWriteSer::from)
-                        .collect(),
-                }
-            }
-            wasm_workers::workflow::workflow_worker::ReplayResponse::Finished { result } => {
-                Self::Finished {
-                    retval: serde_json::to_value(RetVal::from(result))
-                        .expect("supported retval must be JSON serializable"),
-                }
-            }
-            wasm_workers::workflow::workflow_worker::ReplayResponse::Blocked => Self::Blocked,
+impl From<wasm_workers::workflow::workflow_worker::MeasuredReplayResponse> for ReplayResponseSer {
+    fn from(value: wasm_workers::workflow::workflow_worker::MeasuredReplayResponse) -> Self {
+        use wasm_workers::workflow::workflow_worker::ReplayResponse;
+        let outcome = match value.response {
+            ReplayResponse::Advanceable(replay) => ReplayOutcomeSer::Advanceable {
+                captured_writes: replay
+                    .captured_writes
+                    .into_iter()
+                    .map(CapturedWriteSer::from)
+                    .collect(),
+            },
+            ReplayResponse::Finished { result } => ReplayOutcomeSer::Finished {
+                retval: serde_json::to_value(RetVal::from(result))
+                    .expect("supported retval must be JSON serializable"),
+            },
+            ReplayResponse::Blocked => ReplayOutcomeSer::Blocked,
+        };
+        Self::new(outcome, value.measurements)
+    }
+}
+
+impl ReplayResponseSer {
+    fn new(
+        outcome: ReplayOutcomeSer,
+        measurements: wasm_workers::workflow::workflow_worker::ReplayMeasurements,
+    ) -> Self {
+        Self {
+            outcome,
+            replayed_event_count: measurements.replayed_event_count,
+            replay_duration_ms: measurements
+                .replay_duration
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
         }
     }
 }
@@ -3060,7 +3089,7 @@ async fn execution_replay(
     accept: AcceptHeader,
 ) -> Result<Response, HttpResponse> {
     let ser = Box::pin(replay_execution_internal(&state, &execution_id, accept)).await?;
-    let status = if matches!(ser, ReplayResponseSer::ReplayFailed { .. }) {
+    let status = if matches!(&ser.outcome, ReplayOutcomeSer::ReplayFailed { .. }) {
         StatusCode::CONFLICT
     } else {
         StatusCode::OK
@@ -3068,15 +3097,19 @@ async fn execution_replay(
     Ok(match accept {
         AcceptHeader::Json => pretty_json_response(status, &ser),
         AcceptHeader::Text => {
-            let body = match ser {
-                ReplayResponseSer::Advanceable { captured_writes } => {
+            let measurements = format!(
+                "\nreplayed_event_count: {}\nreplay_duration_ms: {}",
+                ser.replayed_event_count, ser.replay_duration_ms
+            );
+            let body = match ser.outcome {
+                ReplayOutcomeSer::Advanceable { captured_writes } => {
                     format!("outcome: advanceable, {} writes", captured_writes.len())
                 }
-                ReplayResponseSer::Finished { retval } => {
+                ReplayOutcomeSer::Finished { retval } => {
                     format!("outcome: finished\nresult: {retval}")
                 }
-                ReplayResponseSer::Blocked => "outcome: blocked".to_string(),
-                ReplayResponseSer::ReplayFailed {
+                ReplayOutcomeSer::Blocked => "outcome: blocked".to_string(),
+                ReplayOutcomeSer::ReplayFailed {
                     error,
                     captured_writes,
                 } => {
@@ -3085,7 +3118,7 @@ async fn execution_replay(
                         captured_writes.len()
                     )
                 }
-            };
+            } + &measurements;
             deprecated_text_response((status, body))
         }
     })
@@ -3325,13 +3358,17 @@ async fn replay_execution_internal(
                 ReplayError::ReplayFailed {
                     err,
                     captured_writes,
-                } => Ok(ReplayResponseSer::ReplayFailed {
-                    error: err.to_string(),
-                    captured_writes: captured_writes
-                        .into_iter()
-                        .map(CapturedWriteSer::from)
-                        .collect(),
-                }),
+                    measurements,
+                } => Ok(ReplayResponseSer::new(
+                    ReplayOutcomeSer::ReplayFailed {
+                        error: err.to_string(),
+                        captured_writes: captured_writes
+                            .into_iter()
+                            .map(CapturedWriteSer::from)
+                            .collect(),
+                    },
+                    *measurements,
+                )),
                 other => Err(HttpResponse {
                     status: StatusCode::UNPROCESSABLE_ENTITY,
                     message: format!("Replay error: {other}"),
