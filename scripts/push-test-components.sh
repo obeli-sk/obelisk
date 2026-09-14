@@ -15,6 +15,7 @@ TAG="$1"
 PREFIX="docker.io/getobelisk/"
 SOURCE_TOML="deployment-testing-wasm-local.toml"
 TARGET_TOML="deployment-testing-wasm-oci.toml"
+CARGO_TARGET_ROOT=${CARGO_TARGET_DIR:-target}
 # TODO: After Rust 1.100 is released, add the P3 fixtures to deployment-testing-wasm-local.toml and remove this temporary manifest.
 WASIP3_SOURCE_TOML=$(mktemp .wasip3-push.XXXXXX.toml)
 trap 'rm -f "$WASIP3_SOURCE_TOML"' EXIT
@@ -37,8 +38,8 @@ cargo build \
     --package test-programs-wasip3-activity \
     --package test-programs-wasip3-webhook
 
-WASIP3_ACTIVITY="target/sandbox/wasm32-wasip3/release_testprograms/test_programs_wasip3_activity.wasm"
-WASIP3_WEBHOOK="target/sandbox/wasm32-wasip3/release_testprograms/test_programs_wasip3_webhook.wasm"
+WASIP3_ACTIVITY="$CARGO_TARGET_ROOT/wasm32-wasip3/release_testprograms/test_programs_wasip3_activity.wasm"
+WASIP3_WEBHOOK="$CARGO_TARGET_ROOT/wasm32-wasip3/release_testprograms/test_programs_wasip3_webhook.wasm"
 wasm-tools validate "$WASIP3_ACTIVITY"
 wasm-tools validate "$WASIP3_WEBHOOK"
 
