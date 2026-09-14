@@ -599,7 +599,7 @@ impl WorkflowWorker {
     #[instrument(
         skip_all,
         name = "workflow replay",
-        fields(%execution_id, replayed_event_count, replay_duration_ms)
+        fields(%execution_id, replayed_event_count, replay_duration_ms, replay_version)
     )]
     #[expect(clippy::type_complexity)]
     pub(crate) async fn capture_replay_writes_from_log(
@@ -633,6 +633,8 @@ impl WorkflowWorker {
         let parent = log.parent();
 
         let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
+        let replay_version = log.last_event().version.0;
+        Span::current().record("replay_version", replay_version);
         let event_history: Vec<_> = log.event_history().collect();
         let replayed_event_count =
             u64::try_from(event_history.len()).expect("event count must fit");
@@ -685,6 +687,7 @@ impl WorkflowWorker {
                 ReplayMeasurements {
                     replayed_event_count,
                     replay_duration,
+                    replay_version,
                 },
             )
         });
@@ -694,6 +697,7 @@ impl WorkflowWorker {
         );
         info!(
             replayed_event_count,
+            replay_version,
             duration = ?replay_duration,
             success,
             "Execution replay completed"

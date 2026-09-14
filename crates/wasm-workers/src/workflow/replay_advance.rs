@@ -29,6 +29,7 @@ pub enum ReplayResponse {
 pub struct ReplayMeasurements {
     pub replayed_event_count: u64,
     pub replay_duration: Duration,
+    pub replay_version: u32,
 }
 
 #[derive(Debug, Clone)]

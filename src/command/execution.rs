@@ -567,6 +567,10 @@ async fn replay(
     if json {
         return print_json(&response);
     }
+    println!(
+        "replayed_event_count: {}\nreplay_duration_ms: {}\nreplay_version: {}",
+        response.replayed_event_count, response.replay_duration_ms, response.replay_version
+    );
     match response.outcome {
         crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
             println!("outcome: advanceable, {} writes", captured_writes.len());

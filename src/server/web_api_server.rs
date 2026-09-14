@@ -2713,6 +2713,11 @@ pub(crate) struct ReplayResponseSer {
     // backcompat: Accept replay responses from servers older than 0.42.
     #[serde(default)]
     pub(crate) replay_duration_ms: u64,
+    /// Highest persisted execution-event version included in the replay log. Response records use
+    /// a separate cursor and are not represented by this version.
+    // backcompat: Accept replay responses from servers older than 0.42.
+    #[serde(default)]
+    pub(crate) replay_version: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -2770,6 +2775,7 @@ impl ReplayResponseSer {
                 .as_millis()
                 .try_into()
                 .unwrap_or(u64::MAX),
+            replay_version: measurements.replay_version,
         }
     }
 }
@@ -3103,8 +3109,8 @@ async fn execution_replay(
         AcceptHeader::Json => pretty_json_response(status, &ser),
         AcceptHeader::Text => {
             let measurements = format!(
-                "\nreplayed_event_count: {}\nreplay_duration_ms: {}",
-                ser.replayed_event_count, ser.replay_duration_ms
+                "\nreplayed_event_count: {}\nreplay_duration_ms: {}\nreplay_version: {}",
+                ser.replayed_event_count, ser.replay_duration_ms, ser.replay_version
             );
             let body = match ser.outcome {
                 ReplayOutcomeSer::Advanceable { captured_writes } => {

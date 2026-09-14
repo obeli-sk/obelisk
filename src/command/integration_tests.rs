@@ -1620,6 +1620,7 @@ struct ReplayCapturedWritesSummary {
 
 #[derive(Debug)]
 struct AdvanceExecutionSummary {
+    execution_id: String,
     steps: usize,
     retval: serde_json::Value,
 }
@@ -1644,6 +1645,7 @@ impl TestExecutionClient {
                 replay_body["replay_duration_ms"]
                     .as_u64()
                     .expect("replay_duration_ms must be a number");
+                assert_eq!(1, replay_body["replay_version"].as_u64().unwrap());
                 match replay_body["type"]
                     .as_str()
                     .expect("replay response type must be set")
@@ -1675,6 +1677,7 @@ impl TestExecutionClient {
                     .unwrap()
                     .into_inner();
                 assert_eq!(0, replay_resp.replayed_event_count);
+                assert_eq!(1, replay_resp.replay_version);
                 let replay_duration = replay_resp
                     .replay_duration
                     .as_ref()
@@ -2007,6 +2010,7 @@ impl TestServer {
                     u64::try_from(steps * 2).unwrap(),
                     replay.replayed_event_count
                 );
+                assert_eq!(u32::try_from(steps * 2 + 1).unwrap(), replay.replay_version);
             }
             let captured_writes = match replay.outcome.expect("replay outcome must be set") {
                 grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(advanceable) => {
@@ -2015,6 +2019,7 @@ impl TestServer {
                 grpc::grpc_gen::replay_execution_response::Outcome::Finished(finished) => {
                     let value = finished.result.expect("finished result must be set");
                     return AdvanceExecutionSummary {
+                        execution_id: exec_id,
                         steps,
                         retval: grpc_result_to_json(value),
                     };
@@ -2043,6 +2048,7 @@ impl TestServer {
                 grpc::grpc_gen::advance_execution_response::Result::Success(success) => {
                     if let Some(value) = success.finished {
                         return AdvanceExecutionSummary {
+                            execution_id: exec_id,
                             steps,
                             retval: grpc_result_to_json(value),
                         };
@@ -2103,6 +2109,10 @@ impl TestServer {
                     u64::try_from(steps * 2).unwrap(),
                     replay_body.replayed_event_count
                 );
+                assert_eq!(
+                    u32::try_from(steps * 2 + 1).unwrap(),
+                    replay_body.replay_version
+                );
             }
             let captured_writes = match replay_body.outcome {
                 crate::server::web_api_server::ReplayOutcomeSer::Advanceable {
@@ -2141,7 +2151,11 @@ impl TestServer {
             let advance_body: AdvanceResponseDeser = advance.json().await.unwrap();
             match advance_body {
                 AdvanceResponseDeser::Finished { value: retval } => {
-                    return AdvanceExecutionSummary { steps, retval };
+                    return AdvanceExecutionSummary {
+                        execution_id: exec_id,
+                        steps,
+                        retval,
+                    };
                 }
                 AdvanceResponseDeser::InProgress => {
                     // continue the loop
@@ -4143,6 +4157,67 @@ async fn replay_and_advance_paused_js_workflow_until_finished_webapi() {
         test_addr!(65),
     )
     .await;
+}
+
+#[tokio::test]
+async fn replay_finished_execution_reports_final_version_grpc() {
+    replay_finished_execution_reports_final_version(TestExecutionClient::Grpc, test_addr!(133))
+        .await;
+}
+
+#[tokio::test]
+async fn replay_finished_execution_reports_final_version_webapi() {
+    replay_finished_execution_reports_final_version(TestExecutionClient::WebApi, test_addr!(134))
+        .await;
+}
+
+async fn replay_finished_execution_reports_final_version(
+    client: TestExecutionClient,
+    addr: String,
+) {
+    let server = TestServer::start(addr).await;
+    let stepped = client
+        .step_execution_until_finished(
+            &server,
+            "testing:integration/workflow-math-random.math-random",
+            vec![],
+        )
+        .await;
+    assert_eq!(1, stepped.steps);
+
+    match client {
+        TestExecutionClient::WebApi => {
+            let replay = server.replay(&stepped.execution_id).await;
+            assert_eq!(replay.status().as_u16(), 200);
+            let replay: ReplayResponseSer = replay.json().await.unwrap();
+            assert_eq!(5, replay.replay_version);
+            assert!(matches!(
+                replay.outcome,
+                crate::server::web_api_server::ReplayOutcomeSer::Finished { .. }
+            ));
+        }
+        TestExecutionClient::Grpc => {
+            let mut grpc_client =
+                ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+                    .await
+                    .unwrap();
+            let replay = grpc_client
+                .replay_execution(ReplayExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: stepped.execution_id,
+                    }),
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(5, replay.replay_version);
+            assert!(matches!(
+                replay.outcome,
+                Some(grpc::grpc_gen::replay_execution_response::Outcome::Finished(_))
+            ));
+        }
+    }
+    server.shutdown().await;
 }
 
 async fn replay_and_advance_oversized_result(client: TestExecutionClient, addr: String) {

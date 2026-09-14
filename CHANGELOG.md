@@ -28,9 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(api)* REST and gRPC replay responses expose the persisted history-event count and replay
-  duration. Failed replays also include a structured, sanitized failure kind, reason, and detail,
-  preserving actionable nondeterminism diagnostics.
+- *(api)* REST and gRPC replay responses expose the persisted history-event count, replay duration,
+  and highest included execution-event version. Response records use a separate cursor and are not
+  represented by this version. Failed replays also include a structured, sanitized failure kind,
+  reason, and detail, preserving actionable nondeterminism diagnostics. The new response fields are
+  additive; existing gRPC field numbers and REST replay outcome tags are unchanged.
 - *(admin)* Added operator-only gRPC and `/v1/admin` APIs, plus `obelisk admin` commands, for
   deleting one or more execution trees and inactive deployments and applying bounded retention
   policies that clean up the oldest eligible records first. Deletion tombstones execution roots

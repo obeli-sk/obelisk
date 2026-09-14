@@ -978,6 +978,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 prost_wkt_types::Duration::try_from(measurements.replay_duration)
                     .expect("replay duration must fit protobuf Duration"),
             ),
+            replay_version: measurements.replay_version,
         }))
     }
 

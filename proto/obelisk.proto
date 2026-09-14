@@ -985,6 +985,9 @@ message ReplayExecutionResponse {
   uint64 replayed_event_count = 5;
   // Time spent executing the workflow replay after loading its execution log.
   google.protobuf.Duration replay_duration = 6;
+  // Highest persisted execution-event version included in the replay log. Response records use a
+  // separate cursor and are not represented by this version.
+  uint32 replay_version = 7;
 }
 
 message PersistExecutionBacktracesRequest {
