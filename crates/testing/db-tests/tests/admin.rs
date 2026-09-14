@@ -4,10 +4,10 @@ use concepts::{
     StrVariant,
     prefixed_ulid::{DeploymentId, ServerRunId, SystemEventId},
     storage::{
-        AppendRequest, CreateRequest, DbPoolCloseable, DeleteDeploymentResult,
-        DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord, DeploymentStatus,
-        ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventCode, SystemEventFilter,
-        SystemEventLevel,
+        AppendRequest, CAS_GC_BATCH_SIZE_BYTES, CreateRequest, DbPoolCloseable,
+        DeleteDeploymentResult, DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord,
+        DeploymentStatus, ExecutionRequest, RetentionPolicy, SystemEvent, SystemEventCode,
+        SystemEventFilter, SystemEventLevel,
     },
     time::ClockFn,
 };
@@ -599,6 +599,45 @@ async fn deployment_cleanup_and_cas_gc_preserve_references(database: Database) {
     );
     drop(admin);
     drop(cas);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
+async fn cas_gc_batches_are_bounded_by_bytes(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let cas = db_pool.cas_conn().await.unwrap();
+    let blob_size = usize::try_from(CAS_GC_BATCH_SIZE_BYTES / 2 + 1).unwrap();
+    let first_digest = cas.write_blob(&vec![1; blob_size]).await.unwrap();
+    let second_digest = cas.write_blob(&vec![2; blob_size]).await.unwrap();
+    let gc = db_pool.cas_gc_conn().await.unwrap();
+
+    let first = gc.gc_cas(false, 100).await.unwrap();
+    assert_eq!(first.orphan_blobs, 1);
+    assert_eq!(first.deleted_blobs, 1);
+    assert_eq!(first.deleted_bytes, blob_size as u64);
+    assert!(first.has_more);
+    assert_ne!(
+        cas.contains_blob(&first_digest).await.unwrap(),
+        cas.contains_blob(&second_digest).await.unwrap()
+    );
+
+    let second = gc.gc_cas(false, 100).await.unwrap();
+    assert_eq!(second.deleted_blobs, 1);
+    assert_eq!(second.deleted_bytes, blob_size as u64);
+    assert!(!second.has_more);
+
+    let oversized_size = usize::try_from(CAS_GC_BATCH_SIZE_BYTES + 1).unwrap();
+    let oversized_digest = cas.write_blob(&vec![3; oversized_size]).await.unwrap();
+    let oversized = gc.gc_cas(false, 100).await.unwrap();
+    assert_eq!(oversized.deleted_blobs, 1);
+    assert_eq!(oversized.deleted_bytes, oversized_size as u64);
+    assert!(!oversized.has_more);
+    assert!(!cas.contains_blob(&oversized_digest).await.unwrap());
+
+    drop((gc, cas));
     db_close.close().await;
 }
 
