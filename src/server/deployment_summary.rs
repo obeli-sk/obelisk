@@ -8,6 +8,7 @@ pub(crate) enum DeploymentComponentType {
     ActivityWasm,
     ActivityJs,
     ActivityExec,
+    ActivityVm,
     ActivityStub,
     ActivityExternal,
     WebhookEndpointWasm,
@@ -32,6 +33,7 @@ const COMPONENT_SECTIONS: &[(&str, DeploymentComponentType)] = &[
     ("activity_wasm", DeploymentComponentType::ActivityWasm),
     ("activity_js", DeploymentComponentType::ActivityJs),
     ("activity_exec", DeploymentComponentType::ActivityExec),
+    ("activity_vm", DeploymentComponentType::ActivityVm),
     ("activity_stub", DeploymentComponentType::ActivityStub),
     (
         "activity_external",

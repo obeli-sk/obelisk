@@ -1,3 +1,6 @@
+pub(crate) mod activity_vm_nix;
+mod activity_vm_runtime;
+mod activity_vm_worker;
 mod config_prepass;
 mod maintenance_gc;
 pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
@@ -21,6 +24,8 @@ use crate::config::deployment::ActivityStubComponentConfigResolvedExt as _;
 use crate::config::deployment::ActivityStubConfigVerified;
 use crate::config::deployment::ActivityStubExtConfigVerified;
 use crate::config::deployment::ActivityStubExtInlineConfigVerified;
+use crate::config::deployment::ActivityVmComponentConfigResolvedExt as _;
+use crate::config::deployment::ActivityVmConfigVerified;
 use crate::config::deployment::ActivityWasmComponentConfigTomlExt as _;
 use crate::config::deployment::ActivityWasmConfigVerified;
 use crate::config::deployment::ComponentCommon;
@@ -2421,6 +2426,7 @@ impl ServerCompiledLinked {
             activities_wasm,
             activities_js,
             activities_exec,
+            activities_vm,
             activities_stub_ext,
             activities_stub_ext_inline,
             workflows,
@@ -2437,6 +2443,7 @@ impl ServerCompiledLinked {
             activities_wasm,
             activities_js,
             activities_exec,
+            activities_vm,
             activities_stub_ext,
             activities_stub_ext_inline,
             workflows,
@@ -4054,6 +4061,7 @@ pub(crate) struct DeploymentVerified {
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_exec: Vec<ActivityExecConfigVerified>,
+    activities_vm: Vec<ActivityVmConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
@@ -4110,6 +4118,14 @@ impl DeploymentVerified {
                     activity.component_id(),
                     &activity.activity_config.allowed_hosts,
                     &activity.activity_config.global_http_config,
+                    "server",
+                )
+            }))
+            .chain(self.activities_vm.iter().map(|activity| {
+                audit(
+                    activity.component_id(),
+                    &activity.allowed_hosts,
+                    &self.global_http_config,
                     "server",
                 )
             }))
@@ -4170,6 +4186,12 @@ impl DeploymentVerified {
             self.activities_wasm
                 .iter()
                 .map(ActivityWasmConfigVerified::component_id),
+        )?;
+        record_component_ids(
+            &mut component_ids_by_digest,
+            self.activities_vm
+                .iter()
+                .map(ActivityVmConfigVerified::component_id),
         )?;
         record_component_ids(
             &mut component_ids_by_digest,
@@ -4274,6 +4296,13 @@ impl DeploymentVerified {
             runtime_config_availability == RuntimeConfigAvailability::AllowUnavailable;
         let mut deployment = deployment.into_resolved();
         trace!("Using deployment toml: {deployment:#?}");
+        // Removed once the worker is wired in the next implementation milestone. Keeping this
+        // explicit prevents an authored VM activity from being silently omitted.
+        let activity_vm_runtime = if deployment.activities_vm.is_empty() {
+            None
+        } else {
+            Some(activity_vm_runtime::fetch(&wasm_cache_dir).await?)
+        };
         // The outbound-HTTP allowlist pre-pass (unregistered secrets, uncovered hosts,
         // unauthorized secret replacements) runs in `config_prepass::preflight` before this
         // point; the authoritative per-request enforcement lives in `http_request_policy`.
@@ -4612,6 +4641,22 @@ impl DeploymentVerified {
                         )?
                     );
                 }
+                let mut activities_vm_verified =
+                    Vec::with_capacity(deployment.activities_vm.len());
+                if let Some(runtime) = activity_vm_runtime.as_deref() {
+                    for activity_vm in deployment.activities_vm {
+                        activities_vm_verified.push(
+                            activity_vm.fetch_and_verify(
+                                runtime,
+                                &wasm_cache_dir,
+                                &global_http_config,
+                                ignore_missing_env_vars,
+                                &secret_registry,
+                                global_executor_instance_limiter.clone(),
+                            ).await?
+                        );
+                    }
+                }
 
                 let mut crons = Vec::with_capacity(deployment.crons.len());
                 for cron in deployment.crons {
@@ -4626,6 +4671,7 @@ impl DeploymentVerified {
                     activities_wasm,
                     activities_js: activities_js_verified,
                     activities_exec: activities_exec_verified,
+                    activities_vm: activities_vm_verified,
                     activities_stub_ext,
                     activities_stub_ext_inline,
                     workflows,
@@ -4681,6 +4727,7 @@ async fn compile_and_link(
     activities_wasm: Vec<ActivityWasmConfigVerified>,
     activities_js: Vec<ActivityJsConfigVerified>,
     activities_exec: Vec<ActivityExecConfigVerified>,
+    activities_vm: Vec<ActivityVmConfigVerified>,
     activities_stub_ext: Vec<ActivityStubExtConfigVerified>,
     activities_stub_ext_inline: Vec<ActivityStubExtInlineConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
@@ -4756,6 +4803,17 @@ async fn compile_and_link(
     } else {
         None
     };
+    let activity_vm_module = activities_vm.first().map(|activity_vm| {
+        let engine = engines.activity_engine.clone();
+        let build_semaphore = build_semaphore.clone();
+        let parent_span = parent_span.clone();
+        let runtime = activity_vm.runtime.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
+            let span = info_span!(parent: parent_span, "activity_vm_runtime_compile");
+            span.in_scope(|| activity_vm_runner::compile(&engine, &runtime))
+        })
+    });
 
     let activity_js_runnable = match activity_js_runnable {
         Some(wasm) => Some(wasm.await??),
@@ -4767,6 +4825,10 @@ async fn compile_and_link(
     };
     let webhook_js_runnable = match webhook_js_runnable {
         Some(wasm) => Some(wasm.await??),
+        None => None,
+    };
+    let activity_vm_module = match activity_vm_module {
+        Some(module) => Some(module.await??),
         None => None,
     };
 
@@ -4810,6 +4872,25 @@ async fn compile_and_link(
                 let span = info_span!(parent: parent_span, "activity_exec_compile", component_id = %activity_exec.component_id());
                 span.in_scope(|| {
                     prespawn_activity_exec(activity_exec).map(|(worker, component_config)| {
+                        CompiledComponent::ActivityOrWorkflow {
+                            worker,
+                            component_config,
+                            frame_files: FrameFilesToSource::default(),
+                        }
+                    })
+                })
+            })
+        }))
+        .chain(activities_vm.into_iter().map(|activity_vm| {
+            let engine = engines.activity_engine.clone();
+            let module = activity_vm_module
+                .clone()
+                .expect("activity VM module exists when VM activities exist");
+            let parent_span = parent_span.clone();
+            tokio::task::spawn_blocking(move || {
+                let span = info_span!(parent: parent_span, "activity_vm_compile", component_id = %activity_vm.component_id());
+                span.in_scope(|| {
+                    prespawn_activity_vm(activity_vm, engine, module).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -5410,6 +5491,85 @@ fn prespawn_activity_exec(
     ))
 }
 
+fn prespawn_activity_vm(
+    activity_vm: ActivityVmConfigVerified,
+    engine: Arc<wasmtime::Engine>,
+    module: wasmtime::Module,
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
+    let component_id = activity_vm.component_id().clone();
+    let activity = activity_vm.activity;
+    let env = activity
+        .env_vars
+        .iter()
+        .map(|entry| (entry.key.clone(), entry.val.clone()))
+        .collect();
+    let mut mapdirs = activity_vm
+        .store_paths
+        .into_iter()
+        .map(|store_path| {
+            let basename = store_path
+                .file_name()
+                .expect("resolved Nix store path has a basename")
+                .to_string_lossy()
+                .into_owned();
+            activity_vm_runner::MapDir::read_only(store_path, format!("/nix/store/{basename}"))
+        })
+        .collect::<Vec<_>>();
+    let mut guest_args = vec![
+        "-no-stdin".to_owned(),
+        "/bin/sh".to_owned(),
+        "/obelisk-activity-vm-http/http-guest.sh".to_owned(),
+        "*".to_owned(),
+    ];
+    match (activity_vm.entrypoint, activity_vm.source_location) {
+        (Some(entrypoint), None) => {
+            guest_args.push("--entrypoint".to_owned());
+            guest_args.extend(entrypoint);
+        }
+        (None, Some((source_dir, source_name))) => {
+            mapdirs.push(activity_vm_runner::MapDir::read_only(
+                source_dir,
+                "/obelisk-activity".to_owned(),
+            ));
+            guest_args.push("--script".to_owned());
+            guest_args.push(format!("/obelisk-activity/{source_name}"));
+        }
+        _ => unreachable!("activity VM source was validated"),
+    }
+    let wit_origin = if activity.user_wasm_component.is_some() {
+        WitOrigin::Authored
+    } else {
+        WitOrigin::Synthesized
+    };
+    let worker = activity_vm_worker::ActivityVmWorkerCompiled::new(
+        module,
+        engine,
+        mapdirs,
+        guest_args,
+        activity_vm.policy_spec,
+        activity.secrets,
+        activity_vm.exposed_secrets,
+        activity.params_via_stdin,
+        env,
+        &activity.ffqn,
+        activity.params,
+        activity.return_type,
+        activity.max_output_bytes,
+        activity.forward_stdout,
+        activity.forward_stderr,
+        activity.user_wasm_component,
+    )
+    .with_context(|| format!("cannot create VM activity worker for {component_id}"))?;
+    let wit = worker.wit();
+    Ok(WorkerCompiled::new_vm_activity(
+        worker,
+        activity.exec_config,
+        wit,
+        activity.logs_store_min_level,
+        wit_origin,
+    ))
+}
+
 /// Resolve the activity-js runtime WASM path from the local build.
 #[cfg(feature = "activity-js-local")]
 async fn fetch_activity_js_runtime(
@@ -5724,6 +5884,7 @@ enum CompiledWorkerKind {
     ActivityWasm(Box<ActivityWorkerCompiled>),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
     ActivityExec(Box<ActivityExecWorkerCompiled>),
+    ActivityVm(Box<activity_vm_worker::ActivityVmWorkerCompiled>),
     WorkflowWasm(Box<WorkflowWorkerCompiledWithConfig>),
     WorkflowJs(Box<WorkflowJsWorkerCompiledWithConfig>),
 }
@@ -5810,6 +5971,33 @@ impl WorkerCompiled {
         (
             WorkerCompiled {
                 worker: CompiledWorkerKind::ActivityExec(Box::new(worker)),
+                exec_config,
+                logs_store_min_level,
+            },
+            component,
+        )
+    }
+
+    fn new_vm_activity(
+        worker: activity_vm_worker::ActivityVmWorkerCompiled,
+        exec_config: ExecConfig,
+        wit: String,
+        logs_store_min_level: Option<LogLevel>,
+        wit_origin: WitOrigin,
+    ) -> (WorkerCompiled, ComponentConfig) {
+        let component = ComponentConfig {
+            component_id: exec_config.component_id.clone(),
+            workflow_or_activity_config: Some(ComponentConfigImportable {
+                exports_ext: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
+            }),
+            imports: vec![],
+            wit,
+            wit_origin,
+        };
+        (
+            WorkerCompiled {
+                worker: CompiledWorkerKind::ActivityVm(Box::new(worker)),
                 exec_config,
                 logs_store_min_level,
             },
@@ -5917,6 +6105,9 @@ impl WorkerCompiled {
                 CompiledWorkerKind::ActivityExec(exec_activity) => {
                     LinkedWorkerKind::ActivityExec(exec_activity)
                 }
+                CompiledWorkerKind::ActivityVm(vm_activity) => {
+                    LinkedWorkerKind::ActivityVm(vm_activity)
+                }
                 CompiledWorkerKind::WorkflowWasm(workflow_compiled) => {
                     LinkedWorkerKind::WorkflowWasm(Box::new(WorkflowWorkerLinkedWithConfig {
                         worker: workflow_compiled.worker.link(fn_registry.clone())?,
@@ -5960,6 +6151,7 @@ enum LinkedWorkerKind {
     ActivityWasm(Box<ActivityWorkerCompiled>),
     ActivityJs(Box<ActivityJsWorkerCompiled>),
     ActivityExec(Box<ActivityExecWorkerCompiled>),
+    ActivityVm(Box<activity_vm_worker::ActivityVmWorkerCompiled>),
     WorkflowWasm(Box<WorkflowWorkerLinkedWithConfig>),
     WorkflowJs(Box<WorkflowJsWorkerLinkedWithConfig>),
     Cron(Box<ScheduleWorkerConfig>),
@@ -6015,6 +6207,9 @@ impl WorkerLinked {
                     log_forwarder_sender,
                     logs_storage_config,
                 ))
+            }
+            LinkedWorkerKind::ActivityVm(vm_activity_compiled) => {
+                Arc::from(vm_activity_compiled.into_worker(cancel_registry, log_forwarder_sender))
             }
             LinkedWorkerKind::WorkflowWasm(workflow_linked) => {
                 let factory = DeadlineTrackerFactoryTokio::new(

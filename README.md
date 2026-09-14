@@ -146,6 +146,11 @@ Check out the [Getting Started Guide](https://obeli.sk/docs/latest/js/getting-st
 obelisk server run --deployment deployment-testing-wasm-oci.toml
 ```
 
+### Linux VM activity MVP
+
+See [`deployment-testing-vm.toml`](deployment-testing-vm.toml) for the runnable
+example, setup commands, and architecture notes.
+
 ### Running with Postgres
 ```sh
 docker run -it --rm \

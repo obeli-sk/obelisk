@@ -38,6 +38,13 @@
       },
       "default": []
     },
+    "activity_vm": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ActivityVmComponentConfigToml"
+      },
+      "default": []
+    },
     "workflow_wasm": {
       "type": "array",
       "items": {
@@ -804,6 +811,178 @@
         {
           "$ref": "#/$defs/InlineFunctionInterfaceToml"
         }
+      ]
+    },
+    "ActivityVmComponentConfigToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "entrypoint": {
+          "description": "Linux executable followed by fixed arguments. Mutually exclusive with `location` and `content`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScriptLocationPathOrOci"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "content": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "ffqn": {
+          "type": "string"
+        },
+        "exec": {
+          "$ref": "#/$defs/ExecConfigToml",
+          "default": {
+            "batch_size": 5,
+            "lock_expiry": {
+              "seconds": 30
+            },
+            "tick_sleep": {
+              "milliseconds": 200
+            },
+            "locking_strategy": null,
+            "instance_limiter": "unlimited"
+          }
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 5
+        },
+        "retry_exp_backoff": {
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "milliseconds": 100
+          }
+        },
+        "forward_stdout": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "forward_stderr": {
+          "$ref": "#/$defs/ComponentStdOutputToml",
+          "default": "db"
+        },
+        "logs_store_min_level": {
+          "$ref": "#/$defs/LogLevelToml",
+          "default": "debug"
+        },
+        "env_vars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
+        },
+        "exposed_secrets": {
+          "description": "Registered secrets exposed to the guest as environment variables.\nEvery process inside the VM can read and inherit these values.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "params_via_stdin": {
+          "description": "Pass parameters in the stdin JSON `params` array instead of command-line arguments.",
+          "type": "boolean",
+          "default": false
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 4096
+        },
+        "store_paths": {
+          "description": "Exact `/nix/store/...` roots whose complete closures are mounted into Linux.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nix_cache": {
+          "description": "Trusted binary caches used to resolve the store closure at deployment time.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NixCacheToml"
+          },
+          "default": []
+        },
+        "allowed_host": {
+          "description": "Policy-filtered HTTP destinations. Secrets are exposed as placeholders only.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedHostToml"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "ffqn",
+        "store_paths"
+      ],
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthoredFunctionInterfaceToml"
+        },
+        {
+          "$ref": "#/$defs/InlineFunctionInterfaceToml"
+        }
+      ]
+    },
+    "NixCacheToml": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "Binary cache base URL, for example `https://cache.nixos.org`.",
+          "type": "string"
+        },
+        "public_key": {
+          "description": "Nix binary-cache signing key.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "public_key"
       ]
     },
     "WorkflowWasmComponentConfigToml": {

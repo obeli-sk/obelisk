@@ -10,6 +10,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 concepts.workspace = true
 db-common.workspace = true
 executor.workspace = true

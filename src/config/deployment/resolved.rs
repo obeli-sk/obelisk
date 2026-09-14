@@ -10,8 +10,8 @@ use super::{
     ComponentBacktraceConfig, ComponentCommon, ComponentLocationToml, ComponentStdOutputToml,
     ConfigName, CronComponentConfigToml, DeploymentTomlValidated, DurationConfig, ExecConfigToml,
     FunctionInterfaceToml, InflightSemaphore, InlineFunctionInterfaceToml, JsParamToml,
-    LockingStrategy, LogLevelToml, MethodsInput, ReplaceIn, ScriptLocationPathOrOci, WebhookRoute,
-    WebhookRouteDetail, sanitize_deployment_relative_path,
+    LockingStrategy, LogLevelToml, MethodsInput, NixCacheToml, ReplaceIn, ScriptLocationPathOrOci,
+    WebhookRoute, WebhookRouteDetail, sanitize_deployment_relative_path,
 };
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
@@ -761,6 +761,212 @@ impl ActivityExecConfigVerified {
     }
 }
 
+pub(crate) trait ActivityVmComponentConfigResolvedExt {
+    async fn fetch_and_verify(
+        self,
+        runtime: &Path,
+        wasm_cache_dir: &Path,
+        global_http_config: &GlobalHttpConfig,
+        ignore_missing_env_vars: bool,
+        secret_registry: &Arc<SecretRegistry>,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Result<ActivityVmConfigVerified, anyhow::Error>;
+}
+
+impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved {
+    async fn fetch_and_verify(
+        self,
+        runtime: &Path,
+        wasm_cache_dir: &Path,
+        global_http_config: &GlobalHttpConfig,
+        ignore_missing_env_vars: bool,
+        secret_registry: &Arc<SecretRegistry>,
+        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Result<ActivityVmConfigVerified, anyhow::Error> {
+        let ActivityVmComponentConfigResolved {
+            name,
+            location,
+            entrypoint,
+            content_digest,
+            ffqn,
+            interface,
+            exec,
+            max_retries,
+            retry_exp_backoff,
+            forward_stdout,
+            forward_stderr,
+            logs_store_min_level,
+            env_vars,
+            exposed_secrets,
+            params_via_stdin,
+            max_output_bytes,
+            store_paths,
+            nix_caches,
+            allowed_hosts,
+        } = self;
+        let (allowed_host_configs, _) = resolve_allowed_hosts(
+            allowed_hosts.clone(),
+            ignore_missing_env_vars,
+            secret_registry,
+        )?;
+        let resolved_env =
+            resolve_env_vars_plaintext(env_vars.clone(), ignore_missing_env_vars, secret_registry)?;
+        validate_no_env_collision(&resolved_env, &allowed_host_configs)?;
+        let secret_names: Vec<String> = allowed_host_configs
+            .iter()
+            .flat_map(|host| host.secret_names.iter().cloned())
+            .chain(exposed_secrets.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let policy_spec = wasm_workers::policy_builder::ProcessHttpPolicySpec {
+            component: allowed_host_configs
+                .iter()
+                .map(wasm_workers::policy_builder::ProcessAllowedHostSpec::from_config)
+                .collect(),
+            global: global_http_config
+                .entries()
+                .iter()
+                .map(wasm_workers::policy_builder::ProcessAllowedHostSpec::from_config)
+                .collect(),
+        };
+        let source = if let Some(location) = location {
+            ActivityExecComponentConfigResolved {
+                name: name.clone(),
+                location,
+                content_digest: content_digest.clone(),
+                ffqn: ffqn.clone(),
+                interface: interface.clone(),
+                exec: exec.clone(),
+                max_retries,
+                retry_exp_backoff,
+                forward_stdout,
+                forward_stderr,
+                logs_store_min_level,
+                env_vars: env_vars.clone(),
+                max_output_bytes,
+                secrets: secret_names.clone(),
+                params_via_stdin,
+            }
+            .resolve(wasm_cache_dir)
+            .await?
+        } else {
+            let bytes = serde_json::to_vec(entrypoint.as_ref().expect("validated entrypoint"))?;
+            let content_digest = ContentDigest(Digest(Sha256::digest(&bytes).into()));
+            let dir = wasm_cache_dir.join("activity-vm/entrypoints");
+            tokio::fs::create_dir_all(&dir).await?;
+            let program = content_digest_to_exec_file(&dir, &content_digest);
+            write_inline_exec_file_to_cache_dir(&program, &dir, &bytes).await?;
+            ResolvedExecProgram {
+                program,
+                content_digest,
+            }
+        };
+        let exec_config = ActivityExecComponentConfigResolved {
+            name,
+            location: ScriptLocationResolved::Content {
+                content: String::new(),
+                file_name: "activity-vm-entrypoint".to_owned(),
+            },
+            content_digest,
+            ffqn,
+            interface,
+            exec,
+            max_retries,
+            retry_exp_backoff,
+            forward_stdout,
+            forward_stderr,
+            logs_store_min_level,
+            env_vars,
+            max_output_bytes,
+            secrets: secret_names,
+            params_via_stdin,
+        };
+        let store = std::env::var_os("OBELISK_ACTIVITY_VM_STORE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| wasm_cache_dir.join("activity-vm/store"));
+        tokio::fs::create_dir_all(&store).await?;
+        let closure =
+            crate::command::server::activity_vm_nix::resolve(&store_paths, &nix_caches, &store)
+                .await?;
+        let resolved_store_paths = closure
+            .into_iter()
+            .map(|basename| store.join(basename))
+            .collect();
+        let source_location = if entrypoint.is_none() {
+            let source_dir = source
+                .program
+                .parent()
+                .context("VM activity script has no parent")?
+                .to_owned();
+            let source_name = source
+                .program
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("VM activity script name is not UTF-8")?
+                .to_owned();
+            Some((source_dir, source_name))
+        } else {
+            None
+        };
+        let policy_bytes = serde_json::to_vec(&policy_spec)?;
+        let policy_digest: [u8; 32] = Sha256::digest(&policy_bytes).into();
+        let mut hasher = Sha256::new();
+        hasher.update(b"activity_vm:v7:");
+        hasher.update(source.content_digest.0.0);
+        hasher.update(runtime.to_string_lossy().as_bytes());
+        hasher.update(policy_digest);
+        for path in &store_paths {
+            hasher.update(path.as_bytes());
+        }
+        for cache in &nix_caches {
+            hasher.update(cache.url.as_bytes());
+            hasher.update(cache.public_key.as_bytes());
+        }
+        for host in &allowed_hosts {
+            hasher.update(serde_json::to_vec(host)?);
+        }
+        let digest = ContentDigest(Digest(hasher.finalize().into()));
+        let verified = exec_config.fetch_and_verify(
+            ResolvedExecProgram {
+                program: source.program,
+                content_digest: digest,
+            },
+            ignore_missing_env_vars,
+            secret_registry,
+            global_executor_instance_limiter,
+        )?;
+        Ok(ActivityVmConfigVerified {
+            runtime: runtime.to_owned(),
+            source_location,
+            entrypoint,
+            store_paths: resolved_store_paths,
+            policy_spec,
+            allowed_hosts: allowed_host_configs,
+            exposed_secrets,
+            activity: verified,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ActivityVmConfigVerified {
+    pub(crate) runtime: PathBuf,
+    pub(crate) source_location: Option<(PathBuf, String)>,
+    pub(crate) entrypoint: Option<Vec<String>>,
+    pub(crate) store_paths: Vec<PathBuf>,
+    pub(crate) policy_spec: wasm_workers::policy_builder::ProcessHttpPolicySpec,
+    pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
+    pub(crate) exposed_secrets: Vec<String>,
+    pub(crate) activity: ActivityExecConfigVerified,
+}
+
+impl ActivityVmConfigVerified {
+    pub(crate) fn component_id(&self) -> &ComponentId {
+        self.activity.component_id()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct WorkflowJsConfigVerified {
     pub(crate) wasm_path: Arc<Path>, // same for all JS workflows
@@ -1373,6 +1579,82 @@ pub(crate) async fn resolve_local_refs(
         });
     }
 
+    let mut activities_vm = Vec::with_capacity(deployment.activities_vm.len());
+    for (mut a, name) in deployment.activities_vm {
+        let interface =
+            resolve_function_interface(a.interface, &mut a.component_files, cas).await?;
+        ensure!(
+            a.component_files.is_empty(),
+            "activity_vm component_files contains files not selected by its WIT"
+        );
+        ensure!(
+            !a.store_paths.is_empty(),
+            "activity_vm requires store_paths"
+        );
+        for path in &a.store_paths {
+            ensure!(
+                path.starts_with("/nix/store/") && !path[11..].contains('/'),
+                "activity_vm store path must be an exact /nix/store root: `{path}`"
+            );
+        }
+        ensure!(
+            !a.nix_caches.is_empty(),
+            "activity_vm requires at least one nix_cache"
+        );
+        for cache in &a.nix_caches {
+            ensure!(
+                cache.url.starts_with("https://"),
+                "activity_vm Nix cache must use HTTPS: `{}`",
+                cache.url
+            );
+        }
+        let location = match (&a.entrypoint, &a.location, &a.content) {
+            (Some(entrypoint), None, None) => {
+                ensure!(
+                    !entrypoint.is_empty(),
+                    "activity_vm entrypoint cannot be empty"
+                );
+                None
+            }
+            (None, _, _) => Some(
+                resolve_script_toml(
+                    ScriptToml::Exec {
+                        location: a.location,
+                        content: a.content,
+                    },
+                    name.to_string(),
+                    cas,
+                    a.content_digest.as_ref(),
+                )
+                .await?,
+            ),
+            _ => {
+                bail!("activity_vm requires exactly one of `entrypoint`, `location`, or `content`")
+            }
+        };
+        activities_vm.push(ActivityVmComponentConfigResolved {
+            name,
+            location,
+            entrypoint: a.entrypoint,
+            content_digest: a.content_digest,
+            ffqn: a.ffqn,
+            interface,
+            exec: a.exec,
+            max_retries: a.max_retries,
+            retry_exp_backoff: a.retry_exp_backoff,
+            forward_stdout: a.forward_stdout,
+            forward_stderr: a.forward_stderr,
+            logs_store_min_level: a.logs_store_min_level,
+            env_vars: a.env_vars,
+            exposed_secrets: a.exposed_secrets,
+            params_via_stdin: a.params_via_stdin,
+            max_output_bytes: a.max_output_bytes,
+            store_paths: a.store_paths,
+            nix_caches: a.nix_caches,
+            allowed_hosts: a.allowed_hosts,
+        });
+    }
+
     // Build resolved stubs/externals with their names filled in.
     let mut activities_stub = Vec::with_capacity(deployment.activities_stub.len());
     for (c, name) in deployment.activities_stub {
@@ -1426,6 +1708,7 @@ pub(crate) async fn resolve_local_refs(
         activities_external,
         activities_js,
         activities_exec,
+        activities_vm,
         workflows_wasm,
         workflows_js,
         webhooks_wasm,
@@ -2574,6 +2857,30 @@ pub struct ActivityExecComponentConfigResolved {
     pub params_via_stdin: bool,
 }
 
+/// Resolved form of `ActivityVmComponentConfigToml`.
+#[derive(Debug, Clone)]
+pub struct ActivityVmComponentConfigResolved {
+    pub name: ConfigName,
+    pub location: Option<ScriptLocationResolved>,
+    pub entrypoint: Option<Vec<String>>,
+    pub content_digest: Option<ContentDigest>,
+    pub ffqn: FunctionFqn,
+    pub interface: FunctionInterfaceResolved,
+    pub exec: ExecConfigToml,
+    pub max_retries: u32,
+    pub retry_exp_backoff: DurationConfig,
+    pub forward_stdout: ComponentStdOutputToml,
+    pub forward_stderr: ComponentStdOutputToml,
+    pub logs_store_min_level: LogLevelToml,
+    pub env_vars: Vec<EnvVarConfig>,
+    pub exposed_secrets: Vec<String>,
+    pub params_via_stdin: bool,
+    pub max_output_bytes: u64,
+    pub store_paths: Vec<String>,
+    pub nix_caches: Vec<NixCacheToml>,
+    pub allowed_hosts: Vec<AllowedHostToml>,
+}
+
 /// Resolved form of `WorkflowWasmComponentConfigToml`.
 #[derive(Debug, Clone)]
 pub struct WorkflowWasmComponentConfigResolved {
@@ -2656,6 +2963,7 @@ pub struct DeploymentResolved {
     pub activities_external: Vec<ActivityExternalComponentConfigResolved>,
     pub activities_js: Vec<ActivityJsComponentConfigResolved>,
     pub activities_exec: Vec<ActivityExecComponentConfigResolved>,
+    pub activities_vm: Vec<ActivityVmComponentConfigResolved>,
     pub workflows_wasm: Vec<WorkflowWasmComponentConfigResolved>,
     pub workflows_js: Vec<WorkflowJsComponentConfigResolved>,
     pub webhooks_wasm: Vec<WebhookWasmComponentConfigResolved>,

@@ -1,0 +1,174 @@
+# Linux VM activity MVP
+#
+# `[[activity_vm]]` runs a script in the pinned container2wasm Linux appliance. Obelisk
+# fetches each declared Nix store closure directly from its HTTPS binary caches, verifies
+# narinfo signatures and hashes, and exposes the cached closure read-only at
+# `/nix/store`. It does not invoke host Nix. HTTP and HTTPS connections are transparently
+# terminated by the in-process VM worker and pass through the same operator/component
+# allowlists and secret placeholder rewriting as WASM and JavaScript activities.
+#
+# The VM worker uses Obelisk's shared Wasmtime activity engine and compiled-module cache.
+# The static guest HTTP proxy and DNS responder are built into the pinned appliance by
+# the `obeli-sk/container2wasm` fork. Guest programs resolve hosts to the proxy's loopback
+# listeners, so interception does not depend on the program's libc or dynamic linking.
+#
+# Run this smoke deployment from the dev shell:
+#
+#   cargo build -p obelisk
+#   export VM_SECRET_VALUE=swordfish
+#   "${CARGO_TARGET_DIR:-target}/debug/obelisk" server run --clean-sqlite-directory --no-auth \
+#     --server-config server-testing-vm.toml --deployment deployment-testing-vm.toml
+#
+# Then, in another dev-shell terminal:
+#
+#   "${CARGO_TARGET_DIR:-target}/debug/obelisk" execution submit -f testing:vm/echo.run
+#   "${CARGO_TARGET_DIR:-target}/debug/obelisk" execution submit -f testing:vm/http.run
+#   "${CARGO_TARGET_DIR:-target}/debug/obelisk" execution submit -f testing:vm/stdin.run -- '"payload"'
+#   "${CARGO_TARGET_DIR:-target}/debug/obelisk" execution submit -f testing:vm/entrypoint.run
+#
+# These commands cover a Nix executable, host-filtered HTTPS with secret rewriting,
+# guest stdin parameters with an explicitly exposed secret environment variable, and
+# direct entrypoint execution. The minimal guest appliance uses Alpine only as its
+# launcher. Inline scripts execute directly, so their shebang interpreter must be
+# included in `store_paths`; this deployment uses an exact Nix Bash path.
+
+[[activity_vm]]
+name = "vm-echo"
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/echo.run"
+content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+printf '"'
+/nix/store/xl1h9i29pgq2q5cszjhm5wpfxfbbqwyi-hello-2.12.3/bin/hello | tr -d '\n'
+printf '"\n'
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = [
+  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+  "/nix/store/xl1h9i29pgq2q5cszjhm5wpfxfbbqwyi-hello-2.12.3",
+]
+
+[[activity_vm.nix_cache]]
+url = "https://cache.nixos.org"
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+
+[[activity_vm]]
+name = "vm-emubench"
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/emubench.run"
+entrypoint = [
+  "/nix/store/vk1ih0la8pfs92v8cy5vkv48kgmi14db-trynix-emubench-static-x86_64-unknown-linux-musl-1/bin/emubench",
+  "all",
+]
+params = []
+return_type = "result"
+forward_stdout = "db"
+store_paths = [
+  "/nix/store/vk1ih0la8pfs92v8cy5vkv48kgmi14db-trynix-emubench-static-x86_64-unknown-linux-musl-1",
+]
+
+[[activity_vm.nix_cache]]
+url = "https://trynix.dev/examples/cache"
+public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
+
+[[activity_vm]]
+name = "vm-cancel"
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/cancel.run"
+entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash", "-c", "sleep 300"]
+params = []
+return_type = "result"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+
+[[activity_vm.nix_cache]]
+url = "https://cache.nixos.org"
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+
+[[activity_vm]]
+name = "vm-http"
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/http.run"
+content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+set -eu
+/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin/bin/curl -fsS -H "X-VM-Secret: ${VM_SECRET}" https://httpbin.org/anything | grep -q '"X-Vm-Secret": "swordfish"' && printf '%s\n' '"secret-rewritten"'
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = [
+  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+  "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
+]
+
+[[activity_vm.nix_cache]]
+url = "https://cache.nixos.org"
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+
+[[activity_vm.allowed_host]]
+pattern = "https://httpbin.org"
+methods = ["GET"]
+secrets = ["VM_SECRET"]
+replace_in = ["headers"]
+
+# Exercises transparent HTTPS from the appliance's musl BusyBox rather than a
+# glibc-linked Nix client. This would not be covered by the former LD_PRELOAD shim.
+[[activity_vm]]
+name = "vm-http-busybox"
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/http-busybox.run"
+content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+set -eu
+/usr/bin/wget -qO /dev/null https://httpbin.org/status/204
+printf '%s\n' '"busybox-https"'
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+
+[[activity_vm.nix_cache]]
+url = "https://cache.nixos.org"
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+
+[[activity_vm.allowed_host]]
+pattern = "https://httpbin.org"
+methods = ["GET"]
+
+[[activity_vm]]
+name = "vm-stdin"
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/stdin.run"
+content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+set -eu
+input=$(cat)
+case "$input:$VM_SECRET:$VM_MODE" in
+  '{"params":["payload"]}:swordfish:testing')
+    printf '%s\n' '"stdin-and-secret"'
+    ;;
+  *)
+    printf '%s\n' '"unexpected stdin"'
+    exit 1
+    ;;
+esac
+'''
+params = [{ name = "input", type = "string" }]
+return_type = "result<string, string>"
+params_via_stdin = true
+exposed_secrets = ["VM_SECRET"]
+env_vars = [{ key = "VM_MODE", value = "testing" }]
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+
+[[activity_vm.nix_cache]]
+url = "https://cache.nixos.org"
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+
+[[activity_vm]]
+name = "vm-entrypoint"
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/entrypoint.run"
+entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash", "-c", "printf '%s\\n' '\"entrypoint\"'"]
+params = []
+return_type = "result<string, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+
+[[activity_vm.nix_cache]]
+url = "https://cache.nixos.org"
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="

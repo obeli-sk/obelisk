@@ -75,7 +75,8 @@ impl CancelRegistry {
             .retain(|_exe, sender| !sender.is_closed());
     }
 
-    pub(crate) fn activity_obtain_cancellation_token(
+    #[must_use]
+    pub fn activity_obtain_cancellation_token(
         &self,
         execution_id: ExecutionId,
     ) -> oneshot::Receiver<()> {

@@ -152,7 +152,7 @@
 # name = "name"                              # Optional. Component name. Defaults to `{ifc_name}.{function_name}` from `ffqn`.
 ## Source specification: exactly one of `location` or `content`.
 ## `content`: script content embedded in the TOML. Written to a temp file at each execution.
-# content = '''#!/usr/bin/env bash
+# content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
 # echo "\"hello\""
 # '''
 ## `location`: local file path or OCI registry reference. Local files are read at deploy time and converted to `content`, making deployment self-contained.
@@ -198,6 +198,46 @@
 ## Secrets: operator-owned secret names from the server.toml `[secrets]` table, piped to the child's stdin as JSON.
 ## The child receives `{"secrets":{"NAME":"value",...}}` on stdin. Use `jq .secrets.NAME /dev/stdin` or equivalent to parse.
 # secrets = ["MY_SECRET"]
+
+### EXPERIMENTAL VM Activity components — run Nix-packaged Linux executables in a Wasmtime sandbox
+### WARNING: activity_vm configuration, guest ABI, cache layout, and runtime behavior may
+### change incompatibly or be removed in a future release.
+### The pinned container2wasm appliance and verified Nix closure are downloaded once into
+### Obelisk's cache. Guest HTTP(S) is authorized by the same policy as WASM/JS activities;
+### secret values replace guest-visible placeholders only after host-side TLS termination.
+### Cache URLs must use HTTPS. Obelisk exposes the verified cached store through virtio-9p.
+### Cold starts should configure exec.lock_expiry above the default 30 seconds.
+# [[activity_vm]]
+# name = "vm-curl"
+# content = '''#!/usr/bin/env bash
+# /nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin/bin/curl \
+#   -fsS -H "Authorization: Bearer ${API_TOKEN}" https://api.example.com/v1/items
+# '''
+# ffqn = "example:vm/curl.run"
+# params = []
+# return_type = "result<string, string>"
+# env_vars = ["LANG", { key = "MODE", value = "batch" }]
+## Default: false. Each parameter is JSON-serialized into a separate argv element.
+## When true, no parameters are appended to argv; stdin receives {"params":[...]}.
+# params_via_stdin = false
+### Explicitly exposed secrets become guest environment variables. Every process inside
+### the VM can read and inherit them. Prefer allowed_host placeholders when possible.
+# exposed_secrets = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+# store_paths = [
+#   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+#   "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
+# ]
+#
+# [[activity_vm.nix_cache]]
+# url = "https://cache.nixos.org"
+# public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+#
+# [[activity_vm.allowed_host]]
+# pattern = "https://api.example.com"
+# methods = ["GET"]
+# request_url_regex = "^GET https://api\\.example\\.com/v1/"
+# secrets = ["API_TOKEN"]
+# replace_in = ["headers"]
 
 ### External Activity components configuration - only WIT schema is loaded
 ### An external activity declares callable activity functions whose implementation

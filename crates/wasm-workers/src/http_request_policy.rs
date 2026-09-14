@@ -491,7 +491,7 @@ fn request_match_input(uri: &hyper::Uri, method: &Method) -> Option<String> {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum PolicyError {
+pub enum PolicyError {
     #[error("outgoing HTTP request has no host in URI: {0}")]
     RequestHasNoHost(Uri),
     #[error("outgoing HTTP request {request_url} denied by {denied_by}")]
@@ -507,7 +507,7 @@ pub(crate) enum PolicyError {
 }
 
 #[derive(Clone, Copy, Debug, derive_more::Display)]
-pub(crate) enum PolicyLayer {
+pub enum PolicyLayer {
     #[display("deployment.toml component policy")]
     Component,
     #[display("server.toml outbound HTTP allowlist")]
@@ -533,7 +533,7 @@ impl From<PolicyError> for ErrorCode {
 impl HttpRequestPolicy {
     /// Check if a host is allowed and perform secret placeholder replacement in headers and query parameters.
     /// Returns the (possibly modified) request, or an error if the host is denied.
-    pub(crate) fn apply(
+    pub fn apply(
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) -> Result<(), PolicyError> {
@@ -673,7 +673,7 @@ impl HttpRequestPolicy {
     /// Perform async body replacement on a request.
     /// Must be called after `apply()` (which handles headers and params synchronously).
     /// Buffers the body, replaces placeholders in text content types, and re-wraps.
-    pub(crate) async fn apply_body_replacement(
+    pub async fn apply_body_replacement(
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) {

@@ -2711,6 +2711,9 @@ fn deployment_component_type_to_grpc(
         deployment_summary::DeploymentComponentType::ActivityExec => {
             grpc_gen::DeploymentComponentType::ActivityExec
         }
+        deployment_summary::DeploymentComponentType::ActivityVm => {
+            grpc_gen::DeploymentComponentType::ActivityVm
+        }
         deployment_summary::DeploymentComponentType::ActivityStub => {
             grpc_gen::DeploymentComponentType::ActivityStub
         }

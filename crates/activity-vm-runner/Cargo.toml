@@ -1,0 +1,36 @@
+[package]
+name = "obelisk-activity-vm-runner"
+description = "Internal Linux VM runner for Obelisk activities"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+concepts.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+wasm-workers.workspace = true
+webpki-roots.workspace = true
+
+[dev-dependencies]
+wat = "1"
+
+[lints]
+workspace = true
