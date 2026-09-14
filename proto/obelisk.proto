@@ -971,6 +971,8 @@ message ReplayExecutionResponse {
   message ReplayFailed {
     string error = 1;
     repeated CapturedWrite captured_writes = 2;
+    // Structured, sanitized reason for the replay failure.
+    SupportedFunctionResult.ExecutionFailure failure = 3;
   }
 
   oneof outcome {
@@ -979,6 +981,13 @@ message ReplayExecutionResponse {
     Blocked blocked = 3;
     ReplayFailed replay_failed = 4;
   }
+  // Number of persisted history events supplied to the workflow replay.
+  uint64 replayed_event_count = 5;
+  // Time spent executing the workflow replay after loading its execution log.
+  google.protobuf.Duration replay_duration = 6;
+  // Highest persisted execution-event version included in the replay log. Response records use a
+  // separate cursor and are not represented by this version.
+  uint32 replay_version = 7;
 }
 
 message PersistExecutionBacktracesRequest {

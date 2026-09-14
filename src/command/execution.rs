@@ -567,22 +567,30 @@ async fn replay(
     if json {
         return print_json(&response);
     }
-    match response {
-        ReplayResponseSer::Advanceable { captured_writes } => {
+    println!(
+        "replayed_event_count: {}\nreplay_duration_ms: {}\nreplay_version: {}",
+        response.replayed_event_count, response.replay_duration_ms, response.replay_version
+    );
+    match response.outcome {
+        crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
             println!("outcome: advanceable, {} writes", captured_writes.len());
         }
-        ReplayResponseSer::Finished { retval } => {
+        crate::server::web_api_server::ReplayOutcomeSer::Finished { retval } => {
             println!("outcome: finished\nresult: {retval}");
         }
-        ReplayResponseSer::Blocked => println!("outcome: blocked"),
-        ReplayResponseSer::ReplayFailed {
+        crate::server::web_api_server::ReplayOutcomeSer::Blocked => println!("outcome: blocked"),
+        crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
             error,
+            failure,
             captured_writes,
         } => {
             println!(
                 "outcome: replay_failed, error: {error}, {} writes",
                 captured_writes.len()
             );
+            if let Some(failure) = failure {
+                println!("{}", format_execution_failure(&failure));
+            }
         }
     }
     Ok(())
@@ -692,24 +700,31 @@ fn replay_to_advanceable_request(
     replay: ReplayResponseSer,
     force: bool,
 ) -> anyhow::Result<AdvanceRequestSer> {
-    match replay {
-        ReplayResponseSer::Advanceable { captured_writes } => Ok(AdvanceRequestSer {
-            captured_writes,
-            persist_backtrace: true,
-        }),
-        ReplayResponseSer::Finished { .. } => {
+    match replay.outcome {
+        crate::server::web_api_server::ReplayOutcomeSer::Advanceable { captured_writes } => {
+            Ok(AdvanceRequestSer {
+                captured_writes,
+                persist_backtrace: true,
+            })
+        }
+        crate::server::web_api_server::ReplayOutcomeSer::Finished { .. } => {
             bail!("execution is already finished")
         }
-        ReplayResponseSer::Blocked => {
+        crate::server::web_api_server::ReplayOutcomeSer::Blocked => {
             bail!("execution is blocked")
         }
-        ReplayResponseSer::ReplayFailed {
+        crate::server::web_api_server::ReplayOutcomeSer::ReplayFailed {
             error,
+            failure,
             captured_writes,
         } => {
+            let diagnostic = failure
+                .as_ref()
+                .map(format_execution_failure)
+                .unwrap_or(error);
             if force {
                 eprintln!(
-                    "Replay failed: {error}. Advancing with --force to persist execution failure."
+                    "Replay failed: {diagnostic}. Advancing with --force to persist execution failure."
                 );
                 Ok(AdvanceRequestSer {
                     captured_writes,
@@ -717,7 +732,7 @@ fn replay_to_advanceable_request(
                 })
             } else {
                 bail!(
-                    "replay failed: {error}, {} captured writes available (use --force to advance with execution failure)",
+                    "replay failed: {diagnostic}, {} captured writes available (use --force to advance with execution failure)",
                     captured_writes.len()
                 )
             }
