@@ -2727,6 +2727,11 @@ pub(crate) enum ReplayOutcomeSer {
     Blocked,
     ReplayFailed {
         error: String,
+        /// Structured, sanitized reason for the replay failure.
+        // backcompat: This is absent in replay responses from servers older than 0.42.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(value_type = Option<Object>)]
+        failure: Option<FinishedExecutionFailure>,
         captured_writes: Vec<CapturedWriteSer>,
     },
 }
@@ -3111,12 +3116,23 @@ async fn execution_replay(
                 ReplayOutcomeSer::Blocked => "outcome: blocked".to_string(),
                 ReplayOutcomeSer::ReplayFailed {
                     error,
+                    failure,
                     captured_writes,
                 } => {
-                    format!(
+                    let mut output = format!(
                         "outcome: replay_failed, error: {error}, {} writes",
                         captured_writes.len()
-                    )
+                    );
+                    if let Some(failure) = failure {
+                        write!(&mut output, "\nfailure: {failure}").expect("writing to string");
+                        if let Some(reason) = failure.reason {
+                            write!(&mut output, "\nreason: {reason}").expect("writing to string");
+                        }
+                        if let Some(detail) = failure.detail {
+                            write!(&mut output, "\ndetail: {detail}").expect("writing to string");
+                        }
+                    }
+                    output
                 }
             } + &measurements;
             deprecated_text_response((status, body))
@@ -3359,16 +3375,20 @@ async fn replay_execution_internal(
                     err,
                     captured_writes,
                     measurements,
-                } => Ok(ReplayResponseSer::new(
-                    ReplayOutcomeSer::ReplayFailed {
-                        error: err.to_string(),
-                        captured_writes: captured_writes
-                            .into_iter()
-                            .map(CapturedWriteSer::from)
-                            .collect(),
-                    },
-                    *measurements,
-                )),
+                } => {
+                    let failure = FinishedExecutionFailure::from(err.as_ref());
+                    Ok(ReplayResponseSer::new(
+                        ReplayOutcomeSer::ReplayFailed {
+                            error: err.to_string(),
+                            failure: Some(failure),
+                            captured_writes: captured_writes
+                                .into_iter()
+                                .map(CapturedWriteSer::from)
+                                .collect(),
+                        },
+                        *measurements,
+                    ))
+                }
                 other => Err(HttpResponse {
                     status: StatusCode::UNPROCESSABLE_ENTITY,
                     message: format!("Replay error: {other}"),

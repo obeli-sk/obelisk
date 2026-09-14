@@ -971,6 +971,8 @@ message ReplayExecutionResponse {
   message ReplayFailed {
     string error = 1;
     repeated CapturedWrite captured_writes = 2;
+    // Structured, sanitized reason for the replay failure.
+    SupportedFunctionResult.ExecutionFailure failure = 3;
   }
 
   oneof outcome {

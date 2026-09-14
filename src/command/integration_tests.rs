@@ -698,6 +698,29 @@ struct TestServer {
 }
 
 impl TestServer {
+    fn corrupt_child_request_params_hash(&self, execution_id: &str) {
+        let connection = rusqlite::Connection::open(&self.sqlite_file).unwrap();
+        let json: String = connection
+            .query_row(
+                "SELECT json_value FROM t_execution_log WHERE execution_id = ?1 AND history_event_type = 'join_set_request'",
+                [execution_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut event: Value = serde_json::from_str(&json).unwrap();
+        let params_hash = event
+            .pointer_mut("/history_event/event/request/params_hash")
+            .expect("child request params_hash must be present");
+        *params_hash =
+            json!("sha256:0000000000000000000000000000000000000000000000000000000000000000");
+        connection
+            .execute(
+                "UPDATE t_execution_log SET json_value = ?1 WHERE execution_id = ?2 AND history_event_type = 'join_set_request'",
+                (serde_json::to_string(&event).unwrap(), execution_id),
+            )
+            .unwrap();
+    }
+
     async fn start(ip: String) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
@@ -3957,6 +3980,133 @@ async fn replaying_paused_workflow_should_return_preview_events(
     );
     assert_eq!(server.get_backtrace(&exec_id, None).await.status(), 404);
 
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn replay_nondeterminism_reason_survives_webapi() {
+    replay_nondeterminism_reason_survives(TestExecutionClient::WebApi, test_addr!(131)).await;
+}
+
+#[tokio::test]
+async fn replay_nondeterminism_reason_survives_grpc() {
+    replay_nondeterminism_reason_survives(TestExecutionClient::Grpc, test_addr!(132)).await;
+}
+
+async fn replay_nondeterminism_reason_survives(client: TestExecutionClient, addr: String) {
+    let server = TestServer::start(addr).await;
+    let execution_id = server.generate_execution_id().await;
+    client
+        .submit_paused(
+            &server,
+            &execution_id,
+            "testing:integration/workflow-add-via-activity.add-via-activity",
+            vec![json!(3), json!(4)],
+        )
+        .await;
+
+    match client {
+        TestExecutionClient::WebApi => {
+            let replay = server.replay(&execution_id).await;
+            assert_eq!(replay.status().as_u16(), 200);
+            let mut replay: Value = replay.json().await.unwrap();
+            let captured_writes = replay["captured_writes"]
+                .as_array_mut()
+                .expect("captured_writes must be an array");
+            let advance = server
+                .client
+                .put(format!(
+                    "{}/v1/executions/{execution_id}/advance",
+                    server.base_url
+                ))
+                .header("Accept", "application/json")
+                .json(&json!({
+                    "captured_writes": captured_writes,
+                    "persist_backtrace": false,
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(advance.status().as_u16(), 200);
+            server.corrupt_child_request_params_hash(&execution_id);
+
+            let failed = server.replay(&execution_id).await;
+            assert_eq!(failed.status().as_u16(), 409);
+            let failed: Value = failed.json().await.unwrap();
+            assert_eq!(failed["type"], "replay_failed");
+            assert_eq!(failed["failure"]["kind"], "nondeterminism_detected");
+            let detail = failed["failure"]["detail"]
+                .as_str()
+                .expect("nondeterminism detail must be set");
+            assert!(
+                detail.contains("found unprocessed request stored at version 3")
+                    && detail.contains("testing:integration/activity.add"),
+                "unexpected nondeterminism detail: {detail}"
+            );
+        }
+        TestExecutionClient::Grpc => {
+            let mut grpc_client =
+                ExecutionRepositoryClient::connect(format!("http://{}", server.api_addr()))
+                    .await
+                    .unwrap();
+            let replay = grpc_client
+                .replay_execution(ReplayExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: execution_id.clone(),
+                    }),
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            let captured_writes = match replay.outcome.unwrap() {
+                grpc::grpc_gen::replay_execution_response::Outcome::Advanceable(advanceable) => {
+                    advanceable.captured_writes
+                }
+                outcome => panic!("unexpected replay outcome: {outcome:?}"),
+            };
+            let advance = grpc_client
+                .advance_execution(AdvanceExecutionRequest {
+                    execution_id: Some(GrpcExecutionId {
+                        id: execution_id.clone(),
+                    }),
+                    captured_writes,
+                    persist_backtrace: false,
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(matches!(
+                advance.result,
+                Some(grpc::grpc_gen::advance_execution_response::Result::Success(
+                    _
+                ))
+            ));
+            server.corrupt_child_request_params_hash(&execution_id);
+
+            let failed = grpc_client
+                .replay_execution(ReplayExecutionRequest {
+                    execution_id: Some(GrpcExecutionId { id: execution_id }),
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            let failed = match failed.outcome.unwrap() {
+                grpc::grpc_gen::replay_execution_response::Outcome::ReplayFailed(failed) => failed,
+                outcome => panic!("unexpected replay outcome: {outcome:?}"),
+            };
+            let failure = failed.failure.expect("structured failure must be set");
+            assert_eq!(
+                failure.kind,
+                grpc::grpc_gen::ExecutionFailureKind::NondeterminismDetected as i32
+            );
+            let detail = failure.detail.expect("nondeterminism detail must be set");
+            assert!(
+                detail.contains("found unprocessed request stored at version 3")
+                    && detail.contains("testing:integration/activity.add"),
+                "unexpected nondeterminism detail: {detail}"
+            );
+        }
+    }
     server.shutdown().await;
 }
 

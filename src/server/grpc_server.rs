@@ -949,6 +949,7 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                 measurements,
             }) => {
                 info!("Replay failed: {err:?}");
+                let failure = concepts::FinishedExecutionFailure::from(err.as_ref());
                 let outcome = grpc_gen::replay_execution_response::Outcome::ReplayFailed(
                     grpc_gen::replay_execution_response::ReplayFailed {
                         error: err.to_string(),
@@ -956,6 +957,11 @@ impl grpc_gen::execution_repository_server::ExecutionRepository for GrpcServer {
                             .into_iter()
                             .map(grpc_mapping::captured_write_to_grpc)
                             .collect(),
+                        failure: Some(grpc_gen::supported_function_result::ExecutionFailure {
+                            kind: grpc_gen::ExecutionFailureKind::from(failure.kind).into(),
+                            reason: failure.reason,
+                            detail: failure.detail,
+                        }),
                     },
                 );
                 (outcome, *measurements)

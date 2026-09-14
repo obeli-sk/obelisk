@@ -3475,6 +3475,13 @@
               "error": {
                 "type": "string"
               },
+              "failure": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Structured, sanitized reason for the replay failure."
+              },
               "type": {
                 "type": "string",
                 "enum": [

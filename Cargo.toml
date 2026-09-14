@@ -118,6 +118,7 @@ hmac.workspace = true
 insta.workspace = true
 paste.workspace = true
 rstest.workspace = true
+rusqlite.workspace = true
 
 [[bin]]
 name = "obelisk"
