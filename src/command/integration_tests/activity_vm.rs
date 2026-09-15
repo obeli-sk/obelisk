@@ -138,7 +138,7 @@ async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
     let connect_to = if use_host_alias {
         String::new()
     } else {
-        format!("  --connect-to {request_authority}:127.0.0.1:80 \\\n")
+        format!("  --noproxy '*' \\\n  --connect-to {request_authority}:127.0.0.1:80 \\\n")
     };
 
     let server_toml = format!(
