@@ -1,0 +1,1 @@
+oci://docker.io/getobelisk/activity-vm-runtime:experimental-bochs-nftables-2026-09-15-5@sha256:75f38f1a208fbbd16887e38dbd033b315e3ce3c39167b4c0e054a8417d34b4b2

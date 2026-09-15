@@ -13,7 +13,7 @@ use super::{
 };
 use crate::args::TomlComponentType;
 use crate::config::env_var::EnvVarConfig;
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow, bail, ensure};
 use concepts::cas::Cas;
 use concepts::{ContentDigest, FunctionFqn};
 use config::{ConfigBuilder, File, FileFormat, builder::AsyncState};
@@ -69,6 +69,8 @@ pub(crate) struct DeploymentToml {
     pub(crate) activities_js: Vec<ActivityJsComponentConfigToml>,
     #[serde(default, rename = "activity_exec")]
     pub(crate) activities_exec: Vec<ActivityExecComponentConfigToml>,
+    #[serde(default, rename = "activity_vm")]
+    pub(crate) activities_vm: Vec<ActivityVmComponentConfigToml>,
     #[serde(default, rename = "workflow_wasm")]
     pub(crate) workflows_wasm: Vec<WorkflowWasmComponentConfigToml>,
     #[serde(default, rename = "workflow_js")]
@@ -89,6 +91,7 @@ pub(crate) struct DeploymentToml {
 #[derive(Default)]
 pub(crate) struct DeploymentTomlValidated {
     pub(crate) activities_exec: Vec<(ActivityExecComponentConfigToml, ConfigName)>,
+    pub(crate) activities_vm: Vec<(ActivityVmComponentConfigToml, ConfigName)>,
     pub(crate) activities_external: Vec<(ActivityExternalComponentConfigToml, ConfigName)>,
     pub(crate) activities_js: Vec<(ActivityJsComponentConfigToml, ConfigName)>,
     pub(crate) activities_stub: Vec<(ActivityStubComponentConfigToml, ConfigName)>,
@@ -125,6 +128,21 @@ impl DeploymentToml {
         self.expand_deployment_dir_prefix(deployment_dir)?;
         self.normalize_oci_locations()?;
         self.validate_wit_sources()?;
+        for activity in &self.activities_vm {
+            let source_count = usize::from(activity.entrypoint.is_some())
+                + usize::from(activity.location.is_some())
+                + usize::from(activity.content.is_some());
+            ensure!(
+                source_count == 1,
+                "activity_vm requires exactly one of `entrypoint`, `location`, or `content`"
+            );
+            if let Some(entrypoint) = &activity.entrypoint {
+                ensure!(
+                    !entrypoint.is_empty(),
+                    "activity_vm entrypoint cannot be empty"
+                );
+            }
+        }
 
         // Build the name→type index and check for duplicates.
         let mut component_names_to_types = hashbrown::HashMap::new();
@@ -166,6 +184,7 @@ impl DeploymentToml {
 
         let activities_js = Self::resolve_names(self.activities_js);
         let activities_exec = Self::resolve_names(self.activities_exec);
+        let activities_vm = Self::resolve_names(self.activities_vm);
         let activities_stub = Self::resolve_stub_names(self.activities_stub);
         let activities_external = Self::resolve_external_names(self.activities_external);
         let workflows_js = Self::resolve_names(self.workflows_js);
@@ -183,6 +202,14 @@ impl DeploymentToml {
         for (_, name) in &activities_exec {
             if component_names_to_types
                 .insert(name.to_string(), TomlComponentType::ActivityExec)
+                .is_some()
+            {
+                bail!("duplicate component name `{name}` in deployment");
+            }
+        }
+        for (_, name) in &activities_vm {
+            if component_names_to_types
+                .insert(name.to_string(), TomlComponentType::ActivityVm)
                 .is_some()
             {
                 bail!("duplicate component name `{name}` in deployment");
@@ -214,6 +241,7 @@ impl DeploymentToml {
         }
         Ok(DeploymentTomlValidated {
             activities_exec,
+            activities_vm,
             activities_external,
             activities_js,
             activities_stub,
@@ -247,6 +275,9 @@ impl DeploymentToml {
         }
         for config in &self.activities_exec {
             validate("activity_exec", &config.interface)?;
+        }
+        for config in &self.activities_vm {
+            validate("activity_vm", &config.interface)?;
         }
         for config in &self.workflows_js {
             validate("workflow_js", &config.interface)?;
@@ -427,6 +458,15 @@ impl HasOptionalNameAndFfqn for ActivityExecComponentConfigToml {
     }
 }
 
+impl HasOptionalNameAndFfqn for ActivityVmComponentConfigToml {
+    fn config_name(&self) -> Option<&ConfigName> {
+        self.name.as_ref()
+    }
+    fn ffqn(&self) -> &FunctionFqn {
+        &self.ffqn
+    }
+}
+
 impl HasOptionalNameAndFfqn for WorkflowJsComponentConfigToml {
     fn config_name(&self) -> Option<&ConfigName> {
         self.name.as_ref()
@@ -575,6 +615,87 @@ pub(crate) struct ActivityJsComponentConfigToml {
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
+    #[serde(default, rename = "allowed_host")]
+    pub(crate) allowed_hosts: Vec<AllowedHostToml>,
+}
+
+// --- activity_vm config ---
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NixCacheToml {
+    /// Binary cache base URL, for example `https://cache.nixos.org`.
+    pub(crate) url: String,
+    /// Nix binary-cache signing key.
+    pub(crate) public_key: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct NixosCacheToml {
+    pub(crate) enabled: bool,
+}
+
+impl Default for NixosCacheToml {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+pub(crate) struct ActivityVmComponentConfigToml {
+    #[serde(default)]
+    pub(crate) name: Option<ConfigName>,
+    /// Linux executable followed by fixed arguments. Command names are resolved through the guest PATH.
+    /// Mutually exclusive with `location` and `content`.
+    #[serde(default)]
+    pub(crate) entrypoint: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) location: Option<ScriptLocationPathOrOci>,
+    #[serde(default)]
+    pub(crate) content: Option<String>,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub(crate) content_digest: Option<ContentDigest>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(skip)]
+    pub(crate) component_files: BTreeMap<String, ContentDigest>,
+    #[schemars(with = "String")]
+    pub(crate) ffqn: FunctionFqn,
+    #[serde(flatten)]
+    pub(crate) interface: FunctionInterfaceToml,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_max_retries")]
+    pub(crate) max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
+    #[serde(default)]
+    pub(crate) forward_stdout: ComponentStdOutputToml,
+    #[serde(default)]
+    pub(crate) forward_stderr: ComponentStdOutputToml,
+    #[serde(default)]
+    pub(crate) logs_store_min_level: LogLevelToml,
+    #[serde(default)]
+    pub(crate) env_vars: Vec<EnvVarConfig>,
+    /// Registered secrets exposed to the guest as environment variables.
+    /// Every process inside the VM can read and inherit these values.
+    #[serde(default)]
+    pub(crate) exposed_secrets: Vec<String>,
+    /// Pass parameters in the stdin JSON `params` array instead of command-line arguments.
+    #[serde(default)]
+    pub(crate) params_via_stdin: bool,
+    #[serde(default = "default_max_output_bytes")]
+    pub(crate) max_output_bytes: u64,
+    /// Exact `/nix/store/...` roots whose closures are mounted; their `bin` directories form the default PATH.
+    pub(crate) store_paths: Vec<String>,
+    /// Trusted binary caches used to resolve the store closure at deployment time.
+    #[serde(default, rename = "nix_cache")]
+    pub(crate) nix_caches: Vec<NixCacheToml>,
+    /// Whether to use cache.nixos.org in addition to custom binary caches.
+    #[serde(default)]
+    pub(crate) nixos_cache: NixosCacheToml,
+    /// Policy-filtered HTTP destinations. Secrets are exposed as placeholders only.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
 }

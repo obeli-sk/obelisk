@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *(activity-vm)* Added experimental `[[activity_vm]]` deployment components for running
+  Nix-packaged Linux programs inside a container2wasm appliance hosted by Wasmtime. The
+  host fetches and verifies declared Nix closures and exposes the cache read-only through virtio-9p,
+  terminates guest HTTP(S), applies the normal outbound HTTP policy and secret-placeholder
+  rewriting, and records HTTP traces.
+  Explicitly exposed secrets are injected as guest environment variables, while stdin is
+  reserved for parameters when `params_via_stdin` is enabled.
+  This support is experimental: its configuration, guest ABI, cache layout, and runtime
+  behavior may change incompatibly or be removed.
 - *(api)* REST and gRPC replay responses expose the persisted history-event count, replay duration,
   and highest included execution-event version. Response records use a separate cursor and are not
   represented by this version. Failed replays also include a structured, sanitized failure kind,

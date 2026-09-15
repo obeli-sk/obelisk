@@ -111,6 +111,7 @@ pub(crate) async fn prepare_deployment_manifest(
     collect_js_refs(&mut doc, "workflow_js", deployment_dir, &mut files).await?;
     collect_js_refs(&mut doc, "webhook_endpoint_js", deployment_dir, &mut files).await?;
     collect_script_refs(&mut doc, "activity_exec", deployment_dir, &mut files).await?;
+    collect_script_refs(&mut doc, "activity_vm", deployment_dir, &mut files).await?;
     for section in WIT_SECTIONS {
         collect_wit_refs(&mut doc, section, deployment_dir, &mut files).await?;
     }
@@ -290,10 +291,12 @@ const SCRIPT_SECTIONS: &[&str] = &[
     "workflow_js",
     "webhook_endpoint_js",
     "activity_exec",
+    "activity_vm",
 ];
 const WIT_SECTIONS: &[&str] = &[
     "activity_js",
     "activity_exec",
+    "activity_vm",
     "workflow_js",
     "activity_stub",
     "activity_external",
@@ -399,9 +402,16 @@ impl DeploymentManifest {
             &mut files,
             &mut component_files,
         )?;
+        collect_script_section(
+            &doc,
+            "activity_vm",
+            &names,
+            &mut files,
+            &mut component_files,
+        )?;
 
         debug_assert!(
-            WASM_SECTIONS.len() + SCRIPT_SECTIONS.len() + BACKTRACE_SECTIONS.len() == 11,
+            WASM_SECTIONS.len() + SCRIPT_SECTIONS.len() + BACKTRACE_SECTIONS.len() == 12,
             "section lists drifted from collection order"
         );
 
@@ -480,6 +490,14 @@ fn resolved_component_names(
             "activity_exec",
             deployment
                 .activities_exec
+                .iter()
+                .map(|(_, n)| n.to_string())
+                .collect(),
+        ),
+        (
+            "activity_vm",
+            deployment
+                .activities_vm
                 .iter()
                 .map(|(_, n)| n.to_string())
                 .collect(),

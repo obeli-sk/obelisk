@@ -30,6 +30,13 @@ pub(crate) async fn target_aware_deployment_fixture(
     deployment_toml: &str,
 ) -> Result<tempfile::NamedTempFile, anyhow::Error> {
     let text = tokio::fs::read_to_string(workspace.join(deployment_toml)).await?;
+    target_aware_deployment_fixture_from_text(workspace, &text).await
+}
+
+pub(crate) async fn target_aware_deployment_fixture_from_text(
+    workspace: &Path,
+    text: &str,
+) -> Result<tempfile::NamedTempFile, anyhow::Error> {
     let rewritten = text.replace(
         "target/wasm-cache",
         &format!("{}/wasm-cache", target_dir_relative(workspace)),

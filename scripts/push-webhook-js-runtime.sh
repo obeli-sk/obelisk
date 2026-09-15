@@ -21,8 +21,9 @@ OUTPUT_FILE="${2:-crates/embedded-assets/webhook-js-runtime-version.txt}"
 cargo check --package webhook-js-runtime-builder # triggers build.rs of webhook-js-runtime-builder
 
 if [ "$TAG" != "dry-run" ]; then
-    STRIPPED="target/wasm-cache/webhook_js_runtime.stripped.wasm"
-    wasm-tools strip --all "target/wasm-cache/webhook_js_runtime.wasm" -o "$STRIPPED"
+    CARGO_TARGET_ROOT=${CARGO_TARGET_DIR:-target}
+    STRIPPED="$CARGO_TARGET_ROOT/wasm-cache/webhook_js_runtime.stripped.wasm"
+    wasm-tools strip --all "$CARGO_TARGET_ROOT/wasm-cache/webhook_js_runtime.wasm" -o "$STRIPPED"
     TMP_TOML="webhook-deployment-for-push.toml"
     trap "rm -f $TMP_TOML" EXIT
     cat > "$TMP_TOML" <<EOF

@@ -2,6 +2,7 @@ target/
 /.direnv/
 /.envrc
 test-codegen-cache
+test-wasm-cache
 /.vscode/
 obelisk.log
 /.claude/

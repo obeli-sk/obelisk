@@ -18,7 +18,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use subtle::ConstantTimeEq as _;
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 
 pub(crate) struct ApiAuth {
     /// Accepted token digests with the identity label used in audit logs.
@@ -103,7 +103,7 @@ pub(crate) async fn auth_middleware(
 ) -> Response {
     match auth.check(req.headers()) {
         Ok(identity) => {
-            debug!(identity, path = %req.uri().path(), "Authorized API request");
+            trace!(identity, path = %req.uri().path(), "Authorized API request");
             next.run(req).await
         }
         Err(reason) => {

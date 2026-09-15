@@ -10,7 +10,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use wasm_workers::http_request_policy::SecretResolver;
+use worker_common::SecretResolver;
 
 pub(crate) const API_TOKEN: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_LEGACY: &str = "OBELISK__API__TOKEN";

@@ -19,6 +19,9 @@ grpc.workspace = true
 utils.workspace = true
 val-json.workspace = true
 wasm-workers.workspace = true
+activity-vm-runner.workspace = true
+activity-vm-worker.workspace = true
+worker-common.workspace = true
 
 activity-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 webhook-js-runtime-builder = { workspace = true, optional = true } # Only for local development
@@ -43,12 +46,14 @@ croner.workspace = true
 derive_more.workspace = true
 directories.workspace = true
 docker_credential.workspace = true
+ed25519-dalek.workspace = true
 futures-util.workspace = true
 hashbrown.workspace = true
 http.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
 jsonwebtoken.workspace = true # Enable rust_crypto features for oci-client's jsonwebtoken dep
+lzma-rs.workspace = true
 oci-client.workspace = true
 oci-wasm.workspace = true
 prost-wkt-types.workspace = true
@@ -56,6 +61,7 @@ prost.workspace = true
 rand.workspace = true
 regex.workspace = true
 reqwest.workspace = true
+ruzstd.workspace = true
 rustls.workspace = true # Enable ring crypto provider for rustls (instead of aws-lc-rs)
 schemars.workspace = true
 secrecy.workspace = true
@@ -119,6 +125,7 @@ insta.workspace = true
 paste.workspace = true
 rstest.workspace = true
 rusqlite.workspace = true
+wiremock.workspace = true
 
 [[bin]]
 name = "obelisk"
@@ -143,6 +150,9 @@ workspace = true
 
 [workspace]
 members = [
+    "crates/activity-vm-runner",
+    "crates/activity-vm-worker",
+    "crates/worker-common",
     "crates/activity-js-runtime",
     "crates/activity-js-runtime/builder",
     "crates/boa-common",
@@ -240,6 +250,9 @@ test-programs-stub-workflow-builder = { path = "crates/testing/test-programs/stu
 test-programs-wasip3-activity-builder = { path = "crates/testing/test-programs/wasip3/activity/builder" }
 test-programs-wasip3-webhook-builder = { path = "crates/testing/test-programs/wasip3/webhook/builder" }
 test-utils = { path = "crates/testing/test-utils" }
+activity-vm-runner = { package = "obelisk-activity-vm-runner", path = "crates/activity-vm-runner" }
+activity-vm-worker = { package = "obelisk-activity-vm-worker", path = "crates/activity-vm-worker" }
+worker-common = { package = "obeli-sk-worker-common", path = "crates/worker-common", version = "0.42.0-rc.1" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.42.0-rc.1" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.42.0-rc.1" }
 wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.42.0-rc.1" }
@@ -280,6 +293,7 @@ derive_more = { version = "2.1.1", features = [
 ] }
 derive-where = "1.6.1"
 directories = "6.0"
+ed25519-dalek = "2"
 divan = { version = "4.7", package = "codspeed-divan-compat" }
 docker_credential = "1.4.0"
 futures = { version = "0.3.34", default-features = false }
@@ -300,6 +314,7 @@ itertools = "0.15"
 jsonwebtoken = { version = "10", default-features = false } # keep in sync with oci-client's jsonwebtoken
 lazy_static = "1.5"
 libc = "0.2.189"
+lzma-rs = "0.3"
 oci-client = { version = "0.17.0", default-features = false }
 oci-wasm = { version = "0.6.0", default-features = false } # Dependent on matching oci-client
 paste = "1.0"
@@ -307,6 +322,7 @@ prost = "0.14.4"
 prost-wkt-types = "0.7"
 quote = "1"
 rand = "0.9" # postgres-protocol pulls rand 0.10; obelisk stays on 0.9 (0.10 reorganized the Rng traits)
+rcgen = "0.14"
 regex = "1.13"
 refinery = { package = "obeli-sk-refinery", version = "0.9.2-obeli-sk.1", default-features = false, features = ["rusqlite", "tokio-postgres-rustls"] }
 reqwest = { version = "0.13", default-features = false, features = [
@@ -320,6 +336,8 @@ rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
 ] }
+ruzstd = "0.8"
+webpki-roots = "1"
 route-recognizer = "0.3.1"
 rstest = "0.27"
 rusqlite = { version = "0.40.2", features = [

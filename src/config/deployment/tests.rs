@@ -15,6 +15,97 @@ fn digest_of(bytes: &[u8]) -> ContentDigest {
     ContentDigest(Digest(Sha256::digest(bytes).into()))
 }
 
+#[test]
+fn activity_vm_authored_config_uses_http_policy_and_exact_store_roots() {
+    let deployment: DeploymentToml = toml::from_str(
+        r##"
+[[activity_vm]]
+name = "fetch"
+ffqn = "testing:vm/fetch.run"
+content = "#!/bin/sh\necho null"
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-curl"]
+
+[[activity_vm.allowed_host]]
+pattern = "https://api.example.com"
+methods = ["POST"]
+secrets = ["API_TOKEN"]
+replace_in = ["headers"]
+"##,
+    )
+    .unwrap();
+
+    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    let (activity, name) = &validated.activities_vm[0];
+    assert_eq!(name.as_str(), "fetch");
+    assert_eq!(activity.store_paths.len(), 1);
+    assert!(activity.nixos_cache.enabled);
+    assert_eq!(activity.allowed_hosts[0].secrets, ["API_TOKEN"]);
+}
+
+#[test]
+fn activity_vm_accepts_one_entrypoint_source() {
+    let deployment: DeploymentToml = toml::from_str(
+        r#"
+[[activity_vm]]
+ffqn = "testing:vm/entrypoint.run"
+entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool", "--json"]
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
+
+"#,
+    )
+    .unwrap();
+
+    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    assert_eq!(
+        validated.activities_vm[0].0.entrypoint.as_deref(),
+        Some(
+            [
+                "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool".to_owned(),
+                "--json".to_owned(),
+            ]
+            .as_slice()
+        )
+    );
+}
+
+#[test]
+fn activity_vm_can_disable_nixos_cache() {
+    let deployment: DeploymentToml = toml::from_str(
+        r#"
+[[activity_vm]]
+ffqn = "testing:vm/entrypoint.run"
+entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
+nixos_cache.enabled = false
+
+[[activity_vm.nix_cache]]
+url = "https://cache.example.com"
+public_key = "example-1:test"
+"#,
+    )
+    .unwrap();
+
+    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    assert!(!validated.activities_vm[0].0.nixos_cache.enabled);
+}
+
+#[test]
+fn activity_vm_rejects_multiple_program_sources() {
+    let deployment: DeploymentToml = toml::from_str(
+        r#"
+[[activity_vm]]
+ffqn = "testing:vm/invalid.run"
+entrypoint = ["/bin/true"]
+content = "exit 0"
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
+"#,
+    )
+    .unwrap();
+
+    let result = deployment.validate(std::path::Path::new("."));
+    assert!(matches!(result, Err(error) if error.to_string().contains("exactly one")));
+}
+
 mod blocking_strategy {
     use super::*;
     use crate::config::deployment::common::{

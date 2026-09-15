@@ -648,7 +648,7 @@ pub struct WebhookEndpointConfig {
     pub global_http_config: crate::http_request_policy::GlobalHttpConfig,
     /// Resolves the endpoint's declared secret names to values at request-time
     /// policy-build (scoped `RestrictedSecretRegistry` in production).
-    pub secrets: Arc<dyn crate::http_request_policy::SecretResolver>,
+    pub secrets: Arc<dyn worker_common::SecretResolver>,
     pub js_config: Option<WebhookEndpointJsConfig>,
     /// The TOML config section type for error messages
     pub config_section_hint: crate::http_hooks::ConfigSectionHint,
