@@ -727,6 +727,52 @@ impl TestServer {
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
 
+    async fn start_activity_vm_smoke(ip: String) -> Self {
+        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
+        let workspace = get_workspace_dir();
+        let mut deployment_doc =
+            std::fs::read_to_string(workspace.join("deployment-testing-vm.toml"))
+                .unwrap()
+                .parse::<DocumentMut>()
+                .unwrap();
+        deployment_doc
+            .as_table_mut()
+            .retain(|key, _| key == "activity_vm");
+        let activities = deployment_doc["activity_vm"]
+            .as_array_of_tables_mut()
+            .unwrap();
+        activities.retain(|table| {
+            matches!(
+                table.get("ffqn").and_then(toml_edit::Item::as_str),
+                Some(
+                    "testing:vm/echo.run"
+                        | "testing:vm/http-busybox.run"
+                        | "testing:vm/stdin.run"
+                        | "testing:vm/entrypoint.run"
+                )
+            )
+        });
+        let stdin = activities
+            .iter_mut()
+            .find(|table| {
+                table.get("ffqn").and_then(toml_edit::Item::as_str) == Some("testing:vm/stdin.run")
+            })
+            .unwrap();
+        stdin.remove("exposed_secrets");
+        stdin["content"] = value(
+            r#"#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+set -eu
+case "$(cat):$VM_MODE" in
+  '{"params":["payload"]}:testing') printf '%s\n' '"stdin-and-env"' ;;
+  *) exit 1 ;;
+esac
+"#,
+        );
+        std::fs::write(&deployment_path, deployment_doc.to_string()).unwrap();
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
     async fn start_with_server_lines_and_component(
         ip: String,
         server_toml_lines: &str,
@@ -5326,6 +5372,42 @@ async fn backtrace_source_workflow_calling_activity() {
         404,
         "unregistered source file must be 404"
     );
+
+    server.shutdown().await;
+}
+
+// ---- Activity VM: Linux appliance activities ----
+
+#[tokio::test]
+async fn activity_vm_smoke() {
+    let server = TestServer::start_activity_vm_smoke(test_addr!(135)).await;
+
+    for (ffqn, params, expected) in [
+        (
+            "testing:vm/echo.run",
+            vec![],
+            json!({ "ok": "Hello, world!" }),
+        ),
+        (
+            "testing:vm/entrypoint.run",
+            vec![],
+            json!({ "ok": "entrypoint" }),
+        ),
+        (
+            "testing:vm/stdin.run",
+            vec![json!("payload")],
+            json!({ "ok": "stdin-and-env" }),
+        ),
+        (
+            "testing:vm/http-busybox.run",
+            vec![],
+            json!({ "ok": "busybox-https" }),
+        ),
+    ] {
+        let response = server.submit_follow(ffqn, params).await;
+        assert_eq!(response.status().as_u16(), 201, "submitting {ffqn}");
+        assert_eq!(response.json::<Value>().await.unwrap(), expected, "{ffqn}");
+    }
 
     server.shutdown().await;
 }
