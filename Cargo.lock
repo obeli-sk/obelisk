@@ -3786,6 +3786,7 @@ dependencies = [
  "utoipa-axum",
  "wasmtime",
  "webhook-js-runtime-builder",
+ "wiremock",
  "wit-component 0.254.0",
  "wit-parser 0.254.0",
  "workflow-js-runtime-builder",

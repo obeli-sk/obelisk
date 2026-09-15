@@ -22,3 +22,18 @@ pub(crate) async fn fetch(cache_root: &Path) -> anyhow::Result<PathBuf> {
             .await?;
     Ok(cached_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_workers::engines::{EngineConfig, Engines};
+
+    #[tokio::test]
+    async fn populate_activity_vm_codegen_cache() {
+        test_utils::set_up();
+        let workspace = PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap());
+        let runtime = fetch(&workspace.join("test-wasm-cache")).await.unwrap();
+        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        activity_vm_runner::compile(&engine, &runtime).unwrap();
+    }
+}

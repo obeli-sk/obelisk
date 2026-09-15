@@ -124,6 +124,7 @@ insta.workspace = true
 paste.workspace = true
 rstest.workspace = true
 rusqlite.workspace = true
+wiremock.workspace = true
 
 [[bin]]
 name = "obelisk"
