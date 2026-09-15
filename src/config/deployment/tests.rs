@@ -25,10 +25,6 @@ ffqn = "testing:vm/fetch.run"
 content = "#!/bin/sh\necho null"
 store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-curl"]
 
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:test"
-
 [[activity_vm.allowed_host]]
 pattern = "https://api.example.com"
 methods = ["POST"]
@@ -42,7 +38,7 @@ replace_in = ["headers"]
     let (activity, name) = &validated.activities_vm[0];
     assert_eq!(name.as_str(), "fetch");
     assert_eq!(activity.store_paths.len(), 1);
-    assert_eq!(activity.nix_caches[0].url, "https://cache.nixos.org");
+    assert!(activity.nixos_cache.enabled);
     assert_eq!(activity.allowed_hosts[0].secrets, ["API_TOKEN"]);
 }
 
@@ -55,9 +51,6 @@ ffqn = "testing:vm/entrypoint.run"
 entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool", "--json"]
 store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
 
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:test"
 "#,
     )
     .unwrap();
@@ -73,6 +66,27 @@ public_key = "cache.nixos.org-1:test"
             .as_slice()
         )
     );
+}
+
+#[test]
+fn activity_vm_can_disable_nixos_cache() {
+    let deployment: DeploymentToml = toml::from_str(
+        r#"
+[[activity_vm]]
+ffqn = "testing:vm/entrypoint.run"
+entrypoint = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool/bin/tool"]
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
+nixos_cache.enabled = false
+
+[[activity_vm.nix_cache]]
+url = "https://cache.example.com"
+public_key = "example-1:test"
+"#,
+    )
+    .unwrap();
+
+    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    assert!(!validated.activities_vm[0].0.nixos_cache.enabled);
 }
 
 #[test]

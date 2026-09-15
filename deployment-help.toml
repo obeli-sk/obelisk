@@ -228,9 +228,12 @@
 #   "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
 # ]
 #
+### cache.nixos.org is enabled by default. Disable it when all store paths come from custom caches.
+# nixos_cache.enabled = false
+### Additional trusted binary caches.
 # [[activity_vm.nix_cache]]
-# url = "https://cache.nixos.org"
-# public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+# url = "https://example.com/nix-cache"
+# public_key = "example-1:..."
 #
 # [[activity_vm.allowed_host]]
 # pattern = "https://api.example.com"

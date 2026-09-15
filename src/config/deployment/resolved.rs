@@ -1597,11 +1597,22 @@ pub(crate) async fn resolve_local_refs(
                 "activity_vm store path must be an exact /nix/store root: `{path}`"
             );
         }
+        let mut nix_caches = a.nix_caches;
+        if a.nixos_cache.enabled {
+            nix_caches.insert(
+                0,
+                NixCacheToml {
+                    url: "https://cache.nixos.org".to_owned(),
+                    public_key: "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+                        .to_owned(),
+                },
+            );
+        }
         ensure!(
-            !a.nix_caches.is_empty(),
-            "activity_vm requires at least one nix_cache"
+            !nix_caches.is_empty(),
+            "activity_vm requires at least one enabled Nix cache"
         );
-        for cache in &a.nix_caches {
+        for cache in &nix_caches {
             ensure!(
                 cache.url.starts_with("https://"),
                 "activity_vm Nix cache must use HTTPS: `{}`",
@@ -1650,7 +1661,7 @@ pub(crate) async fn resolve_local_refs(
             params_via_stdin: a.params_via_stdin,
             max_output_bytes: a.max_output_bytes,
             store_paths: a.store_paths,
-            nix_caches: a.nix_caches,
+            nix_caches,
             allowed_hosts: a.allowed_hosts,
         });
     }

@@ -29,8 +29,7 @@ async fn activity_vm_case(
 #[tokio::test]
 async fn echo() {
     let server_toml = "";
-    let deployment_toml = format!(
-        r#"[[activity_vm]]
+    let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/echo.run"
 content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
@@ -44,11 +43,8 @@ store_paths = [
   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
   "/nix/store/xl1h9i29pgq2q5cszjhm5wpfxfbbqwyi-hello-2.12.3",
 ]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 "#
-    );
+    .to_string();
     activity_vm_case(
         test_addr!(135),
         server_toml,
@@ -63,19 +59,14 @@ public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 #[tokio::test]
 async fn entrypoint() {
     let server_toml = "";
-    let deployment_toml = format!(
-        r#"[[activity_vm]]
+    let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/entrypoint.run"
 entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash", "-c", "printf '%s\\n' '\"entrypoint\"'"]
 params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-"#
-    );
+"#.to_string();
     activity_vm_case(
         test_addr!(136),
         server_toml,
@@ -90,29 +81,25 @@ public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 #[tokio::test]
 async fn stdin() {
     let server_toml = "";
-    let deployment_toml = format!(
-        r#"[[activity_vm]]
+    let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/stdin.run"
 content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
 set -eu
 input=$(cat)
 case "$input:$VM_SECRET:$VM_MODE" in
-  '{{"params":["payload"]}}:swordfish:testing') printf '%s\n' '"stdin-and-secret"' ;;
+  '{"params":["payload"]}:swordfish:testing') printf '%s\n' '"stdin-and-secret"' ;;
   *) printf '%s\n' '"unexpected stdin"'; exit 1 ;;
 esac
 '''
-params = [{{ name = "input", type = "string" }}]
+params = [{ name = "input", type = "string" }]
 return_type = "result<string, string>"
 params_via_stdin = true
 exposed_secrets = ["VM_SECRET"]
-env_vars = [{{ key = "VM_MODE", value = "testing" }}]
+env_vars = [{ key = "VM_MODE", value = "testing" }]
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 "#
-    );
+    .to_string();
     activity_vm_case(
         test_addr!(137),
         server_toml,
@@ -174,9 +161,6 @@ store_paths = [
   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
   "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
 ]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 [[activity_vm.allowed_host]]
 pattern = "http://{mock_addr}"
 methods = ["GET"]

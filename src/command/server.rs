@@ -4803,7 +4803,7 @@ async fn compile_and_link(
         None
     };
     let activity_vm_module = activities_vm.first().map(|activity_vm| {
-        let engine = engines.activity_engine.clone();
+        let engine = engines.activity_vm_engine.clone();
         let build_semaphore = build_semaphore.clone();
         let parent_span = parent_span.clone();
         let runtime = activity_vm.runtime.clone();
@@ -4881,7 +4881,7 @@ async fn compile_and_link(
             })
         }))
         .chain(activities_vm.into_iter().map(|activity_vm| {
-            let engine = engines.activity_engine.clone();
+            let engine = engines.activity_vm_engine.clone();
             let module = activity_vm_module
                 .clone()
                 .expect("activity VM module exists when VM activities exist");

@@ -631,6 +631,18 @@ pub(crate) struct NixCacheToml {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct NixosCacheToml {
+    pub(crate) enabled: bool,
+}
+
+impl Default for NixosCacheToml {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 pub(crate) struct ActivityVmComponentConfigToml {
     #[serde(default)]
     pub(crate) name: Option<ConfigName>,
@@ -679,6 +691,9 @@ pub(crate) struct ActivityVmComponentConfigToml {
     /// Trusted binary caches used to resolve the store closure at deployment time.
     #[serde(default, rename = "nix_cache")]
     pub(crate) nix_caches: Vec<NixCacheToml>,
+    /// Whether to use cache.nixos.org in addition to custom binary caches.
+    #[serde(default)]
+    pub(crate) nixos_cache: NixosCacheToml,
     /// Policy-filtered HTTP destinations. Secrets are exposed as placeholders only.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,

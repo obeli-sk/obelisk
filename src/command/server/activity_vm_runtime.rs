@@ -33,7 +33,8 @@ mod tests {
         test_utils::set_up();
         let workspace = PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap());
         let runtime = fetch(&workspace.join("test-wasm-cache")).await.unwrap();
-        let engine = Engines::get_activity_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let engine =
+            Engines::get_activity_vm_engine_test(EngineConfig::on_demand_testing()).unwrap();
         activity_vm_runner::compile(&engine, &runtime).unwrap();
     }
 }

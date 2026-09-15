@@ -945,6 +945,13 @@
           },
           "default": []
         },
+        "nixos_cache": {
+          "description": "Whether to use cache.nixos.org in addition to custom binary caches.",
+          "$ref": "#/$defs/NixosCacheToml",
+          "default": {
+            "enabled": true
+          }
+        },
         "allowed_host": {
           "description": "Policy-filtered HTTP destinations. Secrets are exposed as placeholders only.",
           "type": "array",
@@ -984,6 +991,16 @@
         "url",
         "public_key"
       ]
+    },
+    "NixosCacheToml": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
     },
     "WorkflowWasmComponentConfigToml": {
       "type": "object",

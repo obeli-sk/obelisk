@@ -45,10 +45,6 @@ store_paths = [
   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
   "/nix/store/xl1h9i29pgq2q5cszjhm5wpfxfbbqwyi-hello-2.12.3",
 ]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/emubench.run"
@@ -61,6 +57,7 @@ return_type = "result"
 store_paths = [
   "/nix/store/vk1ih0la8pfs92v8cy5vkv48kgmi14db-trynix-emubench-static-x86_64-unknown-linux-musl-1",
 ]
+nixos_cache.enabled = false
 [[activity_vm.nix_cache]]
 url = "https://trynix.dev/examples/cache"
 public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
@@ -72,10 +69,6 @@ entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p
 params = []
 return_type = "result"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/http.run"
@@ -89,10 +82,6 @@ store_paths = [
   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
   "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
 ]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-
 [[activity_vm.allowed_host]]
 pattern = "https://httpbin.org"
 methods = ["GET"]
@@ -112,9 +101,6 @@ printf '%s\n' '"busybox-https"'
 params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 [[activity_vm.allowed_host]]
 pattern = "https://httpbin.org"
 methods = ["GET"]
@@ -141,10 +127,6 @@ params_via_stdin = true
 exposed_secrets = ["VM_SECRET"]
 env_vars = [{ key = "VM_MODE", value = "testing" }]
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/entrypoint.run"
@@ -152,6 +134,3 @@ entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p
 params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
-[[activity_vm.nix_cache]]
-url = "https://cache.nixos.org"
-public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
