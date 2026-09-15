@@ -3736,6 +3736,7 @@ dependencies = [
  "obeli-sk-val-json",
  "obeli-sk-wasm-workers",
  "obelisk-activity-vm-runner",
+ "obelisk-activity-vm-worker",
  "oci-client",
  "oci-wasm",
  "opentelemetry",
@@ -3813,6 +3814,26 @@ dependencies = [
  "wasmtime-wasi",
  "wat",
  "webpki-roots",
+]
+
+[[package]]
+name = "obelisk-activity-vm-worker"
+version = "0.42.0-rc.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "obeli-sk-concepts",
+ "obeli-sk-executor",
+ "obeli-sk-utils",
+ "obeli-sk-val-json",
+ "obeli-sk-wasm-workers",
+ "obelisk-activity-vm-runner",
+ "secrecy",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wasmtime",
 ]
 
 [[package]]

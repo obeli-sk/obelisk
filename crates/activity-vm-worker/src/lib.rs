@@ -19,7 +19,7 @@ use wasm_workers::policy_builder::ProcessHttpPolicySpec;
 use wasm_workers::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use wasmtime::{Engine, Module};
 
-pub(crate) struct ActivityVmWorkerCompiled {
+pub struct ActivityVmWorkerCompiled {
     module: Module,
     engine: Arc<Engine>,
     mapdirs: Vec<MapDir>,
@@ -39,7 +39,7 @@ pub(crate) struct ActivityVmWorkerCompiled {
 
 impl ActivityVmWorkerCompiled {
     #[expect(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub fn new(
         module: Module,
         engine: Arc<Engine>,
         mapdirs: Vec<MapDir>,
@@ -86,19 +86,19 @@ impl ActivityVmWorkerCompiled {
         })
     }
 
-    pub(crate) fn exported_functions_ext(&self) -> &[FunctionMetadata] {
+    pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.user_wasm_component.exported_functions(true)
     }
 
-    pub(crate) fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
+    pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
         self.user_wasm_component.exports_hierarchy_ext()
     }
 
-    pub(crate) fn wit(&self) -> String {
+    pub fn wit(&self) -> String {
         self.user_wasm_component.wit()
     }
 
-    pub(crate) fn into_worker(
+    pub fn into_worker(
         self,
         cancel_registry: CancelRegistry,
         log_forwarder_sender: &tokio::sync::mpsc::Sender<concepts::storage::LogInfoAppendRow>,
@@ -132,7 +132,7 @@ impl ActivityVmWorkerCompiled {
     }
 }
 
-pub(crate) struct ActivityVmWorker {
+pub struct ActivityVmWorker {
     module: Module,
     engine: Arc<Engine>,
     mapdirs: Vec<MapDir>,

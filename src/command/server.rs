@@ -1,6 +1,5 @@
 pub(crate) mod activity_vm_nix;
 mod activity_vm_runtime;
-mod activity_vm_worker;
 mod config_prepass;
 mod maintenance_gc;
 pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
