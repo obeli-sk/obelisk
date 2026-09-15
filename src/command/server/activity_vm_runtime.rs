@@ -9,7 +9,6 @@ const RUNTIME_ARTIFACT_KIND: &str = "activity-vm-runtime.v1";
 pub(crate) async fn fetch(cache_root: &Path) -> anyhow::Result<PathBuf> {
     let reference = Reference::from_str(
         RUNTIME_LOCATION
-            .trim()
             .strip_prefix("oci://")
             .context("activity VM runtime reference must start with `oci://`")?,
     )?;
