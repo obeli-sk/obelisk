@@ -9,7 +9,9 @@ use oci_client::{
     errors::OciDistributionError,
     manifest::{OciDescriptor, OciImageManifest},
 };
-use oci_wasm::{ToConfig, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig};
+use oci_wasm::{
+    MODULE_OS, ToConfig, WASM_ARCHITECTURE, WASM_MANIFEST_MEDIA_TYPE, WasmClient, WasmConfig,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -150,9 +152,9 @@ pub(crate) async fn verify_cached_file(
     }
 }
 
-pub(crate) async fn pull_artifact_layer_to_cache(
+pub(crate) async fn pull_wasm_module_to_cache(
     image: &Reference,
-    media_type: &str,
+    artifact_kind: &str,
     cache_dir: &Path,
 ) -> anyhow::Result<(ContentDigest, PathBuf)> {
     if let Some(manifest_digest) = image.digest()
@@ -168,7 +170,7 @@ pub(crate) async fn pull_artifact_layer_to_cache(
         return Ok((content_digest, destination));
     }
 
-    let (client, layer, content_digest) = artifact_layer(image, media_type).await?;
+    let (client, layer, content_digest) = wasm_module_layer(image, artifact_kind).await?;
     let destination = cache_dir.join(format!("{}.wasm", content_digest.0.with_infix("_")));
     let manifest_digest = Digest::from_str(
         image
@@ -188,7 +190,7 @@ pub(crate) async fn pull_artifact_layer_to_cache(
         return Ok((content_digest, destination));
     }
     pull_blob_to_file(
-        &client,
+        client.as_ref(),
         image,
         &destination,
         &layer,
@@ -199,27 +201,32 @@ pub(crate) async fn pull_artifact_layer_to_cache(
     Ok((content_digest, destination))
 }
 
-pub(crate) async fn verify_artifact_layer(
+pub(crate) async fn verify_wasm_module(
     image: &Reference,
-    media_type: &str,
+    artifact_kind: &str,
     path: &Path,
 ) -> anyhow::Result<()> {
-    let (_, _, content_digest) = artifact_layer(image, media_type).await?;
-    verify_cached_file(path, &content_digest)
+    let (_, _, content_digest) = wasm_module_layer(image, artifact_kind).await?;
+    let actual_digest = calculate_sha256_file(path)
         .await
-        .map_err(|()| anyhow::anyhow!("file does not match OCI artifact layer {content_digest}"))
+        .with_context(|| format!("cannot calculate digest for {path:?}"))?;
+    ensure!(
+        actual_digest == content_digest,
+        "file digest {actual_digest} does not match OCI artifact layer {content_digest}"
+    );
+    Ok(())
 }
 
-async fn artifact_layer(
+async fn wasm_module_layer(
     image: &Reference,
-    media_type: &str,
-) -> anyhow::Result<(oci_client::Client, OciDescriptor, ContentDigest)> {
+    artifact_kind: &str,
+) -> anyhow::Result<(WasmClient, OciDescriptor, ContentDigest)> {
     let auth = get_oci_auth(image)?;
-    let client = oci_client::Client::default();
-    let (manifest, manifest_digest, _) = retry(
+    let client = WasmClient::new(oci_client::Client::default());
+    let (mut manifest, config, manifest_digest) = retry(
         || client.pull_manifest_and_config(image, &auth),
         OCI_CLIENT_RETRIES,
-        "calling pull_manifest_and_config for artifact",
+        "calling pull_manifest_and_config for Wasm module",
     )
     .await?;
     if let Some(specified) = image.digest() {
@@ -228,16 +235,29 @@ async fn artifact_layer(
             "manifest digest specified in {image} must be respected by the OCI client, got {manifest_digest}"
         );
     }
-    let mut layers = manifest
+    let layer = manifest
         .layers
-        .into_iter()
-        .filter(|layer| layer.media_type == media_type);
-    let layer = layers
-        .next()
-        .with_context(|| format!("OCI artifact {image} has no {media_type} layer"))?;
+        .pop()
+        .context("oci-wasm manifest must contain exactly one Wasm layer")?;
     ensure!(
-        layers.next().is_none(),
-        "OCI artifact {image} has multiple {media_type} layers"
+        config.architecture == WASM_ARCHITECTURE,
+        "OCI artifact {image} is not a Wasm module"
+    );
+    ensure!(
+        config.os == MODULE_OS && config.component.is_none(),
+        "OCI artifact {image} must contain a wasip1 core module, not a component"
+    );
+    ensure!(
+        config.layer_digests.as_slice() == [layer.digest.as_str()],
+        "OCI artifact {image} config does not identify its Wasm layer"
+    );
+    ensure!(
+        manifest
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get("dev.obelisk.artifact.kind"))
+            .is_some_and(|actual| actual == artifact_kind),
+        "OCI artifact {image} is not of kind {artifact_kind}"
     );
     let content_digest = ContentDigest::from_str(&layer.digest)
         .with_context(|| format!("invalid layer digest in OCI artifact {image}"))?;

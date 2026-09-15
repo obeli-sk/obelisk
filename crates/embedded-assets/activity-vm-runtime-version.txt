@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/activity-vm-runtime:experimental-wizer-2026-09-14-10@sha256:d1b6ac020a68ec4e0482b2a731f5ffe0bfada7dab685ce2fd52d86804b73e277
+oci://docker.io/getobelisk/activity-vm-runtime:experimental-wizer-2026-09-15-11@sha256:53afcb5618a4e2677aa5978cd521fd4809d798a245dec58e46385ceb13fc3581
