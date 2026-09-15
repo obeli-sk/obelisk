@@ -111,6 +111,54 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
     .await;
 }
 
+#[tokio::test]
+async fn stderr_does_not_corrupt_json_result() {
+    let deployment_toml = r#"[[activity_vm]]
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/stderr.run"
+content = '''#!/usr/bin/env bash
+printf '%s\n' 'guest diagnostic' >&2
+printf '%s\n' '"stdout-result"'
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"#;
+    activity_vm_case(
+        test_addr!(140),
+        "",
+        deployment_toml,
+        "testing:vm/stderr.run",
+        vec![],
+        json!({ "ok": "stdout-result" }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn nonzero_exit_maps_error_result() {
+    let deployment_toml = r#"[[activity_vm]]
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/failure.run"
+content = '''#!/usr/bin/env bash
+printf '%s\n' '"expected-failure"'
+exit 7
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+"#;
+    activity_vm_case(
+        test_addr!(141),
+        "",
+        deployment_toml,
+        "testing:vm/failure.run",
+        vec![],
+        json!({ "err": "expected-failure" }),
+    )
+    .await;
+}
+
 async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
     use wiremock::{
         Mock, MockServer, ResponseTemplate,

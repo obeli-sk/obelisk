@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{Context as _, bail};
 use concepts::storage::http_client_trace::HttpClientTrace;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -7,6 +7,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Instant;
+use tokio::io::AsyncReadExt as _;
 use wasm_workers::http_request_policy::HttpRequestPolicy;
 use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
@@ -114,6 +115,13 @@ pub async fn execute(
     let _ = phase_logger_stop.send(());
     let _ = phase_logger.await;
     let mut output = result?;
+    replace_output_from_guest_files(
+        &mut output,
+        queue.path(),
+        max_stdout_bytes,
+        max_stderr_bytes,
+    )
+    .await?;
     output
         .http_client_traces
         .clone_from(&traces.lock().expect("trace mutex poisoned"));
@@ -123,6 +131,50 @@ pub async fn execute(
         "Activity VM execution complete"
     );
     Ok(output)
+}
+
+async fn replace_output_from_guest_files(
+    output: &mut VmOutput,
+    queue: &Path,
+    max_stdout_bytes: usize,
+    max_stderr_bytes: usize,
+) -> anyhow::Result<()> {
+    let Some(stdout) = read_guest_output(queue.join("stdout"), max_stdout_bytes).await? else {
+        return Ok(());
+    };
+    let stderr = read_guest_output(queue.join("stderr"), max_stderr_bytes)
+        .await?
+        .unwrap_or_default();
+
+    // The VM has one serial console, so retain any emulator or init output as diagnostics.
+    // Activity output itself travels through the 9p control directory and remains separated.
+    let mut diagnostics = stderr;
+    diagnostics.append(&mut output.stderr);
+    diagnostics.append(&mut output.stdout);
+    output.stdout = stdout;
+    output.stderr = diagnostics;
+
+    if let Ok(exit_code) = tokio::fs::read_to_string(queue.join("exit-code")).await {
+        output.exit_code = exit_code
+            .trim()
+            .parse()
+            .context("parsing activity VM guest exit code")?;
+    }
+    Ok(())
+}
+
+async fn read_guest_output(path: PathBuf, max_bytes: usize) -> anyhow::Result<Option<Vec<u8>>> {
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let limit = u64::try_from(max_bytes)
+        .expect("32 bit systems are unsupported")
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(limit).read_to_end(&mut bytes).await?;
+    Ok(Some(bytes))
 }
 
 async fn log_guest_phases(
@@ -291,5 +343,55 @@ mod tests {
         )
         .unwrap();
         assert_eq!(output.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn guest_files_separate_output_and_override_exit_code() {
+        let queue = tempfile::tempdir().unwrap();
+        tokio::fs::write(queue.path().join("stdout"), b"\"result\"\n")
+            .await
+            .unwrap();
+        tokio::fs::write(queue.path().join("stderr"), b"guest diagnostic\n")
+            .await
+            .unwrap();
+        tokio::fs::write(queue.path().join("exit-code"), b"7\n")
+            .await
+            .unwrap();
+        let mut output = VmOutput {
+            exit_code: 0,
+            stdout: b"serial console\n".to_vec(),
+            stderr: b"emulator diagnostic\n".to_vec(),
+            http_client_traces: Vec::new(),
+        };
+
+        replace_output_from_guest_files(&mut output, queue.path(), 1024, 1024)
+            .await
+            .unwrap();
+
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.stdout, b"\"result\"\n");
+        assert_eq!(
+            output.stderr,
+            b"guest diagnostic\nemulator diagnostic\nserial console\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn absent_guest_files_preserve_wasi_output() {
+        let queue = tempfile::tempdir().unwrap();
+        let mut output = VmOutput {
+            exit_code: 3,
+            stdout: b"stdout".to_vec(),
+            stderr: b"stderr".to_vec(),
+            http_client_traces: Vec::new(),
+        };
+
+        replace_output_from_guest_files(&mut output, queue.path(), 1024, 1024)
+            .await
+            .unwrap();
+
+        assert_eq!(output.exit_code, 3);
+        assert_eq!(output.stdout, b"stdout");
+        assert_eq!(output.stderr, b"stderr");
     }
 }

@@ -69,8 +69,20 @@ esac
 
 resolved_command=$(command -v "$command" 2>&1 || true)
 mark_phase command-start "${resolved_command:-$command}"
+stdout=/obelisk-activity-vm-http/stdout
+stderr=/obelisk-activity-vm-http/stderr
+: > "$stdout"
+: > "$stderr"
+set +e
 if [ -n "${OBELISK_ACTIVITY_VM_STDIN:-}" ]; then
-  exec "$command" "$@" < "$OBELISK_ACTIVITY_VM_STDIN"
+  "$command" "$@" < "$OBELISK_ACTIVITY_VM_STDIN" > "$stdout" 2> "$stderr"
 else
-  exec "$command" "$@"
+  "$command" "$@" > "$stdout" 2> "$stderr"
 fi
+status=$?
+set -e
+printf '%s\n' "$status" > /obelisk-activity-vm-http/exit-code.tmp
+mv /obelisk-activity-vm-http/exit-code.tmp /obelisk-activity-vm-http/exit-code
+# The host consumes exit-code. Keep the VM launcher successful so init performs the
+# same clean shutdown path for successful and unsuccessful activity commands.
+exit 0
