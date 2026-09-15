@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 use tracing::{debug, trace};
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
+use worker_common::SecretResolver;
 
 /// Where in the outgoing request placeholders are replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -751,12 +752,6 @@ pub fn generate_placeholder() -> String {
 /// verified config. The main crate supplies a `RestrictedSecretRegistry` scoped
 /// to the subset of names a component declared. Env-backed today, Vault-backed
 /// later, hence resolution stays out of the verify/startup path.
-pub trait SecretResolver: Send + Sync + fmt::Debug {
-    /// Return the secret value for `name`, or `None` when the name is unknown or
-    /// not visible to this (restricted) resolver.
-    fn secret_lookup(&self, name: &str) -> Option<SecretString>;
-}
-
 /// A resolver that knows no secrets. Used where a component declares none and in
 /// tests that never inject secret values.
 #[derive(Clone, Copy, Debug)]

@@ -13,11 +13,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use utils::wasm_tools::WasmComponent;
-use wasm_workers::activity::activity_exec_worker::ExecSecrets;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
-use wasm_workers::policy_builder::ProcessHttpPolicySpec;
 use wasm_workers::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use wasmtime::{Engine, Module};
+use worker_common::{ExecSecrets, ProcessHttpPolicySpec, SecretResolver};
 
 pub struct ActivityVmWorkerCompiled {
     module: Module,
@@ -298,7 +297,7 @@ impl Worker for ActivityVmWorker {
 #[derive(Debug)]
 struct EmptyResolver;
 
-impl wasm_workers::http_request_policy::SecretResolver for EmptyResolver {
+impl SecretResolver for EmptyResolver {
     fn secret_lookup(&self, _name: &str) -> Option<secrecy::SecretString> {
         None
     }

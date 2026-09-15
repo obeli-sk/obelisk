@@ -21,6 +21,7 @@ val-json.workspace = true
 wasm-workers.workspace = true
 activity-vm-runner.workspace = true
 activity-vm-worker.workspace = true
+worker-common.workspace = true
 
 activity-js-runtime-builder = { workspace = true, optional = true } # Only for local development
 webhook-js-runtime-builder = { workspace = true, optional = true } # Only for local development
@@ -151,6 +152,7 @@ workspace = true
 members = [
     "crates/activity-vm-runner",
     "crates/activity-vm-worker",
+    "crates/worker-common",
     "crates/activity-js-runtime",
     "crates/activity-js-runtime/builder",
     "crates/boa-common",
@@ -250,6 +252,7 @@ test-programs-wasip3-webhook-builder = { path = "crates/testing/test-programs/wa
 test-utils = { path = "crates/testing/test-utils" }
 activity-vm-runner = { package = "obelisk-activity-vm-runner", path = "crates/activity-vm-runner" }
 activity-vm-worker = { package = "obelisk-activity-vm-worker", path = "crates/activity-vm-worker" }
+worker-common = { package = "obeli-sk-worker-common", path = "crates/worker-common", version = "0.42.0-rc.1" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.42.0-rc.1" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.42.0-rc.1" }
 wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.42.0-rc.1" }

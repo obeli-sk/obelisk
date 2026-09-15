@@ -42,7 +42,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, instrument, warn};
 use utils::wasm_tools::WasmComponent;
-use wasm_workers::activity::activity_exec_worker::ExecSecrets;
 use wasm_workers::cron::cron_worker::CronOrOnce;
 use wasm_workers::http_hooks::ConfigSectionHint;
 use wasm_workers::http_request_policy::HostPatternError;
@@ -51,7 +50,6 @@ use wasm_workers::{
     envvar::EnvVar,
     http_request_policy::{
         AllowedHostConfig, GlobalHttpConfig, HostPattern, MethodsPattern, ReplacementLocation,
-        SecretResolver,
     },
     std_output_stream::StdOutputConfig,
     workflow::workflow_worker::{
@@ -59,6 +57,7 @@ use wasm_workers::{
         WorkflowConfigMode,
     },
 };
+use worker_common::{ExecSecrets, ProcessHttpPolicySpec, SecretResolver};
 
 // Components
 
@@ -747,7 +746,7 @@ pub(crate) struct ActivityExecConfigVerified {
     pub(crate) max_output_bytes: u64,
     pub(crate) forward_stdout: Option<StdOutputConfig>,
     pub(crate) forward_stderr: Option<StdOutputConfig>,
-    pub(crate) secrets: Option<wasm_workers::activity::activity_exec_worker::ExecSecrets>,
+    pub(crate) secrets: Option<ExecSecrets>,
     pub(crate) params_via_stdin: bool,
     pub(crate) component_id: ComponentId,
     pub(crate) exec_config: executor::executor::ExecConfig,
@@ -818,15 +817,15 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let policy_spec = wasm_workers::policy_builder::ProcessHttpPolicySpec {
+        let policy_spec = ProcessHttpPolicySpec {
             component: allowed_host_configs
                 .iter()
-                .map(wasm_workers::policy_builder::ProcessAllowedHostSpec::from_config)
+                .map(wasm_workers::policy_builder::process_allowed_host_spec_from_config)
                 .collect(),
             global: global_http_config
                 .entries()
                 .iter()
-                .map(wasm_workers::policy_builder::ProcessAllowedHostSpec::from_config)
+                .map(wasm_workers::policy_builder::process_allowed_host_spec_from_config)
                 .collect(),
         };
         let source = if let Some(location) = location {
@@ -954,7 +953,7 @@ pub(crate) struct ActivityVmConfigVerified {
     pub(crate) source_location: Option<(PathBuf, String)>,
     pub(crate) entrypoint: Option<Vec<String>>,
     pub(crate) store_paths: Vec<PathBuf>,
-    pub(crate) policy_spec: wasm_workers::policy_builder::ProcessHttpPolicySpec,
+    pub(crate) policy_spec: ProcessHttpPolicySpec,
     pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
     pub(crate) exposed_secrets: Vec<String>,
     pub(crate) activity: ActivityExecConfigVerified,

@@ -90,7 +90,7 @@ struct RunnerInput {
 #[derive(Debug)]
 struct MapResolver(HashMap<String, SecretString>);
 
-impl wasm_workers::http_request_policy::SecretResolver for MapResolver {
+impl worker_common::SecretResolver for MapResolver {
     fn secret_lookup(&self, name: &str) -> Option<SecretString> {
         self.0.get(name).cloned()
     }

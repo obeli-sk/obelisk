@@ -1,71 +1,53 @@
 use crate::http_request_policy::{
     AllowedHostConfig, AllowedHostPolicy, GlobalHttpConfig, HttpRequestPolicy, PlaceholderSecret,
-    SecretResolver, audit_http_policy, generate_placeholder,
+    audit_http_policy, generate_placeholder,
 };
 use secrecy::SecretString;
 use wasmtime_wasi::WasiCtxBuilder;
+use worker_common::{ProcessAllowedHostSpec, ProcessHttpPolicySpec, SecretResolver};
 
-/// Serializable boundary used by the Linux VM helper process. Enforcement still uses
-/// `HttpRequestPolicy`; this contains no secret values.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ProcessHttpPolicySpec {
-    pub component: Vec<ProcessAllowedHostSpec>,
-    pub global: Vec<ProcessAllowedHostSpec>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ProcessAllowedHostSpec {
-    pub pattern: String,
-    pub methods: Vec<String>,
-    pub all_methods: bool,
-    pub request_url_regex: Option<String>,
-    pub secret_names: Vec<String>,
-    pub replace_in: Vec<String>,
-}
-
-impl ProcessAllowedHostSpec {
-    #[must_use]
-    pub fn from_config(config: &AllowedHostConfig) -> Self {
-        use crate::http_request_policy::{MethodsPattern, ReplacementLocation};
-        let (methods, all_methods) = match &config.pattern.methods {
-            MethodsPattern::AllMethods => (Vec::new(), true),
-            MethodsPattern::Specific(methods) => (
-                methods
-                    .iter()
-                    .map(|method| method.as_str().to_owned())
-                    .collect(),
-                false,
-            ),
-        };
-        let replace_in = config
-            .replace_in
-            .iter()
-            .map(|location| {
-                match location {
-                    ReplacementLocation::Headers => "headers",
-                    ReplacementLocation::Body => "body",
-                    ReplacementLocation::Params => "params",
-                }
-                .to_owned()
-            })
-            .collect();
-        Self {
-            pattern: config
-                .pattern
-                .to_string()
-                .split(" [")
-                .next()
-                .unwrap()
-                .to_owned(),
-            methods,
-            all_methods,
-            request_url_regex: config
-                .request_url_regex
-                .as_ref()
-                .map(|regex| regex.as_str().to_owned()),
-            secret_names: config.secret_names.clone(),
-            replace_in,
-        }
+/// Convert a verified host configuration to its helper-process representation.
+#[must_use]
+pub fn process_allowed_host_spec_from_config(config: &AllowedHostConfig) -> ProcessAllowedHostSpec {
+    use crate::http_request_policy::{MethodsPattern, ReplacementLocation};
+    let (methods, all_methods) = match &config.pattern.methods {
+        MethodsPattern::AllMethods => (Vec::new(), true),
+        MethodsPattern::Specific(methods) => (
+            methods
+                .iter()
+                .map(|method| method.as_str().to_owned())
+                .collect(),
+            false,
+        ),
+    };
+    let replace_in = config
+        .replace_in
+        .iter()
+        .map(|location| {
+            match location {
+                ReplacementLocation::Headers => "headers",
+                ReplacementLocation::Body => "body",
+                ReplacementLocation::Params => "params",
+            }
+            .to_owned()
+        })
+        .collect();
+    ProcessAllowedHostSpec {
+        pattern: config
+            .pattern
+            .to_string()
+            .split(" [")
+            .next()
+            .unwrap()
+            .to_owned(),
+        methods,
+        all_methods,
+        request_url_regex: config
+            .request_url_regex
+            .as_ref()
+            .map(|regex| regex.as_str().to_owned()),
+        secret_names: config.secret_names.clone(),
+        replace_in,
     }
 }
 
@@ -243,11 +225,12 @@ fn build_http_policy_inner(
 mod tests {
     use super::build_http_policy_inner;
     use crate::http_request_policy::{
-        AllowedHostConfig, HostPattern, MethodsPattern, ReplacementLocation, SecretResolver,
+        AllowedHostConfig, HostPattern, MethodsPattern, ReplacementLocation,
     };
     use hyper::http::Method;
     use secrecy::SecretString;
     use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+    use worker_common::SecretResolver;
 
     /// Test resolver backed by a fixed name -> value map.
     #[derive(Debug)]

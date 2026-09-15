@@ -38,7 +38,7 @@ pub struct ActivityConfig {
     pub global_http_config: crate::http_request_policy::GlobalHttpConfig,
     /// Resolves the component's declared secret names to values at execution-run
     /// policy-build time (scoped `RestrictedSecretRegistry` in production).
-    pub secrets: Arc<dyn crate::http_request_policy::SecretResolver>,
+    pub secrets: Arc<dyn worker_common::SecretResolver>,
     /// The TOML config section type for error messages
     pub config_section_hint: ConfigSectionHint,
 }

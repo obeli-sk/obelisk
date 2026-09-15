@@ -3644,6 +3644,7 @@ dependencies = [
  "obeli-sk-executor",
  "obeli-sk-utils",
  "obeli-sk-val-json",
+ "obeli-sk-worker-common",
  "oci-client",
  "oci-wasm",
  "rand 0.9.5",
@@ -3693,6 +3694,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "obeli-sk-worker-common"
+version = "0.42.0-rc.1"
+dependencies = [
+ "secrecy",
+ "serde",
+]
+
+[[package]]
 name = "obelisk"
 version = "0.42.0-rc.1"
 dependencies = [
@@ -3735,6 +3744,7 @@ dependencies = [
  "obeli-sk-utils",
  "obeli-sk-val-json",
  "obeli-sk-wasm-workers",
+ "obeli-sk-worker-common",
  "obelisk-activity-vm-runner",
  "obelisk-activity-vm-worker",
  "oci-client",
@@ -3803,6 +3813,7 @@ dependencies = [
  "hyper",
  "obeli-sk-concepts",
  "obeli-sk-wasm-workers",
+ "obeli-sk-worker-common",
  "reqwest",
  "rustls",
  "secrecy",
@@ -3829,6 +3840,7 @@ dependencies = [
  "obeli-sk-utils",
  "obeli-sk-val-json",
  "obeli-sk-wasm-workers",
+ "obeli-sk-worker-common",
  "obelisk-activity-vm-runner",
  "secrecy",
  "serde_json",

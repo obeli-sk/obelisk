@@ -16,6 +16,7 @@ db-common.workspace = true
 executor.workspace = true
 utils.workspace = true
 val-json.workspace = true
+worker-common.workspace = true
 
 arbitrary.workspace = true
 boa_engine.workspace = true

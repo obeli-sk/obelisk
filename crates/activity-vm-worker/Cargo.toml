@@ -23,6 +23,7 @@ tracing.workspace = true
 utils.workspace = true
 wasm-workers.workspace = true
 wasmtime.workspace = true
+worker-common.workspace = true
 
 [dev-dependencies]
 val-json.workspace = true

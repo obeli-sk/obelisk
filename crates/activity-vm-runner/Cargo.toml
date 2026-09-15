@@ -27,6 +27,7 @@ tracing.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 wasm-workers.workspace = true
+worker-common.workspace = true
 webpki-roots.workspace = true
 
 [dev-dependencies]
