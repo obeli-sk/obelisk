@@ -3,7 +3,7 @@ use secrecy::SecretString;
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::PathBuf;
-use wasmtime::Engine;
+use wasmtime::{Config, Engine, OptLevel, WasmBacktraceDetails};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,7 +54,18 @@ async fn main() -> anyhow::Result<()> {
     );
     let (policy, placeholders) =
         wasm_workers::policy_builder::build_process_http_policy(spec, &resolver)?;
-    let engine = Engine::default();
+    let mut engine_config = Config::new();
+    engine_config.shared_memory(true);
+    engine_config.epoch_interruption(true);
+    engine_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
+    if std::env::var_os("OBELISK_WASM_DEBUG").is_some() {
+        // Mirrors `[wasm] debug = true` in the Obelisk worker. Keeping this
+        // opt-in matters for QEMU: disabling Cranelift optimizations makes TCI
+        // boot dramatically slower and substantially increases memory use.
+        engine_config.debug_info(true);
+        engine_config.cranelift_opt_level(OptLevel::None);
+    }
+    let engine = Engine::new(&engine_config)?;
     let module = obelisk_activity_vm_runner::compile(&engine, &module_path)?;
     let output = obelisk_activity_vm_runner::execute(
         &engine,
