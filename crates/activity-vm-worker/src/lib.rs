@@ -86,18 +86,22 @@ impl ActivityVmWorkerCompiled {
         })
     }
 
+    #[must_use]
     pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
         self.user_wasm_component.exported_functions(true)
     }
 
+    #[must_use]
     pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
         self.user_wasm_component.exports_hierarchy_ext()
     }
 
+    #[must_use]
     pub fn wit(&self) -> String {
         self.user_wasm_component.wit()
     }
 
+    #[must_use]
     pub fn into_worker(
         self,
         cancel_registry: CancelRegistry,
