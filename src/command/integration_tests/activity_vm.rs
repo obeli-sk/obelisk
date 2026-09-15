@@ -2,9 +2,8 @@ use super::*;
 
 impl TestServer {
     async fn start_activity_vm(ip: String, server_toml_lines: &str, deployment_toml: &str) -> Self {
-        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
-        let server_toml = std::fs::read_to_string(&server_path).unwrap();
-        std::fs::write(&server_path, format!("{server_toml}\n{server_toml_lines}")).unwrap();
+        let (tmp_dir, server_path, deployment_path) =
+            util::write_server_config(&ip, "", server_toml_lines);
         std::fs::write(&deployment_path, deployment_toml).unwrap();
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
