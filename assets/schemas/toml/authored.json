@@ -828,7 +828,7 @@
           "default": null
         },
         "entrypoint": {
-          "description": "Linux executable followed by fixed arguments. Mutually exclusive with `location` and `content`.",
+          "description": "Linux executable followed by fixed arguments. Command names are resolved through the guest PATH.\nMutually exclusive with `location` and `content`.",
           "type": [
             "array",
             "null"
@@ -931,7 +931,7 @@
           "default": 4096
         },
         "store_paths": {
-          "description": "Exact `/nix/store/...` roots whose complete closures are mounted into Linux.",
+          "description": "Exact `/nix/store/...` roots whose closures are mounted; their `bin` directories form the default PATH.",
           "type": "array",
           "items": {
             "type": "string"

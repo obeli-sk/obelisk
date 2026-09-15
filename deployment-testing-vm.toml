@@ -28,15 +28,15 @@
 # These commands cover a Nix executable, host-filtered HTTPS with secret rewriting,
 # guest stdin parameters with an explicitly exposed secret environment variable, and
 # direct entrypoint execution. The minimal guest appliance uses Alpine only as its
-# launcher. Inline scripts execute directly, so their shebang interpreter must be
-# included in `store_paths`; this deployment uses an exact Nix Bash path.
+# launcher. Declared store paths are added to the default guest PATH, so scripts and
+# entrypoints can use command names while deployments still pin exact Nix packages.
 
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/echo.run"
-content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+content = '''#!/usr/bin/env bash
 printf '"'
-/nix/store/xl1h9i29pgq2q5cszjhm5wpfxfbbqwyi-hello-2.12.3/bin/hello | tr -d '\n'
+hello | tr -d '\n'
 printf '"\n'
 '''
 params = []
@@ -49,7 +49,7 @@ store_paths = [
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/emubench.run"
 entrypoint = [
-  "/nix/store/vk1ih0la8pfs92v8cy5vkv48kgmi14db-trynix-emubench-static-x86_64-unknown-linux-musl-1/bin/emubench",
+  "emubench",
   "all",
 ]
 params = []
@@ -65,16 +65,16 @@ public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/cancel.run"
-entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash", "-c", "sleep 300"]
+entrypoint = ["bash", "-c", "sleep 300"]
 params = []
 return_type = "result"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/http.run"
-content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+content = '''#!/usr/bin/env bash
 set -eu
-/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin/bin/curl -fsS -H "X-VM-Secret: ${VM_SECRET}" https://httpbin.org/anything | grep -q '"X-Vm-Secret": "swordfish"' && printf '%s\n' '"secret-rewritten"'
+curl -fsS -H "X-VM-Secret: ${VM_SECRET}" https://httpbin.org/anything | grep -q '"X-Vm-Secret": "swordfish"' && printf '%s\n' '"secret-rewritten"'
 '''
 params = []
 return_type = "result<string, string>"
@@ -93,7 +93,7 @@ replace_in = ["headers"]
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/http-busybox.run"
-content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+content = '''#!/usr/bin/env bash
 set -eu
 /usr/bin/wget -qO /dev/null https://httpbin.org/status/204
 printf '%s\n' '"busybox-https"'
@@ -108,7 +108,7 @@ methods = ["GET"]
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/stdin.run"
-content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+content = '''#!/usr/bin/env bash
 set -eu
 input=$(cat)
 case "$input:$VM_SECRET:$VM_MODE" in
@@ -130,7 +130,7 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 [[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/entrypoint.run"
-entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash", "-c", "printf '%s\\n' '\"entrypoint\"'"]
+entrypoint = ["bash", "-c", "printf '%s\\n' '\"entrypoint\"'"]
 params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]

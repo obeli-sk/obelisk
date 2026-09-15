@@ -5496,12 +5496,14 @@ fn prespawn_activity_vm(
     module: wasmtime::Module,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity_vm.component_id().clone();
+    let path = activity_vm.path;
     let activity = activity_vm.activity;
-    let env = activity
+    let mut env = activity
         .env_vars
         .iter()
         .map(|entry| (entry.key.clone(), entry.val.clone()))
-        .collect();
+        .collect::<std::collections::HashMap<_, _>>();
+    env.entry("PATH".to_owned()).or_insert(path);
     let mut mapdirs = activity_vm
         .store_paths
         .into_iter()

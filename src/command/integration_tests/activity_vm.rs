@@ -31,9 +31,9 @@ async fn echo() {
     let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/echo.run"
-content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+content = '''#!/usr/bin/env bash
 printf '"'
-/nix/store/xl1h9i29pgq2q5cszjhm5wpfxfbbqwyi-hello-2.12.3/bin/hello | tr -d '\n'
+hello | tr -d '\n'
 printf '"\n'
 '''
 params = []
@@ -61,11 +61,12 @@ async fn entrypoint() {
     let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/entrypoint.run"
-entrypoint = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash", "-c", "printf '%s\\n' '\"entrypoint\"'"]
+entrypoint = ["bash", "-c", "printf '%s\\n' '\"entrypoint\"'"]
 params = []
 return_type = "result<string, string>"
 store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
-"#.to_string();
+"#
+    .to_string();
     activity_vm_case(
         test_addr!(136),
         server_toml,
@@ -83,7 +84,7 @@ async fn stdin() {
     let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/stdin.run"
-content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+content = '''#!/usr/bin/env bash
 set -eu
 input=$(cat)
 case "$input:$VM_SECRET:$VM_MODE" in
@@ -140,13 +141,13 @@ replace_in = ["headers"]
         r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/http.run"
-content = '''#!/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15/bin/bash
+content = '''#!/usr/bin/env bash
 set -eu
 case "$VM_SECRET" in
   OBELISK_SECRET_*) ;;
   *) printf '%s\n' '"VM received the secret value"'; exit 1 ;;
 esac
-/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin/bin/curl -fsS \
+curl -fsS \
   --connect-to 127.0.0.1:{mock_port}:127.0.0.1:80 \
   --connect-timeout 5 \
   --max-time 10 \

@@ -206,11 +206,12 @@
 ### Obelisk's cache. Guest HTTP(S) is authorized by the same policy as WASM/JS activities;
 ### placeholders are replaced with secret values only as the host sends an authorized request.
 ### Cache URLs must use HTTPS. Obelisk exposes the verified cached store through virtio-9p.
+### Each declared store path's `bin` directory is prepended to the default guest PATH.
 ### Cold starts should configure exec.lock_expiry above the default 30 seconds.
 # [[activity_vm]]
 # name = "vm-curl"
 # content = '''#!/usr/bin/env bash
-# /nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin/bin/curl \
+# curl \
 #   -fsS -H "Authorization: Bearer ${API_TOKEN}" https://api.example.com/v1/items
 # '''
 # ffqn = "example:vm/curl.run"

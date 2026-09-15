@@ -67,7 +67,8 @@ case "$mode" in
   *) echo "unknown activity VM invocation mode: $mode" >&2; exit 126 ;;
 esac
 
-mark_phase command-start "$(ls -ln "$command" 2>&1)"
+resolved_command=$(command -v "$command" 2>&1 || true)
+mark_phase command-start "${resolved_command:-$command}"
 if [ -n "${OBELISK_ACTIVITY_VM_STDIN:-}" ]; then
   exec "$command" "$@" < "$OBELISK_ACTIVITY_VM_STDIN"
 else

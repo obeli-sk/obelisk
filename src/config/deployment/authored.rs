@@ -646,7 +646,8 @@ impl Default for NixosCacheToml {
 pub(crate) struct ActivityVmComponentConfigToml {
     #[serde(default)]
     pub(crate) name: Option<ConfigName>,
-    /// Linux executable followed by fixed arguments. Mutually exclusive with `location` and `content`.
+    /// Linux executable followed by fixed arguments. Command names are resolved through the guest PATH.
+    /// Mutually exclusive with `location` and `content`.
     #[serde(default)]
     pub(crate) entrypoint: Option<Vec<String>>,
     #[serde(default)]
@@ -686,7 +687,7 @@ pub(crate) struct ActivityVmComponentConfigToml {
     pub(crate) params_via_stdin: bool,
     #[serde(default = "default_max_output_bytes")]
     pub(crate) max_output_bytes: u64,
-    /// Exact `/nix/store/...` roots whose complete closures are mounted into Linux.
+    /// Exact `/nix/store/...` roots whose closures are mounted; their `bin` directories form the default PATH.
     pub(crate) store_paths: Vec<String>,
     /// Trusted binary caches used to resolve the store closure at deployment time.
     #[serde(default, rename = "nix_cache")]

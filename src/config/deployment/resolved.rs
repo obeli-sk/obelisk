@@ -884,6 +884,14 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             .map(PathBuf::from)
             .unwrap_or_else(|| wasm_cache_dir.join("activity-vm/store"));
         tokio::fs::create_dir_all(&store).await?;
+        let path = store_paths
+            .iter()
+            .map(|root| format!("{root}/bin"))
+            .chain(std::iter::once(
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_owned(),
+            ))
+            .collect::<Vec<_>>()
+            .join(":");
         let closure =
             crate::command::server::activity_vm_nix::resolve(&store_paths, &nix_caches, &store)
                 .await?;
@@ -938,6 +946,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             runtime: runtime.to_owned(),
             source_location,
             entrypoint,
+            path,
             store_paths: resolved_store_paths,
             policy_spec,
             allowed_hosts: allowed_host_configs,
@@ -952,6 +961,7 @@ pub(crate) struct ActivityVmConfigVerified {
     pub(crate) runtime: PathBuf,
     pub(crate) source_location: Option<(PathBuf, String)>,
     pub(crate) entrypoint: Option<Vec<String>>,
+    pub(crate) path: String,
     pub(crate) store_paths: Vec<PathBuf>,
     pub(crate) policy_spec: ProcessHttpPolicySpec,
     pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
