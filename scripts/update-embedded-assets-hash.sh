@@ -3,7 +3,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for version_file in crates/embedded-assets/*-version.txt; do
+for version_file in \
+    crates/embedded-assets/activity-js-runtime-version.txt \
+    crates/embedded-assets/workflow-js-runtime-version.txt \
+    crates/embedded-assets/webhook-js-runtime-version.txt \
+    crates/embedded-assets/webui-version.txt; do
     if [ -z "$(tail -c 1 "$version_file")" ]; then
         echo "$version_file must not end with a newline" >&2
         exit 1
