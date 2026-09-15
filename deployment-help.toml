@@ -207,6 +207,11 @@
 ### placeholders are replaced with secret values only as the host sends an authorized request.
 ### Cache URLs must use HTTPS. Obelisk exposes the verified cached store through virtio-9p.
 ### Each declared store path's `bin` directory is prepended to the default guest PATH.
+### Inside the VM, `obelisk-host` is a guest-only HTTP(S) alias for the Obelisk host.
+### The guest proxy rewrites it to `localhost` before applying the normal HTTP policy, so
+### configure `allowed_host` with `http://localhost:PORT`, as for other activity types:
+### a request whose URL is `http://obelisk-host:5005/v1/executions` is authorized by a
+### pattern of `http://localhost:5005`. Guest `localhost` itself addresses the guest VM.
 ### Cold starts should configure exec.lock_expiry above the default 30 seconds.
 # [[activity_vm]]
 # name = "vm-curl"

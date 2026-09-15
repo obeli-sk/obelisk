@@ -111,8 +111,7 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
     .await;
 }
 
-#[tokio::test]
-async fn http() {
+async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{header, method, path},
@@ -120,6 +119,7 @@ async fn http() {
 
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let mock_addr = listener.local_addr().unwrap();
+    let mock_port = mock_addr.port();
     let mock = MockServer::builder().listener(listener).start().await;
     Mock::given(method("GET"))
         .and(path("/anything"))
@@ -129,9 +129,21 @@ async fn http() {
         .mount(&mock)
         .await;
 
+    let policy_authority = format!("localhost:{mock_port}");
+    let request_authority = if use_host_alias {
+        format!("obelisk-host:{mock_port}")
+    } else {
+        policy_authority.clone()
+    };
+    let connect_to = if use_host_alias {
+        String::new()
+    } else {
+        format!("  --connect-to {request_authority}:127.0.0.1:80 \\\n")
+    };
+
     let server_toml = format!(
         r#"[[outbound_http.allowed_host]]
-pattern = "http://{mock_addr}"
+pattern = "http://{policy_authority}"
 methods = ["GET"]
 secrets = ["VM_SECRET"]
 replace_in = ["headers"]
@@ -148,11 +160,10 @@ case "$VM_SECRET" in
   *) printf '%s\n' '"VM received the secret value"'; exit 1 ;;
 esac
 curl -fsS \
-  --connect-to 127.0.0.1:{mock_port}:127.0.0.1:80 \
-  --connect-timeout 5 \
+{connect_to}  --connect-timeout 5 \
   --max-time 10 \
   -H "X-VM-Secret: ${{VM_SECRET}}" \
-  http://{mock_addr}/anything
+  http://{request_authority}/anything
 printf '%s\n' '"secret-rewritten"'
 '''
 params = []
@@ -162,15 +173,13 @@ store_paths = [
   "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
 ]
 [[activity_vm.allowed_host]]
-pattern = "http://{mock_addr}"
+pattern = "http://{policy_authority}"
 methods = ["GET"]
 secrets = ["VM_SECRET"]
 replace_in = ["headers"]
 "#,
-        mock_port = mock_addr.port(),
     );
-    let server =
-        TestServer::start_activity_vm(test_addr!(138), &server_toml, &deployment_toml).await;
+    let server = TestServer::start_activity_vm(ip, &server_toml, &deployment_toml).await;
     let response = server.submit_follow("testing:vm/http.run", vec![]).await;
     assert_eq!(response.status().as_u16(), 201);
     assert_eq!(
@@ -178,4 +187,14 @@ replace_in = ["headers"]
         json!({ "ok": "secret-rewritten" })
     );
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn http_loopback_connect_to() {
+    activity_vm_http_case(test_addr!(138), false).await;
+}
+
+#[tokio::test]
+async fn http_obelisk_host() {
+    activity_vm_http_case(test_addr!(139), true).await;
 }
