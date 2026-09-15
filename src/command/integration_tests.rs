@@ -1424,9 +1424,22 @@ async fn api_auth_should_deny_unauthenticated_requests() {
 async fn deploy_local_wasm_to_empty_server() {
     let server = TestServer::start_empty(test_addr!(78)).await;
 
-    let fixture = crate::command::test_support::target_aware_deployment_fixture(
+    let fixture = crate::command::test_support::target_aware_deployment_fixture_from_text(
         &get_workspace_dir(),
-        "deployment-testing-wasm-local.toml",
+        r#"[[activity_wasm]]
+name = "test_programs_fibo_activity"
+location = "target/wasm-cache/test_programs_fibo_activity.wasm"
+max_retries = 0
+
+[[workflow_wasm]]
+name = "test_programs_fibo_workflow"
+location = "target/wasm-cache/test_programs_fibo_workflow_component.wasm"
+
+[[webhook_endpoint_wasm]]
+name = "test_programs_fibo_webhook"
+location = "target/wasm-cache/test_programs_fibo_webhook.wasm"
+routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+"#,
     )
     .await
     .unwrap();
