@@ -201,22 +201,6 @@ pub(crate) async fn pull_wasm_module_to_cache(
     Ok((content_digest, destination))
 }
 
-pub(crate) async fn verify_wasm_module(
-    image: &Reference,
-    artifact_kind: &str,
-    path: &Path,
-) -> anyhow::Result<()> {
-    let (_, _, content_digest) = wasm_module_layer(image, artifact_kind).await?;
-    let actual_digest = calculate_sha256_file(path)
-        .await
-        .with_context(|| format!("cannot calculate digest for {path:?}"))?;
-    ensure!(
-        actual_digest == content_digest,
-        "file digest {actual_digest} does not match OCI artifact layer {content_digest}"
-    );
-    Ok(())
-}
-
 async fn wasm_module_layer(
     image: &Reference,
     artifact_kind: &str,
