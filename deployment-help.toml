@@ -204,7 +204,7 @@
 ### change incompatibly or be removed in a future release.
 ### The pinned container2wasm appliance and verified Nix closure are downloaded once into
 ### Obelisk's cache. Guest HTTP(S) is authorized by the same policy as WASM/JS activities;
-### secret values replace guest-visible placeholders only after host-side TLS termination.
+### placeholders are replaced with secret values only as the host sends an authorized request.
 ### Cache URLs must use HTTPS. Obelisk exposes the verified cached store through virtio-9p.
 ### Cold starts should configure exec.lock_expiry above the default 30 seconds.
 # [[activity_vm]]

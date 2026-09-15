@@ -698,8 +698,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         )?;
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
-        // Carry only the declared names plus a component-scoped resolver; values are
-        // fetched by name when the child's stdin is assembled, never baked here.
+        // Resolve secret values only when an execution uses them.
         let resolved_secrets = if self.secrets.is_empty() {
             None
         } else {
@@ -2662,11 +2661,6 @@ pub(crate) fn resolve_allowed_hosts(
                         ReplaceIn::Params => ReplacementLocation::Params,
                     })
                     .collect();
-                // Carry only the declared names: values are resolved lazily per
-                // execution run via the component's `RestrictedSecretRegistry`, never
-                // baked into this verified config. An unregistered name is handled by
-                // `config_prepass::preflight` (continue/bail/fix) and fails closed at
-                // runtime when the resolver cannot supply it.
                 (entry.secrets, replace_in)
             };
 

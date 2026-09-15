@@ -165,8 +165,7 @@ impl Engines {
         async_support: AsyncSupport,
     ) -> Result<Arc<Engine>, EngineError> {
         dst_wasmtime_config.wasm_component_model(true);
-        // Required by WASIp3 (wasi:http@0.3.0) activities and webhooks, which use the
-        // component model's async ABI. Left off for workflows to keep them on the sync ABI.
+        // WASIp3 activities and webhooks require the component model's async ABI.
         dst_wasmtime_config.wasm_component_model_async(async_support == AsyncSupport::Enable);
         dst_wasmtime_config.concurrency_support(async_support == AsyncSupport::Enable);
 

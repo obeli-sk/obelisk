@@ -4,10 +4,10 @@
 # fetches each declared Nix store closure directly from its HTTPS binary caches, verifies
 # narinfo signatures and hashes, and exposes the cached closure read-only at
 # `/nix/store`. It does not invoke host Nix. HTTP and HTTPS connections are transparently
-# terminated by the in-process VM worker and pass through the same operator/component
+# intercepted by the in-process VM worker and pass through the same operator/component
 # allowlists and secret placeholder rewriting as WASM and JavaScript activities.
 #
-# The VM worker uses Obelisk's shared Wasmtime activity engine and compiled-module cache.
+# The VM worker uses a dedicated Wasmtime engine and the shared compiled-module cache.
 # The static guest HTTP proxy and DNS responder are built into the pinned appliance by
 # the `obeli-sk/container2wasm` fork. Guest programs resolve hosts to the proxy's loopback
 # listeners, so interception does not depend on the program's libc or dynamic linking.
