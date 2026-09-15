@@ -153,19 +153,67 @@ pub(crate) async fn verify_cached_file(
 pub(crate) async fn pull_artifact_layer_to_cache(
     image: &Reference,
     media_type: &str,
-    content_digest: &ContentDigest,
-    destination: &Path,
-) -> anyhow::Result<()> {
-    if verify_cached_file(destination, content_digest)
+    cache_dir: &Path,
+) -> anyhow::Result<(ContentDigest, PathBuf)> {
+    if let Some(manifest_digest) = image.digest()
+        && let Ok(manifest_digest) = Digest::from_str(manifest_digest)
+        && let Ok(content) =
+            tokio::fs::read_to_string(digest_to_metadata_file(cache_dir, &manifest_digest)).await
+        && let Ok(content_digest) = ContentDigest::from_str(&content)
+        && let destination = cache_dir.join(format!("{}.wasm", content_digest.0.with_infix("_")))
+        && verify_cached_file(&destination, &content_digest)
+            .await
+            .is_ok()
+    {
+        return Ok((content_digest, destination));
+    }
+
+    let (client, layer, content_digest) = artifact_layer(image, media_type).await?;
+    let destination = cache_dir.join(format!("{}.wasm", content_digest.0.with_infix("_")));
+    let manifest_digest = Digest::from_str(
+        image
+            .digest()
+            .context("artifact cache requires a manifest-pinned OCI reference")?,
+    )?;
+    tokio::fs::create_dir_all(cache_dir).await?;
+    tokio::fs::write(
+        digest_to_metadata_file(cache_dir, &manifest_digest),
+        content_digest.to_string(),
+    )
+    .await?;
+    if verify_cached_file(&destination, &content_digest)
         .await
         .is_ok()
     {
-        return Ok(());
+        return Ok((content_digest, destination));
     }
-    let parent = destination
-        .parent()
-        .context("artifact cache destination must have a parent")?;
-    tokio::fs::create_dir_all(parent).await?;
+    pull_blob_to_file(
+        &client,
+        image,
+        &destination,
+        &layer,
+        &content_digest,
+        "artifact layer",
+    )
+    .await?;
+    Ok((content_digest, destination))
+}
+
+pub(crate) async fn verify_artifact_layer(
+    image: &Reference,
+    media_type: &str,
+    path: &Path,
+) -> anyhow::Result<()> {
+    let (_, _, content_digest) = artifact_layer(image, media_type).await?;
+    verify_cached_file(path, &content_digest)
+        .await
+        .map_err(|()| anyhow::anyhow!("file does not match OCI artifact layer {content_digest}"))
+}
+
+async fn artifact_layer(
+    image: &Reference,
+    media_type: &str,
+) -> anyhow::Result<(oci_client::Client, OciDescriptor, ContentDigest)> {
     let auth = get_oci_auth(image)?;
     let client = oci_client::Client::default();
     let (manifest, manifest_digest, _) = retry(
@@ -191,20 +239,9 @@ pub(crate) async fn pull_artifact_layer_to_cache(
         layers.next().is_none(),
         "OCI artifact {image} has multiple {media_type} layers"
     );
-    ensure!(
-        layer.digest == content_digest.to_string(),
-        "OCI artifact {image} layer digest mismatch: expected {content_digest}, got {}",
-        layer.digest
-    );
-    pull_blob_to_file(
-        &client,
-        image,
-        destination,
-        &layer,
-        content_digest,
-        "artifact layer",
-    )
-    .await
+    let content_digest = ContentDigest::from_str(&layer.digest)
+        .with_context(|| format!("invalid layer digest in OCI artifact {image}"))?;
+    Ok((client, layer, content_digest))
 }
 
 #[instrument(skip_all, fields(image = image.to_string()) err)]
