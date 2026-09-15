@@ -243,7 +243,9 @@ impl Worker for ActivityVmWorker {
 
         forward(self.forward_stdout.as_ref(), &output.stdout, &ctx);
         forward(self.forward_stderr.as_ref(), &output.stderr, &ctx);
-        if output.stdout.len() > max_stdout {
+        let output_variant_is_unit =
+            output_variant_is_unit(output.exit_code, &self.user_return_type);
+        if !output_variant_is_unit && output.stdout.len() > max_stdout {
             return Err(cannot_instantiate(
                 "VM stdout exceeded max_output_bytes",
                 anyhow::anyhow!("limit is {} bytes", self.max_output_bytes),
@@ -251,7 +253,7 @@ impl Worker for ActivityVmWorker {
             ));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed = if stdout.trim().is_empty() {
+        let parsed = if output_variant_is_unit || stdout.trim().is_empty() {
             None
         } else {
             Some(serde_json::from_str(&stdout).map_err(|error| {
@@ -312,6 +314,14 @@ fn cannot_instantiate(
     )
 }
 
+fn output_variant_is_unit(exit_code: i32, return_type: &ReturnTypeExtendable) -> bool {
+    if exit_code == 0 {
+        return_type.type_wrapper_tl.ok.is_none()
+    } else {
+        return_type.type_wrapper_tl.err.is_none()
+    }
+}
+
 fn forward(config: Option<&StdOutputConfigWithSender>, bytes: &[u8], ctx: &WorkerContext) {
     use std::io::Write as _;
     match config {
@@ -336,5 +346,25 @@ fn forward(config: Option<&StdOutputConfigWithSender>, bytes: &[u8], ctx: &Worke
             });
         }
         None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::output_variant_is_unit;
+    use concepts::ReturnType;
+
+    #[test]
+    fn result_of_units_ignores_non_json_stdout() {
+        let type_wrapper = val_json::type_wrapper::parse_wit_type("result").unwrap();
+        let ReturnType::Extendable(return_type) = ReturnType::detect(
+            type_wrapper,
+            concepts::StrVariant::from("result".to_owned()),
+        ) else {
+            panic!("result must be an extendable return type");
+        };
+
+        assert!(output_variant_is_unit(0, &return_type));
+        assert!(output_variant_is_unit(1, &return_type));
     }
 }
