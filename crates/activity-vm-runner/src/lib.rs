@@ -1010,15 +1010,12 @@ fn run_pthread(
     eprintln!(
         "pthread {pthread_ptr:#x}: initialized tls_base={tls_base:#x} tls[4..8]={tls_initdone:#x}"
     );
-    if let Some(init_wasm32) = instance
-        .get_export(&mut store, "init_wasm32")
-        .and_then(Extern::into_func)
-    {
-        init_wasm32.typed::<(), ()>(&store)?.call(&mut store, ())?;
-    } else if runtime.legacy_jit {
-        // Emscripten's browser worker calls QEMU's per-thread TCG initializer
-        // after installing TLS. Standalone Wasm does not export that helper,
-        // so reproduce its fixed wasm32 context setup here.
+    if runtime.legacy_jit {
+        // Old artifacts do not initialize their fixed wasm32 TCG context as
+        // part of the pthread entry point, so reproduce that setup here. New
+        // batched-JIT artifacts own initialization inside their entry point;
+        // calling the exported init_wasm32 before it deadlocks QEMU while the
+        // main thread waits for vCPU startup.
         let malloc = instance.get_typed_func::<i32, i32>(&mut store, "malloc")?;
         let stack = malloc.call(&mut store, 640)?;
         let stack128 = malloc.call(&mut store, 640)?;
@@ -1287,6 +1284,8 @@ mod tests {
                 (func (export "_emscripten_thread_init")
                     (param i32 i32 i32 i32 i32 i32))
                 (func (export "_emscripten_tls_init") (result i32) i32.const 0)
+                ;; The host must not invoke this before the pthread entry.
+                (func (export "init_wasm32") unreachable)
                 (func (export "_emscripten_thread_exit") (param $result i32)
                     i32.const 4 local.get $result i32.store))"#,
         )
