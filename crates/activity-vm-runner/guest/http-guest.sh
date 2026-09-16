@@ -53,6 +53,12 @@ done
 mark_phase network-ready
 
 export SSL_CERT_FILE=/tmp/obelisk-activity-vm-ca.pem
+# Route arbitrary HTTP ports through the guest-local forward proxy. Direct
+# loopback clients may still opt out with their standard no-proxy setting.
+export http_proxy=http://127.0.0.1:80
+export HTTP_PROXY=$http_proxy
+export no_proxy=
+export NO_PROXY=
 
 mode=$1
 shift
