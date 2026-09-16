@@ -63,6 +63,7 @@ struct Descriptors {
     pipes: HashMap<u32, Pipe>,
     tty_input: VecDeque<u8>,
     tty_output: Vec<u8>,
+    handshake_sent: bool,
     status_flags: HashMap<i32, i32>,
 }
 
@@ -125,8 +126,9 @@ impl LegacyFdTable {
                     (2, Descriptor::TtyOutput),
                 ]),
                 pipes: HashMap::new(),
-                tty_input: VecDeque::from(b"=\necho WASMTIME_GUEST_ECHO_OK\n".to_vec()),
+                tty_input: VecDeque::new(),
                 tty_output: Vec::new(),
+                handshake_sent: false,
                 status_flags: HashMap::from([(0, 0), (1, 1), (2, 1)]),
             }),
             readiness: Condvar::new(),
@@ -396,6 +398,17 @@ impl LegacyFdTable {
             Descriptor::TtyOutput => {
                 descriptors.tty_output.extend_from_slice(input);
                 eprint!("{}", String::from_utf8_lossy(input));
+                if !descriptors.handshake_sent
+                    && descriptors
+                        .tty_output
+                        .ends_with(b"trynix: waiting for the store")
+                {
+                    descriptors
+                        .tty_input
+                        .extend(b"=\necho WASMTIME_GUEST_ECHO_OK\n");
+                    descriptors.handshake_sent = true;
+                    self.readiness.notify_all();
+                }
                 Ok(input.len())
             }
             Descriptor::PipeWrite(id) => {
