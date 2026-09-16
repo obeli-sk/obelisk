@@ -124,6 +124,7 @@ async fn lock_store(output: &Path) -> anyhow::Result<File> {
     let lock_path = output.join(".obelisk-activity-vm.lock");
     let lock = OpenOptions::new()
         .create(true)
+        .truncate(true)
         .read(true)
         .write(true)
         .open(&lock_path)
