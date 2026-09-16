@@ -1192,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_wasi_exposes_exact_runtime_arguments() {
+    fn legacy_wasi_exposes_runtime_arguments_clock_and_randomness() {
         let mut config = Config::new();
         config.shared_memory(true);
         let engine = Engine::new(&config).unwrap();
@@ -1206,10 +1206,13 @@ mod tests {
                     (func $get (param i32 i32) (result i32)))
                 (import "wasi_snapshot_preview1" "clock_time_get"
                     (func $clock (param i32 i64 i32) (result i32)))
+                (import "wasi_snapshot_preview1" "random_get"
+                    (func $random (param i32 i32) (result i32)))
                 (func (export "run")
                     i32.const 0 i32.const 4 call $sizes drop
                     i32.const 8 i32.const 32 call $get drop
-                    i32.const 0 i64.const 1 i32.const 52 call $clock drop))"#,
+                    i32.const 0 i64.const 1 i32.const 52 call $clock drop
+                    i32.const 64 i32.const 32 call $random drop))"#,
         )
         .unwrap();
         let memory = SharedMemory::new(&engine, MemoryType::shared(1, 1)).unwrap();
@@ -1258,6 +1261,11 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(bytes, b"qemu\0--flag\0value\0");
         assert!(read_shared_u64(&memory, 52) > 0);
+        assert!(
+            read_shared_bytes(&memory, 64, 32)
+                .iter()
+                .any(|byte| *byte != 0)
+        );
     }
 
     #[test]
@@ -1417,11 +1425,14 @@ mod tests {
     }
 
     fn read_shared_u64(memory: &SharedMemory, offset: usize) -> u64 {
-        let bytes = memory.data()[offset..offset + 8]
+        u64::from_le_bytes(read_shared_bytes(memory, offset, 8).try_into().unwrap())
+    }
+
+    fn read_shared_bytes(memory: &SharedMemory, offset: usize, length: usize) -> Vec<u8> {
+        memory.data()[offset..offset + length]
             .iter()
             // SAFETY: tests do not access this memory concurrently.
             .map(|cell| unsafe { cell.get().read() })
-            .collect::<Vec<_>>();
-        u64::from_le_bytes(bytes.try_into().unwrap())
+            .collect()
     }
 }

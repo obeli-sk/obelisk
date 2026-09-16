@@ -1,4 +1,5 @@
 use crate::VmState;
+use std::io::Read as _;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::{Caller, Extern, Linker};
@@ -62,6 +63,17 @@ pub(crate) fn add_to_linker(
             let nanos = u64::try_from(now.as_nanos())
                 .map_err(|_| wasmtime::Error::msg("legacy WASI clock overflow"))?;
             write_bytes(&mut caller, output, &nanos.to_le_bytes())?;
+            Ok(0_i32)
+        },
+    )?;
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "random_get",
+        |mut caller: Caller<'_, VmState>, pointer: i32, length: i32| {
+            let length = usize::try_from(length).map_err(wasmtime::Error::msg)?;
+            let mut bytes = vec![0; length];
+            std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+            write_bytes(&mut caller, pointer, &bytes)?;
             Ok(0_i32)
         },
     )?;
