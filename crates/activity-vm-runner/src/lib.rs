@@ -267,6 +267,7 @@ pub async fn execute(
     let direct_shell = qemu_runtime
         .as_ref()
         .is_some_and(|runtime| runtime.guest_protocol == QemuGuestProtocol::DirectShell);
+    let direct_shell_http = direct_shell && !policy.hosts.is_empty();
     if direct_shell {
         for mapdir in &mut mapdirs {
             mapdir.guest = format!("/share{}", mapdir.guest);
@@ -302,11 +303,7 @@ pub async fn execute(
             .path()
             .to_owned()
     };
-    let guest_launcher = if direct_shell {
-        include_bytes!("../guest/direct-guest.sh").as_slice()
-    } else {
-        include_bytes!("../guest/http-guest.sh").as_slice()
-    };
+    let guest_launcher = guest_launcher(direct_shell, direct_shell_http);
     tokio::fs::write(queue.join("http-guest.sh"), guest_launcher).await?;
     for name in [
         "exit-code",
@@ -459,6 +456,14 @@ pub async fn execute(
         "Activity VM execution complete"
     );
     Ok(output)
+}
+
+fn guest_launcher(direct_shell: bool, direct_shell_http: bool) -> &'static [u8] {
+    if direct_shell && !direct_shell_http {
+        include_bytes!("../guest/direct-guest.sh")
+    } else {
+        include_bytes!("../guest/http-guest.sh")
+    }
 }
 
 fn direct_shell_input(
@@ -1459,6 +1464,19 @@ mod tests {
         assert!(input.starts_with("\u{1}ccont\n\u{1}c=\n"));
         assert!(input.contains("export MESSAGE='a b'\\''c';"));
         assert!(input.contains("'/bin/echo' 'it'\\''s safe'"));
+    }
+
+    #[test]
+    fn direct_shell_only_enables_the_http_proxy_when_requested() {
+        let fast = guest_launcher(true, false);
+        assert_eq!(fast, include_bytes!("../guest/direct-guest.sh"));
+        assert!(!fast.windows(b"network-ready".len()).any(|part| part == b"network-ready"));
+
+        let networked = guest_launcher(true, true);
+        assert_eq!(networked, include_bytes!("../guest/http-guest.sh"));
+        assert!(networked.windows(b"network-ready".len()).any(|part| part == b"network-ready"));
+
+        assert_eq!(guest_launcher(false, false), networked);
     }
 
     #[test]
