@@ -1146,6 +1146,8 @@ mod tests {
             engine,
             module,
             memory: memory.clone(),
+            table_import: None,
+            legacy_jit: false,
             host_fs: host_fs::HostFs::new(&[]).unwrap(),
             legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
             mapdirs: Vec::new(),

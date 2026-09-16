@@ -1906,6 +1906,25 @@ mod tests {
     }
 
     #[test]
+    fn getdents_uses_emscripten_dirent64_layout_and_tracks_position() {
+        let (_pack, table) = fixture();
+        let fd = table.open("/pack", O_RDONLY).unwrap();
+        let mut bytes = [0_u8; 3 * 280];
+        assert_eq!(table.getdents(fd, &mut bytes).unwrap(), bytes.len());
+        let names = bytes
+            .chunks_exact(280)
+            .map(|record| {
+                assert_eq!(u16::from_le_bytes(record[16..18].try_into().unwrap()), 280);
+                assert!(matches!(record[18], 4 | 8 | 10));
+                let end = record[19..].iter().position(|byte| *byte == 0).unwrap();
+                std::str::from_utf8(&record[19..19 + end]).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, [".", "..", "hello"]);
+        assert_eq!(table.getdents(fd, &mut bytes).unwrap(), 0);
+    }
+
+    #[test]
     fn rejects_writes_and_mutating_open_flags_on_read_only_pack() {
         let (_pack, table) = fixture();
         let fd = table.open("/pack/hello", O_RDONLY).unwrap();
@@ -2069,6 +2088,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
+                active_fiber_entry: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
                 pthread_spawn: None,
@@ -2150,6 +2170,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
+                active_fiber_entry: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
                 pthread_spawn: None,
@@ -2233,6 +2254,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
+                active_fiber_entry: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
                 pthread_spawn: None,
@@ -2313,6 +2335,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
+                active_fiber_entry: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
                 pthread_spawn: None,
@@ -2379,6 +2402,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
+                active_fiber_entry: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
                 pthread_spawn: None,
@@ -2449,6 +2473,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
+                active_fiber_entry: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
                 pthread_spawn: Some(Arc::new(move |pthread, attr, start, arg| {
