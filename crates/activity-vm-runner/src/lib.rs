@@ -185,7 +185,7 @@ pub struct VmOutput {
     pub http_client_traces: Vec<HttpClientTrace>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MapDir {
     host: PathBuf,
     guest: String,
@@ -270,7 +270,10 @@ pub async fn execute(
     let direct_shell_http = direct_shell && !policy.hosts.is_empty();
     if direct_shell {
         for mapdir in &mut mapdirs {
-            mapdir.guest = format!("/share{}", mapdir.guest);
+            mapdir.guest = mapdir.guest.strip_prefix("/nix/store/").map_or_else(
+                || format!("/share{}", mapdir.guest),
+                |path| format!("/share/store/{path}"),
+            );
         }
     }
     if let Some(runtime) = &qemu_runtime {
@@ -280,9 +283,12 @@ pub async fn execute(
             "/image".to_owned(),
         ));
     }
+    tracing::debug!(?mapdirs, "Prepared activity VM directory mappings");
     let has_nix_store = mapdirs.iter().any(|mapdir| {
         mapdir.guest == "/nix/store"
             || mapdir.guest.starts_with("/nix/store/")
+            || mapdir.guest == "/share/store"
+            || mapdir.guest.starts_with("/share/store/")
             || mapdir.qemu_store_image.is_some()
     });
     env.insert(
@@ -305,6 +311,24 @@ pub async fn execute(
     };
     let guest_launcher = guest_launcher(direct_shell, direct_shell_http);
     tokio::fs::write(queue.join("http-guest.sh"), guest_launcher).await?;
+    if direct_shell_http {
+        let proxy = qemu_runtime
+            .as_ref()
+            .context("direct-shell HTTP requires a QEMU runtime")?
+            .image_dir
+            .join("obelisk-activity-vm-http-proxy");
+        ensure!(
+            proxy.is_file(),
+            "direct-shell QEMU runtime is missing obelisk-activity-vm-http-proxy"
+        );
+        let destination = queue.join("obelisk-activity-vm-http-proxy");
+        tokio::fs::copy(proxy, &destination).await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            tokio::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o755)).await?;
+        }
+    }
     for name in [
         "exit-code",
         "http-request-ready",
@@ -351,7 +375,7 @@ pub async fn execute(
         ));
     }
     let resume_input = if direct_shell {
-        direct_shell_input(&guest_args, &env)?
+        direct_shell_input(&guest_args, &env, direct_shell_http)?
     } else {
         bytes::Bytes::from_static(QEMU_RESUME_INPUT)
     };
@@ -433,6 +457,21 @@ pub async fn execute(
     let has_guest_output =
         replace_output_from_guest_files(&mut output, &queue, max_stdout_bytes, max_stderr_bytes)
             .await?;
+    if output.exit_code != 0 {
+        let proxy_log = tokio::fs::read_to_string(queue.join("proxy.log"))
+            .await
+            .unwrap_or_default();
+        let request_ready = tokio::fs::read_to_string(queue.join("http-request-ready"))
+            .await
+            .unwrap_or_default();
+        tracing::debug!(
+            exit_code = output.exit_code,
+            guest_stderr = %String::from_utf8_lossy(&output.stderr),
+            proxy_log,
+            request_ready,
+            "Activity VM guest command failed"
+        );
+    }
     if is_qemu {
         ensure!(
             has_guest_output,
@@ -469,14 +508,21 @@ fn guest_launcher(direct_shell: bool, direct_shell_http: bool) -> &'static [u8] 
 fn direct_shell_input(
     guest_args: &[String],
     env: &HashMap<String, String>,
+    uncached_share: bool,
 ) -> anyhow::Result<bytes::Bytes> {
     ensure!(
         !guest_args.is_empty(),
         "direct-shell guest command is empty"
     );
     let mut command = String::from_utf8(QEMU_RESUME_INPUT.to_vec())?;
+    if uncached_share {
+        command.push_str(
+            "umount /share; mount -t 9p -o trans=virtio,version=9p2000.L,cache=none store0 /share; ",
+        );
+    }
     command.push_str("ln -sfn /share/obelisk-activity-vm-http /obelisk-activity-vm-http; ");
     command.push_str("if [ -d /share/obelisk-activity ]; then ln -sfn /share/obelisk-activity /obelisk-activity; fi; ");
+    command.push_str("if [ -d /share/store ]; then rm -f /nix; mkdir -p /nix; ln -s /share/store /nix/store; fi; ");
     for (key, value) in env {
         ensure!(
             !key.is_empty()
@@ -1457,6 +1503,7 @@ mod tests {
         let input = direct_shell_input(
             &["/bin/echo".to_owned(), "it's safe".to_owned()],
             &HashMap::from([("MESSAGE".to_owned(), "a b'c".to_owned())]),
+            false,
         )
         .unwrap();
         let input = String::from_utf8(input.to_vec()).unwrap();
@@ -1464,17 +1511,30 @@ mod tests {
         assert!(input.starts_with("\u{1}ccont\n\u{1}c=\n"));
         assert!(input.contains("export MESSAGE='a b'\\''c';"));
         assert!(input.contains("'/bin/echo' 'it'\\''s safe'"));
+        assert!(!input.contains("cache=none"));
+
+        let networked =
+            direct_shell_input(&["/bin/true".to_owned()], &HashMap::new(), true).unwrap();
+        assert!(String::from_utf8_lossy(&networked).contains("cache=none"));
     }
 
     #[test]
     fn direct_shell_only_enables_the_http_proxy_when_requested() {
         let fast = guest_launcher(true, false);
         assert_eq!(fast, include_bytes!("../guest/direct-guest.sh"));
-        assert!(!fast.windows(b"network-ready".len()).any(|part| part == b"network-ready"));
+        assert!(
+            !fast
+                .windows(b"network-ready".len())
+                .any(|part| part == b"network-ready")
+        );
 
         let networked = guest_launcher(true, true);
         assert_eq!(networked, include_bytes!("../guest/http-guest.sh"));
-        assert!(networked.windows(b"network-ready".len()).any(|part| part == b"network-ready"));
+        assert!(
+            networked
+                .windows(b"network-ready".len())
+                .any(|part| part == b"network-ready")
+        );
 
         assert_eq!(guest_launcher(false, false), networked);
     }

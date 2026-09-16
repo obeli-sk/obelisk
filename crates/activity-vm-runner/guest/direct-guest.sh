@@ -29,6 +29,9 @@ case "$mode" in
     set -- $interpreter "$script" "$@"
     command=$1
     shift
+    if [ "$command" = /usr/bin/env ] && [ ! -x "$command" ]; then
+      command=/bin/env
+    fi
     ;;
   *) echo "unknown activity VM invocation mode: $mode" >&2; exit 126 ;;
 esac

@@ -34,7 +34,11 @@ else
 fi
 printf '%s\n' 'nameserver 127.0.0.1' > /etc/resolv.conf
 proxy_log=/obelisk-activity-vm-http/proxy.log
-/usr/local/libexec/obelisk/obelisk-activity-vm-http-proxy \
+proxy=/usr/local/libexec/obelisk/obelisk-activity-vm-http-proxy
+if [ -x /obelisk-activity-vm-http/obelisk-activity-vm-http-proxy ]; then
+  proxy=/obelisk-activity-vm-http/obelisk-activity-vm-http-proxy
+fi
+"$proxy" \
   /obelisk-activity-vm-http "$allowed" 2>"$proxy_log" &
 proxy_pid=$!
 while [ ! -f /tmp/obelisk-activity-vm-network-ready ] || \
@@ -66,6 +70,9 @@ case "$mode" in
     set -- $interpreter "$script" "$@"
     command="$1"
     shift
+    if [ "$command" = /usr/bin/env ] && [ ! -x "$command" ]; then
+      command=/bin/env
+    fi
     ;;
   *) echo "unknown activity VM invocation mode: $mode" >&2; exit 126 ;;
 esac

@@ -456,7 +456,17 @@ impl LegacyFdTable {
             for (slot, (index, name)) in entries[start..end].iter().enumerate().enumerate() {
                 let record = &mut output[slot * RECORD_SIZE..(slot + 1) * RECORD_SIZE];
                 record.fill(0);
-                record[0..8].copy_from_slice(&((start + index + 1) as u64).to_le_bytes());
+                let path = match name.as_str() {
+                    "." => guest.clone(),
+                    ".." => Path::new(guest)
+                        .parent()
+                        .unwrap_or(Path::new("/"))
+                        .to_string_lossy()
+                        .into_owned(),
+                    _ if guest == "/" => format!("/{name}"),
+                    _ => format!("{guest}/{name}"),
+                };
+                record[0..8].copy_from_slice(&virtual_inode(&path).to_le_bytes());
                 record[8..16]
                     .copy_from_slice(&(((start + index + 1) * RECORD_SIZE) as i64).to_le_bytes());
                 record[16..18].copy_from_slice(&(RECORD_SIZE as u16).to_le_bytes());
@@ -852,7 +862,9 @@ impl LegacyFdTable {
                 .metadata()
                 .map(|meta| metadata_stat(&meta))
                 .map_err(|error| io_errno(&error)),
-            Descriptor::VirtualDir { .. } => Ok(synthetic_stat(0o040_555)),
+            Descriptor::VirtualDir { guest, .. } => {
+                Ok(synthetic_stat_with_inode(0o040_555, virtual_inode(guest)))
+            }
             Descriptor::TtyInput | Descriptor::TtyOutput => Ok(synthetic_stat(0o020_666)),
             Descriptor::PipeRead(_) | Descriptor::PipeWrite(_) => Ok(synthetic_stat(0o010_600)),
             Descriptor::Random => Ok(synthetic_stat(0o020_444)),
@@ -870,7 +882,7 @@ impl LegacyFdTable {
     fn stat(&self, path: &str, nofollow: bool) -> Result<LegacyStat, i32> {
         let guest = normalize_absolute(path).map_err(fs_errno)?;
         if self.is_virtual_dir(&guest) {
-            return Ok(synthetic_stat(0o040_555));
+            return Ok(synthetic_stat_with_inode(0o040_555, virtual_inode(&guest)));
         }
         let (_, path) = if nofollow {
             self.resolve_unfollowed(path)
@@ -911,7 +923,7 @@ impl LegacyFdTable {
             Base::Host(base) => base,
             Base::Guest(guest) => {
                 if path.is_empty() || path == "." {
-                    return Ok(synthetic_stat(0o040_555));
+                    return Ok(synthetic_stat_with_inode(0o040_555, virtual_inode(&guest)));
                 }
                 let joined = if guest == "/" {
                     format!("/{path}")
@@ -967,6 +979,54 @@ impl LegacyFdTable {
         std::fs::read_link(path)
             .map(|target| target.as_os_str().as_bytes().to_vec())
             .map_err(|error| io_errno(&error))
+    }
+
+    fn readlink_at(&self, dirfd: i32, path: &str) -> Result<Vec<u8>, i32> {
+        if path.starts_with('/') || dirfd == AT_FDCWD {
+            return self.readlink(path);
+        }
+        enum Base {
+            Guest(String),
+            Host(PathBuf),
+        }
+        let base = {
+            let descriptors = self
+                .descriptors
+                .lock()
+                .expect("legacy fd table mutex poisoned");
+            match descriptors.entries.get(&dirfd).ok_or(ERRNO_BADF)? {
+                Descriptor::VirtualDir { guest, .. } => Base::Guest(guest.clone()),
+                Descriptor::File { path, .. } => Base::Host(path.clone()),
+                _ => return Err(ERRNO_BADF),
+            }
+        };
+        match base {
+            Base::Guest(guest) => {
+                let joined = if guest == "/" {
+                    format!("/{path}")
+                } else {
+                    format!("{guest}/{path}")
+                };
+                self.readlink(&joined)
+            }
+            Base::Host(base) => {
+                use std::os::unix::ffi::OsStrExt;
+                let unresolved = base.join(path);
+                let parent = unresolved.parent().ok_or(ERRNO_NOTCAPABLE)?;
+                let parent = parent.canonicalize().map_err(|_| ERRNO_NOENT)?;
+                if !self
+                    .mounts
+                    .iter()
+                    .any(|mount| parent.starts_with(&mount.host))
+                {
+                    return Err(ERRNO_NOTCAPABLE);
+                }
+                let path = parent.join(unresolved.file_name().ok_or(ERRNO_NOTCAPABLE)?);
+                std::fs::read_link(path)
+                    .map(|target| target.as_os_str().as_bytes().to_vec())
+                    .map_err(|error| io_errno(&error))
+            }
+        }
     }
 
     fn poll(&self, fds: &mut [PollFd], timeout_ms: i32) -> usize {
@@ -1106,6 +1166,10 @@ fn metadata_stat(metadata: &std::fs::Metadata) -> LegacyStat {
 }
 
 fn synthetic_stat(mode: u32) -> LegacyStat {
+    synthetic_stat_with_inode(mode, 1)
+}
+
+fn synthetic_stat_with_inode(mode: u32, ino: u64) -> LegacyStat {
     LegacyStat {
         dev: 1,
         mode,
@@ -1121,8 +1185,14 @@ fn synthetic_stat(mode: u32) -> LegacyStat {
         mtime_nsec: 0,
         ctime: 0,
         ctime_nsec: 0,
-        ino: 0,
+        ino,
     }
+}
+
+fn virtual_inode(path: &str) -> u64 {
+    path.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn encode_stat(stat: &LegacyStat) -> [u8; 96] {
@@ -1441,16 +1511,13 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
         "env",
         "__syscall_readlinkat",
         |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, output: i32, size: i32| {
-            if dirfd != AT_FDCWD {
-                return -ERRNO_NOTCAPABLE;
-            }
             let result = (|| -> Result<i32, i32> {
                 let size = usize::try_from(size).map_err(|_| ERRNO_INVAL)?;
                 if size == 0 {
                     return Err(ERRNO_INVAL);
                 }
                 let path = read_string(&mut caller, path)?;
-                let target = caller.data().legacy_fds.readlink(&path)?;
+                let target = caller.data().legacy_fds.readlink_at(dirfd, &path)?;
                 let length = size.min(target.len());
                 write_memory(&mut caller, output, &target[..length])?;
                 i32::try_from(length).map_err(|_| ERRNO_INVAL)
@@ -2240,6 +2307,26 @@ fn fs_errno(error: anyhow::Error) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virtual_directories_have_stable_distinct_inodes() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let table = LegacyFdTable::new(&[
+            MapDir::read_only(first.path().to_owned(), "/share/nix/store/first".to_owned()),
+            MapDir::read_only(
+                second.path().to_owned(),
+                "/share/nix/store/second".to_owned(),
+            ),
+        ])
+        .unwrap();
+
+        let nix = table.stat("/share/nix", false).unwrap();
+        let store = table.stat("/share/nix/store", false).unwrap();
+        assert_ne!(nix.ino, 0);
+        assert_ne!(nix.ino, store.ino);
+        assert_eq!(store.ino, virtual_inode("/share/nix/store"));
+    }
     use std::io::Write;
     use wasmtime::{Engine, Store};
     use wasmtime_wasi::{WasiCtxBuilder, p1};
@@ -2701,6 +2788,8 @@ mod tests {
 
         let (pack, table) = fixture();
         symlink("hello", pack.path().join("link")).unwrap();
+        let directory = table.open("/pack", O_RDONLY).unwrap();
+        assert_eq!(table.readlink_at(directory, "link").unwrap(), b"hello");
         let engine = Engine::default();
         let module = Module::new(
             &engine,
