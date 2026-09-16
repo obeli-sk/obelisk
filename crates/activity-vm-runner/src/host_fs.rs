@@ -147,6 +147,11 @@ impl HostFs {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_host_path(&self, raw: &str) -> anyhow::Result<(PathBuf, bool)> {
+        self.host_path(raw)
+    }
+
     fn allocate(&self, file: File) -> i32 {
         let mut files = self.files.lock().expect("host filesystem mutex poisoned");
         let fd = files.next;
@@ -647,13 +652,35 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(fs.host_path("/nix/store/closure").unwrap(), (store.join("closure"), false));
-        assert_eq!(fs.host_path("/obelisk-activity-vm-http/http-guest.sh").unwrap(), (proxy.join("http-guest.sh"), true));
-        assert_eq!(fs.host_path("/pack/info").unwrap(), (pack.join("info"), true));
+        assert_eq!(
+            fs.host_path("/nix/store/closure").unwrap(),
+            (store.join("closure"), false)
+        );
+        assert_eq!(
+            fs.host_path("/obelisk-activity-vm-http/http-guest.sh")
+                .unwrap(),
+            (proxy.join("http-guest.sh"), true)
+        );
+        assert_eq!(
+            fs.host_path("/pack/info").unwrap(),
+            (pack.join("info"), true)
+        );
         let root_entries = fs.entries("/").unwrap();
-        assert!(root_entries.iter().any(|entry| entry == &("nix".into(), KIND_DIRECTORY)));
-        assert!(root_entries.iter().any(|entry| entry == &("pack".into(), KIND_DIRECTORY)));
-        assert!(root_entries.iter().any(|entry| entry == &("obelisk-activity-vm-http".into(), KIND_DIRECTORY)));
+        assert!(
+            root_entries
+                .iter()
+                .any(|entry| entry == &("nix".into(), KIND_DIRECTORY))
+        );
+        assert!(
+            root_entries
+                .iter()
+                .any(|entry| entry == &("pack".into(), KIND_DIRECTORY))
+        );
+        assert!(
+            root_entries
+                .iter()
+                .any(|entry| entry == &("obelisk-activity-vm-http".into(), KIND_DIRECTORY))
+        );
     }
 
     #[test]

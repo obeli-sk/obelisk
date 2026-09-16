@@ -231,3 +231,154 @@ fn filtered_header(name: &str) -> bool {
             | "upgrade"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MapDir, host_fs::HostFs};
+    use hyper::Method;
+    use secrecy::SecretString;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use wasm_workers::http_request_policy::{
+        AllowedHostPolicy, HostPattern, HttpRequestPolicy, MethodsPattern, PlaceholderSecret,
+        ReplacementLocation,
+    };
+
+    #[tokio::test]
+    async fn qemu_9p_queue_applies_policy_and_returns_response() {
+        const PLACEHOLDER: &str = "OBELISK_SECRET_QUEUE_TEST";
+        const SECRET: &str = "swordfish";
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 4096];
+                let read = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(read, 0, "HTTP request ended before its body arrived");
+                request.extend_from_slice(&buffer[..read]);
+                let Some(headers_end) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let headers_end = headers_end + 4;
+                let headers = String::from_utf8_lossy(&request[..headers_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                if request.len() >= headers_end + content_length {
+                    let body = &request[headers_end..headers_end + content_length];
+                    assert!(headers.lines().any(|line| {
+                        line.eq_ignore_ascii_case(&format!("x-vm-secret: {SECRET}"))
+                    }));
+                    assert_eq!(body, format!("body={SECRET}").as_bytes());
+                    break;
+                }
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nbridge-ok",
+                )
+                .await
+                .unwrap();
+        });
+
+        let queue = tempfile::tempdir().unwrap();
+        let guest_mount = "/obelisk-activity-vm-http";
+        let host_fs = HostFs::new(&[MapDir::read_write(
+            queue.path().to_owned(),
+            guest_mount.to_owned(),
+        )])
+        .unwrap();
+        let policy = HttpRequestPolicy {
+            hosts: vec![AllowedHostPolicy {
+                pattern: HostPattern::parse_with_methods(
+                    &format!("http://127.0.0.1:{}", address.port()),
+                    MethodsPattern::Specific(vec![Method::POST]),
+                )
+                .unwrap(),
+                request_url_regex: None,
+                secrets: vec![PlaceholderSecret {
+                    name: "VM_SECRET".to_owned(),
+                    placeholder: PLACEHOLDER.to_owned(),
+                    real_value: SecretString::from(SECRET),
+                    replace_in: [ReplacementLocation::Headers, ReplacementLocation::Body]
+                        .into_iter()
+                        .collect(),
+                }],
+            }],
+            global_allowlist: None,
+            component_policy_hash: "component-test-policy".to_owned(),
+            server_policy_hash: "server-test-policy".to_owned(),
+        };
+        let traces = Arc::new(Mutex::new(Vec::new()));
+        let bridge = tokio::spawn(serve(queue.path().to_owned(), policy, traces.clone()));
+
+        let (request_path, writable) = host_fs
+            .test_host_path(&format!("{guest_mount}/qemu.request"))
+            .unwrap();
+        assert!(writable);
+        tokio::fs::write(
+            request_path,
+            serde_json::to_vec(&serde_json::json!({
+                "method": "POST",
+                "url": format!("http://{address}/anything"),
+                "headers": [
+                    ["content-type", "text/plain"],
+                    ["x-vm-secret", PLACEHOLDER]
+                ],
+                "body": format!("body={PLACEHOLDER}").into_bytes()
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let done_guest = format!("{guest_mount}/qemu.done");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (done, _) = host_fs.test_host_path(&done_guest).unwrap();
+                if tokio::fs::try_exists(done).await.unwrap() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        })
+        .await
+        .expect("bridge did not publish completion");
+
+        let read_guest = |name: &str| {
+            host_fs
+                .test_host_path(&format!("{guest_mount}/{name}"))
+                .unwrap()
+                .0
+        };
+        let response: serde_json::Value =
+            serde_json::from_slice(&tokio::fs::read(read_guest("qemu.response")).await.unwrap())
+                .unwrap();
+        assert_eq!(response["status"], 200);
+        assert_eq!(response["body_prefix"], "qemu");
+        assert_eq!(
+            tokio::fs::read(read_guest("qemu.body-00000000"))
+                .await
+                .unwrap(),
+            b"bridge-ok"
+        );
+        let done: serde_json::Value =
+            serde_json::from_slice(&tokio::fs::read(read_guest("qemu.done")).await.unwrap())
+                .unwrap();
+        assert_eq!(done["body_length"], 9);
+        assert_eq!(done["chunks"], 1);
+        assert_eq!(traces.lock().unwrap().len(), 1);
+
+        bridge.abort();
+        server.await.unwrap();
+    }
+}
