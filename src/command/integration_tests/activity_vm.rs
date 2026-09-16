@@ -138,8 +138,8 @@ store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3
 #[tokio::test]
 async fn nonzero_exit_maps_error_result() {
     let deployment_toml = r#"[[activity_vm]]
-exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/failure.run"
+max_retries = 0
 content = '''#!/usr/bin/env bash
 printf '%s\n' '"expected-failure"'
 exit 7
