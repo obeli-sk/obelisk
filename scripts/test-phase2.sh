@@ -7,8 +7,13 @@ export RUST_BACKTRACE=1
 export RUST_LOG="${RUST_LOG:-info,obeli=debug,app=trace}"
 export NEXTEST_NO_OUTPUT_INDENT=1
 
-if [[ -n "${OBELISK_ACTIVITY_VM_RUNTIME_DIR:-}" ]]; then
+activity_vm_module=""
+if [[ -n "${OBELISK_ACTIVITY_VM_RUNTIME_MODULE:-}" ]]; then
+  activity_vm_module="$OBELISK_ACTIVITY_VM_RUNTIME_MODULE"
+elif [[ -n "${OBELISK_ACTIVITY_VM_RUNTIME_DIR:-}" ]]; then
   activity_vm_module="$OBELISK_ACTIVITY_VM_RUNTIME_DIR/qemu-system-x86_64.wasm"
+fi
+if [[ -n "$activity_vm_module" ]]; then
   phase1_digest_file="test-codegen-cache/activity-vm-phase1.sha256"
   test -f "$activity_vm_module"
   test -f "$phase1_digest_file"

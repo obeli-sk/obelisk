@@ -57,6 +57,11 @@ const RUNTIME_ARTIFACT_KIND: &str = "activity-vm-runtime.v1";
 const TITLE: &str = "org.opencontainers.image.title";
 
 pub(crate) async fn fetch(cache_root: &Path) -> anyhow::Result<ActivityVmRuntime> {
+    if let Some(module) = std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_MODULE").map(PathBuf::from)
+    {
+        ensure!(module.is_file(), "local activity VM module is missing");
+        return Ok(ActivityVmRuntime::WasmModule(module));
+    }
     if let Some(root) = std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_DIR").map(PathBuf::from) {
         let bundle = bundle_paths(root);
         ensure!(
