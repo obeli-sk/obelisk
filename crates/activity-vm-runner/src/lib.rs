@@ -162,6 +162,7 @@ pub struct MapDir {
     host: PathBuf,
     guest: String,
     permissions: FsPerms,
+    qemu_store_image: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +178,7 @@ impl MapDir {
             host,
             guest,
             permissions: FsPerms::ReadOnly,
+            qemu_store_image: None,
         }
     }
 
@@ -186,7 +188,26 @@ impl MapDir {
             host,
             guest,
             permissions: FsPerms::ReadWrite,
+            qemu_store_image: None,
         }
+    }
+
+    pub fn qemu_store_squashfs(host: PathBuf) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            host.file_name()
+                .is_some_and(|name| name == "store.squashfs"),
+            "QEMU store image must be named store.squashfs"
+        );
+        let parent = host
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .context("QEMU store image must have a parent directory")?;
+        Ok(Self {
+            host: parent.to_owned(),
+            guest: "/obelisk-activity-vm-store".to_owned(),
+            permissions: FsPerms::ReadOnly,
+            qemu_store_image: Some("obelisk-activity-vm-store/store.squashfs".to_owned()),
+        })
     }
 }
 
@@ -374,6 +395,15 @@ fn qemu_runtime_info(
             "m: "
         });
         info.push_str(mapdir.guest.trim_start_matches('/'));
+        info.push('\n');
+    }
+    for image in mapdirs
+        .iter()
+        .filter_map(|mapdir| mapdir.qemu_store_image.as_deref())
+    {
+        ensure_runtime_info_line(image)?;
+        info.push_str("s: ");
+        info.push_str(image);
         info.push('\n');
     }
     let mut env = env.iter().collect::<Vec<_>>();
@@ -1357,6 +1387,23 @@ mod tests {
             qemu_runtime_info(&mapdirs, &args, &env).unwrap(),
             "c: /bin/echo hello\\ world\nmr: nix/store/abc\nm: queue\nenv: FIRST=one\nenv: SECOND=two\n"
         );
+    }
+
+    #[test]
+    fn writes_qemu_store_squashfs_after_read_only_mount() {
+        let mapdir =
+            MapDir::qemu_store_squashfs(PathBuf::from("/cache/activity/store.squashfs")).unwrap();
+
+        assert_eq!(
+            qemu_runtime_info(&[mapdir], &[], &HashMap::new()).unwrap(),
+            "c:\nmr: obelisk-activity-vm-store\ns: obelisk-activity-vm-store/store.squashfs\n"
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_qemu_store_image_path() {
+        assert!(MapDir::qemu_store_squashfs(PathBuf::from("store.squashfs")).is_err());
+        assert!(MapDir::qemu_store_squashfs(PathBuf::from("/cache/store.img")).is_err());
     }
 
     fn write_shared_u32(memory: &SharedMemory, offset: usize, value: u32) {
