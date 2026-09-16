@@ -1172,6 +1172,15 @@ fn dispatch_proxy(
     };
     let table = caller.data().legacy_fds.clone();
     let syscall = match index {
+        2 => {
+            let spawn = caller
+                .data()
+                .pthread_spawn
+                .clone()
+                .ok_or_else(|| "pthread spawner is unavailable".to_owned())?;
+            return spawn(arg(0)?, arg(1)?, arg(2)?, arg(3)?)
+                .map_err(|error| format!("spawning pthread: {error:#}"));
+        }
         9 => {
             let dirfd = arg(0)?;
             if dirfd != AT_FDCWD {
@@ -1769,6 +1778,7 @@ mod tests {
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
+                pthread_spawn: None,
             },
         );
         let mut linker = Linker::new(&engine);
@@ -1849,6 +1859,7 @@ mod tests {
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
+                pthread_spawn: None,
             },
         );
         let mut linker = Linker::new(&engine);
@@ -1931,6 +1942,7 @@ mod tests {
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
+                pthread_spawn: None,
             },
         );
         let mut linker = Linker::new(&engine);
@@ -2010,6 +2022,7 @@ mod tests {
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
+                pthread_spawn: None,
             },
         );
         let mut linker = Linker::new(&engine);
@@ -2075,6 +2088,7 @@ mod tests {
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
+                pthread_spawn: None,
             },
         );
         let mut linker = Linker::new(&engine);
@@ -2120,10 +2134,20 @@ mod tests {
                     if i32.const 2 return end
                     i32.const 344 i64.load i64.const 11 i64.ne
                     if i32.const 3 return end
+                    ;; pthreadCreateProxied shares the runner's real spawn callback.
+                    i32.const 520 f64.const 10 f64.store
+                    i32.const 536 f64.const 20 f64.store
+                    i32.const 552 f64.const 30 f64.store
+                    i32.const 568 f64.const 40 f64.store
+                    i32.const 2 i32.const 123 i32.const 8 i32.const 512 call $proxy
+                    i32.trunc_f64_s i32.const 7 i32.ne
+                    if i32.const 4 return end
                     i32.const 0))"#,
         )
         .unwrap();
         let host_fs = crate::host_fs::HostFs::new(&[]).unwrap();
+        let spawned = Arc::new(Mutex::new(Vec::new()));
+        let spawned_for_host = spawned.clone();
         let mut store = Store::new(
             &engine,
             VmState {
@@ -2134,6 +2158,13 @@ mod tests {
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
+                pthread_spawn: Some(Arc::new(move |pthread, attr, start, arg| {
+                    spawned_for_host
+                        .lock()
+                        .unwrap()
+                        .push((pthread, attr, start, arg));
+                    Ok(7)
+                })),
             },
         );
         let mut linker = Linker::new(&engine);
@@ -2148,5 +2179,6 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert_eq!(*spawned.lock().unwrap(), [(10, 20, 30, 40)]);
     }
 }

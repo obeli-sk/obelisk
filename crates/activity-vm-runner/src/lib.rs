@@ -28,7 +28,10 @@ struct VmState {
     fiber_next: Option<i32>,
     fiber_entries: HashMap<i32, (i32, i32)>,
     poll_calls: u64,
+    pthread_spawn: Option<PthreadSpawn>,
 }
+
+type PthreadSpawn = Arc<dyn Fn(i32, i32, i32, i32) -> wasmtime::Result<i32> + Send + Sync>;
 
 struct EmscriptenRuntime {
     engine: Engine,
@@ -373,6 +376,7 @@ fn run_module(
             fiber_next: None,
             fiber_entries: HashMap::new(),
             poll_calls: 0,
+            pthread_spawn: None,
         },
     );
     let mut linker: Linker<VmState> = Linker::new(engine);
@@ -413,7 +417,9 @@ fn run_module(
                 threads: Mutex::new(Vec::new()),
                 cancelled: cancelled.clone(),
             });
-            add_pthread_create(&mut linker, runtime.clone())?;
+            let spawn = pthread_spawner(runtime.clone());
+            store.data_mut().pthread_spawn = Some(spawn.clone());
+            add_pthread_create(&mut linker, spawn)?;
             emscripten_runtime = Some(runtime);
         }
     }
@@ -489,11 +495,14 @@ fn run_module(
     })
 }
 
-fn add_pthread_create(
-    linker: &mut Linker<VmState>,
-    runtime: Arc<EmscriptenRuntime>,
-) -> anyhow::Result<()> {
-    emscripten::add_pthread_create(linker, move |pthread_ptr, _attr, start_routine, arg| {
+fn add_pthread_create(linker: &mut Linker<VmState>, spawn: PthreadSpawn) -> anyhow::Result<()> {
+    emscripten::add_pthread_create(linker, move |pthread_ptr, attr, start_routine, arg| {
+        spawn(pthread_ptr, attr, start_routine, arg)
+    })
+}
+
+fn pthread_spawner(runtime: Arc<EmscriptenRuntime>) -> PthreadSpawn {
+    Arc::new(move |pthread_ptr, _attr, start_routine, arg| {
         eprintln!("pthread create ptr={pthread_ptr:#x} start={start_routine:#x} arg={arg:#x}");
         if pthread_ptr <= 0 || start_routine < 0 {
             return Err(wasmtime::Error::msg("invalid Emscripten pthread request"));
@@ -592,6 +601,7 @@ fn run_pthread(
             fiber_next: None,
             fiber_entries: HashMap::new(),
             poll_calls: 0,
+            pthread_spawn: Some(pthread_spawner(runtime.clone())),
         },
     );
     let mut linker = Linker::new(&runtime.engine);
@@ -611,7 +621,14 @@ fn run_pthread(
         linker.allow_shadowing(true);
         legacy_fd::add_to_linker(&mut linker)?;
     }
-    add_pthread_create(&mut linker, runtime.clone())?;
+    add_pthread_create(
+        &mut linker,
+        store
+            .data()
+            .pthread_spawn
+            .clone()
+            .expect("pthread spawner is set"),
+    )?;
     let cancelled = runtime.cancelled.clone();
     store.epoch_deadline_callback(move |_| {
         Ok(if cancelled.load(Ordering::Relaxed) {
@@ -818,6 +835,7 @@ mod tests {
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
+                pthread_spawn: None,
             },
         );
         let mut linker = Linker::new(&engine);
