@@ -15,6 +15,9 @@ use crate::{
 };
 use toml_edit::{DocumentMut, value};
 
+mod activity_vm;
+mod util;
+
 /// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the resolved
 /// `ActivityStubExtInlineConfigResolved` the tests used to construct in-memory.
 fn append_inline_stub(doc: &mut DocumentMut, name: &str, ffqn: &str) {
@@ -155,46 +158,12 @@ fn write_test_configs(
     server_toml_api_lines: &str,
 ) -> (tempfile::TempDir, PathBuf, PathBuf) {
     let workspace = get_workspace_dir();
-    let db_dir = tempfile::tempdir().unwrap();
+    let (db_dir, server_path, deployment_path) =
+        util::write_server_config(ip, server_toml_api_lines, "");
     let fixture_src = workspace.join("crates/testing/test-programs");
     let fixture_dst = db_dir.path().join("crates/testing/test-programs");
     copy_dir_recursive(&fixture_src.join("js"), &fixture_dst.join("js"));
     copy_dir_recursive(&fixture_src.join("exec"), &fixture_dst.join("exec"));
-    let server_contents = format!(
-        r#"api.listening_addr = "{ip}:{API_PORT}"
-{server_toml_api_lines}
-allow_exec_activities = true
-webui.enabled = false
-external.listening_addr = "{ip}:{WEBHOOK_PORT}"
-
-[wasm.codegen_cache]
-directory = "{codegen_cache}"
-
-[database.sqlite]
-directory = "{db_dir}"
-
-[public_env]
-allowed = ["PATH", "OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
-
-[[outbound_http.allowed_host]]
-pattern = "*"
-methods = "*"
-
-[[outbound_http.allowed_host]]
-pattern = "httpbin.org"
-methods = "*"
-secrets = ["MY_SECRET"]
-replace_in = ["headers", "params", "body"]
-"#,
-        ip = ip,
-        API_PORT = API_PORT,
-        WEBHOOK_PORT = WEBHOOK_PORT,
-        codegen_cache = workspace.join("test-codegen-cache").display(),
-        db_dir = db_dir.path().display(),
-    );
-    let server_path = db_dir.path().join("server.toml");
-
-    std::fs::write(&server_path, server_contents).unwrap();
     let ws = ".";
     let deployment_contents = format!(
         r#"
@@ -681,7 +650,6 @@ routes = [{{ methods = ["GET"], route = "/multifile" }}]
 "#,
     );
     debug!("Deployment TOML:{deployment_contents}");
-    let deployment_path = db_dir.path().join("deployment.toml");
     std::fs::write(&deployment_path, deployment_contents).unwrap();
     (db_dir, server_path, deployment_path)
 }
@@ -851,10 +819,16 @@ impl TestServer {
                 prepared_dirs,
                 termination_watcher,
                 std::sync::Arc::new(
-                    crate::config::secret_registry::SecretRegistry::from_test_values([(
-                        "MY_SECRET".to_string(),
-                        secrecy::SecretString::from("s3cret_value"),
-                    )])
+                    crate::config::secret_registry::SecretRegistry::from_test_values([
+                        (
+                            "MY_SECRET".to_string(),
+                            secrecy::SecretString::from("s3cret_value"),
+                        ),
+                        (
+                            "VM_SECRET".to_string(),
+                            secrecy::SecretString::from("swordfish"),
+                        ),
+                    ])
                     .with_public_env([
                         "PATH".to_string(),
                         "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_string(),
@@ -1450,9 +1424,22 @@ async fn api_auth_should_deny_unauthenticated_requests() {
 async fn deploy_local_wasm_to_empty_server() {
     let server = TestServer::start_empty(test_addr!(78)).await;
 
-    let fixture = crate::command::test_support::target_aware_deployment_fixture(
+    let fixture = crate::command::test_support::target_aware_deployment_fixture_from_text(
         &get_workspace_dir(),
-        "deployment-testing-wasm-local.toml",
+        r#"[[activity_wasm]]
+name = "test_programs_fibo_activity"
+location = "target/wasm-cache/test_programs_fibo_activity.wasm"
+max_retries = 0
+
+[[workflow_wasm]]
+name = "test_programs_fibo_workflow"
+location = "target/wasm-cache/test_programs_fibo_workflow_component.wasm"
+
+[[webhook_endpoint_wasm]]
+name = "test_programs_fibo_webhook"
+location = "target/wasm-cache/test_programs_fibo_webhook.wasm"
+routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+"#,
     )
     .await
     .unwrap();

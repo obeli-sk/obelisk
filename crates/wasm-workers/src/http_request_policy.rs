@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 use tracing::{debug, trace};
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
+use worker_common::SecretResolver;
 
 /// Where in the outgoing request placeholders are replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -491,7 +492,7 @@ fn request_match_input(uri: &hyper::Uri, method: &Method) -> Option<String> {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum PolicyError {
+pub enum PolicyError {
     #[error("outgoing HTTP request has no host in URI: {0}")]
     RequestHasNoHost(Uri),
     #[error("outgoing HTTP request {request_url} denied by {denied_by}")]
@@ -507,7 +508,7 @@ pub(crate) enum PolicyError {
 }
 
 #[derive(Clone, Copy, Debug, derive_more::Display)]
-pub(crate) enum PolicyLayer {
+pub enum PolicyLayer {
     #[display("deployment.toml component policy")]
     Component,
     #[display("server.toml outbound HTTP allowlist")]
@@ -533,7 +534,7 @@ impl From<PolicyError> for ErrorCode {
 impl HttpRequestPolicy {
     /// Check if a host is allowed and perform secret placeholder replacement in headers and query parameters.
     /// Returns the (possibly modified) request, or an error if the host is denied.
-    pub(crate) fn apply(
+    pub fn apply(
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) -> Result<(), PolicyError> {
@@ -673,7 +674,7 @@ impl HttpRequestPolicy {
     /// Perform async body replacement on a request.
     /// Must be called after `apply()` (which handles headers and params synchronously).
     /// Buffers the body, replaces placeholders in text content types, and re-wraps.
-    pub(crate) async fn apply_body_replacement(
+    pub async fn apply_body_replacement(
         &self,
         request: &mut hyper::Request<wasmtime_wasi_http::p2::body::HyperOutgoingBody>,
     ) {
@@ -751,12 +752,6 @@ pub fn generate_placeholder() -> String {
 /// verified config. The main crate supplies a `RestrictedSecretRegistry` scoped
 /// to the subset of names a component declared. Env-backed today, Vault-backed
 /// later, hence resolution stays out of the verify/startup path.
-pub trait SecretResolver: Send + Sync + fmt::Debug {
-    /// Return the secret value for `name`, or `None` when the name is unknown or
-    /// not visible to this (restricted) resolver.
-    fn secret_lookup(&self, name: &str) -> Option<SecretString>;
-}
-
 /// A resolver that knows no secrets. Used where a component declares none and in
 /// tests that never inject secret values.
 #[derive(Clone, Copy, Debug)]

@@ -297,6 +297,9 @@ pub(super) fn preflight(
         for activity in &deployment.activities_js {
             check("activity_js", &activity.name, &activity.allowed_hosts);
         }
+        for activity in &deployment.activities_vm {
+            check("activity_vm", &activity.name, &activity.allowed_hosts);
+        }
         for webhook in &deployment.webhooks_wasm {
             check(
                 "webhook_endpoint_wasm",
@@ -420,6 +423,7 @@ pub(super) fn deployment_allowed_host_lists(
     let mut lists: Vec<&[AllowedHostToml]> = Vec::new();
     lists.extend(deployment.activities_wasm.iter().map(|c| &*c.allowed_hosts));
     lists.extend(deployment.activities_js.iter().map(|c| &*c.allowed_hosts));
+    lists.extend(deployment.activities_vm.iter().map(|c| &*c.allowed_hosts));
     lists.extend(deployment.webhooks_wasm.iter().map(|c| &*c.allowed_hosts));
     lists.extend(deployment.webhooks_js.iter().map(|c| &*c.allowed_hosts));
     lists
@@ -437,6 +441,13 @@ pub(super) fn collect_deployment_unregistered_secrets(
     }
     for exec in &deployment.activities_exec {
         for name in &exec.secrets {
+            if secret_registry.secret_lookup(name).is_none() {
+                unregistered.insert(name.clone());
+            }
+        }
+    }
+    for vm in &deployment.activities_vm {
+        for name in &vm.exposed_secrets {
             if secret_registry.secret_lookup(name).is_none() {
                 unregistered.insert(name.clone());
             }

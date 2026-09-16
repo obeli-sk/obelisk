@@ -275,7 +275,8 @@ fn find_component_for_push(
                 },
             })
         }
-        other @ (TomlComponentType::ActivityExternal
+        other @ (TomlComponentType::ActivityVm
+        | TomlComponentType::ActivityExternal
         | TomlComponentType::ActivityStub
         | TomlComponentType::Cron) => {
             bail!("component type `{other}` does not support push")
@@ -427,8 +428,10 @@ async fn add_component_from_oci(
                 info!("Fetched exec OCI image, manifest_digest: {manifest_digest}");
                 (Some(manifest_digest), Some(content_digest))
             }
-            TomlComponentType::ActivityExternal | TomlComponentType::ActivityStub => {
-                bail!("external and stub activity types cannot be pushed to an oci registry")
+            TomlComponentType::ActivityVm
+            | TomlComponentType::ActivityExternal
+            | TomlComponentType::ActivityStub => {
+                bail!("VM, external and stub activity types cannot be pushed to an oci registry")
             }
             TomlComponentType::Cron => {
                 bail!("cron type cannot be pushed to an oci registry")

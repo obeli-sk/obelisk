@@ -1,0 +1,72 @@
+# Linux VM activity MVP
+
+[[activity_vm]]
+ffqn = "testing:vm/echo.greet"
+params = [{ name = "name", type = "string" }]
+content = '''#!/usr/bin/env bash
+name="$1"
+name="${name#\"}"
+name="${name%\"}"
+echo "\"Hello, $name\""
+'''
+return_type = "result<string, string>"
+store_paths = [
+  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+]
+
+[[activity_vm]]
+ffqn = "testing:vm/emubench.run"
+entrypoint = [
+  "emubench",
+  "all",
+]
+store_paths = [
+  "/nix/store/vk1ih0la8pfs92v8cy5vkv48kgmi14db-trynix-emubench-static-x86_64-unknown-linux-musl-1",
+]
+nixos_cache.enabled = false
+[[activity_vm.nix_cache]]
+url = "https://trynix.dev/examples/cache"
+public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
+
+[[activity_vm]]
+ffqn = "testing:vm/http.run"
+params = [{ name = "command", type = "string" }]
+content = '''#!/usr/bin/env bash
+command="$1"
+command="${command#\"}"
+command="${command%\"}"
+echo "got command $command"
+bash -c "$command"
+'''
+store_paths = [
+  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+  "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
+]
+[[activity_vm.allowed_host]]
+pattern = "*://*:*"
+methods = ["GET"]
+secrets = ["VM_SECRET"]
+replace_in = ["headers"]
+
+[[activity_vm]]
+ffqn = "testing:vm/stdin.run"
+content = '''#!/usr/bin/env bash
+set -eu
+input=$(cat)
+case "$input:$VM_SECRET:$VM_MODE" in
+  '{"params":["payload"]}:swordfish:testing')
+    printf '%s\n' '"stdin-and-secret"'
+    ;;
+  *)
+    printf '%s\n' '"unexpected stdin"'
+    exit 1
+    ;;
+esac
+'''
+params = [{ name = "input", type = "string" }]
+return_type = "result<string, string>"
+params_via_stdin = true
+exposed_secrets = ["VM_SECRET"]
+env_vars = [{ key = "VM_MODE", value = "testing" }]
+store_paths = ["/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15"]
+

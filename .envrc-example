@@ -14,3 +14,4 @@ export TEST_POSTGRES_PASSWORD="postgres"
 export TEST_POSTGRES_DATABASE_PREFIX="obelisk_test"
 #
 export MY_SECRET="foo"
+export VM_SECRET_VALUE="foo"

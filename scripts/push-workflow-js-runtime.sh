@@ -21,8 +21,9 @@ OUTPUT_FILE="${2:-crates/embedded-assets/workflow-js-runtime-version.txt}"
 cargo check --package workflow-js-runtime-builder # triggers build.rs of workflow-js-runtime-builder
 
 if [ "$TAG" != "dry-run" ]; then
-    STRIPPED="target/wasm-cache/workflow_js_runtime_component.stripped.wasm"
-    wasm-tools strip --all "target/wasm-cache/workflow_js_runtime_component.wasm" -o "$STRIPPED"
+    CARGO_TARGET_ROOT=${CARGO_TARGET_DIR:-target}
+    STRIPPED="$CARGO_TARGET_ROOT/wasm-cache/workflow_js_runtime_component.stripped.wasm"
+    wasm-tools strip --all "$CARGO_TARGET_ROOT/wasm-cache/workflow_js_runtime_component.wasm" -o "$STRIPPED"
     TMP_TOML="workflow-deployment-for-push.toml"
     trap "rm -f $TMP_TOML" EXIT
     cat > "$TMP_TOML" <<EOF

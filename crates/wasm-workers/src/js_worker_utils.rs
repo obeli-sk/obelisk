@@ -11,7 +11,7 @@ use concepts::{
 use executor::worker::{FatalError, WorkerError};
 use val_json::type_wrapper::TypeWrapper;
 
-pub(crate) fn map_ok_variant(
+pub fn map_ok_variant(
     val: Option<serde_json::Value>,
     user_return_type: &ReturnTypeExtendable,
     version: Version,
@@ -37,7 +37,7 @@ pub(crate) fn map_ok_variant_fatal(
     )
 }
 
-pub(crate) fn map_err_variant(
+pub fn map_err_variant(
     val: Option<serde_json::Value>,
     user_return_type: &ReturnTypeExtendable,
     version: Version,

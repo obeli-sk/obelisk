@@ -1,0 +1,8 @@
+[[outbound_http.allowed_host]]
+pattern = "*://*:*"
+methods = ["GET"]
+secrets = ["VM_SECRET"]
+replace_in = ["headers"]
+
+[secrets]
+VM_SECRET = { env = "VM_SECRET_VALUE" }

@@ -18,21 +18,12 @@ use executor::worker::{
     FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
 };
 use secrecy::{ExposeSecret, SecretString};
-use std::sync::Arc;
-use std::{io::ErrorKind, path::PathBuf};
+use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 use utils::wasm_tools::WasmComponent;
-
-/// Exec-activity secrets: the declared names plus the component-scoped resolver
-/// that supplies their values at spawn time. Values are never baked into the
-/// verified config; they are fetched by name when the child's stdin is assembled.
-#[derive(Debug, Clone)]
-pub struct ExecSecrets {
-    pub names: Vec<String>,
-    pub resolver: Arc<dyn crate::http_request_policy::SecretResolver>,
-}
+use worker_common::ExecSecrets;
 
 /// Compiled exec activity. No WASM engine needed.
 pub struct ActivityExecWorkerCompiled {
