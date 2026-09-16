@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/activity-vm-runtime:experimental-bochs-nftables-2026-09-15-5@sha256:75f38f1a208fbbd16887e38dbd033b315e3ce3c39167b4c0e054a8417d34b4b2
+oci://docker.io/getobelisk/qemu-wasmtime-jit@sha256:1b5b60ecb807d1cbcb16eb2605bc2e0c5b4212b3713561e2ecb436a57bb73455

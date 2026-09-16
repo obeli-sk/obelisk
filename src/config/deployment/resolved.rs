@@ -763,6 +763,7 @@ pub(crate) trait ActivityVmComponentConfigResolvedExt {
     async fn fetch_and_verify(
         self,
         runtime: &Path,
+        qemu_runtime: Option<&activity_vm_runner::QemuRuntimeConfig>,
         wasm_cache_dir: &Path,
         global_http_config: &GlobalHttpConfig,
         ignore_missing_env_vars: bool,
@@ -775,6 +776,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
     async fn fetch_and_verify(
         self,
         runtime: &Path,
+        qemu_runtime: Option<&activity_vm_runner::QemuRuntimeConfig>,
         wasm_cache_dir: &Path,
         global_http_config: &GlobalHttpConfig,
         ignore_missing_env_vars: bool,
@@ -944,6 +946,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
         )?;
         Ok(ActivityVmConfigVerified {
             runtime: runtime.to_owned(),
+            qemu_runtime: qemu_runtime.cloned(),
             source_location,
             entrypoint,
             path,
@@ -959,6 +962,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
 #[derive(Debug)]
 pub(crate) struct ActivityVmConfigVerified {
     pub(crate) runtime: PathBuf,
+    pub(crate) qemu_runtime: Option<activity_vm_runner::QemuRuntimeConfig>,
     pub(crate) source_location: Option<(PathBuf, String)>,
     pub(crate) entrypoint: Option<Vec<String>>,
     pub(crate) path: String,

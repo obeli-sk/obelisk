@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use concepts::storage::http_client_trace::HttpClientTrace;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
@@ -163,6 +163,12 @@ pub struct MapDir {
     permissions: FsPerms,
 }
 
+#[derive(Clone, Debug)]
+pub struct QemuRuntimeConfig {
+    pub args: Vec<String>,
+    pub image_dir: PathBuf,
+}
+
 impl MapDir {
     #[must_use]
     pub fn read_only(host: PathBuf, guest: String) -> Self {
@@ -188,6 +194,7 @@ pub async fn execute(
     engine: &Engine,
     module: Module,
     mut mapdirs: Vec<MapDir>,
+    qemu_runtime: Option<QemuRuntimeConfig>,
     guest_args: Vec<String>,
     mut env: HashMap<String, String>,
     stdin: Option<Vec<u8>>,
@@ -200,6 +207,13 @@ pub async fn execute(
     tracing::debug!("Preparing activity VM execution");
     let is_qemu = qemu_memory_type(&module)?.is_some();
     let is_legacy_qemu = legacy_fd::is_required(&module);
+    if let Some(runtime) = &qemu_runtime {
+        ensure!(is_qemu, "QEMU runtime configuration requires a QEMU module");
+        mapdirs.push(MapDir::read_only(
+            runtime.image_dir.clone(),
+            "/image".to_owned(),
+        ));
+    }
     let queue = tempfile::tempdir()?;
     tokio::fs::write(
         queue.path().join("http-guest.sh"),
@@ -217,7 +231,7 @@ pub async fn execute(
         queue.path().to_owned(),
         "/obelisk-activity-vm-http".to_owned(),
     ));
-    let qemu_pack = if is_qemu && !is_legacy_qemu {
+    let qemu_pack = if is_qemu && (qemu_runtime.is_some() || !is_legacy_qemu) {
         let pack = tempfile::tempdir()?;
         tokio::fs::write(
             pack.path().join("info"),
@@ -232,7 +246,9 @@ pub async fn execute(
     } else {
         None
     };
-    let module_args = if is_qemu && !is_legacy_qemu {
+    let module_args = if let Some(runtime) = qemu_runtime {
+        runtime.args
+    } else if is_qemu && !is_legacy_qemu {
         qemu_args()?
     } else {
         guest_args
@@ -681,7 +697,10 @@ fn run_module(
         });
     }
     let call_result = if let Some(start) = start {
-        if instance.get_func(&mut store, "asyncify_get_state").is_some() {
+        if instance
+            .get_func(&mut store, "asyncify_get_state")
+            .is_some()
+        {
             emscripten::call_asyncify_root(&mut store, &instance, &start)
         } else {
             start.call(&mut store, ())

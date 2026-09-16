@@ -244,9 +244,7 @@ impl LegacyFdTable {
         if path.starts_with('/') || dirfd == AT_FDCWD {
             return self.open(path, flags);
         }
-        if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0
-            || flags & O_ACCMODE != O_RDONLY
-        {
+        if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0 || flags & O_ACCMODE != O_RDONLY {
             return Err(ERRNO_NOTCAPABLE);
         }
         let base = {
@@ -299,9 +297,17 @@ impl LegacyFdTable {
         else {
             return Err(ERRNO_BADF);
         };
-        let mut entries = vec![(".".to_owned(), 4_u8, path.metadata().map_err(|e| io_errno(&e))?.ino())];
+        let mut entries = vec![(
+            ".".to_owned(),
+            4_u8,
+            path.metadata().map_err(|e| io_errno(&e))?.ino(),
+        )];
         let parent = path.parent().unwrap_or(path);
-        entries.push(("..".to_owned(), 4, parent.metadata().map_err(|e| io_errno(&e))?.ino()));
+        entries.push((
+            "..".to_owned(),
+            4,
+            parent.metadata().map_err(|e| io_errno(&e))?.ino(),
+        ));
         let read_dir = std::fs::read_dir(path).map_err(|error| io_errno(&error))?;
         for entry in read_dir {
             let entry = entry.map_err(|error| io_errno(&error))?;
@@ -313,17 +319,24 @@ impl LegacyFdTable {
             } else {
                 8
             };
-            entries.push((entry.file_name().to_string_lossy().into_owned(), kind, metadata.ino()));
+            entries.push((
+                entry.file_name().to_string_lossy().into_owned(),
+                kind,
+                metadata.ino(),
+            ));
         }
         entries[2..].sort_unstable_by(|left, right| left.0.cmp(&right.0));
         let capacity = output.len() / RECORD_SIZE;
         let start = *directory_offset;
         let end = entries.len().min(start.saturating_add(capacity));
-        for (slot, (index, (name, kind, inode))) in entries[start..end].iter().enumerate().enumerate() {
+        for (slot, (index, (name, kind, inode))) in
+            entries[start..end].iter().enumerate().enumerate()
+        {
             let record = &mut output[slot * RECORD_SIZE..(slot + 1) * RECORD_SIZE];
             record.fill(0);
             record[0..8].copy_from_slice(&inode.to_le_bytes());
-            record[8..16].copy_from_slice(&(((start + index + 1) * RECORD_SIZE) as i64).to_le_bytes());
+            record[8..16]
+                .copy_from_slice(&(((start + index + 1) * RECORD_SIZE) as i64).to_le_bytes());
             record[16..18].copy_from_slice(&(RECORD_SIZE as u16).to_le_bytes());
             record[18] = *kind;
             let bytes = name.as_bytes();
@@ -671,9 +684,7 @@ impl LegacyFdTable {
             }
         };
         let path = base.join(path);
-        let canonical = path
-            .canonicalize()
-            .map_err(|_| ERRNO_NOENT)?;
+        let canonical = path.canonicalize().map_err(|_| ERRNO_NOENT)?;
         if !self
             .mounts
             .iter()
@@ -1421,9 +1432,12 @@ fn dispatch_proxy(
             }
         }
         19 => {
-            let count = usize::try_from(arg(2)?).map_err(|_| "negative getdents size".to_owned())?;
+            let count =
+                usize::try_from(arg(2)?).map_err(|_| "negative getdents size".to_owned())?;
             let mut bytes = vec![0; count];
-            let length = table.getdents(arg(0)?, &mut bytes).map_err(|errno| errno.to_string())?;
+            let length = table
+                .getdents(arg(0)?, &mut bytes)
+                .map_err(|errno| errno.to_string())?;
             write_memory(caller, arg(1)?, &bytes[..length]).map_err(|errno| errno.to_string())?;
             return Ok(length as i32);
         }

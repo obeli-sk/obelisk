@@ -1,5 +1,6 @@
 pub(crate) mod activity_vm_nix;
 mod activity_vm_runtime;
+mod qemu_bundle_cache;
 mod config_prepass;
 mod maintenance_gc;
 pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
@@ -4642,11 +4643,13 @@ impl DeploymentVerified {
                 }
                 let mut activities_vm_verified =
                     Vec::with_capacity(deployment.activities_vm.len());
-                if let Some(runtime) = activity_vm_runtime.as_deref() {
+                if let Some(runtime) = activity_vm_runtime.as_ref() {
+                    let qemu_runtime = runtime.qemu_config()?;
                     for activity_vm in deployment.activities_vm {
                         activities_vm_verified.push(
                             activity_vm.fetch_and_verify(
-                                runtime,
+                                runtime.module(),
+                                qemu_runtime.as_ref(),
                                 &wasm_cache_dir,
                                 &global_http_config,
                                 ignore_missing_env_vars,
@@ -4885,11 +4888,12 @@ async fn compile_and_link(
             let module = activity_vm_module
                 .clone()
                 .expect("activity VM module exists when VM activities exist");
+            let qemu_config = activity_vm.qemu_runtime.clone();
             let parent_span = parent_span.clone();
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_vm_compile", component_id = %activity_vm.component_id());
                 span.in_scope(|| {
-                    prespawn_activity_vm(activity_vm, engine, module).map(|(worker, component_config)| {
+                    prespawn_activity_vm(activity_vm, engine, module, qemu_config).map(|(worker, component_config)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -5494,6 +5498,7 @@ fn prespawn_activity_vm(
     activity_vm: ActivityVmConfigVerified,
     engine: Arc<wasmtime::Engine>,
     module: wasmtime::Module,
+    qemu_runtime: Option<activity_vm_runner::QemuRuntimeConfig>,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity_vm.component_id().clone();
     let path = activity_vm.path;
@@ -5546,6 +5551,7 @@ fn prespawn_activity_vm(
         module,
         engine,
         mapdirs,
+        qemu_runtime,
         guest_args,
         activity_vm.policy_spec,
         activity.secrets,

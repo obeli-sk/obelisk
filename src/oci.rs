@@ -547,7 +547,9 @@ fn extract_component_metadata(
         .and_then(|json| serde_json::from_str(json).ok())
 }
 
-fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAuth, anyhow::Error> {
+pub(crate) fn get_oci_auth(
+    reference: &Reference,
+) -> Result<oci_client::secrets::RegistryAuth, anyhow::Error> {
     /// Translate the registry into a key for the auth lookup.
     fn get_docker_config_auth_key(reference: &Reference) -> &str {
         match reference.resolve_registry() {
@@ -734,7 +736,7 @@ pub(crate) async fn push_exec(
 /// Pull a single blob layer to a local file, verifying the sha256 digest.
 /// Writes atomically via a temp file to avoid partial reads.
 #[instrument(skip_all, fields(%image))]
-async fn pull_blob_to_file(
+pub(crate) async fn pull_blob_to_file(
     client: &oci_client::Client,
     image: &Reference,
     dest_path: &Path,

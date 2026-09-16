@@ -48,6 +48,7 @@ directories.workspace = true
 docker_credential.workspace = true
 ed25519-dalek.workspace = true
 futures-util.workspace = true
+flate2.workspace = true
 hashbrown.workspace = true
 http.workspace = true
 indexmap.workspace = true
@@ -73,6 +74,7 @@ sha2.workspace = true
 subtle.workspace = true
 strum.workspace = true
 tempfile.workspace = true
+tar.workspace = true
 thiserror.workspace = true
 tokio-stream.workspace = true
 tokio.workspace = true
@@ -300,6 +302,7 @@ futures = { version = "0.3.34", default-features = false }
 futures-concurrency = "7.7.1"
 futures-lite = "2.6.1"
 futures-util = "0.3.34"
+flate2 = "1"
 getrandom = "0.4"
 hashbrown = { version = "0.17.1", features = ["serde"] }
 hdrhistogram = { version = "7.6.0", default-features = false }
@@ -357,6 +360,7 @@ subtle = "2.6.1"
 strum = { version = "0.28.0", features = ["derive"] }
 syn = { version = "3", features = ["full"] }
 tempfile = "3.27"
+tar = "0.4"
 thiserror = "2.0"
 tokio-postgres = { version = "0.7.18", features = ["with-chrono-0_4", "with-serde_json-1"] }
 tokio = { version = "1", features = [

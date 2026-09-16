@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
         &engine,
         module,
         mapdirs,
+        None,
         guest_args,
         placeholders.into_iter().collect(),
         None,

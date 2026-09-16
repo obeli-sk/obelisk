@@ -808,7 +808,12 @@ fn read_instance_i32(
     instance: &Instance,
     address: i32,
 ) -> wasmtime::Result<i32> {
-    let imported = store.data().qemu_jit.memory.clone().map(|memory| memory.as_extern());
+    let imported = store
+        .data()
+        .qemu_jit
+        .memory
+        .clone()
+        .map(|memory| memory.as_extern());
     let memory = imported
         .or_else(|| instance.get_export(&mut *store, "memory"))
         .ok_or_else(|| wasmtime::Error::msg("missing Emscripten memory import"))?;
@@ -821,7 +826,12 @@ fn write_instance_i32(
     address: i32,
     value: i32,
 ) -> wasmtime::Result<()> {
-    let imported = store.data().qemu_jit.memory.clone().map(|memory| memory.as_extern());
+    let imported = store
+        .data()
+        .qemu_jit
+        .memory
+        .clone()
+        .map(|memory| memory.as_extern());
     let memory = imported
         .or_else(|| instance.get_export(&mut *store, "memory"))
         .ok_or_else(|| wasmtime::Error::msg("missing Emscripten memory import"))?;
@@ -1012,11 +1022,7 @@ fn invoke<T>(
         .get_export("stackSave")
         .or_else(|| caller.get_export("emscripten_stack_get_current"))
         .and_then(Extern::into_func)
-        .map(|function| {
-            function
-                .typed::<(), i32>(&*caller)?
-                .call(&mut *caller, ())
-        })
+        .map(|function| function.typed::<(), i32>(&*caller)?.call(&mut *caller, ()))
         .transpose()?;
     let table_index = params
         .first()
