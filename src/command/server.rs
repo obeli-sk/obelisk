@@ -1,8 +1,8 @@
 pub(crate) mod activity_vm_nix;
 mod activity_vm_runtime;
-mod qemu_bundle_cache;
 mod config_prepass;
 mod maintenance_gc;
+mod qemu_bundle_cache;
 pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
 
 use crate::ServerStartup;
@@ -5521,12 +5521,17 @@ fn prespawn_activity_vm(
             activity_vm_runner::MapDir::read_only(store_path, format!("/nix/store/{basename}"))
         })
         .collect::<Vec<_>>();
-    let mut guest_args = vec![
-        "-no-stdin".to_owned(),
+    let mut guest_args = Vec::with_capacity(4);
+    if qemu_runtime.is_none() {
+        // This is a Wasmtime CLI option understood by the legacy Bochs
+        // runtime, not a Linux guest argument.
+        guest_args.push("-no-stdin".to_owned());
+    }
+    guest_args.extend([
         "/bin/sh".to_owned(),
         "/obelisk-activity-vm-http/http-guest.sh".to_owned(),
         "*".to_owned(),
-    ];
+    ]);
     match (activity_vm.entrypoint, activity_vm.source_location) {
         (Some(entrypoint), None) => {
             guest_args.push("--entrypoint".to_owned());

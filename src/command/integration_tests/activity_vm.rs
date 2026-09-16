@@ -31,17 +31,12 @@ async fn echo() {
     let deployment_toml = r#"[[activity_vm]]
 exec.lock_expiry.seconds = 300
 ffqn = "testing:vm/echo.run"
-content = '''#!/usr/bin/env bash
-printf '"'
-hello | tr -d '\n'
-printf '"\n'
+content = '''#!/bin/sh
+/bin/echo '"Hello, world!"'
 '''
 params = []
 return_type = "result<string, string>"
-store_paths = [
-  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
-  "/nix/store/xl1h9i29pgq2q5cszjhm5wpfxfbbqwyi-hello-2.12.3",
-]
+store_paths = []
 "#
     .to_string();
     activity_vm_case(

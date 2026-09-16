@@ -67,11 +67,18 @@ async fn main() -> anyhow::Result<()> {
     }
     let engine = Engine::new(&engine_config)?;
     let module = obelisk_activity_vm_runner::compile(&engine, &module_path)?;
+    let qemu_runtime = std::env::var_os("OBELISK_QEMU_IMAGE_DIR")
+        .map(PathBuf::from)
+        .map(|image_dir| -> anyhow::Result<_> {
+            let args = serde_json::from_slice(&std::fs::read(image_dir.join("../args.json"))?)?;
+            Ok(obelisk_activity_vm_runner::QemuRuntimeConfig { args, image_dir })
+        })
+        .transpose()?;
     let output = obelisk_activity_vm_runner::execute(
         &engine,
         module,
         mapdirs,
-        None,
+        qemu_runtime,
         guest_args,
         placeholders.into_iter().collect(),
         None,

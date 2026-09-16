@@ -207,13 +207,18 @@ impl Engines {
         Self::get_activity_engine_internal(config)
     }
 
-    fn get_activity_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+    fn get_activity_engine_internal(mut config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
         // The QEMU activity runtime imports a shared linear memory for its
         // Emscripten pthread workers and dynamically compiled translation
         // blocks. Wasmtime rejects that memory at instantiation unless shared
         // memory support is enabled on the engine itself.
         wasmtime_config.shared_memory(true);
+        // QEMU appends dynamically compiled translation blocks to its
+        // function table. The pooling allocator's fixed per-table capacity
+        // can be exhausted by a single VM, so activity VMs require the
+        // on-demand allocator even when other worker engines use pooling.
+        config.pooling_config = PoolingConfig::OnDemand;
         Self::configure_common(wasmtime_config, config, AsyncSupport::Disable)
     }
 
@@ -280,5 +285,25 @@ mod tests {
 
         SharedMemory::new(&engine, MemoryType::shared(1, 1))
             .expect("activity VM engine must support QEMU shared memory");
+    }
+
+    #[test]
+    fn activity_vm_engine_does_not_apply_pooling_table_capacity() {
+        let engine = Engines::get_activity_vm_engine_test(EngineConfig::pooling_nocache_testing(
+            PoolingOptions::default(),
+        ))
+        .expect("create activity VM engine");
+        let module = wasmtime::Module::new(
+            &engine,
+            "(module (table (export \"table\") 9002 100000 funcref))",
+        )
+        .unwrap();
+        let mut store = wasmtime::Store::new(&engine, ());
+        let instance = wasmtime::Instance::new(&mut store, &module, &[]).unwrap();
+        let table = instance.get_table(&mut store, "table").unwrap();
+
+        table
+            .grow(&mut store, 20_000, wasmtime::Ref::Func(None))
+            .expect("QEMU table must grow beyond the pooling default");
     }
 }

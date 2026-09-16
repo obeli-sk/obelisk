@@ -1599,10 +1599,6 @@ pub(crate) async fn resolve_local_refs(
             a.component_files.is_empty(),
             "activity_vm component_files contains files not selected by its WIT"
         );
-        ensure!(
-            !a.store_paths.is_empty(),
-            "activity_vm requires store_paths"
-        );
         for path in &a.store_paths {
             ensure!(
                 path.starts_with("/nix/store/") && !path[11..].contains('/'),

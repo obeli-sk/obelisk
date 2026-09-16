@@ -317,7 +317,7 @@ fn cannot_instantiate(
     WorkerError::FatalError(
         FatalError::CannotInstantiate {
             reason: reason.to_owned(),
-            detail: Some(error.to_string()),
+            detail: Some(format!("{error:#}")),
         },
         version.clone(),
     )

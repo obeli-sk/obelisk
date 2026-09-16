@@ -7,6 +7,14 @@ use wasmtime::{
     Caller, Extern, ExternType, Instance, Linker, Memory, Module, Ref, SharedMemory, TypedFunc,
 };
 
+macro_rules! eprintln {
+    ($($argument:tt)*) => {
+        if std::env::var_os("OBELISK_QEMU_TRACE").is_some() {
+            std::eprintln!($($argument)*);
+        }
+    };
+}
+
 #[derive(Clone)]
 pub(crate) enum QemuMemory {
     Plain(Memory),

@@ -1,6 +1,6 @@
 use anyhow::{Context, ensure};
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
@@ -8,6 +8,14 @@ use std::time::{Duration, Instant};
 use wasmtime::{Caller, Extern, Linker, Module};
 
 use crate::{MapDir, VmState};
+
+macro_rules! eprintln {
+    ($($argument:tt)*) => {
+        if std::env::var_os("OBELISK_QEMU_TRACE").is_some() {
+            std::eprintln!($($argument)*);
+        }
+    };
+}
 
 const AT_FDCWD: i32 = -100;
 const O_ACCMODE: i32 = 3;
@@ -20,6 +28,9 @@ const O_APPEND: i32 = 1024;
 const ERRNO_BADF: i32 = 8;
 const ERRNO_INVAL: i32 = 28;
 const ERRNO_IO: i32 = 29;
+// Emscripten translates the WASI errno returned by the host import to the
+// corresponding Linux errno visible to QEMU. WASI ENOENT (44) becomes Linux
+// ENOENT (2).
 const ERRNO_NOENT: i32 = 44;
 const ERRNO_NOTCAPABLE: i32 = 76;
 const ERRNO_NOTTY: i32 = 59;
@@ -44,6 +55,10 @@ enum Descriptor {
         writable: bool,
         directory_offset: usize,
     },
+    VirtualDir {
+        guest: String,
+        directory_offset: usize,
+    },
     TtyInput,
     TtyOutput,
     PipeRead(u32),
@@ -63,6 +78,7 @@ struct Descriptors {
     entries: HashMap<i32, Descriptor>,
     pipes: HashMap<u32, Pipe>,
     tty_input: VecDeque<u8>,
+    pending_tty_input: Vec<u8>,
     tty_output: Vec<u8>,
     handshake_sent: bool,
     status_flags: HashMap<i32, i32>,
@@ -100,6 +116,31 @@ struct LegacyStat {
 }
 
 impl LegacyFdTable {
+    fn is_virtual_dir(&self, guest: &str) -> bool {
+        self.mounts.iter().any(|mount| {
+            mount.guest != guest
+                && mount
+                    .guest
+                    .strip_prefix(guest)
+                    .is_some_and(|rest| guest == "/" || rest.starts_with('/'))
+        })
+    }
+
+    fn virtual_entries(&self, guest: &str) -> Vec<String> {
+        let mut entries = self
+            .mounts
+            .iter()
+            .filter_map(|mount| {
+                let rest = mount.guest.strip_prefix(guest)?;
+                let rest = rest.trim_start_matches('/');
+                (!rest.is_empty()).then(|| rest.split('/').next().unwrap().to_owned())
+            })
+            .collect::<Vec<_>>();
+        entries.sort_unstable();
+        entries.dedup();
+        entries
+    }
+
     pub(crate) fn new(mapdirs: &[MapDir]) -> anyhow::Result<Arc<Self>> {
         let mut mounts = mapdirs
             .iter()
@@ -128,6 +169,7 @@ impl LegacyFdTable {
                 ]),
                 pipes: HashMap::new(),
                 tty_input: VecDeque::new(),
+                pending_tty_input: Vec::new(),
                 tty_output: Vec::new(),
                 handshake_sent: false,
                 status_flags: HashMap::from([(0, 0), (1, 1), (2, 1)]),
@@ -152,6 +194,9 @@ impl LegacyFdTable {
             .strip_prefix(&mount.guest)
             .unwrap()
             .trim_start_matches('/');
+        if relative.is_empty() {
+            return Ok((mount, mount.host.clone()));
+        }
         let path = mount.host.join(relative);
         let canonical = path
             .canonicalize()
@@ -179,6 +224,9 @@ impl LegacyFdTable {
             .strip_prefix(&mount.guest)
             .unwrap()
             .trim_start_matches('/');
+        if relative.is_empty() {
+            return Ok((mount, mount.host.clone()));
+        }
         let path = mount.host.join(relative);
         let parent = path.parent().context("legacy path has no parent")?;
         let canonical_parent = parent
@@ -205,17 +253,63 @@ impl LegacyFdTable {
             descriptors.entries.insert(fd, Descriptor::Random);
             return Ok(fd);
         }
-        if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0 {
+        let guest = normalize_absolute(path).map_err(fs_errno)?;
+        if self.is_virtual_dir(&guest) {
+            if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0 || flags & O_ACCMODE != O_RDONLY
+            {
+                return Err(ERRNO_NOTCAPABLE);
+            }
+            let mut descriptors = self
+                .descriptors
+                .lock()
+                .expect("legacy fd table mutex poisoned");
+            let fd = allocate_fd(&mut descriptors);
+            descriptors.entries.insert(
+                fd,
+                Descriptor::VirtualDir {
+                    guest,
+                    directory_offset: 0,
+                },
+            );
+            descriptors.status_flags.insert(fd, flags);
+            return Ok(fd);
+        }
+        if !self.mounts.iter().any(|mount| {
+            guest == mount.guest
+                || guest
+                    .strip_prefix(&mount.guest)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        }) {
+            return Err(ERRNO_NOENT);
+        }
+        if flags & O_ACCMODE > 2 {
             return Err(ERRNO_NOTCAPABLE);
         }
-        if flags & O_ACCMODE != O_RDONLY {
-            return Err(ERRNO_NOTCAPABLE);
+        let creating = flags & O_CREAT != 0;
+        let (mount, path) = if creating {
+            self.resolve_unfollowed(path)
+        } else {
+            self.resolve_existing(path)
         }
-        let (mount, path) = self.resolve_existing(path).map_err(|error| {
+        .map_err(|error| {
             eprintln!("legacy fd resolve failed: {error:#}");
             fs_errno(error)
         })?;
-        let file = File::open(&path).map_err(|error| {
+        let mutating = flags & (O_CREAT | O_TRUNC | O_APPEND) != 0;
+        if mutating && !mount.writable {
+            return Err(ERRNO_NOTCAPABLE);
+        }
+        let requested_write = flags & O_ACCMODE != O_RDONLY || mutating;
+        let host_writable = requested_write && mount.writable;
+        let mut options = OpenOptions::new();
+        options
+            .read(flags & O_ACCMODE != 1)
+            .write(host_writable)
+            .create(creating)
+            .create_new(creating && flags & O_EXCL != 0)
+            .truncate(flags & O_TRUNC != 0)
+            .append(flags & O_APPEND != 0);
+        let file = options.open(&path).map_err(|error| {
             eprintln!("legacy fd host open {} failed: {error}", path.display());
             io_errno(&error)
         })?;
@@ -230,7 +324,7 @@ impl LegacyFdTable {
             Descriptor::File {
                 file,
                 path,
-                writable: mount.writable && flags & O_ACCMODE != O_RDONLY,
+                writable: host_writable,
                 directory_offset: 0,
             },
         );
@@ -244,26 +338,86 @@ impl LegacyFdTable {
         if path.starts_with('/') || dirfd == AT_FDCWD {
             return self.open(path, flags);
         }
-        if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0 || flags & O_ACCMODE != O_RDONLY {
+        if flags & O_ACCMODE > 2 {
             return Err(ERRNO_NOTCAPABLE);
+        }
+        enum Base {
+            Guest(String),
+            Host(PathBuf),
         }
         let base = {
             let descriptors = self
                 .descriptors
                 .lock()
                 .expect("legacy fd table mutex poisoned");
-            match descriptors.entries.get(&dirfd).ok_or(ERRNO_BADF)? {
-                Descriptor::File { path, .. } => path.clone(),
-                _ => return Err(ERRNO_BADF),
+            match descriptors.entries.get(&dirfd) {
+                None => {
+                    eprintln!("legacy fd openat missing dirfd={dirfd}");
+                    return Err(ERRNO_BADF);
+                }
+                Some(Descriptor::VirtualDir { guest, .. }) => Base::Guest(guest.clone()),
+                Some(Descriptor::File { path, .. }) => Base::Host(path.clone()),
+                Some(_) => {
+                    eprintln!("legacy fd openat dirfd={dirfd} is not a directory");
+                    return Err(ERRNO_BADF);
+                }
             }
         };
-        let path = base.join(path).canonicalize().map_err(|_| ERRNO_NOENT)?;
+        let base = match base {
+            Base::Host(base) => base,
+            Base::Guest(guest) => {
+                let joined = if guest == "/" {
+                    format!("/{path}")
+                } else {
+                    format!("{guest}/{path}")
+                };
+                return self.open(&joined, flags);
+            }
+        };
+        let unresolved = base.join(path);
+        let creating = flags & O_CREAT != 0;
+        let path = if creating {
+            let parent = unresolved.parent().ok_or(ERRNO_NOTCAPABLE)?;
+            let parent = parent.canonicalize().map_err(|_| ERRNO_NOENT)?;
+            parent.join(unresolved.file_name().ok_or(ERRNO_NOTCAPABLE)?)
+        } else {
+            unresolved.canonicalize().map_err(|error| {
+                eprintln!(
+                    "legacy fd openat canonicalize {} failed: {error}",
+                    unresolved.display()
+                );
+                ERRNO_NOENT
+            })?
+        };
         let mount = self
             .mounts
             .iter()
             .find(|mount| path.starts_with(&mount.host))
-            .ok_or(ERRNO_NOTCAPABLE)?;
-        let file = File::open(&path).map_err(|error| io_errno(&error))?;
+            .ok_or_else(|| {
+                eprintln!("legacy fd openat path {} escaped mounts", path.display());
+                ERRNO_NOTCAPABLE
+            })?;
+        let mutating = flags & (O_CREAT | O_TRUNC | O_APPEND) != 0;
+        if mutating && !mount.writable {
+            return Err(ERRNO_NOTCAPABLE);
+        }
+        let requested_write = flags & O_ACCMODE != O_RDONLY || mutating;
+        let host_writable = requested_write && mount.writable;
+        let mut options = OpenOptions::new();
+        options
+            .read(flags & O_ACCMODE != 1)
+            .write(host_writable)
+            .create(creating)
+            .create_new(creating && flags & O_EXCL != 0)
+            .truncate(flags & O_TRUNC != 0)
+            .append(flags & O_APPEND != 0);
+        let file = options.open(&path).map_err(|error| {
+            eprintln!(
+                "legacy fd openat host open {} failed: {error}",
+                path.display()
+            );
+            io_errno(&error)
+        })?;
         let mut descriptors = self
             .descriptors
             .lock()
@@ -274,7 +428,7 @@ impl LegacyFdTable {
             Descriptor::File {
                 file,
                 path,
-                writable: mount.writable && flags & O_ACCMODE != O_RDONLY,
+                writable: host_writable,
                 directory_offset: 0,
             },
         );
@@ -289,6 +443,31 @@ impl LegacyFdTable {
             .descriptors
             .lock()
             .expect("legacy fd table mutex poisoned");
+        if let Descriptor::VirtualDir {
+            guest,
+            directory_offset,
+        } = descriptors.entries.get_mut(&fd).ok_or(ERRNO_BADF)?
+        {
+            let mut entries = vec![".".to_owned(), "..".to_owned()];
+            entries.extend(self.virtual_entries(guest));
+            let capacity = output.len() / RECORD_SIZE;
+            let start = *directory_offset;
+            let end = entries.len().min(start.saturating_add(capacity));
+            for (slot, (index, name)) in entries[start..end].iter().enumerate().enumerate() {
+                let record = &mut output[slot * RECORD_SIZE..(slot + 1) * RECORD_SIZE];
+                record.fill(0);
+                record[0..8].copy_from_slice(&((start + index + 1) as u64).to_le_bytes());
+                record[8..16]
+                    .copy_from_slice(&(((start + index + 1) * RECORD_SIZE) as i64).to_le_bytes());
+                record[16..18].copy_from_slice(&(RECORD_SIZE as u16).to_le_bytes());
+                record[18] = 4;
+                let bytes = name.as_bytes();
+                let length = bytes.len().min(255);
+                record[19..19 + length].copy_from_slice(&bytes[..length]);
+            }
+            *directory_offset = end;
+            return Ok((end - start) * RECORD_SIZE);
+        }
         let Descriptor::File {
             path,
             directory_offset,
@@ -399,13 +578,15 @@ impl LegacyFdTable {
                 .and_then(|mut source| source.read_exact(output))
                 .map(|()| output.len())
                 .map_err(|error| io_errno(&error)),
-            Descriptor::TtyOutput | Descriptor::PipeWrite(_) => Err(ERRNO_BADF),
+            Descriptor::VirtualDir { .. } | Descriptor::TtyOutput | Descriptor::PipeWrite(_) => {
+                Err(ERRNO_BADF)
+            }
         }
     }
 
     fn pread(&self, fd: i32, output: &mut [u8], offset: u64) -> Result<usize, i32> {
         use std::os::unix::fs::FileExt;
-        match self
+        let result = match self
             .descriptors
             .lock()
             .expect("legacy fd table mutex poisoned")
@@ -417,7 +598,12 @@ impl LegacyFdTable {
                 .read_at(output, offset)
                 .map_err(|error| io_errno(&error)),
             _ => Err(ERRNO_BADF),
-        }
+        };
+        eprintln!(
+            "legacy fd pread fd={fd} length={} offset={offset} result={result:?}",
+            output.len()
+        );
+        result
     }
 
     fn pwrite(&self, fd: i32, input: &[u8], offset: u64) -> Result<usize, i32> {
@@ -452,6 +638,7 @@ impl LegacyFdTable {
             Descriptor::File {
                 writable: false, ..
             }
+            | Descriptor::VirtualDir { .. }
             | Descriptor::TtyInput
             | Descriptor::PipeRead(_)
             | Descriptor::Random => Err(ERRNO_BADF),
@@ -474,9 +661,7 @@ impl LegacyFdTable {
                             .windows(b"vm_state_notify running 1".len())
                             .any(|window| window == b"vm_state_notify running 1"))
                 {
-                    descriptors
-                        .tty_input
-                        .extend(b"=\necho WASMTIME_GUEST_ECHO_OK\n");
+                    descriptors.tty_input.extend(crate::QEMU_RESUME_INPUT);
                     descriptors.handshake_sent = true;
                     self.readiness.notify_all();
                 }
@@ -564,6 +749,13 @@ impl LegacyFdTable {
                 writable: *writable,
                 directory_offset: *directory_offset,
             },
+            Descriptor::VirtualDir {
+                guest,
+                directory_offset,
+            } => Descriptor::VirtualDir {
+                guest: guest.clone(),
+                directory_offset: *directory_offset,
+            },
             Descriptor::TtyInput => Descriptor::TtyInput,
             Descriptor::TtyOutput => Descriptor::TtyOutput,
             Descriptor::PipeRead(id) => Descriptor::PipeRead(*id),
@@ -638,6 +830,7 @@ impl LegacyFdTable {
                 .metadata()
                 .map(|meta| metadata_stat(&meta))
                 .map_err(|error| io_errno(&error)),
+            Descriptor::VirtualDir { .. } => Ok(synthetic_stat(0o040_555)),
             Descriptor::TtyInput | Descriptor::TtyOutput => Ok(synthetic_stat(0o020_666)),
             Descriptor::PipeRead(_) | Descriptor::PipeWrite(_) => Ok(synthetic_stat(0o010_600)),
             Descriptor::Random => Ok(synthetic_stat(0o020_444)),
@@ -653,6 +846,10 @@ impl LegacyFdTable {
     }
 
     fn stat(&self, path: &str, nofollow: bool) -> Result<LegacyStat, i32> {
+        let guest = normalize_absolute(path).map_err(fs_errno)?;
+        if self.is_virtual_dir(&guest) {
+            return Ok(synthetic_stat(0o040_555));
+        }
         let (_, path) = if nofollow {
             self.resolve_unfollowed(path)
         } else {
@@ -673,14 +870,33 @@ impl LegacyFdTable {
         if path.starts_with('/') || dirfd == AT_FDCWD {
             return self.stat(path, nofollow);
         }
+        enum Base {
+            Guest(String),
+            Host(PathBuf),
+        }
         let base = {
             let descriptors = self
                 .descriptors
                 .lock()
                 .expect("legacy fd table mutex poisoned");
             match descriptors.entries.get(&dirfd).ok_or(ERRNO_BADF)? {
-                Descriptor::File { path, .. } => path.clone(),
+                Descriptor::VirtualDir { guest, .. } => Base::Guest(guest.clone()),
+                Descriptor::File { path, .. } => Base::Host(path.clone()),
                 _ => return Err(ERRNO_BADF),
+            }
+        };
+        let base = match base {
+            Base::Host(base) => base,
+            Base::Guest(guest) => {
+                if path.is_empty() || path == "." {
+                    return Ok(synthetic_stat(0o040_555));
+                }
+                let joined = if guest == "/" {
+                    format!("/{path}")
+                } else {
+                    format!("{guest}/{path}")
+                };
+                return self.stat(&joined, nofollow);
             }
         };
         let path = base.join(path);
@@ -733,13 +949,25 @@ impl LegacyFdTable {
 
     fn poll(&self, fds: &mut [PollFd], timeout_ms: i32) -> usize {
         eprintln!("legacy fd poll count={} timeout={timeout_ms}", fds.len());
-        let deadline = u64::try_from(timeout_ms)
+        // Browser Emscripten yields back to its event loop for long waits.
+        // A native condition-variable wait would strand the QEMU main loop
+        // when no host thread can signal its internal descriptors, so turn a
+        // long guest deadline into a short cooperative polling quantum.
+        let wait_ms = if timeout_ms > 1_000 { 1 } else { timeout_ms };
+        let deadline = u64::try_from(wait_ms)
             .ok()
             .map(|ms| Instant::now() + Duration::from_millis(ms));
         let mut state = self
             .descriptors
             .lock()
             .expect("legacy fd table mutex poisoned");
+        if timeout_ms > 1_000 && !state.handshake_sent && state.tty_input.is_empty() {
+            let pending = std::mem::take(&mut state.pending_tty_input);
+            if !pending.is_empty() {
+                state.tty_input.extend(pending);
+                state.handshake_sent = true;
+            }
+        }
         loop {
             let ready = update_revents(&state, fds);
             if ready != 0 || timeout_ms == 0 {
@@ -768,14 +996,20 @@ impl LegacyFdTable {
         }
     }
 
-    #[cfg(test)]
-    fn push_tty_input(&self, input: &[u8]) {
-        self.descriptors.lock().unwrap().tty_input.extend(input);
-        self.readiness.notify_all();
+    pub(crate) fn seed_tty_input(&self, input: &[u8]) {
+        let mut descriptors = self.descriptors.lock().unwrap();
+        descriptors.pending_tty_input.extend(input);
     }
 
     #[cfg(test)]
-    fn tty_output(&self) -> Vec<u8> {
+    fn push_tty_input(&self, input: &[u8]) {
+        let mut descriptors = self.descriptors.lock().unwrap();
+        descriptors.tty_input.extend(input);
+        drop(descriptors);
+        self.readiness.notify_all();
+    }
+
+    pub(crate) fn tty_output(&self) -> Vec<u8> {
         self.descriptors.lock().unwrap().tty_output.clone()
     }
 }
@@ -799,6 +1033,7 @@ fn update_revents(state: &Descriptors, fds: &mut [PollFd]) -> usize {
         let available = match state.entries.get(&pollfd.fd) {
             None => POLLNVAL,
             Some(Descriptor::File { writable, .. }) => POLLIN | if *writable { POLLOUT } else { 0 },
+            Some(Descriptor::VirtualDir { .. }) => POLLIN,
             Some(Descriptor::TtyInput) => {
                 if state.tty_input.is_empty() {
                     0
@@ -1142,11 +1377,10 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
         |mut caller: Caller<'_, VmState>, path: i32, _size: i32, output: i32| {
             let result = (|| -> Result<(), i32> {
                 let path = read_string(&mut caller, path)?;
-                caller
-                    .data()
-                    .legacy_fds
-                    .resolve_existing(&path)
-                    .map_err(fs_errno)?;
+                let table = caller.data().legacy_fds.clone();
+                if !table.is_virtual_dir(&path) {
+                    table.resolve_existing(&path).map_err(fs_errno)?;
+                }
                 write_statfs(&mut caller, output)
             })();
             result.map_or_else(|errno| -errno, |()| 0)
@@ -1220,11 +1454,9 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
                 Ok(path) => path,
                 Err(errno) => return -errno,
             };
-            caller
-                .data()
-                .legacy_fds
-                .open_at(dirfd, &path, flags)
-                .unwrap_or_else(|errno| -errno)
+            let result = caller.data().legacy_fds.open_at(dirfd, &path, flags);
+            eprintln!("legacy fd openat result={result:?}");
+            result.unwrap_or_else(|errno| -errno)
         },
     )?;
     linker.func_wrap(
@@ -1918,11 +2150,58 @@ mod tests {
     }
 
     #[test]
+    fn exposes_mount_parents_through_a_confined_virtual_root() {
+        let (_pack, table) = fixture();
+        let root = table.open("/", O_RDONLY).unwrap();
+        assert_eq!(table.fstat(root).unwrap().mode, 0o040_555);
+        assert_eq!(table.stat("/", false).unwrap().mode, 0o040_555);
+        assert_eq!(table.stat_at(root, ".", true).unwrap().mode, 0o040_555);
+        assert_eq!(table.stat_at(root, "", true).unwrap().mode, 0o040_555);
+
+        let mut bytes = [0_u8; 3 * 280];
+        assert_eq!(table.getdents(root, &mut bytes).unwrap(), bytes.len());
+        let names = bytes
+            .chunks_exact(280)
+            .map(|record| {
+                let end = record[19..].iter().position(|byte| *byte == 0).unwrap();
+                std::str::from_utf8(&record[19..19 + end]).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, [".", "..", "pack"]);
+
+        let pack = table.open_at(root, "pack", O_RDONLY).unwrap();
+        assert_eq!(table.fstat(pack).unwrap().mode & 0o170_000, 0o040_000);
+        assert_eq!(
+            table.stat_at(root, "pack", true).unwrap().mode & 0o170_000,
+            0o040_000
+        );
+        assert_eq!(
+            table.open_at(root, "../etc/passwd", O_RDONLY),
+            Err(ERRNO_NOTCAPABLE)
+        );
+    }
+
+    #[test]
     fn rejects_writes_and_mutating_open_flags_on_read_only_pack() {
         let (_pack, table) = fixture();
         let fd = table.open("/pack/hello", O_RDONLY).unwrap();
         assert_eq!(table.write(fd, b"no"), Err(ERRNO_BADF));
+        let compatibility_fd = table.open("/pack/hello", 2).unwrap();
+        assert_eq!(table.write(compatibility_fd, b"no"), Err(ERRNO_BADF));
         assert_eq!(table.open("/pack/hello", O_TRUNC), Err(ERRNO_NOTCAPABLE));
+    }
+
+    #[test]
+    fn reports_unmounted_absolute_file_as_missing() {
+        let (_pack, table) = fixture();
+        assert_eq!(
+            table.open("/usr/local/etc/qemu/qemu.conf", O_RDONLY),
+            Err(ERRNO_NOENT)
+        );
+        assert_eq!(
+            table.open_at(AT_FDCWD, "/usr/local/etc/qemu/qemu.conf", O_RDONLY),
+            Err(ERRNO_NOENT)
+        );
     }
 
     #[test]
@@ -2000,6 +2279,10 @@ mod tests {
         table.read(0, &mut input).unwrap();
         assert_eq!(table.poll(&mut idle, 15), 0);
         assert!(started.elapsed() >= Duration::from_millis(10));
+
+        let started = Instant::now();
+        assert_eq!(table.poll(&mut idle, 45_000_000), 0);
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 
     #[test]
@@ -2081,8 +2364,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
-                active_fiber_entry: None,
-                fiber_entries: HashMap::new(),
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: None,
             },
@@ -2163,8 +2445,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
-                active_fiber_entry: None,
-                fiber_entries: HashMap::new(),
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: None,
             },
@@ -2247,8 +2528,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
-                active_fiber_entry: None,
-                fiber_entries: HashMap::new(),
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: None,
             },
@@ -2328,8 +2608,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
-                active_fiber_entry: None,
-                fiber_entries: HashMap::new(),
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: None,
             },
@@ -2395,8 +2674,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
-                active_fiber_entry: None,
-                fiber_entries: HashMap::new(),
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: None,
             },
@@ -2466,8 +2744,7 @@ mod tests {
                 host_fs,
                 legacy_fds: table,
                 fiber_next: None,
-                active_fiber_entry: None,
-                fiber_entries: HashMap::new(),
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: Some(Arc::new(move |pthread, attr, start, arg| {
                     spawned_for_host

@@ -34,8 +34,7 @@ struct VmState {
     host_fs: Arc<host_fs::HostFs>,
     legacy_fds: Arc<legacy_fd::LegacyFdTable>,
     fiber_next: Option<i32>,
-    fiber_entries: HashMap<i32, emscripten::FiberEntry>,
-    active_fiber_entry: Option<emscripten::FiberEntry>,
+    fiber_entries: Arc<Mutex<HashMap<i32, (i32, i32)>>>,
     poll_calls: u64,
     pthread_spawn: Option<PthreadSpawn>,
 }
@@ -50,6 +49,7 @@ struct EmscriptenRuntime {
     legacy_jit: bool,
     host_fs: Arc<host_fs::HostFs>,
     legacy_fds: Arc<legacy_fd::LegacyFdTable>,
+    fiber_entries: Arc<Mutex<HashMap<i32, (i32, i32)>>>,
     mapdirs: Vec<MapDir>,
     arguments: Arc<[String]>,
     stdout: pipe::MemoryOutputPipe,
@@ -57,6 +57,8 @@ struct EmscriptenRuntime {
     threads: Mutex<Vec<std::thread::JoinHandle<anyhow::Result<()>>>>,
     cancelled: Arc<AtomicBool>,
 }
+
+const QEMU_RESUME_INPUT: &[u8] = b"\x01ccont\n\x01c=\n";
 
 /// A serial input which supplies the snapshot-resume handshake once and then
 /// remains open. Returning `Closed` after the handshake makes QEMU's stdio
@@ -68,7 +70,7 @@ struct ResumeInput {
 impl ResumeInput {
     fn new() -> Self {
         Self {
-            bytes: Arc::new(Mutex::new(bytes::Bytes::from_static(b"=\n"))),
+            bytes: Arc::new(Mutex::new(bytes::Bytes::from_static(QEMU_RESUME_INPUT))),
         }
     }
 }
@@ -154,6 +156,7 @@ pub struct VmOutput {
     pub exit_code: i32,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    pub serial: Vec<u8>,
     pub http_client_traces: Vec<HttpClientTrace>,
 }
 
@@ -309,7 +312,22 @@ pub async fn execute(
     let _ = broker.await;
     let _ = phase_logger_stop.send(());
     let _ = phase_logger.await;
-    let mut output = result?;
+    let mut output = match result {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!(
+                "activity VM queue after failure: {:?}",
+                directory_entries(queue.path())
+            );
+            if let Some(pack) = &qemu_pack {
+                eprintln!(
+                    "activity VM pack after failure: {:?}",
+                    directory_entries(pack.path())
+                );
+            }
+            return Err(error);
+        }
+    };
     replace_output_from_guest_files(
         &mut output,
         queue.path(),
@@ -334,6 +352,15 @@ pub async fn execute(
         "Activity VM execution complete"
     );
     Ok(output)
+}
+
+fn directory_entries(path: &Path) -> Vec<String> {
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect()
 }
 
 async fn replace_output_from_guest_files(
@@ -575,6 +602,10 @@ fn run_module(
     }
     let host_fs = host_fs::HostFs::new(mapdirs)?;
     let legacy_fds = legacy_fd::LegacyFdTable::new(mapdirs)?;
+    if guest_args.iter().any(|argument| argument == "-incoming") {
+        legacy_fds.seed_tty_input(QEMU_RESUME_INPUT);
+    }
+    let fiber_entries = Arc::new(Mutex::new(HashMap::new()));
     let mut store = Store::new(
         engine,
         VmState {
@@ -583,8 +614,7 @@ fn run_module(
             host_fs: host_fs.clone(),
             legacy_fds: legacy_fds.clone(),
             fiber_next: None,
-            fiber_entries: HashMap::new(),
-            active_fiber_entry: None,
+            fiber_entries: fiber_entries.clone(),
             poll_calls: 0,
             pthread_spawn: None,
         },
@@ -639,6 +669,7 @@ fn run_module(
                     .any(|import| import.name() == "instantiate_wasm"),
                 host_fs,
                 legacy_fds,
+                fiber_entries,
                 mapdirs: mapdirs.to_vec(),
                 arguments: std::iter::once("obelisk-activity-vm".to_owned())
                     .chain(guest_args.iter().cloned())
@@ -747,8 +778,20 @@ fn run_module(
             .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
     };
     eprintln!("QEMU root result: {call_result:?}");
+    let mut serial = Vec::new();
     if let Some(runtime) = emscripten_runtime {
-        join_pthreads(&runtime)?;
+        if let Err(error) = join_pthreads(&runtime, mapdirs) {
+            if is_shutdown_trap(&error) && guest_has_completed(&runtime, mapdirs) {
+                eprintln!("QEMU pthread stopped after guest completion: {error:#}");
+            } else {
+                let console = runtime.legacy_fds.tty_output();
+                return Err(error.context(format!(
+                    "QEMU serial output:\n{}",
+                    String::from_utf8_lossy(&console)
+                )));
+            }
+        }
+        serial = runtime.legacy_fds.tty_output();
     }
     let exit_code = match call_result {
         Ok(()) => 0,
@@ -770,6 +813,7 @@ fn run_module(
         exit_code,
         stdout: stdout.contents().to_vec(),
         stderr: stderr.contents().to_vec(),
+        serial,
         http_client_traces: Vec::new(),
     })
 }
@@ -841,7 +885,11 @@ fn pthread_spawner(runtime: Arc<EmscriptenRuntime>) -> PthreadSpawn {
         let thread_runtime = runtime.clone();
         let handle = std::thread::Builder::new()
             .name(format!("activity-vm-pthread-{pthread_ptr:x}"))
-            .spawn(move || run_pthread(&thread_runtime, pthread_ptr, start_routine, arg))
+            .spawn(move || {
+                run_pthread(&thread_runtime, pthread_ptr, start_routine, arg).with_context(|| {
+                    format!("Emscripten pthread {pthread_ptr:#x} start routine {start_routine:#x}")
+                })
+            })
             .map_err(|error| {
                 wasmtime::Error::msg(format!("spawning Emscripten pthread: {error}"))
             })?;
@@ -854,7 +902,39 @@ fn pthread_spawner(runtime: Arc<EmscriptenRuntime>) -> PthreadSpawn {
     })
 }
 
-fn join_pthreads(runtime: &EmscriptenRuntime) -> anyhow::Result<()> {
+fn guest_completion_exists(mapdirs: &[MapDir]) -> bool {
+    mapdirs
+        .iter()
+        .find(|mapdir| mapdir.guest == "/obelisk-activity-vm-http")
+        .is_some_and(|mapdir| {
+            mapdir.host.join("stdout").is_file() && mapdir.host.join("exit-code").is_file()
+        })
+}
+
+fn guest_has_completed(runtime: &EmscriptenRuntime, mapdirs: &[MapDir]) -> bool {
+    guest_completion_exists(mapdirs)
+        || runtime
+            .legacy_fds
+            .tty_output()
+            .windows(b"activity-vm: command completed".len())
+            .any(|window| window == b"activity-vm: command completed")
+}
+
+fn is_shutdown_trap(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<wasmtime::Trap>())
+        .is_some_and(|trap| {
+            matches!(
+                trap,
+                wasmtime::Trap::UnreachableCodeReached | wasmtime::Trap::Interrupt
+            )
+        })
+}
+
+fn join_pthreads(runtime: &EmscriptenRuntime, mapdirs: &[MapDir]) -> anyhow::Result<()> {
+    let mut first_error = None;
+    let mut stopping = false;
     loop {
         let handle = {
             let mut threads = runtime
@@ -862,7 +942,14 @@ fn join_pthreads(runtime: &EmscriptenRuntime) -> anyhow::Result<()> {
                 .lock()
                 .expect("Emscripten thread mutex poisoned");
             if threads.is_empty() {
-                return Ok(());
+                return match first_error {
+                    Some(error)
+                        if !(guest_has_completed(runtime, mapdirs) && is_shutdown_trap(&error)) =>
+                    {
+                        Err(error)
+                    }
+                    _ => Ok(()),
+                };
             }
             threads
                 .iter()
@@ -872,11 +959,23 @@ fn join_pthreads(runtime: &EmscriptenRuntime) -> anyhow::Result<()> {
         if let Some(handle) = handle {
             match handle.join() {
                 Ok(Ok(())) => {}
-                Ok(Err(error)) => return Err(error),
-                Err(_) => anyhow::bail!("Emscripten pthread panicked"),
+                Ok(Err(error)) => {
+                    first_error.get_or_insert(error);
+                    stopping = true;
+                }
+                Err(_) => {
+                    first_error
+                        .get_or_insert_with(|| anyhow::anyhow!("Emscripten pthread panicked"));
+                    stopping = true;
+                }
             }
         } else {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            stopping |= guest_has_completed(runtime, mapdirs);
+            if stopping {
+                runtime.cancelled.store(true, Ordering::Relaxed);
+                runtime.engine.increment_epoch();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }
@@ -930,8 +1029,7 @@ fn run_pthread(
             host_fs: runtime.host_fs.clone(),
             legacy_fds: runtime.legacy_fds.clone(),
             fiber_next: None,
-            fiber_entries: HashMap::new(),
-            active_fiber_entry: None,
+            fiber_entries: runtime.fiber_entries.clone(),
             poll_calls: 0,
             pthread_spawn: Some(pthread_spawner(runtime.clone())),
         },
@@ -1078,16 +1176,16 @@ fn run_pthread(
         eprintln!("pthread {pthread_ptr:#x}: stdin poll probe ready={ready} pollfd={result:?}");
     }
     eprintln!("pthread {pthread_ptr:#x}: entering start routine");
+    let function = match table.get(&mut store, start_routine as u64) {
+        Some(Ref::Func(Some(function))) => function,
+        _ => unreachable!("pthread entry was validated above"),
+    };
     let result = if instance
         .get_func(&mut store, "asyncify_get_state")
         .is_some()
     {
-        emscripten::call_asyncify_pthread(&mut store, &instance, start_routine, arg)?
+        emscripten::call_asyncify_pthread(&mut store, &instance, &function, arg)?
     } else {
-        let function = match table.get(&mut store, start_routine as u64) {
-            Some(Ref::Func(Some(function))) => function,
-            _ => unreachable!("pthread entry was validated above"),
-        };
         function.typed::<i32, i32>(&store)?.call(&mut store, arg)?
     };
     eprintln!("pthread {pthread_ptr:#x}: start routine returned {result}");
@@ -1098,9 +1196,9 @@ fn run_pthread(
             String::from_utf8_lossy(&diagnostics)
         );
     }
-    instance
-        .get_typed_func::<i32, ()>(&mut store, "_emscripten_thread_exit")?
-        .call(&mut store, result)?;
+    // Emscripten's Node worker keeps the runtime alive after the entry point
+    // returns when noExitRuntime is set. QEMU relies on that worker message
+    // loop, so do not run `_emscripten_thread_exit` here.
     Ok(())
 }
 
@@ -1222,8 +1320,7 @@ mod tests {
                 host_fs: host_fs::HostFs::new(&[]).unwrap(),
                 legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
                 fiber_next: None,
-                fiber_entries: HashMap::new(),
-                active_fiber_entry: None,
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: None,
             },
@@ -1302,6 +1399,7 @@ mod tests {
             legacy_jit: false,
             host_fs: host_fs::HostFs::new(&[]).unwrap(),
             legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
+            fiber_entries: Arc::new(Mutex::new(HashMap::new())),
             mapdirs: Vec::new(),
             arguments: Arc::from([]),
             stdout: pipe::MemoryOutputPipe::new(1024),
@@ -1311,7 +1409,9 @@ mod tests {
         });
         run_pthread(&runtime, pthread_ptr as i32, 0, 41).unwrap();
         assert_eq!(read_shared_u32(&memory, 0).unwrap(), 41);
-        assert_eq!(read_shared_u32(&memory, 4).unwrap(), 42);
+        // noExitRuntime keeps the worker alive instead of calling
+        // `_emscripten_thread_exit` after its entry point returns.
+        assert_eq!(read_shared_u32(&memory, 4).unwrap(), 0);
     }
 
     #[test]
@@ -1359,8 +1459,7 @@ mod tests {
                 host_fs: host_fs::HostFs::new(&[]).unwrap(),
                 legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
                 fiber_next: None,
-                fiber_entries: HashMap::new(),
-                active_fiber_entry: None,
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
                 poll_calls: 0,
                 pthread_spawn: None,
             },
@@ -1394,6 +1493,43 @@ mod tests {
             qemu_runtime_info(&mapdirs, &args, &env).unwrap(),
             "c: /bin/echo hello\\ world\nmr: nix/store/abc\nm: queue\nenv: FIRST=one\nenv: SECOND=two\n"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a built QEMU activity VM runtime"]
+    async fn qemu_running_snapshot_executes_literal_echo() {
+        let runtime_dir = PathBuf::from(
+            std::env::var_os("OBELISK_QEMU_RUNTIME_DIR")
+                .expect("OBELISK_QEMU_RUNTIME_DIR must point at the QEMU runtime"),
+        );
+        let mut config = Config::new();
+        config.shared_memory(true).epoch_interruption(true);
+        let engine = Engine::new(&config).unwrap();
+        let module = compile(&engine, &runtime_dir.join("qemu-system-x86_64.wasm")).unwrap();
+        let args =
+            serde_json::from_slice(&std::fs::read(runtime_dir.join("args.json")).unwrap()).unwrap();
+        let output = execute(
+            &engine,
+            module,
+            Vec::new(),
+            Some(QemuRuntimeConfig {
+                args,
+                image_dir: runtime_dir.join("image"),
+            }),
+            vec!["/bin/echo".to_owned(), "Hello, world!".to_owned()],
+            HashMap::new(),
+            None,
+            HttpRequestPolicy::default(),
+            Arc::new(AtomicBool::new(false)),
+            1024 * 1024,
+            1024 * 1024,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.exit_code, 0);
+        let serial = String::from_utf8_lossy(&output.serial);
+        assert!(serial.contains("Hello, world!"), "serial output: {serial}");
     }
 
     #[test]

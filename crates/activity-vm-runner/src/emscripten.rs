@@ -1,18 +1,19 @@
 use anyhow::{Context, ensure};
 use chrono::{Datelike, TimeZone as _, Timelike as _, Utc};
 use std::io::Read as _;
-use std::sync::OnceLock;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::{
     Caller, Extern, ExternType, Instance, Linker, Module, Ref, Store, TypedFunc, Val, ValType,
 };
 
 use crate::VmState;
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum FiberEntry {
-    Start,
-    Table { index: i32, argument: i32 },
+macro_rules! eprintln {
+    ($($argument:tt)*) => {
+        if std::env::var_os("OBELISK_QEMU_TRACE").is_some() {
+            std::eprintln!($($argument)*);
+        }
+    };
 }
 
 #[derive(Debug)]
@@ -36,6 +37,11 @@ const SUCCESS_SHIMS: &[&str] = &[
     "_emscripten_thread_cleanup",
     "__emscripten_thread_cleanup",
     "emscripten_check_blocking_allowed",
+    "_emscripten_runtime_keepalive_clear",
+    // The browser and Node hosts use this hook to opt out of dynamic TCG
+    // promotion. Wasmtime supports the generated modules, so keep promotion
+    // enabled by returning false.
+    "wasm_promotion_disabled_js",
 ];
 
 pub(crate) fn add_invoke_wrappers<T: Send + 'static>(
@@ -110,7 +116,11 @@ pub(crate) fn add_platform_shims<T: Send + 'static>(
         }
         let name = name.to_owned();
         let returns_core_count = name == "emscripten_num_logical_cores";
-        let succeeds = returns_core_count || SUCCESS_SHIMS.contains(&name.as_str());
+        let returns_keepalive = name == "emscripten_runtime_keepalive_check";
+        let promotion_disabled = name == "wasm_promotion_disabled_js"
+            && std::env::var_os("OBELISK_QEMU_DISABLE_JIT").is_some();
+        let succeeds =
+            returns_core_count || returns_keepalive || SUCCESS_SHIMS.contains(&name.as_str());
         let returns = function_type.results().collect::<Vec<_>>();
         linker.func_new(
             "env",
@@ -125,7 +135,9 @@ pub(crate) fn add_platform_shims<T: Send + 'static>(
                 for (result, ty) in results.iter_mut().zip(&returns) {
                     *result = zero(ty)?;
                 }
-                if returns_core_count {
+                if returns_core_count || returns_keepalive {
+                    results[0] = Val::I32(1);
+                } else if promotion_disabled {
                     results[0] = Val::I32(1);
                 }
                 Ok(())
@@ -156,8 +168,11 @@ pub(crate) fn add_platform_services(linker: &mut Linker<VmState>) -> anyhow::Res
         },
     )?;
     linker.func_wrap("env", "emscripten_get_now", || -> f64 {
-        static ORIGIN: OnceLock<Instant> = OnceLock::new();
-        ORIGIN.get_or_init(Instant::now).elapsed().as_secs_f64() * 1_000.0
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1_000.0
     })?;
     linker.func_wrap("env", "emscripten_date_now", || -> f64 {
         SystemTime::now()
@@ -609,23 +624,13 @@ pub(crate) fn add_fiber_swap(linker: &mut Linker<VmState>) -> anyhow::Result<()>
             eprintln!("fiber swap old={old_fiber:#x} new={new_fiber:#x} state={state}");
             match state {
                 0 => {
-                    let stack_export = if caller.get_export("stackSave").is_some() {
-                        "stackSave"
-                    } else {
-                        "emscripten_stack_get_current"
-                    };
-                    let stack = call_i32_export(&mut caller, stack_export, &[])?;
+                    let stack = call_stack_save(&mut caller)?;
                     write_i32(&mut caller, old_fiber + 8, stack)?;
                     call_void_export(
                         &mut caller,
                         "asyncify_start_unwind",
                         &[Val::I32(old_fiber + 20)],
                     )?;
-                    let entry = caller
-                        .data()
-                        .active_fiber_entry
-                        .ok_or_else(|| wasmtime::Error::msg("fiber swap has no active entry"))?;
-                    caller.data_mut().fiber_entries.insert(old_fiber, entry);
                     caller.data_mut().fiber_next = Some(new_fiber);
                     Ok(())
                 }
@@ -642,39 +647,35 @@ pub(crate) fn add_fiber_swap(linker: &mut Linker<VmState>) -> anyhow::Result<()>
 pub(crate) fn call_asyncify_root(
     store: &mut Store<VmState>,
     instance: &Instance,
-    _root: &TypedFunc<(), ()>,
+    root: &TypedFunc<(), ()>,
 ) -> wasmtime::Result<()> {
-    drive_asyncify(store, instance, FiberEntry::Start)?;
-    Ok(())
+    drive_asyncify(store, instance, |store| root.call(store, ()))
 }
 
 pub(crate) fn call_asyncify_pthread(
     store: &mut Store<VmState>,
     instance: &Instance,
-    table_index: i32,
+    root: &wasmtime::Func,
     argument: i32,
 ) -> wasmtime::Result<i32> {
-    let entry = FiberEntry::Table {
-        index: table_index,
-        argument,
-    };
-    drive_asyncify(store, instance, entry)?
-        .ok_or_else(|| wasmtime::Error::msg("Emscripten pthread returned without an i32 value"))
+    let mut result = [Val::I32(0)];
+    drive_asyncify(store, instance, |store| {
+        root.call(store, &[Val::I32(argument)], &mut result)
+    })?;
+    result[0]
+        .i32()
+        .ok_or_else(|| wasmtime::Error::msg("Emscripten pthread returned a non-i32 value"))
 }
 
 fn drive_asyncify(
     store: &mut Store<VmState>,
     instance: &Instance,
-    initial_entry: FiberEntry,
-) -> wasmtime::Result<Option<i32>> {
-    let mut result = call_fiber_entry(store, instance, initial_entry)?;
+    mut call_root: impl FnMut(&mut Store<VmState>) -> wasmtime::Result<()>,
+) -> wasmtime::Result<()> {
+    call_root(store)?;
     loop {
         let Some(next) = store.data_mut().fiber_next.take() else {
-            let state = instance
-                .get_typed_func::<(), i32>(&mut *store, "asyncify_get_state")?
-                .call(&mut *store, ())?;
-            eprintln!("asyncify root returned with state={state} and no next fiber");
-            return Ok(result);
+            return Ok(());
         };
         instance
             .get_typed_func::<(), ()>(&mut *store, "asyncify_stop_unwind")?
@@ -700,67 +701,63 @@ fn drive_asyncify(
 
         if entry != 0 {
             write_instance_i32(store, instance, next + 12, 0)?;
-            let selected = FiberEntry::Table {
-                index: entry,
-                argument: user_data,
-            };
-            store.data_mut().fiber_entries.insert(next, selected);
-            result = call_fiber_entry(store, instance, selected)?;
+            store
+                .data()
+                .fiber_entries
+                .lock()
+                .unwrap()
+                .insert(next, (entry, user_data));
+            call_table_entry(store, instance, entry, user_data)?;
         } else {
             instance
                 .get_typed_func::<i32, ()>(&mut *store, "asyncify_start_rewind")?
                 .call(&mut *store, next + 20)?;
-            let selected = store
+            let fiber_entry = store
                 .data()
                 .fiber_entries
+                .lock()
+                .unwrap()
                 .get(&next)
-                .copied()
-                // The first switch into an already-initialized root fiber has
-                // no table entry. It rewinds the entry that was just unwound.
-                .unwrap_or(initial_entry);
-            result = call_fiber_entry(store, instance, selected)?;
+                .copied();
+            if let Some((entry, user_data)) = fiber_entry {
+                call_table_entry(store, instance, entry, user_data)?;
+            } else {
+                call_root(store)?;
+            }
         }
     }
 }
 
-fn call_fiber_entry(
+fn call_table_entry(
     store: &mut Store<VmState>,
     instance: &Instance,
-    entry: FiberEntry,
-) -> wasmtime::Result<Option<i32>> {
-    store.data_mut().active_fiber_entry = Some(entry);
-    let (function, params) = match entry {
-        FiberEntry::Start => (
-            instance
-                .get_func(&mut *store, "_start")
-                .ok_or_else(|| wasmtime::Error::msg("missing Emscripten _start export"))?,
-            Vec::new(),
-        ),
-        FiberEntry::Table { index, argument } => {
-            let table = instance
-                .get_export(&mut *store, "__indirect_function_table")
-                .and_then(Extern::into_table)
-                .ok_or_else(|| {
-                    wasmtime::Error::msg("Emscripten function table export is unavailable")
-                })?;
-            let function = match table.get(&mut *store, index as u64) {
-                Some(Ref::Func(Some(function))) => function,
-                _ => {
-                    return Err(wasmtime::Error::msg(format!(
-                        "Emscripten fiber entry {index} is not a function"
-                    )));
-                }
-            };
-            (function, vec![Val::I32(argument)])
+    entry: i32,
+    user_data: i32,
+) -> wasmtime::Result<()> {
+    let table = instance
+        .get_export(&mut *store, "__indirect_function_table")
+        .and_then(Extern::into_table)
+        .ok_or_else(|| wasmtime::Error::msg("Emscripten function table export is unavailable"))?;
+    let function = match table.get(&mut *store, entry as u64) {
+        Some(Ref::Func(Some(function))) => function,
+        _ => {
+            return Err(wasmtime::Error::msg(format!(
+                "Emscripten fiber entry {entry} is not a function"
+            )));
         }
     };
-    let result_types = function.ty(&*store).results().collect::<Vec<_>>();
-    let mut results = result_types
-        .iter()
-        .map(zero)
-        .collect::<wasmtime::Result<Vec<_>>>()?;
-    function.call(&mut *store, &params, &mut results)?;
-    Ok(results.first().and_then(Val::i32))
+    function.call(&mut *store, &[Val::I32(user_data)], &mut [])
+}
+
+fn call_stack_save(caller: &mut Caller<'_, VmState>) -> wasmtime::Result<i32> {
+    for name in ["stackSave", "emscripten_stack_get_current"] {
+        if caller.get_export(name).is_some() {
+            return call_i32_export(caller, name, &[]);
+        }
+    }
+    Err(wasmtime::Error::msg(
+        "missing Emscripten stackSave/emscripten_stack_get_current export",
+    ))
 }
 
 fn call_i32_export(
@@ -1106,9 +1103,11 @@ mod tests {
             &engine,
             r#"(module
                 (import "env" "sync_file_range" (func $sync (param i32 i64 i64 i32) (result i32)))
+                (import "env" "wasm_promotion_disabled_js" (func $promotion_disabled (result i32)))
                 (import "env" "__pthread_create_js" (func $create (param i32 i32 i32 i32) (result i32)))
                 (func (export "sync") (result i32)
                     i32.const 0 i64.const 0 i64.const 0 i32.const 0 call $sync)
+                (export "promotion_disabled" (func $promotion_disabled))
                 (func (export "create") (result i32)
                     i32.const 0 i32.const 0 i32.const 0 i32.const 0 call $create))"#,
         )
@@ -1127,6 +1126,10 @@ mod tests {
             .get_typed_func::<(), i32>(&mut store, "sync")
             .unwrap();
         assert_eq!(sync.call(&mut store, ()).unwrap(), 0);
+        let promotion_disabled = instance
+            .get_typed_func::<(), i32>(&mut store, "promotion_disabled")
+            .unwrap();
+        assert_eq!(promotion_disabled.call(&mut store, ()).unwrap(), 0);
         let create = instance
             .get_typed_func::<(), i32>(&mut store, "create")
             .unwrap();

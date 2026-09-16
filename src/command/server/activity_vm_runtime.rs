@@ -165,9 +165,8 @@ async fn fetch_qemu_bundle(
         )
         .await?;
     }
-    let decoder = flate2::read::GzDecoder::new(std::fs::File::open(
-        staging.path().join("image.tar.gz"),
-    )?);
+    let decoder =
+        flate2::read::GzDecoder::new(std::fs::File::open(staging.path().join("image.tar.gz"))?);
     let unpacked = staging.path().join("unpacked");
     super::qemu_bundle_cache::publish_image_layer(decoder, &unpacked)?;
     std::fs::rename(unpacked.join("image"), staging.path().join("image"))?;
