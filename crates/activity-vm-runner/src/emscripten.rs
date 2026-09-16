@@ -388,6 +388,10 @@ fn read_ffi_value(
         2 => Val::F32(read_extern_u32(memory, caller, ptr)?),
         3 => Val::F64(read_extern_u64(memory, caller, ptr)?),
         11 | 12 => Val::I64(read_extern_u64(memory, caller, ptr)? as i64),
+        // Emscripten lowers a multi-field struct argument to a pointer to a
+        // stack copy. The libffi-owned value storage remains live for the
+        // duration of this synchronous call, so its pointer is equivalent.
+        13 => Val::I32(ptr),
         other => {
             return Err(wasmtime::Error::msg(format!(
                 "unsupported ffi argument type {other}"
