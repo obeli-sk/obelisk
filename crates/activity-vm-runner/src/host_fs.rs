@@ -622,3 +622,43 @@ fn emscripten_errno(error: &anyhow::Error) -> i32 {
         _ => 29,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qemu_9p_mounts_keep_pack_store_and_proxy_separate() {
+        let root = tempfile::tempdir().unwrap();
+        let store = root.path().join("store");
+        let proxy = root.path().join("proxy");
+        let pack = root.path().join("pack");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::create_dir_all(&proxy).unwrap();
+        std::fs::create_dir_all(&pack).unwrap();
+        std::fs::write(store.join("closure"), b"nix").unwrap();
+        std::fs::write(proxy.join("http-guest.sh"), b"proxy").unwrap();
+        std::fs::write(pack.join("info"), b"args").unwrap();
+
+        let fs = HostFs::new(&[
+            MapDir::read_only(store.clone(), "/nix/store".into()),
+            MapDir::read_write(proxy.clone(), "/obelisk-activity-vm-http".into()),
+            MapDir::read_write(pack.clone(), "/pack".into()),
+        ])
+        .unwrap();
+
+        assert_eq!(fs.host_path("/nix/store/closure").unwrap(), (store.join("closure"), false));
+        assert_eq!(fs.host_path("/obelisk-activity-vm-http/http-guest.sh").unwrap(), (proxy.join("http-guest.sh"), true));
+        assert_eq!(fs.host_path("/pack/info").unwrap(), (pack.join("info"), true));
+        let root_entries = fs.entries("/").unwrap();
+        assert!(root_entries.iter().any(|entry| entry == &("nix".into(), KIND_DIRECTORY)));
+        assert!(root_entries.iter().any(|entry| entry == &("pack".into(), KIND_DIRECTORY)));
+        assert!(root_entries.iter().any(|entry| entry == &("obelisk-activity-vm-http".into(), KIND_DIRECTORY)));
+    }
+
+    #[test]
+    fn qemu_9p_rejects_parent_traversal() {
+        let fs = HostFs::new(&[]).unwrap();
+        assert!(fs.host_path("/pack/../secret").is_err());
+    }
+}
