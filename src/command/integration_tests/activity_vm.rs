@@ -29,7 +29,7 @@ async fn activity_vm_case(
 async fn echo() {
     let server_toml = "";
     let deployment_toml = r#"[[activity_vm]]
-exec.lock_expiry.seconds = 120
+exec.lock_expiry.seconds = 300
 ffqn = "testing:vm/echo.run"
 content = '''#!/usr/bin/env bash
 printf '"'
