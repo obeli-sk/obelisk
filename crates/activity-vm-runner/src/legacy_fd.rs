@@ -452,9 +452,12 @@ impl LegacyFdTable {
                 descriptors.tty_output.extend_from_slice(input);
                 eprint!("{}", String::from_utf8_lossy(input));
                 if !descriptors.handshake_sent
-                    && descriptors
+                    && (descriptors
                         .tty_output
                         .ends_with(b"trynix: waiting for the store")
+                        || descriptors
+                            .tty_output
+                            .ends_with(b"vm_state_notify running 1"))
                 {
                     descriptors
                         .tty_input
