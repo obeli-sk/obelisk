@@ -22,6 +22,7 @@ const ERRNO_INVAL: i32 = 28;
 const ERRNO_IO: i32 = 29;
 const ERRNO_NOENT: i32 = 44;
 const ERRNO_NOTCAPABLE: i32 = 76;
+const ERRNO_NOTTY: i32 = 59;
 
 const POLLIN: i16 = 1;
 const POLLOUT: i16 = 4;
@@ -57,6 +58,7 @@ struct Descriptors {
     pipes: HashMap<u32, Pipe>,
     tty_input: VecDeque<u8>,
     tty_output: Vec<u8>,
+    status_flags: HashMap<i32, i32>,
 }
 
 struct Pipe {
@@ -70,6 +72,24 @@ struct PollFd {
     fd: i32,
     events: i16,
     revents: i16,
+}
+
+struct LegacyStat {
+    dev: u32,
+    mode: u32,
+    nlink: u32,
+    uid: u32,
+    gid: u32,
+    rdev: u32,
+    size: i64,
+    blocks: u32,
+    atime: i64,
+    atime_nsec: u32,
+    mtime: i64,
+    mtime_nsec: u32,
+    ctime: i64,
+    ctime_nsec: u32,
+    ino: u64,
 }
 
 impl LegacyFdTable {
@@ -102,6 +122,7 @@ impl LegacyFdTable {
                 pipes: HashMap::new(),
                 tty_input: VecDeque::new(),
                 tty_output: Vec::new(),
+                status_flags: HashMap::from([(0, 0), (1, 1), (2, 1)]),
             }),
             readiness: Condvar::new(),
         }))
@@ -134,6 +155,37 @@ impl LegacyFdTable {
         Ok((mount, canonical))
     }
 
+    fn resolve_unfollowed(&self, raw: &str) -> anyhow::Result<(&Mount, PathBuf)> {
+        let guest = normalize_absolute(raw)?;
+        let mount = self
+            .mounts
+            .iter()
+            .find(|mount| {
+                guest == mount.guest
+                    || guest
+                        .strip_prefix(&mount.guest)
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .context("legacy path is outside a mounted directory")?;
+        let relative = guest
+            .strip_prefix(&mount.guest)
+            .unwrap()
+            .trim_start_matches('/');
+        let path = mount.host.join(relative);
+        let parent = path.parent().context("legacy path has no parent")?;
+        let canonical_parent = parent
+            .canonicalize()
+            .with_context(|| format!("resolving parent of legacy path {guest}"))?;
+        ensure!(
+            canonical_parent.starts_with(&mount.host),
+            "legacy path escapes its mount"
+        );
+        Ok((
+            mount,
+            canonical_parent.join(path.file_name().unwrap_or_default()),
+        ))
+    }
+
     fn open(&self, path: &str, flags: i32) -> Result<i32, i32> {
         if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0 {
             return Err(ERRNO_NOTCAPABLE);
@@ -156,6 +208,7 @@ impl LegacyFdTable {
                 writable: mount.writable && flags & O_ACCMODE != O_RDONLY,
             },
         );
+        descriptors.status_flags.insert(fd, flags);
         Ok(fd)
     }
 
@@ -165,6 +218,7 @@ impl LegacyFdTable {
             .lock()
             .expect("legacy fd table mutex poisoned");
         let descriptor = state.entries.remove(&fd).ok_or(ERRNO_BADF)?;
+        state.status_flags.remove(&fd);
         let pipe_id = match descriptor {
             Descriptor::PipeRead(id) => {
                 state.pipes.get_mut(&id).unwrap().readers -= 1;
@@ -221,6 +275,26 @@ impl LegacyFdTable {
         {
             Descriptor::File { file, .. } => file
                 .read_at(output, offset)
+                .map_err(|error| io_errno(&error)),
+            _ => Err(ERRNO_BADF),
+        }
+    }
+
+    fn pwrite(&self, fd: i32, input: &[u8], offset: u64) -> Result<usize, i32> {
+        use std::os::unix::fs::FileExt;
+        match self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned")
+            .entries
+            .get(&fd)
+            .ok_or(ERRNO_BADF)?
+        {
+            Descriptor::File {
+                file,
+                writable: true,
+            } => file
+                .write_at(input, offset)
                 .map_err(|error| io_errno(&error)),
             _ => Err(ERRNO_BADF),
         }
@@ -305,7 +379,151 @@ impl LegacyFdTable {
         );
         state.entries.insert(read_fd, Descriptor::PipeRead(id));
         state.entries.insert(write_fd, Descriptor::PipeWrite(id));
+        state.status_flags.insert(read_fd, 0);
+        state.status_flags.insert(write_fd, 1);
         (read_fd, write_fd)
+    }
+
+    fn duplicate(&self, fd: i32, minimum: i32) -> Result<i32, i32> {
+        if minimum < 0 {
+            return Err(ERRNO_INVAL);
+        }
+        let mut state = self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned");
+        let descriptor = match state.entries.get(&fd).ok_or(ERRNO_BADF)? {
+            Descriptor::File { file, writable } => Descriptor::File {
+                file: file.try_clone().map_err(|error| io_errno(&error))?,
+                writable: *writable,
+            },
+            Descriptor::TtyInput => Descriptor::TtyInput,
+            Descriptor::TtyOutput => Descriptor::TtyOutput,
+            Descriptor::PipeRead(id) => Descriptor::PipeRead(*id),
+            Descriptor::PipeWrite(id) => Descriptor::PipeWrite(*id),
+        };
+        let mut new_fd = minimum.max(0);
+        while state.entries.contains_key(&new_fd) {
+            new_fd = new_fd.checked_add(1).ok_or(ERRNO_INVAL)?;
+        }
+        match &descriptor {
+            Descriptor::PipeRead(id) => state.pipes.get_mut(id).unwrap().readers += 1,
+            Descriptor::PipeWrite(id) => state.pipes.get_mut(id).unwrap().writers += 1,
+            _ => {}
+        }
+        let flags = *state.status_flags.get(&fd).unwrap_or(&0);
+        state.entries.insert(new_fd, descriptor);
+        state.status_flags.insert(new_fd, flags);
+        state.next = state.next.max(new_fd.saturating_add(1));
+        Ok(new_fd)
+    }
+
+    fn get_flags(&self, fd: i32) -> Result<i32, i32> {
+        self.descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned")
+            .status_flags
+            .get(&fd)
+            .copied()
+            .ok_or(ERRNO_BADF)
+    }
+
+    fn add_flags(&self, fd: i32, flags: i32) -> Result<(), i32> {
+        let mut state = self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned");
+        *state.status_flags.get_mut(&fd).ok_or(ERRNO_BADF)? |= flags;
+        Ok(())
+    }
+
+    fn is_tty(&self, fd: i32) -> Result<bool, i32> {
+        let state = self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned");
+        Ok(matches!(
+            state.entries.get(&fd).ok_or(ERRNO_BADF)?,
+            Descriptor::TtyInput | Descriptor::TtyOutput
+        ))
+    }
+
+    fn bytes_available(&self, fd: i32) -> Result<u32, i32> {
+        let state = self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned");
+        match state.entries.get(&fd).ok_or(ERRNO_BADF)? {
+            Descriptor::TtyInput => Ok(state.tty_input.len() as u32),
+            Descriptor::PipeRead(id) => Ok(state.pipes.get(id).unwrap().bytes.len() as u32),
+            _ => Err(ERRNO_INVAL),
+        }
+    }
+
+    fn fstat(&self, fd: i32) -> Result<LegacyStat, i32> {
+        let state = self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned");
+        match state.entries.get(&fd).ok_or(ERRNO_BADF)? {
+            Descriptor::File { file, .. } => file
+                .metadata()
+                .map(|meta| metadata_stat(&meta))
+                .map_err(|error| io_errno(&error)),
+            Descriptor::TtyInput | Descriptor::TtyOutput => Ok(synthetic_stat(0o020_666)),
+            Descriptor::PipeRead(_) | Descriptor::PipeWrite(_) => Ok(synthetic_stat(0o010_600)),
+        }
+    }
+
+    fn contains(&self, fd: i32) -> bool {
+        self.descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned")
+            .entries
+            .contains_key(&fd)
+    }
+
+    fn stat(&self, path: &str, nofollow: bool) -> Result<LegacyStat, i32> {
+        let (_, path) = if nofollow {
+            self.resolve_unfollowed(path)
+        } else {
+            self.resolve_existing(path)
+        }
+        .map_err(fs_errno)?;
+        let metadata = if nofollow {
+            std::fs::symlink_metadata(path)
+        } else {
+            std::fs::metadata(path)
+        }
+        .map_err(|error| io_errno(&error))?;
+        Ok(metadata_stat(&metadata))
+    }
+
+    fn access(&self, path: &str, mode: i32) -> Result<(), i32> {
+        if mode & !7 != 0 {
+            return Err(ERRNO_INVAL);
+        }
+        let (mount, path) = self.resolve_existing(path).map_err(fs_errno)?;
+        let metadata = path.metadata().map_err(|error| io_errno(&error))?;
+        use std::os::unix::fs::MetadataExt;
+        if mode & 2 != 0 && !mount.writable {
+            return Err(2);
+        }
+        if mode & 4 != 0 && metadata.mode() & 0o444 == 0 {
+            return Err(2);
+        }
+        if mode & 1 != 0 && metadata.mode() & 0o111 == 0 {
+            return Err(2);
+        }
+        Ok(())
+    }
+
+    fn readlink(&self, path: &str) -> Result<Vec<u8>, i32> {
+        use std::os::unix::ffi::OsStrExt;
+        let (_, path) = self.resolve_unfollowed(path).map_err(fs_errno)?;
+        std::fs::read_link(path)
+            .map(|target| target.as_os_str().as_bytes().to_vec())
+            .map_err(|error| io_errno(&error))
     }
 
     fn poll(&self, fds: &mut [PollFd], timeout_ms: i32) -> usize {
@@ -402,6 +620,68 @@ fn update_revents(state: &Descriptors, fds: &mut [PollFd]) -> usize {
     fds.iter().filter(|fd| fd.revents != 0).count()
 }
 
+fn metadata_stat(metadata: &std::fs::Metadata) -> LegacyStat {
+    use std::os::unix::fs::MetadataExt;
+    LegacyStat {
+        dev: metadata.dev() as u32,
+        mode: metadata.mode(),
+        nlink: metadata.nlink() as u32,
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        rdev: metadata.rdev() as u32,
+        size: metadata.size() as i64,
+        blocks: metadata.blocks() as u32,
+        atime: metadata.atime(),
+        atime_nsec: metadata.atime_nsec() as u32,
+        mtime: metadata.mtime(),
+        mtime_nsec: metadata.mtime_nsec() as u32,
+        ctime: metadata.ctime(),
+        ctime_nsec: metadata.ctime_nsec() as u32,
+        ino: metadata.ino(),
+    }
+}
+
+fn synthetic_stat(mode: u32) -> LegacyStat {
+    LegacyStat {
+        dev: 1,
+        mode,
+        nlink: 1,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        size: 0,
+        blocks: 0,
+        atime: 0,
+        atime_nsec: 0,
+        mtime: 0,
+        mtime_nsec: 0,
+        ctime: 0,
+        ctime_nsec: 0,
+        ino: 0,
+    }
+}
+
+fn encode_stat(stat: &LegacyStat) -> [u8; 96] {
+    let mut output = [0; 96];
+    output[0..4].copy_from_slice(&stat.dev.to_le_bytes());
+    output[4..8].copy_from_slice(&stat.mode.to_le_bytes());
+    output[8..12].copy_from_slice(&stat.nlink.to_le_bytes());
+    output[12..16].copy_from_slice(&stat.uid.to_le_bytes());
+    output[16..20].copy_from_slice(&stat.gid.to_le_bytes());
+    output[20..24].copy_from_slice(&stat.rdev.to_le_bytes());
+    output[24..32].copy_from_slice(&stat.size.to_le_bytes());
+    output[32..36].copy_from_slice(&4096_u32.to_le_bytes());
+    output[36..40].copy_from_slice(&stat.blocks.to_le_bytes());
+    output[40..48].copy_from_slice(&stat.atime.to_le_bytes());
+    output[48..52].copy_from_slice(&stat.atime_nsec.to_le_bytes());
+    output[56..64].copy_from_slice(&stat.mtime.to_le_bytes());
+    output[64..68].copy_from_slice(&stat.mtime_nsec.to_le_bytes());
+    output[72..80].copy_from_slice(&stat.ctime.to_le_bytes());
+    output[80..84].copy_from_slice(&stat.ctime_nsec.to_le_bytes());
+    output[88..96].copy_from_slice(&stat.ino.to_le_bytes());
+    output
+}
+
 pub(crate) fn is_required(module: &Module) -> bool {
     module
         .imports()
@@ -409,6 +689,263 @@ pub(crate) fn is_required(module: &Module) -> bool {
 }
 
 pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> {
+    linker.func_wrap(
+        "env",
+        "_emscripten_receive_on_main_thread_js",
+        |mut caller: Caller<'_, VmState>,
+         index: i32,
+         _thread: i32,
+         encoded_count: i32,
+         args: i32|
+         -> wasmtime::Result<f64> {
+            let args = decode_proxy_args(&mut caller, encoded_count, args).map_err(|errno| {
+                wasmtime::Error::msg(format!(
+                    "decoding proxied Emscripten call {index}: errno {errno}"
+                ))
+            })?;
+            let value = dispatch_proxy(&mut caller, index, &args).map_err(|message| {
+                wasmtime::Error::msg(format!("proxied Emscripten call {index}: {message}"))
+            })?;
+            Ok(f64::from(value))
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "_mmap_js",
+        |mut caller: Caller<'_, VmState>,
+         length: i32,
+         _protection: i32,
+         _flags: i32,
+         fd: i32,
+         offset: i64,
+         allocated: i32,
+         address: i32| {
+            let result = (|| -> Result<(), i32> {
+                let length = u32::try_from(length).map_err(|_| ERRNO_INVAL)?;
+                let offset = u64::try_from(offset).map_err(|_| ERRNO_INVAL)?;
+                let aligned = length.checked_add(65_535).ok_or(ERRNO_INVAL)? & !65_535;
+                let allocator = caller
+                    .get_export("emscripten_builtin_memalign")
+                    .and_then(Extern::into_func)
+                    .ok_or(ERRNO_INVAL)?
+                    .typed::<(i32, i32), i32>(&caller)
+                    .map_err(|_| ERRNO_INVAL)?;
+                let pointer = allocator
+                    .call(&mut caller, (65_536, aligned as i32))
+                    .map_err(|_| ERRNO_IO)?;
+                if pointer == 0 {
+                    return Err(48);
+                }
+                let mut bytes = vec![0; length as usize];
+                let table = caller.data().legacy_fds.clone();
+                table.pread(fd, &mut bytes, offset)?;
+                write_memory(&mut caller, pointer, &bytes)?;
+                write_memory(&mut caller, allocated, &1_u32.to_le_bytes())?;
+                write_memory(&mut caller, address, &(pointer as u32).to_le_bytes())
+            })();
+            result.map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "_msync_js",
+        |mut caller: Caller<'_, VmState>,
+         address: i32,
+         length: i32,
+         _protection: i32,
+         flags: i32,
+         fd: i32,
+         offset: i64| {
+            sync_mapping(&mut caller, address, length, flags, fd, offset)
+                .map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "_munmap_js",
+        |mut caller: Caller<'_, VmState>,
+         address: i32,
+         length: i32,
+         protection: i32,
+         flags: i32,
+         fd: i32,
+         offset: i64| {
+            if protection & 2 == 0 {
+                0
+            } else {
+                sync_mapping(&mut caller, address, length, flags, fd, offset)
+                    .map_or_else(|errno| -errno, |()| 0)
+            }
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_fcntl64",
+        |mut caller: Caller<'_, VmState>, fd: i32, command: i32, varargs: i32| {
+            let table = caller.data().legacy_fds.clone();
+            let result = (|| -> Result<i32, i32> {
+                match command {
+                    0 | 1030 => table.duplicate(fd, read_u32(&mut caller, varargs)? as i32),
+                    1 | 2 | 6 | 7 => {
+                        table.get_flags(fd)?;
+                        Ok(0)
+                    }
+                    3 => table.get_flags(fd),
+                    4 => {
+                        table.add_flags(fd, read_u32(&mut caller, varargs)? as i32)?;
+                        Ok(0)
+                    }
+                    5 => {
+                        table.get_flags(fd)?;
+                        let pointer = read_u32(&mut caller, varargs)? as i32;
+                        write_memory(&mut caller, pointer, &2_i16.to_le_bytes())?;
+                        Ok(0)
+                    }
+                    8 | 16 => Err(ERRNO_INVAL),
+                    _ => Err(ERRNO_INVAL),
+                }
+            })();
+            result.unwrap_or_else(|errno| -errno)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_ioctl",
+        |mut caller: Caller<'_, VmState>, fd: i32, operation: i32, varargs: i32| {
+            let table = caller.data().legacy_fds.clone();
+            let result = (|| -> Result<i32, i32> {
+                if operation == 21531 {
+                    let output = read_u32(&mut caller, varargs)? as i32;
+                    let count = table.bytes_available(fd)?;
+                    write_memory(&mut caller, output, &count.to_le_bytes())?;
+                    return Ok(0);
+                }
+                if !table.is_tty(fd)? {
+                    return Err(ERRNO_NOTTY);
+                }
+                match operation {
+                    21505 => {
+                        let output = read_u32(&mut caller, varargs)? as i32;
+                        write_memory(&mut caller, output, &[0; 49])?;
+                        Ok(0)
+                    }
+                    21506..=21512 | 21515 | 21524 => Ok(0),
+                    21519 => {
+                        let output = read_u32(&mut caller, varargs)? as i32;
+                        write_memory(&mut caller, output, &0_u32.to_le_bytes())?;
+                        Ok(0)
+                    }
+                    21520 => Err(ERRNO_INVAL),
+                    21523 => {
+                        let output = read_u32(&mut caller, varargs)? as i32;
+                        let mut winsize = [0; 8];
+                        winsize[0..2].copy_from_slice(&24_u16.to_le_bytes());
+                        winsize[2..4].copy_from_slice(&80_u16.to_le_bytes());
+                        write_memory(&mut caller, output, &winsize)?;
+                        Ok(0)
+                    }
+                    _ => Err(ERRNO_INVAL),
+                }
+            })();
+            result.unwrap_or_else(|errno| -errno)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_fstat64",
+        |mut caller: Caller<'_, VmState>, fd: i32, output: i32| {
+            let table = caller.data().legacy_fds.clone();
+            match table.fstat(fd) {
+                Ok(stat) => write_memory(&mut caller, output, &encode_stat(&stat))
+                    .map_or_else(|errno| -errno, |()| 0),
+                Err(errno) => -errno,
+            }
+        },
+    )?;
+    for (name, nofollow) in [("__syscall_stat64", false), ("__syscall_lstat64", true)] {
+        linker.func_wrap(
+            "env",
+            name,
+            move |mut caller: Caller<'_, VmState>, path: i32, output: i32| {
+                path_stat(&mut caller, path, output, nofollow)
+            },
+        )?;
+    }
+    linker.func_wrap(
+        "env",
+        "__syscall_newfstatat",
+        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, output: i32, flags: i32| {
+            if dirfd != AT_FDCWD {
+                return -ERRNO_NOTCAPABLE;
+            }
+            path_stat(&mut caller, path, output, flags & 256 != 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_faccessat",
+        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, mode: i32, _flags: i32| {
+            if dirfd != AT_FDCWD {
+                return -ERRNO_NOTCAPABLE;
+            }
+            let path = match read_string(&mut caller, path) {
+                Ok(path) => path,
+                Err(errno) => return -errno,
+            };
+            caller
+                .data()
+                .legacy_fds
+                .access(&path, mode)
+                .map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_readlinkat",
+        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, output: i32, size: i32| {
+            if dirfd != AT_FDCWD {
+                return -ERRNO_NOTCAPABLE;
+            }
+            let result = (|| -> Result<i32, i32> {
+                let size = usize::try_from(size).map_err(|_| ERRNO_INVAL)?;
+                if size == 0 {
+                    return Err(ERRNO_INVAL);
+                }
+                let path = read_string(&mut caller, path)?;
+                let target = caller.data().legacy_fds.readlink(&path)?;
+                let length = size.min(target.len());
+                write_memory(&mut caller, output, &target[..length])?;
+                i32::try_from(length).map_err(|_| ERRNO_INVAL)
+            })();
+            result.unwrap_or_else(|errno| -errno)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_statfs64",
+        |mut caller: Caller<'_, VmState>, path: i32, _size: i32, output: i32| {
+            let result = (|| -> Result<(), i32> {
+                let path = read_string(&mut caller, path)?;
+                caller
+                    .data()
+                    .legacy_fds
+                    .resolve_existing(&path)
+                    .map_err(fs_errno)?;
+                write_statfs(&mut caller, output)
+            })();
+            result.map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_fstatfs64",
+        |mut caller: Caller<'_, VmState>, fd: i32, _size: i32, output: i32| {
+            if !caller.data().legacy_fds.contains(fd) {
+                return -ERRNO_BADF;
+            }
+            write_statfs(&mut caller, output).map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
     linker.func_wrap(
         "env",
         "__syscall_pipe",
@@ -588,6 +1125,368 @@ fn vectored_io(
             .unwrap_or(0),
         Err(errno) => errno,
     }
+}
+
+fn decode_proxy_args(
+    caller: &mut Caller<'_, VmState>,
+    encoded_count: i32,
+    pointer: i32,
+) -> Result<Vec<i64>, i32> {
+    if encoded_count < 0 || encoded_count % 2 != 0 {
+        return Err(ERRNO_INVAL);
+    }
+    let count = usize::try_from(encoded_count / 2).map_err(|_| ERRNO_INVAL)?;
+    let mut output = Vec::with_capacity(count);
+    for index in 0..count {
+        let address = pointer
+            .checked_add(
+                i32::try_from(index.checked_mul(16).ok_or(ERRNO_INVAL)?)
+                    .map_err(|_| ERRNO_INVAL)?,
+            )
+            .ok_or(ERRNO_INVAL)?;
+        let mut pair = [0; 16];
+        read_memory(caller, address, &mut pair)?;
+        let tag = i64::from_le_bytes(pair[..8].try_into().unwrap());
+        let bits = u64::from_le_bytes(pair[8..].try_into().unwrap());
+        output.push(if tag == 0 {
+            f64::from_bits(bits) as i64
+        } else {
+            bits as i64
+        });
+    }
+    Ok(output)
+}
+
+fn dispatch_proxy(
+    caller: &mut Caller<'_, VmState>,
+    index: i32,
+    args: &[i64],
+) -> Result<i32, String> {
+    let arg = |index: usize| -> Result<i32, String> {
+        i32::try_from(
+            *args
+                .get(index)
+                .ok_or_else(|| format!("missing argument {index}"))?,
+        )
+        .map_err(|_| format!("argument {index} does not fit i32"))
+    };
+    let table = caller.data().legacy_fds.clone();
+    let syscall = match index {
+        9 => {
+            let dirfd = arg(0)?;
+            if dirfd != AT_FDCWD {
+                Err(ERRNO_NOTCAPABLE)
+            } else {
+                let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+                table.access(&path, arg(2)?).map(|()| 0)
+            }
+        }
+        13 => return Ok(fcntl_call(caller, arg(0)?, arg(1)?, arg(2)?)),
+        14 => match table.fstat(arg(0)?) {
+            Ok(stat) => write_memory(caller, arg(1)?, &encode_stat(&stat)).map(|()| 0),
+            Err(errno) => Err(errno),
+        },
+        15 => {
+            if !table.contains(arg(0)?) {
+                Err(ERRNO_BADF)
+            } else {
+                write_statfs(caller, arg(2)?).map(|()| 0)
+            }
+        }
+        23 => return Ok(ioctl_call(caller, arg(0)?, arg(1)?, arg(2)?)),
+        27 => {
+            if arg(0)? != AT_FDCWD {
+                Err(ERRNO_NOTCAPABLE)
+            } else {
+                let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+                match table.stat(&path, arg(3)? & 256 != 0) {
+                    Ok(stat) => write_memory(caller, arg(2)?, &encode_stat(&stat)).map(|()| 0),
+                    Err(errno) => Err(errno),
+                }
+            }
+        }
+        28 => {
+            if arg(0)? != AT_FDCWD {
+                Err(ERRNO_NOTCAPABLE)
+            } else {
+                let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+                return Ok(table.open(&path, arg(2)?).unwrap_or_else(|errno| -errno));
+            }
+        }
+        29 => {
+            let (reader, writer) = table.pipe();
+            let mut pair = [0; 8];
+            pair[..4].copy_from_slice(&reader.to_le_bytes());
+            pair[4..].copy_from_slice(&writer.to_le_bytes());
+            write_memory(caller, arg(0)?, &pair).map(|()| 0)
+        }
+        30 => return Ok(poll_call(caller, arg(0)?, arg(1)?, arg(2)?)),
+        // The synchronous Rust poll/read implementations wait on the shared
+        // descriptor condvar directly, so the JS-only atomic wake helper does
+        // not participate. Complete it immediately if the artifact queues it.
+        31 => {
+            let address = arg(0)?
+                .checked_mul(4)
+                .ok_or_else(|| "atomic index overflow".to_owned())?;
+            write_memory(caller, address, &2_i32.to_le_bytes())
+                .map_err(|errno| errno.to_string())?;
+            return Ok(0);
+        }
+        32 => {
+            if arg(0)? != AT_FDCWD {
+                Err(ERRNO_NOTCAPABLE)
+            } else {
+                let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+                let target = table.readlink(&path).map_err(|errno| errno.to_string())?;
+                let size =
+                    usize::try_from(arg(3)?).map_err(|_| "negative readlink size".to_owned())?;
+                if size == 0 {
+                    Err(ERRNO_INVAL)
+                } else {
+                    let length = size.min(target.len());
+                    write_memory(caller, arg(2)?, &target[..length])
+                        .map_err(|errno| errno.to_string())?;
+                    return Ok(length as i32);
+                }
+            }
+        }
+        45 => {
+            return Ok(mmap_call(
+                caller,
+                arg(0)?,
+                arg(3)?,
+                *args
+                    .get(4)
+                    .ok_or_else(|| "missing mmap offset".to_owned())?,
+                arg(5)?,
+                arg(6)?,
+            ));
+        }
+        50 => return Ok(table.close(arg(0)?).err().unwrap_or(0)),
+        52 => {
+            return Ok(vectored_io(
+                caller,
+                arg(0)?,
+                arg(1)?,
+                arg(2)?,
+                arg(4)?,
+                Some(args[3] as u64),
+                false,
+            ));
+        }
+        54 => {
+            return Ok(vectored_io(
+                caller,
+                arg(0)?,
+                arg(1)?,
+                arg(2)?,
+                arg(3)?,
+                None,
+                false,
+            ));
+        }
+        55 => match table.seek(
+            arg(0)?,
+            args.get(1)
+                .copied()
+                .ok_or_else(|| "missing offset".to_owned())?,
+            arg(2)?,
+        ) {
+            Ok(position) => write_memory(caller, arg(3)?, &position.to_le_bytes()).map(|()| 0),
+            Err(errno) => Err(errno),
+        },
+        57 => {
+            return Ok(vectored_io(
+                caller,
+                arg(0)?,
+                arg(1)?,
+                arg(2)?,
+                arg(3)?,
+                None,
+                true,
+            ));
+        }
+        _ => return Err("unsupported proxy table index".to_owned()),
+    };
+    Ok(syscall.unwrap_or_else(|errno| -errno))
+}
+
+fn fcntl_call(caller: &mut Caller<'_, VmState>, fd: i32, command: i32, varargs: i32) -> i32 {
+    let table = caller.data().legacy_fds.clone();
+    let result = (|| -> Result<i32, i32> {
+        match command {
+            0 | 1030 => table.duplicate(fd, read_u32(caller, varargs)? as i32),
+            1 | 2 | 6 | 7 => {
+                table.get_flags(fd)?;
+                Ok(0)
+            }
+            3 => table.get_flags(fd),
+            4 => {
+                table.add_flags(fd, read_u32(caller, varargs)? as i32)?;
+                Ok(0)
+            }
+            5 => {
+                table.get_flags(fd)?;
+                let pointer = read_u32(caller, varargs)? as i32;
+                write_memory(caller, pointer, &2_i16.to_le_bytes())?;
+                Ok(0)
+            }
+            _ => Err(ERRNO_INVAL),
+        }
+    })();
+    result.unwrap_or_else(|errno| -errno)
+}
+
+fn ioctl_call(caller: &mut Caller<'_, VmState>, fd: i32, operation: i32, varargs: i32) -> i32 {
+    let table = caller.data().legacy_fds.clone();
+    let result = (|| -> Result<i32, i32> {
+        if operation == 21531 {
+            let output = read_u32(caller, varargs)? as i32;
+            write_memory(caller, output, &table.bytes_available(fd)?.to_le_bytes())?;
+            return Ok(0);
+        }
+        if !table.is_tty(fd)? {
+            return Err(ERRNO_NOTTY);
+        }
+        match operation {
+            21505 => {
+                let output = read_u32(caller, varargs)? as i32;
+                write_memory(caller, output, &[0; 49])?;
+                Ok(0)
+            }
+            21506..=21512 | 21515 | 21524 => Ok(0),
+            21519 => {
+                let output = read_u32(caller, varargs)? as i32;
+                write_memory(caller, output, &0_u32.to_le_bytes())?;
+                Ok(0)
+            }
+            21520 => Err(ERRNO_INVAL),
+            21523 => {
+                let output = read_u32(caller, varargs)? as i32;
+                let mut winsize = [0; 8];
+                winsize[..2].copy_from_slice(&24_u16.to_le_bytes());
+                winsize[2..4].copy_from_slice(&80_u16.to_le_bytes());
+                write_memory(caller, output, &winsize)?;
+                Ok(0)
+            }
+            _ => Err(ERRNO_INVAL),
+        }
+    })();
+    result.unwrap_or_else(|errno| -errno)
+}
+
+fn poll_call(caller: &mut Caller<'_, VmState>, pointer: i32, count: i32, timeout_ms: i32) -> i32 {
+    let result = (|| -> Result<i32, i32> {
+        let count = usize::try_from(count).map_err(|_| ERRNO_INVAL)?;
+        let mut fds = Vec::with_capacity(count);
+        for index in 0..count {
+            let address = pointer
+                .checked_add(i32::try_from(index * 8).map_err(|_| ERRNO_INVAL)?)
+                .ok_or(ERRNO_INVAL)?;
+            let mut bytes = [0; 8];
+            read_memory(caller, address, &mut bytes)?;
+            fds.push(PollFd {
+                fd: i32::from_le_bytes(bytes[..4].try_into().unwrap()),
+                events: i16::from_le_bytes(bytes[4..6].try_into().unwrap()),
+                revents: 0,
+            });
+        }
+        let table = caller.data().legacy_fds.clone();
+        let ready = table.poll(&mut fds, timeout_ms);
+        for (index, fd) in fds.iter().enumerate() {
+            let address = pointer
+                .checked_add(i32::try_from(index * 8 + 6).map_err(|_| ERRNO_INVAL)?)
+                .ok_or(ERRNO_INVAL)?;
+            write_memory(caller, address, &fd.revents.to_le_bytes())?;
+        }
+        i32::try_from(ready).map_err(|_| ERRNO_INVAL)
+    })();
+    result.unwrap_or_else(|errno| -errno)
+}
+
+fn mmap_call(
+    caller: &mut Caller<'_, VmState>,
+    length: i32,
+    fd: i32,
+    offset: i64,
+    allocated: i32,
+    address: i32,
+) -> i32 {
+    let result = (|| -> Result<(), i32> {
+        let length = u32::try_from(length).map_err(|_| ERRNO_INVAL)?;
+        let offset = u64::try_from(offset).map_err(|_| ERRNO_INVAL)?;
+        let aligned = length.checked_add(65_535).ok_or(ERRNO_INVAL)? & !65_535;
+        let allocator = caller
+            .get_export("emscripten_builtin_memalign")
+            .and_then(Extern::into_func)
+            .ok_or(ERRNO_INVAL)?
+            .typed::<(i32, i32), i32>(&caller)
+            .map_err(|_| ERRNO_INVAL)?;
+        let pointer = allocator
+            .call(&mut *caller, (65_536, aligned as i32))
+            .map_err(|_| ERRNO_IO)?;
+        if pointer == 0 {
+            return Err(48);
+        }
+        let mut bytes = vec![0; length as usize];
+        caller.data().legacy_fds.pread(fd, &mut bytes, offset)?;
+        write_memory(caller, pointer, &bytes)?;
+        write_memory(caller, allocated, &1_u32.to_le_bytes())?;
+        write_memory(caller, address, &(pointer as u32).to_le_bytes())
+    })();
+    result.map_or_else(|errno| -errno, |()| 0)
+}
+
+fn path_stat(caller: &mut Caller<'_, VmState>, path: i32, output: i32, nofollow: bool) -> i32 {
+    let result = (|| -> Result<(), i32> {
+        let path = read_string(caller, path)?;
+        let stat = caller.data().legacy_fds.stat(&path, nofollow)?;
+        write_memory(caller, output, &encode_stat(&stat))
+    })();
+    result.map_or_else(|errno| -errno, |()| 0)
+}
+
+fn sync_mapping(
+    caller: &mut Caller<'_, VmState>,
+    address: i32,
+    length: i32,
+    flags: i32,
+    fd: i32,
+    offset: i64,
+) -> Result<(), i32> {
+    if flags & 2 != 0 {
+        return Ok(());
+    }
+    let length = usize::try_from(length).map_err(|_| ERRNO_INVAL)?;
+    let offset = u64::try_from(offset).map_err(|_| ERRNO_INVAL)?;
+    let mut bytes = vec![0; length];
+    read_memory(caller, address, &mut bytes)?;
+    let table = caller.data().legacy_fds.clone();
+    let written = table.pwrite(fd, &bytes, offset)?;
+    if written == bytes.len() {
+        Ok(())
+    } else {
+        Err(ERRNO_IO)
+    }
+}
+
+fn write_statfs(caller: &mut Caller<'_, VmState>, output: i32) -> Result<(), i32> {
+    let mut bytes = [0; 64];
+    for (offset, value) in [
+        (4, 4096_u32),
+        (8, 1_000_000),
+        (12, 500_000),
+        (16, 500_000),
+        (20, 1),
+        (24, 1_000_000),
+        (28, 42),
+        (36, 255),
+        (40, 4096),
+        (44, 2),
+    ] {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    write_memory(caller, output, &bytes)
 }
 
 fn normalize_absolute(raw: &str) -> anyhow::Result<String> {
@@ -954,6 +1853,290 @@ mod tests {
         );
         let mut linker = Linker::new(&engine);
         p1::add_to_linker_sync(&mut linker, |state: &mut VmState| &mut state.wasi).unwrap();
+        linker.allow_shadowing(true);
+        add_to_linker(&mut linker).unwrap();
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        assert_eq!(
+            instance
+                .get_typed_func::<(), i32>(&mut store, "run")
+                .unwrap()
+                .call(&mut store, ())
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn links_stat_access_readlink_and_statfs_with_legacy_layouts() {
+        use std::os::unix::fs::symlink;
+
+        let (pack, table) = fixture();
+        symlink("hello", pack.path().join("link")).unwrap();
+        let engine = Engine::default();
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (import "env" "__syscall_openat"
+                    (func $open (param i32 i32 i32 i32) (result i32)))
+                (import "env" "__syscall_fstat64"
+                    (func $fstat (param i32 i32) (result i32)))
+                (import "env" "__syscall_newfstatat"
+                    (func $stat (param i32 i32 i32 i32) (result i32)))
+                (import "env" "__syscall_faccessat"
+                    (func $access (param i32 i32 i32 i32) (result i32)))
+                (import "env" "__syscall_readlinkat"
+                    (func $readlink (param i32 i32 i32 i32) (result i32)))
+                (import "env" "__syscall_fstatfs64"
+                    (func $statfs (param i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 0) "/pack/hello\00")
+                (data (i32.const 32) "/pack/link\00")
+                (func (export "run") (result i32)
+                    (local $fd i32)
+                    i32.const -100 i32.const 0 i32.const 0 i32.const 0
+                    call $open local.tee $fd
+                    i32.const 128 call $fstat
+                    if i32.const 1 return end
+                    i32.const 152 i64.load i64.const 11 i64.ne
+                    if i32.const 2 return end
+                    i32.const -100 i32.const 0 i32.const 224 i32.const 0 call $stat
+                    if i32.const 3 return end
+                    i32.const 248 i64.load i64.const 11 i64.ne
+                    if i32.const 4 return end
+                    i32.const -100 i32.const 0 i32.const 4 i32.const 0 call $access
+                    if i32.const 5 return end
+                    i32.const -100 i32.const 32 i32.const 400 i32.const 5 call $readlink
+                    i32.const 5 i32.ne if i32.const 6 return end
+                    i32.const 400 i32.load8_u i32.const 104 i32.ne
+                    if i32.const 7 return end
+                    local.get $fd i32.const 64 i32.const 500 call $statfs
+                    if i32.const 8 return end
+                    i32.const 504 i32.load i32.const 4096 i32.ne
+                    if i32.const 9 return end
+                    i32.const 0))"#,
+        )
+        .unwrap();
+        let mapdirs = [MapDir::read_only(
+            pack.path().to_owned(),
+            "/pack".to_owned(),
+        )];
+        let host_fs = crate::host_fs::HostFs::new(&mapdirs).unwrap();
+        let mut store = Store::new(
+            &engine,
+            VmState {
+                wasi: WasiCtxBuilder::new().build_p1(),
+                qemu_jit: crate::qemu_jit::QemuJit::new(None),
+                host_fs,
+                legacy_fds: table,
+                fiber_next: None,
+                fiber_entries: HashMap::new(),
+                poll_calls: 0,
+            },
+        );
+        let mut linker = Linker::new(&engine);
+        linker.allow_shadowing(true);
+        add_to_linker(&mut linker).unwrap();
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        assert_eq!(
+            instance
+                .get_typed_func::<(), i32>(&mut store, "run")
+                .unwrap()
+                .call(&mut store, ())
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            &instance
+                .get_memory(&mut store, "memory")
+                .unwrap()
+                .data(&store)[400..405],
+            b"hello"
+        );
+    }
+
+    #[test]
+    fn links_fcntl_and_tty_pipe_ioctls() {
+        let (_pack, table) = fixture();
+        let engine = Engine::default();
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (import "env" "__syscall_pipe" (func $pipe (param i32) (result i32)))
+                (import "env" "__syscall_fcntl64"
+                    (func $fcntl (param i32 i32 i32) (result i32)))
+                (import "env" "__syscall_ioctl"
+                    (func $ioctl (param i32 i32 i32) (result i32)))
+                (import "wasi_snapshot_preview1" "fd_write"
+                    (func $write (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 64) "xyz")
+                (func (export "run") (result i32)
+                    (local $reader i32) (local $writer i32) (local $duplicate i32)
+                    i32.const 0 call $pipe drop
+                    i32.const 0 i32.load local.set $reader
+                    i32.const 4 i32.load local.set $writer
+                    i32.const 16 i32.const 64 i32.store
+                    i32.const 20 i32.const 3 i32.store
+                    local.get $writer i32.const 16 i32.const 1 i32.const 24 call $write drop
+                    local.get $reader i32.const 3 i32.const 0 call $fcntl
+                    if i32.const 1 return end
+                    i32.const 40 i32.const 100 i32.store
+                    local.get $reader i32.const 0 i32.const 40 call $fcntl
+                    local.tee $duplicate i32.const 100 i32.ne
+                    if i32.const 2 return end
+                    i32.const 44 i32.const 48 i32.store
+                    local.get $duplicate i32.const 21531 i32.const 44 call $ioctl
+                    if i32.const 3 return end
+                    i32.const 48 i32.load i32.const 3 i32.ne
+                    if i32.const 4 return end
+                    i32.const 52 i32.const 56 i32.store
+                    i32.const 1 i32.const 21523 i32.const 52 call $ioctl
+                    if i32.const 5 return end
+                    i32.const 56 i32.load16_u i32.const 24 i32.ne
+                    if i32.const 6 return end
+                    i32.const 58 i32.load16_u i32.const 80 i32.ne
+                    if i32.const 7 return end
+                    i32.const 0))"#,
+        )
+        .unwrap();
+        let host_fs = crate::host_fs::HostFs::new(&[]).unwrap();
+        let mut store = Store::new(
+            &engine,
+            VmState {
+                wasi: WasiCtxBuilder::new().build_p1(),
+                qemu_jit: crate::qemu_jit::QemuJit::new(None),
+                host_fs,
+                legacy_fds: table,
+                fiber_next: None,
+                fiber_entries: HashMap::new(),
+                poll_calls: 0,
+            },
+        );
+        let mut linker = Linker::new(&engine);
+        linker.allow_shadowing(true);
+        add_to_linker(&mut linker).unwrap();
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        assert_eq!(
+            instance
+                .get_typed_func::<(), i32>(&mut store, "run")
+                .unwrap()
+                .call(&mut store, ())
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn maps_legacy_files_through_the_guest_allocator() {
+        let (_pack, table) = fixture();
+        let engine = Engine::default();
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (import "env" "__syscall_openat"
+                    (func $open (param i32 i32 i32 i32) (result i32)))
+                (import "env" "_mmap_js"
+                    (func $mmap (param i32 i32 i32 i32 i64 i32 i32) (result i32)))
+                (import "env" "_munmap_js"
+                    (func $munmap (param i32 i32 i32 i32 i32 i64) (result i32)))
+                (memory (export "memory") 2)
+                (data (i32.const 0) "/pack/hello\00")
+                (func (export "emscripten_builtin_memalign") (param i32 i32) (result i32)
+                    i32.const 65536)
+                (func (export "run") (result i32)
+                    (local $fd i32)
+                    i32.const -100 i32.const 0 i32.const 0 i32.const 0
+                    call $open local.set $fd
+                    i32.const 5 i32.const 1 i32.const 2 local.get $fd i64.const 6
+                    i32.const 100 i32.const 104 call $mmap
+                    if i32.const 1 return end
+                    i32.const 100 i32.load i32.const 1 i32.ne
+                    if i32.const 2 return end
+                    i32.const 104 i32.load i32.const 65536 i32.ne
+                    if i32.const 3 return end
+                    i32.const 65536 i32.load8_u i32.const 119 i32.ne
+                    if i32.const 4 return end
+                    i32.const 65540 i32.load8_u i32.const 100 i32.ne
+                    if i32.const 5 return end
+                    i32.const 65536 i32.const 5 i32.const 0 i32.const 2
+                    local.get $fd i64.const 6 call $munmap
+                    if i32.const 6 return end
+                    i32.const 0))"#,
+        )
+        .unwrap();
+        let host_fs = crate::host_fs::HostFs::new(&[]).unwrap();
+        let mut store = Store::new(
+            &engine,
+            VmState {
+                wasi: WasiCtxBuilder::new().build_p1(),
+                qemu_jit: crate::qemu_jit::QemuJit::new(None),
+                host_fs,
+                legacy_fds: table,
+                fiber_next: None,
+                fiber_entries: HashMap::new(),
+                poll_calls: 0,
+            },
+        );
+        let mut linker = Linker::new(&engine);
+        linker.allow_shadowing(true);
+        add_to_linker(&mut linker).unwrap();
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        assert_eq!(
+            instance
+                .get_typed_func::<(), i32>(&mut store, "run")
+                .unwrap()
+                .call(&mut store, ())
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn dispatches_tagged_main_thread_proxy_arguments() {
+        let (_pack, table) = fixture();
+        let engine = Engine::default();
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (import "env" "_emscripten_receive_on_main_thread_js"
+                    (func $proxy (param i32 i32 i32 i32) (result f64)))
+                (memory (export "memory") 1)
+                (data (i32.const 256) "/pack/hello\00")
+                (func (export "run") (result i32)
+                    (local $fd i32)
+                    ;; Four non-BigInt arguments are encoded as tag=0,f64 payload.
+                    i32.const 8 f64.const -100 f64.store
+                    i32.const 24 f64.const 256 f64.store
+                    i32.const 40 f64.const 0 f64.store
+                    i32.const 56 f64.const 0 f64.store
+                    i32.const 28 i32.const 123 i32.const 8 i32.const 0 call $proxy
+                    i32.trunc_f64_s local.tee $fd
+                    i32.const 0 i32.lt_s if i32.const 1 return end
+                    ;; fstat(fd, 320), also through proxy index 14.
+                    i32.const 72 local.get $fd f64.convert_i32_s f64.store
+                    i32.const 88 f64.const 320 f64.store
+                    i32.const 14 i32.const 123 i32.const 4 i32.const 64 call $proxy
+                    i32.trunc_f64_s i32.const 0 i32.ne
+                    if i32.const 2 return end
+                    i32.const 344 i64.load i64.const 11 i64.ne
+                    if i32.const 3 return end
+                    i32.const 0))"#,
+        )
+        .unwrap();
+        let host_fs = crate::host_fs::HostFs::new(&[]).unwrap();
+        let mut store = Store::new(
+            &engine,
+            VmState {
+                wasi: WasiCtxBuilder::new().build_p1(),
+                qemu_jit: crate::qemu_jit::QemuJit::new(None),
+                host_fs,
+                legacy_fds: table,
+                fiber_next: None,
+                fiber_entries: HashMap::new(),
+                poll_calls: 0,
+            },
+        );
+        let mut linker = Linker::new(&engine);
         linker.allow_shadowing(true);
         add_to_linker(&mut linker).unwrap();
         let instance = linker.instantiate(&mut store, &module).unwrap();
