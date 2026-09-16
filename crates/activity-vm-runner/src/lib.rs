@@ -328,13 +328,32 @@ pub async fn execute(
             return Err(error);
         }
     };
-    replace_output_from_guest_files(
+    let has_guest_output = replace_output_from_guest_files(
         &mut output,
         queue.path(),
         max_stdout_bytes,
         max_stderr_bytes,
     )
     .await?;
+    if is_qemu && !has_guest_output {
+        if let Some(exit_code) = output.serial.split(|byte| *byte == b'\n' || *byte == b'\r').find_map(
+            |line| {
+                line.strip_prefix(b"OBELISK_ACTIVITY_VM_EXIT_CODE=")
+                    .and_then(|value| std::str::from_utf8(value).ok())
+                    .and_then(|value| value.parse().ok())
+            },
+        ) {
+            output.exit_code = exit_code;
+        }
+        if let Some(json) = output
+            .serial
+            .split(|byte| *byte == b'\n' || *byte == b'\r')
+            .rev()
+            .find(|line| serde_json::from_slice::<serde_json::Value>(line).is_ok())
+        {
+            output.stdout = json.to_vec();
+        }
+    }
     if is_qemu {
         if let Some(pack) = &qemu_pack
             && let Ok(console) = tokio::fs::read(pack.path().join("console.log")).await
@@ -368,9 +387,9 @@ async fn replace_output_from_guest_files(
     queue: &Path,
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let Some(stdout) = read_guest_output(queue.join("stdout"), max_stdout_bytes).await? else {
-        return Ok(());
+        return Ok(false);
     };
     let stderr = read_guest_output(queue.join("stderr"), max_stderr_bytes)
         .await?
@@ -386,7 +405,7 @@ async fn replace_output_from_guest_files(
             .parse()
             .context("parsing activity VM guest exit code")?;
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn read_guest_output(path: PathBuf, max_bytes: usize) -> anyhow::Result<Option<Vec<u8>>> {

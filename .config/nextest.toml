@@ -8,6 +8,14 @@ junit.report-name = "ci-test"
 junit.store-success-output = true
 junit.store-failure-output = true
 
+[test-groups.activity-vm]
+max-threads = 1
+
+[[profile.ci-test.overrides]]
+filter = 'test(/^command::integration_tests::activity_vm::/)'
+slow-timeout = { period = "30s", terminate-after = 10 }
+test-group = "activity-vm"
+
 [profile.ci-test-populate-codegen-cache]
 failure-output = "immediate"
 fail-fast = true
