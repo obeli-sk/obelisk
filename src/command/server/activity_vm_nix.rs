@@ -3,6 +3,7 @@ use base64::Engine as _;
 use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 use sha2::{Digest as _, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read as _};
 use std::path::Path;
 
@@ -26,6 +27,12 @@ pub(crate) async fn resolve(
     output: &Path,
 ) -> anyhow::Result<Vec<String>> {
     tokio::fs::create_dir_all(output).await?;
+    // The store and its manifest are shared by every deployment. Concurrent resolvers used to
+    // restore into the same temporary directory and race while replacing the destination, which
+    // could make `rename` fail with ENOTEMPTY.
+    // Keep the lock for the entire resolution so marker checks, restoration, and manifest updates
+    // form one transaction. An OS lock also covers multiple Obelisk processes sharing the store.
+    let _store_lock = lock_store(output).await?;
     let client = reqwest::Client::new();
     let mut pending = roots
         .iter()
@@ -111,6 +118,23 @@ pub(crate) async fn resolve(
     let mut closure = seen.into_iter().collect::<Vec<_>>();
     closure.sort_unstable();
     Ok(closure)
+}
+
+async fn lock_store(output: &Path) -> anyhow::Result<File> {
+    let lock_path = output.join(".obelisk-activity-vm.lock");
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("cannot open activity VM store lock {}", lock_path.display()))?;
+    tokio::task::spawn_blocking(move || {
+        lock.lock()
+            .with_context(|| format!("cannot lock activity VM store at {}", lock_path.display()))?;
+        Ok(lock)
+    })
+    .await
+    .context("activity VM store lock task failed")?
 }
 
 async fn restore_store_symlinks(store: &Path) -> anyhow::Result<()> {
