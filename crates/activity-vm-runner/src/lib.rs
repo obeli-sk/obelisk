@@ -17,12 +17,14 @@ use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
 mod emscripten;
 mod host_fs;
 mod http_bridge;
+mod legacy_fd;
 mod qemu_jit;
 
 struct VmState {
     wasi: p1::WasiP1Ctx,
     qemu_jit: qemu_jit::QemuJit,
     host_fs: Arc<host_fs::HostFs>,
+    legacy_fds: Arc<legacy_fd::LegacyFdTable>,
     fiber_next: Option<i32>,
     fiber_entries: HashMap<i32, (i32, i32)>,
     poll_calls: u64,
@@ -33,6 +35,7 @@ struct EmscriptenRuntime {
     module: Module,
     memory: SharedMemory,
     host_fs: Arc<host_fs::HostFs>,
+    legacy_fds: Arc<legacy_fd::LegacyFdTable>,
     mapdirs: Vec<MapDir>,
     stdout: pipe::MemoryOutputPipe,
     stderr: pipe::MemoryOutputPipe,
@@ -359,12 +362,14 @@ fn run_module(
             })?;
     }
     let host_fs = host_fs::HostFs::new(mapdirs)?;
+    let legacy_fds = legacy_fd::LegacyFdTable::new(mapdirs)?;
     let mut store = Store::new(
         engine,
         VmState {
             wasi: wasi.build_p1(),
             qemu_jit: qemu_jit::QemuJit::new(None),
             host_fs: host_fs.clone(),
+            legacy_fds: legacy_fds.clone(),
             fiber_next: None,
             fiber_entries: HashMap::new(),
             poll_calls: 0,
@@ -391,12 +396,17 @@ fn run_module(
         emscripten::add_mailbox_notify(&mut linker)?;
         emscripten::add_poll(&mut linker)?;
         host_fs::add_to_linker(&mut linker)?;
+        if legacy_fd::is_required(module) {
+            linker.allow_shadowing(true);
+            legacy_fd::add_to_linker(&mut linker)?;
+        }
         if let qemu_jit::QemuMemory::Shared(memory) = memory {
             let runtime = Arc::new(EmscriptenRuntime {
                 engine: engine.clone(),
                 module: module.clone(),
                 memory,
                 host_fs,
+                legacy_fds,
                 mapdirs: mapdirs.to_vec(),
                 stdout: stdout.clone(),
                 stderr: stderr.clone(),
@@ -578,6 +588,7 @@ fn run_pthread(
             wasi,
             qemu_jit: qemu_jit::QemuJit::new(Some(memory.clone())),
             host_fs: runtime.host_fs.clone(),
+            legacy_fds: runtime.legacy_fds.clone(),
             fiber_next: None,
             fiber_entries: HashMap::new(),
             poll_calls: 0,
@@ -596,6 +607,10 @@ fn run_pthread(
     emscripten::add_mailbox_notify(&mut linker)?;
     emscripten::add_poll(&mut linker)?;
     host_fs::add_to_linker(&mut linker)?;
+    if legacy_fd::is_required(&runtime.module) {
+        linker.allow_shadowing(true);
+        legacy_fd::add_to_linker(&mut linker)?;
+    }
     add_pthread_create(&mut linker, runtime.clone())?;
     let cancelled = runtime.cancelled.clone();
     store.epoch_deadline_callback(move |_| {
@@ -744,6 +759,7 @@ mod tests {
             module,
             memory: memory.clone(),
             host_fs: host_fs::HostFs::new(&[]).unwrap(),
+            legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
             mapdirs: Vec::new(),
             stdout: pipe::MemoryOutputPipe::new(1024),
             stderr: pipe::MemoryOutputPipe::new(1024),
@@ -798,6 +814,7 @@ mod tests {
                 wasi: WasiCtxBuilder::new().build_p1(),
                 qemu_jit: qemu_jit::QemuJit::new(None),
                 host_fs: host_fs::HostFs::new(&[]).unwrap(),
+                legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
                 poll_calls: 0,
