@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "xterm-pty": "0.12.0"
+  }
+}
