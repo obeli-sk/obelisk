@@ -2,6 +2,7 @@ use anyhow::{Context, ensure};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use wasmtime::{
     Caller, Extern, ExternType, Instance, Linker, Memory, Module, Ref, SharedMemory, TypedFunc,
 };
@@ -109,10 +110,19 @@ pub(crate) fn add_to_linker<T: HasQemuJit + Send + 'static>(
                 .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
         },
     )?;
-    linker.func_wrap("env", "wasm_tail_calls_supported_js", || {
-        i32::from(std::env::var_os("OBELISK_QEMU_TAIL_CALLS").is_some())
-    })?;
-    linker.func_wrap("env", "remove_batch_js", |_base: i32, _count: i32| {})?;
+    linker.func_wrap(
+        "env",
+        "wasm_tail_calls_supported_js",
+        |caller: Caller<'_, T>| tail_calls_supported(caller.engine()),
+    )?;
+    linker.func_wrap(
+        "env",
+        "remove_batch_js",
+        |mut caller: Caller<'_, T>, base: i32, count: i32| -> wasmtime::Result<()> {
+            remove_batch(&mut caller, base, count)
+                .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
+        },
+    )?;
     linker.func_wrap(
         "env",
         "report_stats_js",
@@ -144,10 +154,19 @@ pub(crate) fn add_to_linker<T: HasQemuJit + Send + 'static>(
                 .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
         },
     )?;
-    linker.func_wrap("qemu_jit", "tail_calls_supported", || {
-        i32::from(std::env::var_os("OBELISK_QEMU_TAIL_CALLS").is_some())
-    })?;
-    linker.func_wrap("qemu_jit", "remove_batch", |_base: i32, _count: i32| {})?;
+    linker.func_wrap(
+        "qemu_jit",
+        "tail_calls_supported",
+        |caller: Caller<'_, T>| tail_calls_supported(caller.engine()),
+    )?;
+    linker.func_wrap(
+        "qemu_jit",
+        "remove_batch",
+        |mut caller: Caller<'_, T>, base: i32, count: i32| -> wasmtime::Result<()> {
+            remove_batch(&mut caller, base, count)
+                .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
+        },
+    )?;
     linker.func_wrap(
         "qemu_jit",
         "report_stats",
@@ -368,10 +387,9 @@ fn compile_batch<T: HasQemuJit>(
         .chunks_exact(4)
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
         .collect::<Vec<_>>();
-    eprintln!("QEMU compiling batch functions={nfuncs} bytes={bytes_len}");
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let module = Module::new(caller.engine(), wasm)?;
-    eprintln!("QEMU compiled batch module in {:?}", started.elapsed());
+    let compiled = started.elapsed();
     let table = caller
         .get_export("__indirect_function_table")
         .and_then(Extern::into_table)
@@ -396,7 +414,13 @@ fn compile_batch<T: HasQemuJit>(
             (m, n, ty) => anyhow::bail!("unsupported QEMU JIT import {m}.{n}: {ty:?}"),
         }
     }
+    ensure!(
+        helper == helper_indices.len(),
+        "QEMU JIT helper vector length mismatch"
+    );
+    let instantiate_started = Instant::now();
     let instance = Instance::new(&mut *caller, &module, &imports)?;
+    let instantiated = instantiate_started.elapsed();
     let base = table.size(&mut *caller);
     table.grow(&mut *caller, nfuncs as u64, Ref::Func(None))?;
     for i in 0..nfuncs as u64 {
@@ -405,8 +429,47 @@ fn compile_batch<T: HasQemuJit>(
             .context("QEMU JIT batch export is missing")?;
         table.set(&mut *caller, base + i, Ref::Func(Some(function)))?;
     }
-    eprintln!("QEMU compiled batch of {nfuncs} TCG blocks");
+    eprintln!(
+        "QEMU compiled batch blocks={nfuncs} bytes={bytes_len} compile_us={} instantiate_us={} total_us={}",
+        compiled.as_micros(),
+        instantiated.as_micros(),
+        started.elapsed().as_micros()
+    );
     Ok(base as i32)
+}
+
+fn tail_calls_supported(engine: &wasmtime::Engine) -> i32 {
+    // This is the same minimal return_call probe used by deployed Trynix.
+    const PROBE: &[u8] = &[
+        0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 6, 1, 4, 0, 18, 0, 11,
+    ];
+    i32::from(
+        std::env::var_os("OBELISK_QEMU_DISABLE_TAIL_CALLS").is_none()
+            && Module::new(engine, PROBE).is_ok(),
+    )
+}
+
+fn remove_batch<T: HasQemuJit>(
+    caller: &mut Caller<'_, T>,
+    base: i32,
+    count: i32,
+) -> anyhow::Result<()> {
+    ensure!(base >= 0 && count >= 0, "invalid QEMU JIT batch range");
+    let table = caller
+        .get_export("__indirect_function_table")
+        .and_then(Extern::into_table)
+        .context("QEMU function table export is unavailable")?;
+    let end = u64::try_from(base)?
+        .checked_add(u64::try_from(count)?)
+        .context("QEMU JIT batch range overflow")?;
+    ensure!(
+        end <= table.size(&mut *caller),
+        "QEMU JIT batch range exceeds table"
+    );
+    for index in u64::try_from(base)?..end {
+        table.set(&mut *caller, index, Ref::Func(None))?;
+    }
+    Ok(())
 }
 
 fn compile<T: HasQemuJit>(
@@ -521,6 +584,10 @@ fn read_byte(source: &UnsafeCell<u8>) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use wasmtime::{Config, Engine, MemoryType, Store};
 
     struct State(QemuJit);
@@ -583,6 +650,174 @@ mod tests {
             .get_typed_func::<(), i32>(&mut store, "run")
             .unwrap();
         assert_eq!(run.call(&mut store, ()).unwrap(), 42);
+    }
+
+    #[test]
+    fn detects_tail_call_support_from_the_engine() {
+        let mut disabled = Config::new();
+        disabled.wasm_tail_call(false);
+        assert_eq!(tail_calls_supported(&Engine::new(&disabled).unwrap()), 0);
+
+        let mut enabled = Config::new();
+        enabled.wasm_tail_call(true);
+        assert_eq!(tail_calls_supported(&Engine::new(&enabled).unwrap()), 1);
+    }
+
+    #[test]
+    fn loads_calls_and_removes_exact_style_batches_across_a_yielding_helper() {
+        let mut config = Config::new();
+        config.shared_memory(true);
+        config.wasm_tail_call(true);
+        let engine = Engine::new(&config).unwrap();
+        let memory = SharedMemory::new(&engine, MemoryType::shared(2, 2)).unwrap();
+        write_shared(&memory, 0, &2_u32.to_le_bytes());
+
+        let ordinary = wat::parse_str(
+            r#"(module
+                (type $tb (func (param i32) (result i32)))
+                (import "env" "buffer" (memory 2 2 shared))
+                (import "env" "table" (table 1 funcref))
+                (import "helper" "0" (func $helper (type $tb)))
+                (func (export "f0") (type $tb) (param i32) (result i32)
+                    local.get 0 call $helper))"#,
+        )
+        .unwrap();
+        let tail = wat::parse_str(
+            r#"(module
+                (type $tb (func (param i32) (result i32)))
+                (import "env" "buffer" (memory 2 2 shared))
+                (import "env" "table" (table 1 funcref))
+                (import "helper" "0" (func $helper (type $tb)))
+                (func (export "f0") (type $tb) (param i32) (result i32)
+                    local.get 0 return_call $helper))"#,
+        )
+        .unwrap();
+        write_shared(&memory, 0x1000, &ordinary);
+        write_shared(&memory, 0x4000, &tail);
+        write_shared(&memory, 0x8000, &0_u32.to_le_bytes());
+
+        let outer = Module::new(
+            &engine,
+            &format!(
+                r#"(module
+                    (type $tb (func (param i32) (result i32)))
+                    (import "env" "memory" (memory 2 2 shared))
+                    (import "env" "instantiate_batch_js"
+                        (func $compile (param i32 i32 i32 i32 i32 i32) (result i32)))
+                    (import "env" "remove_batch_js" (func $remove (param i32 i32)))
+                    (import "env" "wasm_tail_calls_supported_js" (func $tail (result i32)))
+                    (import "test" "yield" (func $yield))
+                    (global $asyncify_state (mut i32) i32.const 0)
+                    (table (export "__indirect_function_table") 1 funcref)
+                    (func $helper (type $tb) (param i32) (result i32)
+                        call $yield
+                        local.get 0 i32.const 0 i32.load i32.add)
+                    (elem (i32.const 0) $helper)
+                    (func (export "compile_ordinary") (result i32)
+                        i32.const 0x1000 i32.const {ordinary_len} i32.const 1
+                        i32.const 0x8000 i32.const 1 i32.const 0 call $compile)
+                    (func (export "compile_tail") (result i32)
+                        i32.const 0x4000 i32.const {tail_len} i32.const 1
+                        i32.const 0x8000 i32.const 1 i32.const 0 call $compile)
+                    (func (export "call") (param i32 i32) (result i32)
+                        local.get 1 local.get 0 call_indirect (type $tb))
+                    (func (export "remove") (param i32) local.get 0 i32.const 1 call $remove)
+                    (func (export "asyncify_get_state") (result i32) global.get $asyncify_state)
+                    (func (export "asyncify_start_unwind") (param i32)
+                        i32.const 1 global.set $asyncify_state)
+                    (func (export "asyncify_stop_unwind")
+                        i32.const 0 global.set $asyncify_state)
+                    (func (export "asyncify_start_rewind") (param i32)
+                        i32.const 2 global.set $asyncify_state)
+                    (func (export "asyncify_stop_rewind")
+                        i32.const 0 global.set $asyncify_state)
+                    (func (export "tail_supported") (result i32) call $tail))"#,
+                ordinary_len = ordinary.len(),
+                tail_len = tail.len(),
+            ),
+        )
+        .unwrap();
+        let yields = Arc::new(AtomicUsize::new(0));
+        let host_yields = yields.clone();
+        let mut store = Store::new(
+            &engine,
+            State(QemuJit::new(Some(QemuMemory::Shared(memory.clone())))),
+        );
+        let mut linker = Linker::new(&engine);
+        linker.define(&mut store, "env", "memory", memory).unwrap();
+        linker
+            .func_wrap(
+                "test",
+                "yield",
+                move |mut caller: Caller<'_, State>| -> wasmtime::Result<()> {
+                    host_yields.fetch_add(1, Ordering::Relaxed);
+                    let state = caller
+                        .get_export("asyncify_get_state")
+                        .and_then(Extern::into_func)
+                        .unwrap()
+                        .typed::<(), i32>(&caller)?
+                        .call(&mut caller, ())?;
+                    match state {
+                        0 => caller
+                            .get_export("asyncify_start_unwind")
+                            .and_then(Extern::into_func)
+                            .unwrap()
+                            .typed::<i32, ()>(&caller)?
+                            .call(&mut caller, 123),
+                        2 => caller
+                            .get_export("asyncify_stop_rewind")
+                            .and_then(Extern::into_func)
+                            .unwrap()
+                            .typed::<(), ()>(&caller)?
+                            .call(&mut caller, ()),
+                        other => Err(wasmtime::Error::msg(format!(
+                            "unexpected Asyncify state {other}"
+                        ))),
+                    }
+                },
+            )
+            .unwrap();
+        add_to_linker(&mut linker).unwrap();
+        let instance = linker.instantiate(&mut store, &outer).unwrap();
+        let compile_ordinary = instance
+            .get_typed_func::<(), i32>(&mut store, "compile_ordinary")
+            .unwrap();
+        let compile_tail = instance
+            .get_typed_func::<(), i32>(&mut store, "compile_tail")
+            .unwrap();
+        let call = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "call")
+            .unwrap();
+        let remove = instance
+            .get_typed_func::<i32, ()>(&mut store, "remove")
+            .unwrap();
+        let tail_supported = instance
+            .get_typed_func::<(), i32>(&mut store, "tail_supported")
+            .unwrap();
+        let asyncify_state = instance
+            .get_typed_func::<(), i32>(&mut store, "asyncify_get_state")
+            .unwrap();
+        let stop_unwind = instance
+            .get_typed_func::<(), ()>(&mut store, "asyncify_stop_unwind")
+            .unwrap();
+        let start_rewind = instance
+            .get_typed_func::<i32, ()>(&mut store, "asyncify_start_rewind")
+            .unwrap();
+
+        let ordinary_base = compile_ordinary.call(&mut store, ()).unwrap();
+        assert_eq!(call.call(&mut store, (ordinary_base, 40)).unwrap(), 42);
+        assert_eq!(asyncify_state.call(&mut store, ()).unwrap(), 1);
+        stop_unwind.call(&mut store, ()).unwrap();
+        start_rewind.call(&mut store, 123).unwrap();
+        remove.call(&mut store, ordinary_base).unwrap();
+        assert!(call.call(&mut store, (ordinary_base, 40)).is_err());
+
+        assert_eq!(tail_supported.call(&mut store, ()).unwrap(), 1);
+        let tail_base = compile_tail.call(&mut store, ()).unwrap();
+        assert!(tail_base > ordinary_base);
+        assert_eq!(call.call(&mut store, (tail_base, 40)).unwrap(), 42);
+        assert_eq!(asyncify_state.call(&mut store, ()).unwrap(), 0);
+        assert_eq!(yields.load(Ordering::Relaxed), 2);
     }
 
     fn write_shared(memory: &SharedMemory, offset: usize, bytes: &[u8]) {
