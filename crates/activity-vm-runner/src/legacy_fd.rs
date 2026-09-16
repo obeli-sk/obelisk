@@ -527,6 +527,7 @@ impl LegacyFdTable {
     }
 
     fn close(&self, fd: i32) -> Result<(), i32> {
+        eprintln!("legacy fd close fd={fd}");
         let mut state = self
             .descriptors
             .lock()
@@ -552,6 +553,7 @@ impl LegacyFdTable {
         }
         drop(state);
         self.readiness.notify_all();
+        eprintln!("legacy fd close fd={fd} complete");
         Ok(())
     }
 
@@ -623,6 +625,24 @@ impl LegacyFdTable {
             } => file
                 .write_at(input, offset)
                 .map_err(|error| io_errno(&error)),
+            _ => Err(ERRNO_BADF),
+        }
+    }
+
+    fn truncate(&self, fd: i32, length: u64) -> Result<(), i32> {
+        match self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned")
+            .entries
+            .get(&fd)
+            .ok_or(ERRNO_BADF)?
+        {
+            Descriptor::File {
+                file,
+                writable: true,
+                ..
+            } => file.set_len(length).map_err(|error| io_errno(&error)),
             _ => Err(ERRNO_BADF),
         }
     }
@@ -1133,6 +1153,69 @@ pub(crate) fn is_required(module: &Module) -> bool {
 pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> {
     linker.func_wrap(
         "env",
+        "__syscall_chmod",
+        |mut caller: Caller<'_, VmState>, path: i32, _mode: i32| {
+            let result = read_string(&mut caller, path)
+                .and_then(|path| caller.data().legacy_fds.stat(&path, false).map(|_| ()));
+            result.map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_fchmod",
+        |caller: Caller<'_, VmState>, fd: i32, _mode: i32| {
+            if caller.data().legacy_fds.contains(fd) {
+                0
+            } else {
+                -ERRNO_BADF
+            }
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_fchownat",
+        |mut caller: Caller<'_, VmState>,
+         dirfd: i32,
+         path: i32,
+         _owner: i32,
+         _group: i32,
+         flags: i32| {
+            let result = read_string(&mut caller, path).and_then(|path| {
+                caller
+                    .data()
+                    .legacy_fds
+                    .stat_at(dirfd, &path, flags & 256 != 0)
+                    .map(|_| ())
+            });
+            result.map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_ftruncate64",
+        |caller: Caller<'_, VmState>, fd: i32, length: i64| {
+            let result = u64::try_from(length)
+                .map_err(|_| ERRNO_INVAL)
+                .and_then(|length| caller.data().legacy_fds.truncate(fd, length));
+            result.map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_utimensat",
+        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, _times: i32, flags: i32| {
+            let result = read_string(&mut caller, path).and_then(|path| {
+                caller
+                    .data()
+                    .legacy_fds
+                    .stat_at(dirfd, &path, flags & 256 != 0)
+                    .map(|_| ())
+            });
+            result.map_or_else(|errno| -errno, |()| 0)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
         "_emscripten_receive_on_main_thread_js",
         |mut caller: Caller<'_, VmState>,
          index: i32,
@@ -1145,9 +1228,11 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
                     "decoding proxied Emscripten call {index}: errno {errno}"
                 ))
             })?;
+            eprintln!("legacy proxy enter index={index} args={args:?}");
             let value = dispatch_proxy(&mut caller, index, &args).map_err(|message| {
                 wasmtime::Error::msg(format!("proxied Emscripten call {index}: {message}"))
             })?;
+            eprintln!("legacy proxy exit index={index} value={value}");
             Ok(f64::from(value))
         },
     )?;
@@ -1505,6 +1590,21 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
     )?;
     linker.func_wrap(
         "wasi_snapshot_preview1",
+        "fd_pwrite",
+        |mut caller: Caller<'_, VmState>,
+         fd: i32,
+         iovs: i32,
+         count: i32,
+         offset: i64,
+         output: i32| {
+            let Ok(offset) = u64::try_from(offset) else {
+                return ERRNO_INVAL;
+            };
+            vectored_io(&mut caller, fd, iovs, count, output, Some(offset), true)
+        },
+    )?;
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
         "fd_write",
         |mut caller: Caller<'_, VmState>, fd: i32, iovs: i32, count: i32, output: i32| {
             vectored_io(&mut caller, fd, iovs, count, output, None, true)
@@ -1557,7 +1657,10 @@ fn vectored_io(
                     i32::try_from(pointer).map_err(|_| ERRNO_INVAL)?,
                     &mut bytes,
                 )?;
-                table.write(fd, &bytes)?
+                match offset {
+                    Some(base) => table.pwrite(fd, &bytes, base + u64::from(total))?,
+                    None => table.write(fd, &bytes)?,
+                }
             } else {
                 let transferred = match offset {
                     Some(base) => table.pread(fd, &mut bytes, base + u64::from(total))?,
@@ -1641,6 +1744,10 @@ fn dispatch_proxy(
             return spawn(arg(0)?, arg(1)?, arg(2)?, arg(3)?)
                 .map_err(|error| format!("spawning pthread: {error:#}"));
         }
+        6 => {
+            let path = read_string(caller, arg(0)?).map_err(|errno| errno.to_string())?;
+            table.stat(&path, false).map(|_| 0)
+        }
         9 => {
             let dirfd = arg(0)?;
             if dirfd != AT_FDCWD {
@@ -1650,6 +1757,17 @@ fn dispatch_proxy(
                 eprintln!("legacy proxy faccessat path={path:?} mode={:#x}", arg(2)?);
                 table.access(&path, arg(2)?).map(|()| 0)
             }
+        }
+        11 => {
+            if table.contains(arg(0)?) {
+                Ok(0)
+            } else {
+                Err(ERRNO_BADF)
+            }
+        }
+        12 => {
+            let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+            table.stat_at(arg(0)?, &path, arg(4)? & 256 != 0).map(|_| 0)
         }
         13 => return Ok(fcntl_call(caller, arg(0)?, arg(1)?, arg(2)?)),
         14 => match table.fstat(arg(0)?) {
@@ -1662,6 +1780,15 @@ fn dispatch_proxy(
             } else {
                 write_statfs(caller, arg(2)?).map(|()| 0)
             }
+        }
+        17 => {
+            let length = u64::try_from(
+                *args
+                    .get(1)
+                    .ok_or_else(|| "missing truncate length".to_owned())?,
+            )
+            .map_err(|_| "negative truncate length".to_owned())?;
+            table.truncate(arg(0)?, length).map(|()| 0)
         }
         19 => {
             let count =
@@ -1729,6 +1856,10 @@ fn dispatch_proxy(
                 }
             }
         }
+        43 => {
+            let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+            table.stat_at(arg(0)?, &path, arg(3)? & 256 != 0).map(|_| 0)
+        }
         45 => {
             return Ok(mmap_call(
                 caller,
@@ -1751,6 +1882,17 @@ fn dispatch_proxy(
                 arg(4)?,
                 Some(args[3] as u64),
                 false,
+            ));
+        }
+        53 => {
+            return Ok(vectored_io(
+                caller,
+                arg(0)?,
+                arg(1)?,
+                arg(2)?,
+                arg(4)?,
+                Some(args[3] as u64),
+                true,
             ));
         }
         54 => {
@@ -2302,6 +2444,92 @@ mod tests {
         assert_eq!(table.poll(&mut fds, 1_000), 1);
         assert_eq!(fds[0].revents, POLLIN);
         thread.join().unwrap();
+    }
+
+    #[test]
+    fn links_positioned_writes_to_writable_mounts() {
+        let pack = tempfile::tempdir().unwrap();
+        let file = pack.path().join("output");
+        std::fs::write(&file, b"hello world").unwrap();
+        let mapdirs = [MapDir::read_write(
+            pack.path().to_owned(),
+            "/pack".to_owned(),
+        )];
+        let table = LegacyFdTable::new(&mapdirs).unwrap();
+        let engine = Engine::default();
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (import "env" "__syscall_openat"
+                    (func $openat (param i32 i32 i32 i32) (result i32)))
+                (import "wasi_snapshot_preview1" "fd_pwrite"
+                    (func $pwrite (param i32 i32 i32 i64 i32) (result i32)))
+                (import "env" "_emscripten_receive_on_main_thread_js"
+                    (func $proxy (param i32 i32 i32 i32) (result f64)))
+                (memory (export "memory") 1)
+                (data (i32.const 0) "/pack/output\00")
+                (data (i32.const 32) "WASM!")
+                (data (i32.const 64) "\20\00\00\00\05\00\00\00")
+                (data (i32.const 80) "PROXY")
+                (data (i32.const 96) "\50\00\00\00\05\00\00\00")
+                (func (export "run") (result i32)
+                    (local $fd i32)
+                    i32.const -100 i32.const 0 i32.const 2 i32.const 0
+                    call $openat local.set $fd
+                    local.get $fd i32.const 64 i32.const 1 i64.const 6 i32.const 72
+                    call $pwrite
+                    if (result i32)
+                        i32.const -1
+                    else
+                        ;; fd_pwrite(fd, iov, count, offset, pnum), through
+                        ;; Emscripten's proxied function table index 53.
+                        i32.const 136 local.get $fd f64.convert_i32_s f64.store
+                        i32.const 152 f64.const 96 f64.store
+                        i32.const 168 f64.const 1 f64.store
+                        i32.const 184 f64.const 0 f64.store
+                        i32.const 200 f64.const 104 f64.store
+                        i32.const 53 i32.const 123 i32.const 10 i32.const 128 call $proxy
+                        i32.trunc_f64_s
+                        if (result i32)
+                            i32.const -2
+                        else
+                            i32.const 72 i32.load i32.const 5 i32.ne
+                            if (result i32)
+                                i32.const -3
+                            else
+                                i32.const 104 i32.load
+                            end
+                        end
+                    end))"#,
+        )
+        .unwrap();
+        let host_fs = crate::host_fs::HostFs::new(&mapdirs).unwrap();
+        let mut store = Store::new(
+            &engine,
+            VmState {
+                wasi: WasiCtxBuilder::new().build_p1(),
+                qemu_jit: crate::qemu_jit::QemuJit::new(None),
+                host_fs,
+                legacy_fds: table,
+                fiber_next: None,
+                fiber_entries: Arc::new(Mutex::new(HashMap::new())),
+                poll_calls: 0,
+                pthread_spawn: None,
+            },
+        );
+        let mut linker = Linker::new(&engine);
+        linker.allow_shadowing(true);
+        add_to_linker(&mut linker).unwrap();
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        assert_eq!(
+            instance
+                .get_typed_func::<(), i32>(&mut store, "run")
+                .unwrap()
+                .call(&mut store, ())
+                .unwrap(),
+            5
+        );
+        assert_eq!(std::fs::read(file).unwrap(), b"PROXY WASM!");
     }
 
     #[test]

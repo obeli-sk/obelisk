@@ -1,1 +1,1 @@
-oci://docker.io/getobelisk/qemu-wasmtime-jit@sha256:2183a8c41aa612943be7ba899678b40e2509e27ff3f705a558692dfd834fb552
+oci://docker.io/getobelisk/qemu-wasmtime-jit@sha256:9d57d0a792f43c43770ec4c116fa586ac6d171ff9dfbdd961ec0cb6c6aa2b2b9

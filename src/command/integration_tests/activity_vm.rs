@@ -131,7 +131,7 @@ store_paths = []
 }
 
 #[tokio::test]
-#[ignore = "QEMU serial fallback nonzero shutdown requires follow-up"]
+#[ignore = "QEMU nonzero exit propagation requires follow-up"]
 async fn nonzero_exit_maps_error_result() {
     let deployment_toml = r#"[[activity_vm]]
 ffqn = "testing:vm/failure.run"

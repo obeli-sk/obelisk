@@ -239,38 +239,70 @@ pub async fn execute(
             "/image".to_owned(),
         ));
     }
-    let queue = tempfile::tempdir()?;
+    let has_nix_store = mapdirs.iter().any(|mapdir| {
+        mapdir.guest == "/nix/store"
+            || mapdir.guest.starts_with("/nix/store/")
+            || mapdir.qemu_store_image.is_some()
+    });
+    env.insert(
+        "OBELISK_ACTIVITY_VM_NIX_STORE".to_owned(),
+        if has_nix_store { "1" } else { "0" }.to_owned(),
+    );
+    let uses_qemu_pack = is_qemu && (qemu_runtime.is_some() || !is_legacy_qemu);
+    let qemu_pack = uses_qemu_pack.then(tempfile::tempdir).transpose()?;
+    let queue_temp = (!uses_qemu_pack).then(tempfile::tempdir).transpose()?;
+    let queue = if let Some(pack) = &qemu_pack {
+        let queue = pack.path().join("obelisk-activity-vm-http");
+        tokio::fs::create_dir(&queue).await?;
+        queue
+    } else {
+        queue_temp
+            .as_ref()
+            .context("missing activity VM queue")?
+            .path()
+            .to_owned()
+    };
     tokio::fs::write(
-        queue.path().join("http-guest.sh"),
+        queue.join("http-guest.sh"),
         include_bytes!("../guest/http-guest.sh"),
     )
     .await?;
+    for name in [
+        "exit-code",
+        "phase-command-start",
+        "phase-guest-launcher",
+        "phase-network-ready",
+        "phase-store-mounted",
+        "proxy.log",
+        "stderr",
+        "stdout",
+    ] {
+        tokio::fs::write(queue.join(name), []).await?;
+    }
     if let Some(stdin) = stdin {
-        tokio::fs::write(queue.path().join("stdin.json"), stdin).await?;
+        tokio::fs::write(queue.join("stdin.json"), stdin).await?;
         env.insert(
             "OBELISK_ACTIVITY_VM_STDIN".to_owned(),
             "/obelisk-activity-vm-http/stdin.json".to_owned(),
         );
     }
-    mapdirs.push(MapDir::read_write(
-        queue.path().to_owned(),
-        "/obelisk-activity-vm-http".to_owned(),
-    ));
-    let qemu_pack = if is_qemu && (qemu_runtime.is_some() || !is_legacy_qemu) {
-        let pack = tempfile::tempdir()?;
+    if !uses_qemu_pack {
+        mapdirs.push(MapDir::read_write(
+            queue.clone(),
+            "/obelisk-activity-vm-http".to_owned(),
+        ));
+    }
+    if let Some(pack) = &qemu_pack {
         tokio::fs::write(
             pack.path().join("info"),
-            qemu_runtime_info(&mapdirs, &guest_args, &env)?,
+            qemu_runtime_info(&mapdirs, &["obelisk-activity-vm-http"], &guest_args, &env)?,
         )
         .await?;
         mapdirs.push(MapDir::read_write(
             pack.path().to_owned(),
             "/pack".to_owned(),
         ));
-        Some(pack)
-    } else {
-        None
-    };
+    }
     let module_args = if let Some(runtime) = qemu_runtime {
         runtime.args
     } else if is_qemu && !is_legacy_qemu {
@@ -279,14 +311,10 @@ pub async fn execute(
         guest_args
     };
     let traces = Arc::new(Mutex::new(Vec::new()));
-    let broker = tokio::spawn(http_bridge::serve(
-        queue.path().to_owned(),
-        policy,
-        traces.clone(),
-    ));
+    let broker = tokio::spawn(http_bridge::serve(queue.clone(), policy, traces.clone()));
     let (phase_logger_stop, phase_logger_stop_rx) = tokio::sync::oneshot::channel();
     let phase_logger = tokio::spawn(log_guest_phases(
-        queue.path().to_owned(),
+        queue.clone(),
         started,
         phase_logger_stop_rx,
     ));
@@ -317,7 +345,7 @@ pub async fn execute(
         Err(error) => {
             eprintln!(
                 "activity VM queue after failure: {:?}",
-                directory_entries(queue.path())
+                directory_entries(&queue)
             );
             if let Some(pack) = &qemu_pack {
                 eprintln!(
@@ -328,31 +356,14 @@ pub async fn execute(
             return Err(error);
         }
     };
-    let has_guest_output = replace_output_from_guest_files(
-        &mut output,
-        queue.path(),
-        max_stdout_bytes,
-        max_stderr_bytes,
-    )
-    .await?;
-    if is_qemu && !has_guest_output {
-        if let Some(exit_code) = output.serial.split(|byte| *byte == b'\n' || *byte == b'\r').find_map(
-            |line| {
-                line.strip_prefix(b"OBELISK_ACTIVITY_VM_EXIT_CODE=")
-                    .and_then(|value| std::str::from_utf8(value).ok())
-                    .and_then(|value| value.parse().ok())
-            },
-        ) {
-            output.exit_code = exit_code;
-        }
-        if let Some(json) = output
-            .serial
-            .split(|byte| *byte == b'\n' || *byte == b'\r')
-            .rev()
-            .find(|line| serde_json::from_slice::<serde_json::Value>(line).is_ok())
-        {
-            output.stdout = json.to_vec();
-        }
+    let has_guest_output =
+        replace_output_from_guest_files(&mut output, &queue, max_stdout_bytes, max_stderr_bytes)
+            .await?;
+    if is_qemu {
+        ensure!(
+            has_guest_output,
+            "QEMU guest did not publish output through the 9p queue"
+        );
     }
     if is_qemu {
         if let Some(pack) = &qemu_pack
@@ -424,6 +435,7 @@ async fn read_guest_output(path: PathBuf, max_bytes: usize) -> anyhow::Result<Op
 
 fn qemu_runtime_info(
     mapdirs: &[MapDir],
+    pack_mounts: &[&str],
     guest_args: &[String],
     env: &HashMap<String, String>,
 ) -> anyhow::Result<String> {
@@ -441,6 +453,12 @@ fn qemu_runtime_info(
             "m: "
         });
         info.push_str(mapdir.guest.trim_start_matches('/'));
+        info.push('\n');
+    }
+    for mount in pack_mounts {
+        ensure_runtime_info_line(mount)?;
+        info.push_str("p: ");
+        info.push_str(mount.trim_start_matches('/'));
         info.push('\n');
     }
     for image in mapdirs
@@ -515,7 +533,7 @@ fn qemu_args() -> anyhow::Result<Vec<String>> {
         "-device",
         "virtio-9p-pci,fsdev=wasi0,mount_tag=wasi0,ioeventfd=off",
         "-fsdev",
-        "local,path=/pack,security_model=passthrough,id=wasi1",
+        "local,path=/pack,security_model=none,id=wasi1",
         "-device",
         "virtio-9p-pci,fsdev=wasi1,mount_tag=wasi1,ioeventfd=off",
     ]
@@ -926,7 +944,9 @@ fn guest_completion_exists(mapdirs: &[MapDir]) -> bool {
         .iter()
         .find(|mapdir| mapdir.guest == "/obelisk-activity-vm-http")
         .is_some_and(|mapdir| {
-            mapdir.host.join("stdout").is_file() && mapdir.host.join("exit-code").is_file()
+            mapdir.host.join("stdout").is_file()
+                && std::fs::metadata(mapdir.host.join("exit-code"))
+                    .is_ok_and(|metadata| metadata.len() > 0)
         })
 }
 
@@ -1509,8 +1529,8 @@ mod tests {
             ("FIRST".to_owned(), "one".to_owned()),
         ]);
         assert_eq!(
-            qemu_runtime_info(&mapdirs, &args, &env).unwrap(),
-            "c: /bin/echo hello\\ world\nmr: nix/store/abc\nm: queue\nenv: FIRST=one\nenv: SECOND=two\n"
+            qemu_runtime_info(&mapdirs, &["runtime/queue"], &args, &env).unwrap(),
+            "c: /bin/echo hello\\ world\nmr: nix/store/abc\nm: queue\np: runtime/queue\nenv: FIRST=one\nenv: SECOND=two\n"
         );
     }
 
@@ -1557,7 +1577,7 @@ mod tests {
             MapDir::qemu_store_squashfs(PathBuf::from("/cache/activity/store.squashfs")).unwrap();
 
         assert_eq!(
-            qemu_runtime_info(&[mapdir], &[], &HashMap::new()).unwrap(),
+            qemu_runtime_info(&[mapdir], &[], &[], &HashMap::new()).unwrap(),
             "c:\nmr: obelisk-activity-vm-store\ns: obelisk-activity-vm-store/store.squashfs\n"
         );
     }
