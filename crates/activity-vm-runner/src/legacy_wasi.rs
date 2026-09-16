@@ -1,5 +1,6 @@
 use crate::VmState;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::{Caller, Extern, Linker};
 use wasmtime_wasi::p2::{OutputStream, pipe::MemoryOutputPipe};
 
@@ -48,6 +49,19 @@ pub(crate) fn add_to_linker(
                     .checked_add(1)
                     .ok_or_else(|| wasmtime::Error::msg("legacy WASI argv overflow"))?;
             }
+            Ok(0_i32)
+        },
+    )?;
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "clock_time_get",
+        |mut caller: Caller<'_, VmState>, _clock: i32, _precision: i64, output: i32| {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(wasmtime::Error::msg)?;
+            let nanos = u64::try_from(now.as_nanos())
+                .map_err(|_| wasmtime::Error::msg("legacy WASI clock overflow"))?;
+            write_bytes(&mut caller, output, &nanos.to_le_bytes())?;
             Ok(0_i32)
         },
     )?;

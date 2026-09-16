@@ -1174,9 +1174,12 @@ mod tests {
                     (func $sizes (param i32 i32) (result i32)))
                 (import "wasi_snapshot_preview1" "args_get"
                     (func $get (param i32 i32) (result i32)))
+                (import "wasi_snapshot_preview1" "clock_time_get"
+                    (func $clock (param i32 i64 i32) (result i32)))
                 (func (export "run")
                     i32.const 0 i32.const 4 call $sizes drop
-                    i32.const 8 i32.const 32 call $get drop))"#,
+                    i32.const 8 i32.const 32 call $get drop
+                    i32.const 0 i64.const 1 i32.const 52 call $clock drop))"#,
         )
         .unwrap();
         let memory = SharedMemory::new(&engine, MemoryType::shared(1, 1)).unwrap();
@@ -1224,6 +1227,7 @@ mod tests {
             .map(|cell| unsafe { cell.get().read() })
             .collect::<Vec<_>>();
         assert_eq!(bytes, b"qemu\0--flag\0value\0");
+        assert!(read_shared_u64(&memory, 52) > 0);
     }
 
     #[test]
@@ -1363,5 +1367,14 @@ mod tests {
             // SAFETY: the test does not run a Wasm instance concurrently.
             unsafe { destination.get().write(source) };
         }
+    }
+
+    fn read_shared_u64(memory: &SharedMemory, offset: usize) -> u64 {
+        let bytes = memory.data()[offset..offset + 8]
+            .iter()
+            // SAFETY: tests do not access this memory concurrently.
+            .map(|cell| unsafe { cell.get().read() })
+            .collect::<Vec<_>>();
+        u64::from_le_bytes(bytes.try_into().unwrap())
     }
 }
