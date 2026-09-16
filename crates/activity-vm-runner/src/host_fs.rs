@@ -147,11 +147,6 @@ impl HostFs {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_host_path(&self, raw: &str) -> anyhow::Result<(PathBuf, bool)> {
-        self.host_path(raw)
-    }
-
     fn allocate(&self, file: File) -> i32 {
         let mut files = self.files.lock().expect("host filesystem mutex poisoned");
         let fd = files.next;

@@ -179,10 +179,10 @@ async fn activity_vm_http_case(ip: String, use_host_alias: bool) {
     } else {
         policy_authority.clone()
     };
-    let connect_to = if use_host_alias {
-        "  --noproxy '*' \\\n".to_string()
+    let connect_host = if use_host_alias {
+        "obelisk-host"
     } else {
-        format!("  --noproxy '*' \\\n  --connect-to {request_authority}:127.0.0.1:80 \\\n")
+        "127.0.0.1"
     };
 
     let server_toml = format!(
@@ -197,25 +197,25 @@ replace_in = ["headers"]
         r#"[[activity_vm]]
 exec.lock_expiry.seconds = 120
 ffqn = "testing:vm/http.run"
-content = '''#!/usr/bin/env bash
+content = '''#!/bin/sh
 set -eu
 case "$VM_SECRET" in
   OBELISK_SECRET_*) ;;
   *) printf '%s\n' '"VM received the secret value"'; exit 1 ;;
 esac
-curl -fsS \
-{connect_to}  --connect-timeout 5 \
-  --max-time 10 \
-  -H "X-VM-Secret: ${{VM_SECRET}}" \
-  http://{request_authority}/anything
+response=$(
+  printf 'GET /anything HTTP/1.1\r\nHost: {request_authority}\r\nX-VM-Secret: %s\r\nConnection: close\r\n\r\n' "$VM_SECRET" |
+    /bin/busybox nc -w 10 {connect_host} 80
+)
+case "$response" in
+  'HTTP/1.1 204 '*) ;;
+  *) printf '%s\n' '"unexpected HTTP response"'; exit 1 ;;
+esac
 printf '%s\n' '"secret-rewritten"'
 '''
 params = []
 return_type = "result<string, string>"
-store_paths = [
-  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
-  "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
-]
+store_paths = []
 [[activity_vm.allowed_host]]
 pattern = "http://{policy_authority}"
 methods = ["GET"]
@@ -234,13 +234,11 @@ replace_in = ["headers"]
 }
 
 #[tokio::test]
-#[ignore = "QEMU HTTP bridge requires writable 9p follow-up"]
 async fn http_loopback_connect_to() {
     activity_vm_http_case(test_addr!(138), false).await;
 }
 
 #[tokio::test]
-#[ignore = "QEMU HTTP bridge requires writable 9p follow-up"]
 async fn http_obelisk_host() {
     activity_vm_http_case(test_addr!(139), true).await;
 }
