@@ -681,7 +681,11 @@ fn run_module(
         });
     }
     let call_result = if let Some(start) = start {
-        emscripten::call_asyncify_root(&mut store, &instance, &start)
+        if instance.get_func(&mut store, "asyncify_get_state").is_some() {
+            emscripten::call_asyncify_root(&mut store, &instance, &start)
+        } else {
+            start.call(&mut store, ())
+        }
     } else {
         call_emscripten_main(&mut store, &instance, guest_args)
             .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
@@ -1016,7 +1020,18 @@ fn run_pthread(
         eprintln!("pthread {pthread_ptr:#x}: stdin poll probe ready={ready} pollfd={result:?}");
     }
     eprintln!("pthread {pthread_ptr:#x}: entering start routine");
-    let result = emscripten::call_asyncify_pthread(&mut store, &instance, start_routine, arg)?;
+    let result = if instance
+        .get_func(&mut store, "asyncify_get_state")
+        .is_some()
+    {
+        emscripten::call_asyncify_pthread(&mut store, &instance, start_routine, arg)?
+    } else {
+        let function = match table.get(&mut store, start_routine as u64) {
+            Some(Ref::Func(Some(function))) => function,
+            _ => unreachable!("pthread entry was validated above"),
+        };
+        function.typed::<i32, i32>(&store)?.call(&mut store, arg)?
+    };
     eprintln!("pthread {pthread_ptr:#x}: start routine returned {result}");
     let diagnostics = runtime.stderr.contents();
     if !diagnostics.is_empty() {

@@ -609,7 +609,12 @@ pub(crate) fn add_fiber_swap(linker: &mut Linker<VmState>) -> anyhow::Result<()>
             eprintln!("fiber swap old={old_fiber:#x} new={new_fiber:#x} state={state}");
             match state {
                 0 => {
-                    let stack = call_i32_export(&mut caller, "stackSave", &[])?;
+                    let stack_export = if caller.get_export("stackSave").is_some() {
+                        "stackSave"
+                    } else {
+                        "emscripten_stack_get_current"
+                    };
+                    let stack = call_i32_export(&mut caller, stack_export, &[])?;
                     write_i32(&mut caller, old_fiber + 8, stack)?;
                     call_void_export(
                         &mut caller,
@@ -687,7 +692,10 @@ fn drive_asyncify(
             .get_typed_func::<(i32, i32), ()>(&mut *store, "emscripten_stack_set_limits")?
             .call(&mut *store, (stack_base, stack_limit))?;
         instance
-            .get_typed_func::<i32, ()>(&mut *store, "stackRestore")?
+            .get_typed_func::<i32, ()>(&mut *store, "stackRestore")
+            .or_else(|_| {
+                instance.get_typed_func::<i32, ()>(&mut *store, "_emscripten_stack_restore")
+            })?
             .call(&mut *store, stack_ptr)?;
 
         if entry != 0 {
@@ -707,9 +715,9 @@ fn drive_asyncify(
                 .fiber_entries
                 .get(&next)
                 .copied()
-                .ok_or_else(|| {
-                    wasmtime::Error::msg(format!("fiber {next:#x} has no rewind entry"))
-                })?;
+                // The first switch into an already-initialized root fiber has
+                // no table entry. It rewinds the entry that was just unwound.
+                .unwrap_or(initial_entry);
             result = call_fiber_entry(store, instance, selected)?;
         }
     }
@@ -789,8 +797,10 @@ fn write_i32(caller: &mut Caller<'_, VmState>, address: i32, value: i32) -> wasm
         .qemu_jit
         .memory
         .clone()
+        .map(|memory| memory.as_extern())
+        .or_else(|| caller.get_export("memory"))
         .ok_or_else(|| wasmtime::Error::msg("missing Emscripten memory import"))?;
-    write_extern_i32(memory.as_extern(), caller, address, value)
+    write_extern_i32(memory, caller, address, value)
 }
 
 fn read_instance_i32(
@@ -798,14 +808,11 @@ fn read_instance_i32(
     instance: &Instance,
     address: i32,
 ) -> wasmtime::Result<i32> {
-    let memory = store
-        .data()
-        .qemu_jit
-        .memory
-        .clone()
+    let imported = store.data().qemu_jit.memory.clone().map(|memory| memory.as_extern());
+    let memory = imported
+        .or_else(|| instance.get_export(&mut *store, "memory"))
         .ok_or_else(|| wasmtime::Error::msg("missing Emscripten memory import"))?;
-    let _ = instance;
-    read_extern_i32(memory.as_extern(), store, address)
+    read_extern_i32(memory, store, address)
 }
 
 fn write_instance_i32(
@@ -814,14 +821,11 @@ fn write_instance_i32(
     address: i32,
     value: i32,
 ) -> wasmtime::Result<()> {
-    let memory = store
-        .data()
-        .qemu_jit
-        .memory
-        .clone()
+    let imported = store.data().qemu_jit.memory.clone().map(|memory| memory.as_extern());
+    let memory = imported
+        .or_else(|| instance.get_export(&mut *store, "memory"))
         .ok_or_else(|| wasmtime::Error::msg("missing Emscripten memory import"))?;
-    let _ = instance;
-    write_extern_i32(memory.as_extern(), store, address, value)
+    write_extern_i32(memory, store, address, value)
 }
 
 fn read_extern_i32<T>(
@@ -1006,10 +1010,14 @@ fn invoke<T>(
     // through an invoke_* wrapper. Reproduce that boundary in the host.
     let saved_stack = caller
         .get_export("stackSave")
+        .or_else(|| caller.get_export("emscripten_stack_get_current"))
         .and_then(Extern::into_func)
-        .context("missing Emscripten stack_get_current export")?
-        .typed::<(), i32>(&*caller)?
-        .call(&mut *caller, ())?;
+        .map(|function| {
+            function
+                .typed::<(), i32>(&*caller)?
+                .call(&mut *caller, ())
+        })
+        .transpose()?;
     let table_index = params
         .first()
         .and_then(Val::i32)
@@ -1030,8 +1038,10 @@ fn invoke<T>(
     match function.call(&mut *caller, &params[1..], results) {
         Ok(()) => Ok(()),
         Err(error) if error.downcast_ref::<EmscriptenLongjmp>().is_some() => {
+            let saved_stack = saved_stack.context("missing Emscripten stackSave export")?;
             caller
                 .get_export("stackRestore")
+                .or_else(|| caller.get_export("_emscripten_stack_restore"))
                 .and_then(Extern::into_func)
                 .context("missing Emscripten stack_restore export")?
                 .typed::<i32, ()>(&*caller)?

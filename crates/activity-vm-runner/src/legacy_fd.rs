@@ -213,7 +213,7 @@ impl LegacyFdTable {
         }
         let (mount, path) = self.resolve_existing(path).map_err(|error| {
             eprintln!("legacy fd resolve failed: {error:#}");
-            ERRNO_NOENT
+            fs_errno(error)
         })?;
         let file = File::open(&path).map_err(|error| {
             eprintln!("legacy fd host open {} failed: {error}", path.display());
@@ -1232,46 +1232,6 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
         },
     )?;
     linker.func_wrap(
-        "env",
-        "__syscall_readlinkat",
-        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, _buffer: i32, _size: i32| {
-            let path = read_string(&mut caller, path).unwrap_or_else(|_| "<invalid>".to_owned());
-            eprintln!("legacy readlinkat dirfd={dirfd} path={path:?}");
-            -ERRNO_NOENT
-        },
-    )?;
-    linker.func_wrap(
-        "env",
-        "__syscall_fcntl64",
-        |_caller: Caller<'_, VmState>, fd: i32, command: i32, _arguments: i32| {
-            eprintln!("legacy fcntl64 fd={fd} command={command}");
-            match command {
-                1..=7 => 0,
-                _ => -ERRNO_INVAL,
-            }
-        },
-    )?;
-    linker.func_wrap(
-        "env",
-        "__syscall_faccessat",
-        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, mode: i32, _flags: i32| {
-            if dirfd != AT_FDCWD {
-                return -ERRNO_NOTCAPABLE;
-            }
-            let path = match read_string(&mut caller, path) {
-                Ok(path) => path,
-                Err(errno) => return -errno,
-            };
-            eprintln!("legacy faccessat path={path:?} mode={mode:#x}");
-            caller
-                .data()
-                .legacy_fds
-                .access(&path, mode)
-                .err()
-                .unwrap_or(0)
-        },
-    )?;
-    linker.func_wrap(
         "wasi_snapshot_preview1",
         "fd_close",
         |caller: Caller<'_, VmState>, fd: i32| {
@@ -1780,8 +1740,22 @@ fn normalize_absolute(raw: &str) -> anyhow::Result<String> {
     Ok(normalized.to_string_lossy().into_owned())
 }
 
-fn memory(caller: &Caller<'_, VmState>) -> Result<crate::qemu_jit::QemuMemory, i32> {
-    caller.data().qemu_jit.memory.clone().ok_or(ERRNO_INVAL)
+fn memory(caller: &mut Caller<'_, VmState>) -> Result<crate::qemu_jit::QemuMemory, i32> {
+    caller
+        .data()
+        .qemu_jit
+        .memory
+        .clone()
+        .or_else(|| match caller.get_export("memory") {
+            Some(wasmtime::Extern::Memory(memory)) => {
+                Some(crate::qemu_jit::QemuMemory::Plain(memory))
+            }
+            Some(wasmtime::Extern::SharedMemory(memory)) => {
+                Some(crate::qemu_jit::QemuMemory::Shared(memory))
+            }
+            _ => None,
+        })
+        .ok_or(ERRNO_INVAL)
 }
 
 fn read_string(caller: &mut Caller<'_, VmState>, pointer: i32) -> Result<String, i32> {
