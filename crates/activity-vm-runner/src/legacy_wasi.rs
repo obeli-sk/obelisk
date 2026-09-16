@@ -1,4 +1,5 @@
 use crate::VmState;
+use std::sync::Arc;
 use wasmtime::{Caller, Extern, Linker};
 use wasmtime_wasi::p2::{OutputStream, pipe::MemoryOutputPipe};
 
@@ -7,7 +8,49 @@ pub(crate) fn add_to_linker(
     linker: &mut Linker<VmState>,
     stdout: MemoryOutputPipe,
     stderr: MemoryOutputPipe,
+    arguments: Arc<[String]>,
 ) -> anyhow::Result<()> {
+    let size_arguments = arguments.clone();
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "args_sizes_get",
+        move |mut caller: Caller<'_, VmState>, count: i32, size: i32| {
+            let byte_size = size_arguments.iter().try_fold(0_usize, |size, argument| {
+                size.checked_add(argument.len() + 1)
+            });
+            let byte_size = byte_size
+                .and_then(|size| i32::try_from(size).ok())
+                .ok_or_else(|| wasmtime::Error::msg("legacy WASI argument size overflow"))?;
+            write_i32(&mut caller, count, i32::try_from(size_arguments.len())?)?;
+            write_i32(&mut caller, size, byte_size)?;
+            Ok(0_i32)
+        },
+    )?;
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "args_get",
+        move |mut caller: Caller<'_, VmState>, pointers: i32, bytes: i32| {
+            let mut bytes = bytes;
+            for (index, argument) in arguments.iter().enumerate() {
+                write_i32(
+                    &mut caller,
+                    pointers
+                        .checked_add(i32::try_from(index * 4)?)
+                        .ok_or_else(|| wasmtime::Error::msg("legacy WASI argv overflow"))?,
+                    bytes,
+                )?;
+                write_bytes(&mut caller, bytes, argument.as_bytes())?;
+                bytes = bytes
+                    .checked_add(i32::try_from(argument.len())?)
+                    .ok_or_else(|| wasmtime::Error::msg("legacy WASI argv overflow"))?;
+                write_bytes(&mut caller, bytes, &[0])?;
+                bytes = bytes
+                    .checked_add(1)
+                    .ok_or_else(|| wasmtime::Error::msg("legacy WASI argv overflow"))?;
+            }
+            Ok(0_i32)
+        },
+    )?;
     linker.func_wrap(
         "wasi_snapshot_preview1",
         "environ_sizes_get",

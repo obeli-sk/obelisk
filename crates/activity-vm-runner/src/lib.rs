@@ -51,6 +51,7 @@ struct EmscriptenRuntime {
     host_fs: Arc<host_fs::HostFs>,
     legacy_fds: Arc<legacy_fd::LegacyFdTable>,
     mapdirs: Vec<MapDir>,
+    arguments: Arc<[String]>,
     stdout: pipe::MemoryOutputPipe,
     stderr: pipe::MemoryOutputPipe,
     threads: Mutex<Vec<std::thread::JoinHandle<anyhow::Result<()>>>>,
@@ -563,7 +564,10 @@ fn run_module(
     if qemu_memory_type.is_none() {
         p1::add_to_linker_sync(&mut linker, |state: &mut VmState| &mut state.wasi)?;
     } else {
-        legacy_wasi::add_to_linker(&mut linker, stdout.clone(), stderr.clone())?;
+        let arguments = std::iter::once("obelisk-activity-vm".to_owned())
+            .chain(guest_args.iter().cloned())
+            .collect::<Arc<[_]>>();
+        legacy_wasi::add_to_linker(&mut linker, stdout.clone(), stderr.clone(), arguments)?;
     }
     let mut emscripten_runtime = None;
     if let Some(memory_type) = qemu_memory_type {
@@ -606,6 +610,9 @@ fn run_module(
                 host_fs,
                 legacy_fds,
                 mapdirs: mapdirs.to_vec(),
+                arguments: std::iter::once("obelisk-activity-vm".to_owned())
+                    .chain(guest_args.iter().cloned())
+                    .collect(),
                 stdout: stdout.clone(),
                 stderr: stderr.clone(),
                 threads: Mutex::new(Vec::new()),
@@ -901,7 +908,12 @@ fn run_pthread(
     );
     let mut linker = Linker::new(&runtime.engine);
     if legacy_fd::is_required(&runtime.module) {
-        legacy_wasi::add_to_linker(&mut linker, runtime.stdout.clone(), runtime.stderr.clone())?;
+        legacy_wasi::add_to_linker(
+            &mut linker,
+            runtime.stdout.clone(),
+            runtime.stderr.clone(),
+            runtime.arguments.clone(),
+        )?;
     } else {
         p1::add_to_linker_sync(&mut linker, |state: &mut VmState| &mut state.wasi)?;
     }
@@ -1150,6 +1162,71 @@ mod tests {
     }
 
     #[test]
+    fn legacy_wasi_exposes_exact_runtime_arguments() {
+        let mut config = Config::new();
+        config.shared_memory(true);
+        let engine = Engine::new(&config).unwrap();
+        let module = Module::new(
+            &engine,
+            r#"(module
+                (import "env" "memory" (memory 1 1 shared))
+                (import "wasi_snapshot_preview1" "args_sizes_get"
+                    (func $sizes (param i32 i32) (result i32)))
+                (import "wasi_snapshot_preview1" "args_get"
+                    (func $get (param i32 i32) (result i32)))
+                (func (export "run")
+                    i32.const 0 i32.const 4 call $sizes drop
+                    i32.const 8 i32.const 32 call $get drop))"#,
+        )
+        .unwrap();
+        let memory = SharedMemory::new(&engine, MemoryType::shared(1, 1)).unwrap();
+        let qemu_memory = qemu_jit::QemuMemory::Shared(memory.clone());
+        let mut store = Store::new(
+            &engine,
+            VmState {
+                wasi: WasiCtxBuilder::new().build_p1(),
+                qemu_jit: qemu_jit::QemuJit::new(Some(qemu_memory.clone())),
+                host_fs: host_fs::HostFs::new(&[]).unwrap(),
+                legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
+                fiber_next: None,
+                fiber_entries: HashMap::new(),
+                active_fiber_entry: None,
+                poll_calls: 0,
+                pthread_spawn: None,
+            },
+        );
+        let mut linker = Linker::new(&engine);
+        linker
+            .define(&mut store, "env", "memory", qemu_memory.as_extern())
+            .unwrap();
+        legacy_wasi::add_to_linker(
+            &mut linker,
+            pipe::MemoryOutputPipe::new(128),
+            pipe::MemoryOutputPipe::new(128),
+            Arc::from(["qemu".to_owned(), "--flag".to_owned(), "value".to_owned()]),
+        )
+        .unwrap();
+        let instance = linker.instantiate(&mut store, &module).unwrap();
+        instance
+            .get_typed_func::<(), ()>(&mut store, "run")
+            .unwrap()
+            .call(&mut store, ())
+            .unwrap();
+
+        assert_eq!(read_shared_u32(&memory, 0).unwrap(), 3);
+        assert_eq!(read_shared_u32(&memory, 4).unwrap(), 18);
+        assert_eq!(read_shared_u32(&memory, 8).unwrap(), 32);
+        assert_eq!(read_shared_u32(&memory, 12).unwrap(), 37);
+        assert_eq!(read_shared_u32(&memory, 16).unwrap(), 44);
+        let bytes = memory.data()[32..50]
+            .iter()
+            // SAFETY: the Wasm call has returned, so no guest thread accesses this memory.
+            .map(|cell| unsafe { cell.get().read() })
+            .collect::<Vec<_>>();
+        assert_eq!(bytes, b"qemu\0--flag\0value\0");
+    }
+
+    #[test]
     fn runs_an_emscripten_pthread_in_a_shared_instance() {
         let mut config = Config::new();
         config.shared_memory(true);
@@ -1185,6 +1262,7 @@ mod tests {
             host_fs: host_fs::HostFs::new(&[]).unwrap(),
             legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
             mapdirs: Vec::new(),
+            arguments: Arc::from([]),
             stdout: pipe::MemoryOutputPipe::new(1024),
             stderr: pipe::MemoryOutputPipe::new(1024),
             threads: Mutex::new(Vec::new()),

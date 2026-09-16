@@ -208,7 +208,13 @@ impl Engines {
     }
 
     fn get_activity_engine_internal(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        Self::configure_common(wasmtime::Config::new(), config, AsyncSupport::Disable)
+        let mut wasmtime_config = wasmtime::Config::new();
+        // The QEMU activity runtime imports a shared linear memory for its
+        // Emscripten pthread workers and dynamically compiled translation
+        // blocks. Wasmtime rejects that memory at instantiation unless shared
+        // memory support is enabled on the engine itself.
+        wasmtime_config.shared_memory(true);
+        Self::configure_common(wasmtime_config, config, AsyncSupport::Disable)
     }
 
     fn get_activity_async_engine_internal(
@@ -259,5 +265,20 @@ impl Engines {
         } else {
             res
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasmtime::{MemoryType, SharedMemory};
+
+    #[test]
+    fn activity_vm_engine_supports_qemu_shared_memory() {
+        let engine = Engines::get_activity_vm_engine_test(EngineConfig::on_demand_testing())
+            .expect("create activity VM engine");
+
+        SharedMemory::new(&engine, MemoryType::shared(1, 1))
+            .expect("activity VM engine must support QEMU shared memory");
     }
 }
