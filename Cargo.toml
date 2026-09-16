@@ -396,7 +396,7 @@ utoipa-axum = "0.2.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "48.0.2", features = ["memory-protection-keys"] }
+wasmtime = { version = "48.0.2", features = ["memory-protection-keys", "pulley", "winch"] }
 # p3 enables the WASIp3 (component model async) modules used by wasi:http@0.3.0 activities/webhooks.
 wasmtime-wasi = { version = "48.0.2", features = ["p3"] }
 wasmtime-wasi-io = "48.0.2"

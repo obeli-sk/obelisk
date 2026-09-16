@@ -670,6 +670,7 @@ impl LegacyFdTable {
             },
             Descriptor::TtyOutput => {
                 descriptors.tty_output.extend_from_slice(input);
+                crate::benchmark_serial_output(&descriptors.tty_output);
                 eprint!("{}", String::from_utf8_lossy(input));
                 if !descriptors.handshake_sent
                     && (descriptors

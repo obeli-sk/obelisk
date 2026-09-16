@@ -3,7 +3,10 @@ use secrecy::SecretString;
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::PathBuf;
-use wasmtime::{Config, Engine, OptLevel, WasmBacktraceDetails};
+use wasmtime::{
+    Cache, Config, Engine, InstanceAllocationStrategy, OptLevel, PoolingAllocationConfig, Strategy,
+    WasmBacktraceDetails,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -56,8 +59,42 @@ async fn main() -> anyhow::Result<()> {
         wasm_workers::policy_builder::build_process_http_policy(spec, &resolver)?;
     let mut engine_config = Config::new();
     engine_config.shared_memory(true);
-    engine_config.epoch_interruption(true);
+    engine_config.epoch_interruption(false);
+    engine_config.consume_fuel(false);
+    engine_config.parallel_compilation(true);
+    engine_config.wasm_component_model_async(false);
+    engine_config.concurrency_support(false);
     engine_config.wasm_backtrace_details(WasmBacktraceDetails::Enable);
+    if std::env::var_os("QEMU_WASMTIME_CACHE").is_some() {
+        engine_config.cache(Some(Cache::from_file(None)?));
+    }
+    if std::env::var_os("QEMU_WASMTIME_POOLING").is_some() {
+        let mut pooling = PoolingAllocationConfig::default();
+        pooling
+            .total_core_instances(1024)
+            .total_tables(32)
+            .max_tables_per_module(2)
+            .table_elements(65_536);
+        engine_config.allocation_strategy(InstanceAllocationStrategy::Pooling(pooling));
+    }
+    if let Some(target) = std::env::var_os("QEMU_WASMTIME_TARGET") {
+        engine_config.target(target.to_string_lossy().as_ref())?;
+    }
+    if let Some(strategy) = std::env::var_os("QEMU_WASMTIME_STRATEGY") {
+        match strategy.to_string_lossy().as_ref() {
+            "cranelift" => engine_config.strategy(Strategy::Cranelift),
+            "winch" => engine_config.strategy(Strategy::Winch),
+            other => anyhow::bail!("unsupported Wasmtime strategy {other}"),
+        };
+    }
+    if let Some(level) = std::env::var_os("QEMU_WASMTIME_OPT_LEVEL") {
+        engine_config.cranelift_opt_level(match level.to_string_lossy().as_ref() {
+            "none" => OptLevel::None,
+            "speed" => OptLevel::Speed,
+            "speed-and-size" => OptLevel::SpeedAndSize,
+            other => anyhow::bail!("unsupported Cranelift optimization level {other}"),
+        });
+    }
     if std::env::var_os("OBELISK_WASM_DEBUG").is_some() {
         // Mirrors `[wasm] debug = true` in the Obelisk worker. Keeping this
         // opt-in matters for QEMU: disabling Cranelift optimizations makes TCI
@@ -65,7 +102,9 @@ async fn main() -> anyhow::Result<()> {
         engine_config.debug_info(true);
         engine_config.cranelift_opt_level(OptLevel::None);
     }
+    obelisk_activity_vm_runner::start_benchmark();
     let engine = Engine::new(&engine_config)?;
+    let compile_started = std::time::Instant::now();
     let module = obelisk_activity_vm_runner::compile(&engine, &module_path)?;
     let qemu_runtime = std::env::var_os("OBELISK_QEMU_IMAGE_DIR")
         .map(PathBuf::from)

@@ -4,7 +4,7 @@ use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Instant;
@@ -27,6 +27,31 @@ mod http_bridge;
 mod legacy_fd;
 mod legacy_wasi;
 mod qemu_jit;
+
+static BENCHMARK_STARTED: OnceLock<Instant> = OnceLock::new();
+static BENCHMARK_REPORTED: AtomicBool = AtomicBool::new(false);
+
+pub fn start_benchmark() {
+    let _ = BENCHMARK_STARTED.set(Instant::now());
+}
+
+fn benchmark_serial_output(output: &[u8]) {
+    let configured_marker = std::env::var_os("QEMU_WASMTIME_BENCHMARK_MARKER")
+        .map(|marker| marker.as_encoded_bytes().to_vec());
+    let marker = configured_marker.as_deref().unwrap_or_else(|| {
+        if std::env::var_os("QEMU_WASMTIME_TRYNIX").is_some() {
+            b"trynix: welcome to the multiverse".as_slice()
+        } else {
+            b"WASMTIME_POC_ECHO_OK".as_slice()
+        }
+    });
+    if output.windows(marker.len()).any(|window| window == marker)
+        && !BENCHMARK_REPORTED.swap(true, Ordering::Relaxed)
+        && let Some(started) = BENCHMARK_STARTED.get()
+    {
+        eprintln!("QEMU_BENCHMARK_MARKER_US={}", started.elapsed().as_micros());
+    }
+}
 
 struct VmState {
     wasi: p1::WasiP1Ctx,
