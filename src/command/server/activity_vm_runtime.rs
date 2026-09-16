@@ -24,11 +24,23 @@ impl ActivityVmRuntime {
     ) -> anyhow::Result<Option<activity_vm_runner::QemuRuntimeConfig>> {
         match self {
             Self::WasmModule(_) => Ok(None),
-            Self::QemuBundle(bundle) => Ok(Some(activity_vm_runner::QemuRuntimeConfig {
-                args: serde_json::from_slice(&std::fs::read(&bundle.args)?)
-                    .context("QEMU runtime args.json must be a JSON string array")?,
-                image_dir: bundle.image_dir.clone(),
-            })),
+            Self::QemuBundle(bundle) => {
+                let args: Vec<String> = serde_json::from_slice(&std::fs::read(&bundle.args)?)
+                    .context("QEMU runtime args.json must be a JSON string array")?;
+                let guest_protocol = if args
+                    .iter()
+                    .any(|argument| argument.contains("mount_tag=store0"))
+                {
+                    activity_vm_runner::QemuGuestProtocol::DirectShell
+                } else {
+                    activity_vm_runner::QemuGuestProtocol::Pack
+                };
+                Ok(Some(activity_vm_runner::QemuRuntimeConfig {
+                    args,
+                    image_dir: bundle.image_dir.clone(),
+                    guest_protocol,
+                }))
+            }
         }
     }
 }
@@ -45,6 +57,22 @@ const RUNTIME_ARTIFACT_KIND: &str = "activity-vm-runtime.v1";
 const TITLE: &str = "org.opencontainers.image.title";
 
 pub(crate) async fn fetch(cache_root: &Path) -> anyhow::Result<ActivityVmRuntime> {
+    if let Some(root) = std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_DIR").map(PathBuf::from) {
+        let bundle = bundle_paths(root);
+        ensure!(
+            bundle.module.is_file(),
+            "local QEMU runtime module is missing"
+        );
+        ensure!(
+            bundle.args.is_file(),
+            "local QEMU runtime args.json is missing"
+        );
+        ensure!(
+            bundle.image_dir.is_dir(),
+            "local QEMU runtime image directory is missing"
+        );
+        return Ok(ActivityVmRuntime::QemuBundle(bundle));
+    }
     let reference = Reference::from_str(
         RUNTIME_LOCATION
             .trim()
@@ -269,6 +297,15 @@ mod tests {
         let runtime = fetch(&workspace.join("test-wasm-cache"))
             .await
             .unwrap_or_else(|error| panic!("{error:#}"));
+        if let Ok(expected) = std::env::var("OBELISK_ACTIVITY_VM_EXPECTED_MODULE_SHA256") {
+            use sha2::{Digest as _, Sha256};
+            let bytes = std::fs::read(runtime.module()).unwrap();
+            assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected);
+        }
+        eprintln!(
+            "phase 1 codegen of activity VM module: {}",
+            runtime.module().display()
+        );
         let engine =
             Engines::get_activity_vm_engine_test(EngineConfig::on_demand_testing()).unwrap();
         activity_vm_runner::compile(&engine, runtime.module()).unwrap();

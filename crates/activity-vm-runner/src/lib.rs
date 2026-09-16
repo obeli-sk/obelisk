@@ -93,9 +93,9 @@ struct ResumeInput {
 }
 
 impl ResumeInput {
-    fn new() -> Self {
+    fn new(bytes: bytes::Bytes) -> Self {
         Self {
-            bytes: Arc::new(Mutex::new(bytes::Bytes::from_static(QEMU_RESUME_INPUT))),
+            bytes: Arc::new(Mutex::new(bytes)),
         }
     }
 }
@@ -197,6 +197,13 @@ pub struct MapDir {
 pub struct QemuRuntimeConfig {
     pub args: Vec<String>,
     pub image_dir: PathBuf,
+    pub guest_protocol: QemuGuestProtocol,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QemuGuestProtocol {
+    Pack,
+    DirectShell,
 }
 
 impl MapDir {
@@ -257,6 +264,14 @@ pub async fn execute(
     tracing::debug!("Preparing activity VM execution");
     let is_qemu = qemu_memory_type(&module)?.is_some();
     let is_legacy_qemu = legacy_fd::is_required(&module);
+    let direct_shell = qemu_runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.guest_protocol == QemuGuestProtocol::DirectShell);
+    if direct_shell {
+        for mapdir in &mut mapdirs {
+            mapdir.guest = format!("/share{}", mapdir.guest);
+        }
+    }
     if let Some(runtime) = &qemu_runtime {
         ensure!(is_qemu, "QEMU runtime configuration requires a QEMU module");
         mapdirs.push(MapDir::read_only(
@@ -287,11 +302,12 @@ pub async fn execute(
             .path()
             .to_owned()
     };
-    tokio::fs::write(
-        queue.join("http-guest.sh"),
-        include_bytes!("../guest/http-guest.sh"),
-    )
-    .await?;
+    let guest_launcher = if direct_shell {
+        include_bytes!("../guest/direct-guest.sh").as_slice()
+    } else {
+        include_bytes!("../guest/http-guest.sh").as_slice()
+    };
+    tokio::fs::write(queue.join("http-guest.sh"), guest_launcher).await?;
     for name in [
         "exit-code",
         "http-request-ready",
@@ -323,16 +339,25 @@ pub async fn execute(
         ));
     }
     if let Some(pack) = &qemu_pack {
-        tokio::fs::write(
-            pack.path().join("info"),
-            qemu_runtime_info(&mapdirs, &["obelisk-activity-vm-http"], &guest_args, &env)?,
-        )
-        .await?;
+        if direct_shell {
+            tokio::fs::write(pack.path().join("manifest"), []).await?;
+        } else {
+            tokio::fs::write(
+                pack.path().join("info"),
+                qemu_runtime_info(&mapdirs, &["obelisk-activity-vm-http"], &guest_args, &env)?,
+            )
+            .await?;
+        }
         mapdirs.push(MapDir::read_write(
             pack.path().to_owned(),
-            "/pack".to_owned(),
+            if direct_shell { "/share" } else { "/pack" }.to_owned(),
         ));
     }
+    let resume_input = if direct_shell {
+        direct_shell_input(&guest_args, &env)?
+    } else {
+        bytes::Bytes::from_static(QEMU_RESUME_INPUT)
+    };
     let module_args = if let Some(runtime) = qemu_runtime {
         runtime.args
     } else if is_qemu && !is_legacy_qemu {
@@ -349,6 +374,24 @@ pub async fn execute(
         phase_logger_stop_rx,
     ));
     let engine = engine.clone();
+    let completion_cancelled = cancelled.clone();
+    let completion_engine = engine.clone();
+    let completion_file = queue.join("exit-code");
+    let completion_watcher = direct_shell.then(|| {
+        tokio::spawn(async move {
+            loop {
+                if tokio::fs::read(&completion_file)
+                    .await
+                    .is_ok_and(|contents| !contents.is_empty())
+                {
+                    completion_cancelled.store(true, Ordering::Relaxed);
+                    completion_engine.increment_epoch();
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+    });
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis(),
         "Starting activity VM module"
@@ -363,9 +406,13 @@ pub async fn execute(
             max_stdout_bytes,
             max_stderr_bytes,
             cancelled,
+            resume_input,
         )
     })
     .await?;
+    if let Some(completion_watcher) = completion_watcher {
+        completion_watcher.abort();
+    }
     broker.abort();
     let _ = broker.await;
     let _ = phase_logger_stop.send(());
@@ -412,6 +459,46 @@ pub async fn execute(
         "Activity VM execution complete"
     );
     Ok(output)
+}
+
+fn direct_shell_input(
+    guest_args: &[String],
+    env: &HashMap<String, String>,
+) -> anyhow::Result<bytes::Bytes> {
+    ensure!(
+        !guest_args.is_empty(),
+        "direct-shell guest command is empty"
+    );
+    let mut command = String::from_utf8(QEMU_RESUME_INPUT.to_vec())?;
+    command.push_str("ln -sfn /share/obelisk-activity-vm-http /obelisk-activity-vm-http; ");
+    command.push_str("if [ -d /share/obelisk-activity ]; then ln -sfn /share/obelisk-activity /obelisk-activity; fi; ");
+    for (key, value) in env {
+        ensure!(
+            !key.is_empty()
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'),
+            "invalid direct-shell environment variable name `{key}`"
+        );
+        command.push_str("export ");
+        command.push_str(key);
+        command.push('=');
+        command.push_str(&shell_quote(value));
+        command.push_str("; ");
+    }
+    command.push_str(
+        &guest_args
+            .iter()
+            .map(|argument| shell_quote(argument))
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    command.push_str("; sync; poweroff -f\n");
+    Ok(bytes::Bytes::from(command))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn directory_entries(path: &Path) -> Vec<String> {
@@ -638,13 +725,14 @@ fn run_module(
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
     cancelled: Arc<AtomicBool>,
+    resume_input: bytes::Bytes,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let stdout = pipe::MemoryOutputPipe::new(max_stdout_bytes.saturating_add(1));
     let stderr = pipe::MemoryOutputPipe::new(max_stderr_bytes);
     let mut wasi = WasiCtxBuilder::new();
     if qemu_memory_type(module)?.is_some() {
-        wasi.stdin(ResumeInput::new());
+        wasi.stdin(ResumeInput::new(resume_input.clone()));
     } else {
         wasi.stdin(pipe::ClosedInputStream);
     }
@@ -670,7 +758,7 @@ fn run_module(
     let host_fs = host_fs::HostFs::new(mapdirs)?;
     let legacy_fds = legacy_fd::LegacyFdTable::new(mapdirs)?;
     if guest_args.iter().any(|argument| argument == "-incoming") {
-        legacy_fds.seed_tty_input(QEMU_RESUME_INPUT);
+        legacy_fds.seed_tty_input(&resume_input);
     }
     let fiber_entries = Arc::new(Mutex::new(HashMap::new()));
     let mut store = Store::new(
@@ -970,14 +1058,17 @@ fn pthread_spawner(runtime: Arc<EmscriptenRuntime>) -> PthreadSpawn {
 }
 
 fn guest_completion_exists(mapdirs: &[MapDir]) -> bool {
-    mapdirs
-        .iter()
-        .find(|mapdir| mapdir.guest == "/obelisk-activity-vm-http")
-        .is_some_and(|mapdir| {
-            mapdir.host.join("stdout").is_file()
-                && std::fs::metadata(mapdir.host.join("exit-code"))
-                    .is_ok_and(|metadata| metadata.len() > 0)
-        })
+    mapdirs.iter().any(|mapdir| {
+        let queue = if mapdir.guest.ends_with("/obelisk-activity-vm-http") {
+            mapdir.host.clone()
+        } else if mapdir.guest == "/share" {
+            mapdir.host.join("obelisk-activity-vm-http")
+        } else {
+            return false;
+        };
+        queue.join("stdout").is_file()
+            && std::fs::metadata(queue.join("exit-code")).is_ok_and(|metadata| metadata.len() > 0)
+    })
 }
 
 fn guest_has_completed(runtime: &EmscriptenRuntime, mapdirs: &[MapDir]) -> bool {
@@ -1075,7 +1166,7 @@ fn run_pthread(
     // QEMU's PROXY_TO_PTHREAD build executes main() on a worker instance.
     // The native snapshot builder leaves the guest blocked on this serial
     // byte; make it available to that worker as well as the bootstrap store.
-    wasi.stdin(ResumeInput::new())
+    wasi.stdin(ResumeInput::new(bytes::Bytes::new()))
         .stdout(runtime.stdout.clone())
         .stderr(runtime.stderr.clone());
     for mapdir in &runtime.mapdirs {
@@ -1350,9 +1441,36 @@ mod tests {
             1024,
             1024,
             Arc::new(AtomicBool::new(false)),
+            bytes::Bytes::new(),
         )
         .unwrap();
         assert_eq!(output.exit_code, 0);
+    }
+
+    #[test]
+    fn direct_shell_input_quotes_arguments_and_environment() {
+        let input = direct_shell_input(
+            &["/bin/echo".to_owned(), "it's safe".to_owned()],
+            &HashMap::from([("MESSAGE".to_owned(), "a b'c".to_owned())]),
+        )
+        .unwrap();
+        let input = String::from_utf8(input.to_vec()).unwrap();
+
+        assert!(input.starts_with("\u{1}ccont\n\u{1}c=\n"));
+        assert!(input.contains("export MESSAGE='a b'\\''c';"));
+        assert!(input.contains("'/bin/echo' 'it'\\''s safe'"));
+    }
+
+    #[test]
+    fn detects_direct_shell_completion_in_share() {
+        let share = tempfile::tempdir().unwrap();
+        let queue = share.path().join("obelisk-activity-vm-http");
+        std::fs::create_dir(&queue).unwrap();
+        std::fs::write(queue.join("stdout"), b"result").unwrap();
+        std::fs::write(queue.join("exit-code"), b"0\n").unwrap();
+        let mapdir = MapDir::read_write(share.path().to_owned(), "/share".to_owned());
+
+        assert!(guest_completion_exists(&[mapdir]));
     }
 
     #[test]
@@ -1584,6 +1702,7 @@ mod tests {
             Some(QemuRuntimeConfig {
                 args,
                 image_dir: runtime_dir.join("image"),
+                guest_protocol: QemuGuestProtocol::Pack,
             }),
             vec!["/bin/echo".to_owned(), "Hello, world!".to_owned()],
             HashMap::new(),

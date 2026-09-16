@@ -682,7 +682,8 @@ impl LegacyFdTable {
                             .windows(b"vm_state_notify running 1".len())
                             .any(|window| window == b"vm_state_notify running 1"))
                 {
-                    descriptors.tty_input.extend(crate::QEMU_RESUME_INPUT);
+                    let pending = std::mem::take(&mut descriptors.pending_tty_input);
+                    descriptors.tty_input.extend(pending);
                     descriptors.handshake_sent = true;
                     self.readiness.notify_all();
                 }

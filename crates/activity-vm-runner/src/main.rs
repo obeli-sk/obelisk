@@ -59,7 +59,9 @@ async fn main() -> anyhow::Result<()> {
         wasm_workers::policy_builder::build_process_http_policy(spec, &resolver)?;
     let mut engine_config = Config::new();
     engine_config.shared_memory(true);
-    engine_config.epoch_interruption(false);
+    engine_config.epoch_interruption(
+        std::env::var_os("QEMU_WASMTIME_EPOCH").is_some_and(|value| value != "0"),
+    );
     engine_config.consume_fuel(false);
     engine_config.parallel_compilation(true);
     engine_config.wasm_component_model_async(false);
@@ -106,11 +108,28 @@ async fn main() -> anyhow::Result<()> {
     let engine = Engine::new(&engine_config)?;
     let compile_started = std::time::Instant::now();
     let module = obelisk_activity_vm_runner::compile(&engine, &module_path)?;
+    eprintln!(
+        "QEMU outer module compile_ms={}",
+        compile_started.elapsed().as_millis()
+    );
     let qemu_runtime = std::env::var_os("OBELISK_QEMU_IMAGE_DIR")
         .map(PathBuf::from)
         .map(|image_dir| -> anyhow::Result<_> {
-            let args = serde_json::from_slice(&std::fs::read(image_dir.join("../args.json"))?)?;
-            Ok(obelisk_activity_vm_runner::QemuRuntimeConfig { args, image_dir })
+            let args: Vec<String> =
+                serde_json::from_slice(&std::fs::read(image_dir.join("../args.json"))?)?;
+            let guest_protocol = if args
+                .iter()
+                .any(|argument| argument.contains("mount_tag=store0"))
+            {
+                obelisk_activity_vm_runner::QemuGuestProtocol::DirectShell
+            } else {
+                obelisk_activity_vm_runner::QemuGuestProtocol::Pack
+            };
+            Ok(obelisk_activity_vm_runner::QemuRuntimeConfig {
+                args,
+                image_dir,
+                guest_protocol,
+            })
         })
         .transpose()?;
     let output = obelisk_activity_vm_runner::execute(
