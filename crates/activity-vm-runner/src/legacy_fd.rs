@@ -454,10 +454,12 @@ impl LegacyFdTable {
                 if !descriptors.handshake_sent
                     && (descriptors
                         .tty_output
-                        .ends_with(b"trynix: waiting for the store")
+                        .windows(b"trynix: waiting for the store".len())
+                        .any(|window| window == b"trynix: waiting for the store")
                         || descriptors
                             .tty_output
-                            .ends_with(b"vm_state_notify running 1"))
+                            .windows(b"vm_state_notify running 1".len())
+                            .any(|window| window == b"vm_state_notify running 1"))
                 {
                     descriptors
                         .tty_input
