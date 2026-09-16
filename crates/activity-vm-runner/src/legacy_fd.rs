@@ -38,11 +38,16 @@ struct Mount {
 }
 
 enum Descriptor {
-    File { file: File, writable: bool },
+    File {
+        file: File,
+        path: PathBuf,
+        writable: bool,
+    },
     TtyInput,
     TtyOutput,
     PipeRead(u32),
     PipeWrite(u32),
+    Random,
 }
 
 pub(crate) struct LegacyFdTable {
@@ -120,7 +125,7 @@ impl LegacyFdTable {
                     (2, Descriptor::TtyOutput),
                 ]),
                 pipes: HashMap::new(),
-                tty_input: VecDeque::new(),
+                tty_input: VecDeque::from(b"=\necho WASMTIME_GUEST_ECHO_OK\n".to_vec()),
                 tty_output: Vec::new(),
                 status_flags: HashMap::from([(0, 0), (1, 1), (2, 1)]),
             }),
@@ -187,14 +192,30 @@ impl LegacyFdTable {
     }
 
     fn open(&self, path: &str, flags: i32) -> Result<i32, i32> {
+        eprintln!("legacy fd open path={path:?} flags={flags:#x}");
+        if path == "/dev/urandom" || path == "/dev/random" {
+            let mut descriptors = self
+                .descriptors
+                .lock()
+                .expect("legacy fd table mutex poisoned");
+            let fd = allocate_fd(&mut descriptors);
+            descriptors.entries.insert(fd, Descriptor::Random);
+            return Ok(fd);
+        }
         if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0 {
             return Err(ERRNO_NOTCAPABLE);
         }
         if flags & O_ACCMODE != O_RDONLY {
             return Err(ERRNO_NOTCAPABLE);
         }
-        let (mount, path) = self.resolve_existing(path).map_err(fs_errno)?;
-        let file = File::open(path).map_err(|error| io_errno(&error))?;
+        let (mount, path) = self.resolve_existing(path).map_err(|error| {
+            eprintln!("legacy fd resolve failed: {error:#}");
+            ERRNO_NOENT
+        })?;
+        let file = File::open(&path).map_err(|error| {
+            eprintln!("legacy fd host open {} failed: {error}", path.display());
+            io_errno(&error)
+        })?;
         let mut descriptors = self
             .descriptors
             .lock()
@@ -205,6 +226,52 @@ impl LegacyFdTable {
             fd,
             Descriptor::File {
                 file,
+                path,
+                writable: mount.writable && flags & O_ACCMODE != O_RDONLY,
+            },
+        );
+        descriptors.status_flags.insert(fd, flags);
+        eprintln!("legacy fd open allocated fd={fd}");
+        Ok(fd)
+    }
+
+    fn open_at(&self, dirfd: i32, path: &str, flags: i32) -> Result<i32, i32> {
+        eprintln!("legacy fd openat dirfd={dirfd} path={path:?} flags={flags:#x}");
+        if path.starts_with('/') || dirfd == AT_FDCWD {
+            return self.open(path, flags);
+        }
+        if flags & (O_CREAT | O_EXCL | O_TRUNC | O_APPEND) != 0
+            || flags & O_ACCMODE != O_RDONLY
+        {
+            return Err(ERRNO_NOTCAPABLE);
+        }
+        let base = {
+            let descriptors = self
+                .descriptors
+                .lock()
+                .expect("legacy fd table mutex poisoned");
+            match descriptors.entries.get(&dirfd).ok_or(ERRNO_BADF)? {
+                Descriptor::File { path, .. } => path.clone(),
+                _ => return Err(ERRNO_BADF),
+            }
+        };
+        let path = base.join(path).canonicalize().map_err(|_| ERRNO_NOENT)?;
+        let mount = self
+            .mounts
+            .iter()
+            .find(|mount| path.starts_with(&mount.host))
+            .ok_or(ERRNO_NOTCAPABLE)?;
+        let file = File::open(&path).map_err(|error| io_errno(&error))?;
+        let mut descriptors = self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned");
+        let fd = allocate_fd(&mut descriptors);
+        descriptors.entries.insert(
+            fd,
+            Descriptor::File {
+                file,
+                path,
                 writable: mount.writable && flags & O_ACCMODE != O_RDONLY,
             },
         );
@@ -242,6 +309,7 @@ impl LegacyFdTable {
     }
 
     fn read(&self, fd: i32, output: &mut [u8]) -> Result<usize, i32> {
+        eprintln!("legacy fd read fd={fd} length={}", output.len());
         let mut state = self
             .descriptors
             .lock()
@@ -259,6 +327,10 @@ impl LegacyFdTable {
                 let id = *id;
                 Ok(drain(&mut state.pipes.get_mut(&id).unwrap().bytes, output))
             }
+            Descriptor::Random => File::open("/dev/urandom")
+                .and_then(|mut source| source.read_exact(output))
+                .map(|()| output.len())
+                .map_err(|error| io_errno(&error)),
             Descriptor::TtyOutput | Descriptor::PipeWrite(_) => Err(ERRNO_BADF),
         }
     }
@@ -293,6 +365,7 @@ impl LegacyFdTable {
             Descriptor::File {
                 file,
                 writable: true,
+                ..
             } => file
                 .write_at(input, offset)
                 .map_err(|error| io_errno(&error)),
@@ -301,6 +374,7 @@ impl LegacyFdTable {
     }
 
     fn write(&self, fd: i32, input: &[u8]) -> Result<usize, i32> {
+        eprintln!("legacy fd write fd={fd} length={}", input.len());
         let mut descriptors = self
             .descriptors
             .lock()
@@ -311,7 +385,8 @@ impl LegacyFdTable {
                 writable: false, ..
             }
             | Descriptor::TtyInput
-            | Descriptor::PipeRead(_) => Err(ERRNO_BADF),
+            | Descriptor::PipeRead(_)
+            | Descriptor::Random => Err(ERRNO_BADF),
             Descriptor::File { .. } => match descriptors.entries.get_mut(&fd).unwrap() {
                 Descriptor::File { file, .. } => {
                     file.write(input).map_err(|error| io_errno(&error))
@@ -320,6 +395,7 @@ impl LegacyFdTable {
             },
             Descriptor::TtyOutput => {
                 descriptors.tty_output.extend_from_slice(input);
+                eprint!("{}", String::from_utf8_lossy(input));
                 Ok(input.len())
             }
             Descriptor::PipeWrite(id) => {
@@ -393,14 +469,20 @@ impl LegacyFdTable {
             .lock()
             .expect("legacy fd table mutex poisoned");
         let descriptor = match state.entries.get(&fd).ok_or(ERRNO_BADF)? {
-            Descriptor::File { file, writable } => Descriptor::File {
+            Descriptor::File {
+                file,
+                path,
+                writable,
+            } => Descriptor::File {
                 file: file.try_clone().map_err(|error| io_errno(&error))?,
+                path: path.clone(),
                 writable: *writable,
             },
             Descriptor::TtyInput => Descriptor::TtyInput,
             Descriptor::TtyOutput => Descriptor::TtyOutput,
             Descriptor::PipeRead(id) => Descriptor::PipeRead(*id),
             Descriptor::PipeWrite(id) => Descriptor::PipeWrite(*id),
+            Descriptor::Random => Descriptor::Random,
         };
         let mut new_fd = minimum.max(0);
         while state.entries.contains_key(&new_fd) {
@@ -472,6 +554,7 @@ impl LegacyFdTable {
                 .map_err(|error| io_errno(&error)),
             Descriptor::TtyInput | Descriptor::TtyOutput => Ok(synthetic_stat(0o020_666)),
             Descriptor::PipeRead(_) | Descriptor::PipeWrite(_) => Ok(synthetic_stat(0o010_600)),
+            Descriptor::Random => Ok(synthetic_stat(0o020_444)),
         }
     }
 
@@ -499,9 +582,47 @@ impl LegacyFdTable {
         Ok(metadata_stat(&metadata))
     }
 
+    fn stat_at(&self, dirfd: i32, path: &str, nofollow: bool) -> Result<LegacyStat, i32> {
+        eprintln!("legacy fd statat dirfd={dirfd} path={path:?} nofollow={nofollow}");
+        if path.starts_with('/') || dirfd == AT_FDCWD {
+            return self.stat(path, nofollow);
+        }
+        let base = {
+            let descriptors = self
+                .descriptors
+                .lock()
+                .expect("legacy fd table mutex poisoned");
+            match descriptors.entries.get(&dirfd).ok_or(ERRNO_BADF)? {
+                Descriptor::File { path, .. } => path.clone(),
+                _ => return Err(ERRNO_BADF),
+            }
+        };
+        let path = base.join(path);
+        let canonical = path
+            .canonicalize()
+            .map_err(|_| ERRNO_NOENT)?;
+        if !self
+            .mounts
+            .iter()
+            .any(|mount| canonical.starts_with(&mount.host))
+        {
+            return Err(ERRNO_NOTCAPABLE);
+        }
+        let metadata = if nofollow {
+            std::fs::symlink_metadata(&path)
+        } else {
+            std::fs::metadata(&path)
+        }
+        .map_err(|error| io_errno(&error))?;
+        Ok(metadata_stat(&metadata))
+    }
+
     fn access(&self, path: &str, mode: i32) -> Result<(), i32> {
         if mode & !7 != 0 {
             return Err(ERRNO_INVAL);
+        }
+        if path == "/dev/urandom" || path == "/dev/random" {
+            return Ok(());
         }
         let (mount, path) = self.resolve_existing(path).map_err(fs_errno)?;
         let metadata = path.metadata().map_err(|error| io_errno(&error))?;
@@ -527,6 +648,7 @@ impl LegacyFdTable {
     }
 
     fn poll(&self, fds: &mut [PollFd], timeout_ms: i32) -> usize {
+        eprintln!("legacy fd poll count={} timeout={timeout_ms}", fds.len());
         let deadline = u64::try_from(timeout_ms)
             .ok()
             .map(|ms| Instant::now() + Duration::from_millis(ms));
@@ -601,6 +723,7 @@ fn update_revents(state: &Descriptors, fds: &mut [PollFd]) -> usize {
                 }
             }
             Some(Descriptor::TtyOutput) => POLLOUT,
+            Some(Descriptor::Random) => POLLIN,
             Some(Descriptor::PipeRead(id)) => {
                 let pipe = state.pipes.get(id).unwrap();
                 (if pipe.bytes.is_empty() { 0 } else { POLLIN })
@@ -875,10 +998,19 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
         "env",
         "__syscall_newfstatat",
         |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, output: i32, flags: i32| {
-            if dirfd != AT_FDCWD {
-                return -ERRNO_NOTCAPABLE;
+            let result = (|| -> Result<(), i32> {
+                let path = read_string(&mut caller, path)?;
+                let stat = caller
+                    .data()
+                    .legacy_fds
+                    .stat_at(dirfd, &path, flags & 256 != 0)?;
+                eprintln!("legacy fd statat result mode={:#o}", stat.mode);
+                write_memory(&mut caller, output, &encode_stat(&stat))
+            })();
+            if let Err(errno) = result {
+                eprintln!("legacy fd statat failed errno={errno}");
             }
-            path_stat(&mut caller, path, output, flags & 256 != 0)
+            result.map_or_else(|errno| -errno, |()| 0)
         },
     )?;
     linker.func_wrap(
@@ -1000,9 +1132,6 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
         "env",
         "__syscall_openat",
         |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, flags: i32, _mode: i32| {
-            if dirfd != AT_FDCWD {
-                return -ERRNO_NOTCAPABLE;
-            }
             let path = match read_string(&mut caller, path) {
                 Ok(path) => path,
                 Err(errno) => return -errno,
@@ -1010,8 +1139,48 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
             caller
                 .data()
                 .legacy_fds
-                .open(&path, flags)
+                .open_at(dirfd, &path, flags)
                 .unwrap_or_else(|errno| -errno)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_readlinkat",
+        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, _buffer: i32, _size: i32| {
+            let path = read_string(&mut caller, path).unwrap_or_else(|_| "<invalid>".to_owned());
+            eprintln!("legacy readlinkat dirfd={dirfd} path={path:?}");
+            -ERRNO_NOENT
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_fcntl64",
+        |_caller: Caller<'_, VmState>, fd: i32, command: i32, _arguments: i32| {
+            eprintln!("legacy fcntl64 fd={fd} command={command}");
+            match command {
+                1..=7 => 0,
+                _ => -ERRNO_INVAL,
+            }
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "__syscall_faccessat",
+        |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, mode: i32, _flags: i32| {
+            if dirfd != AT_FDCWD {
+                return -ERRNO_NOTCAPABLE;
+            }
+            let path = match read_string(&mut caller, path) {
+                Ok(path) => path,
+                Err(errno) => return -errno,
+            };
+            eprintln!("legacy faccessat path={path:?} mode={mode:#x}");
+            caller
+                .data()
+                .legacy_fds
+                .access(&path, mode)
+                .err()
+                .unwrap_or(0)
         },
     )?;
     linker.func_wrap(
@@ -1187,6 +1356,7 @@ fn dispatch_proxy(
                 Err(ERRNO_NOTCAPABLE)
             } else {
                 let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+                eprintln!("legacy proxy faccessat path={path:?} mode={:#x}", arg(2)?);
                 table.access(&path, arg(2)?).map(|()| 0)
             }
         }
@@ -1204,23 +1374,22 @@ fn dispatch_proxy(
         }
         23 => return Ok(ioctl_call(caller, arg(0)?, arg(1)?, arg(2)?)),
         27 => {
-            if arg(0)? != AT_FDCWD {
-                Err(ERRNO_NOTCAPABLE)
-            } else {
-                let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
-                match table.stat(&path, arg(3)? & 256 != 0) {
-                    Ok(stat) => write_memory(caller, arg(2)?, &encode_stat(&stat)).map(|()| 0),
-                    Err(errno) => Err(errno),
-                }
+            let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+            let stat = table.stat_at(arg(0)?, &path, arg(3)? & 256 != 0);
+            eprintln!(
+                "legacy proxy fstatat path={path:?} result={:?}",
+                stat.as_ref().map(|stat| stat.mode)
+            );
+            match stat {
+                Ok(stat) => write_memory(caller, arg(2)?, &encode_stat(&stat)).map(|()| 0),
+                Err(errno) => Err(errno),
             }
         }
         28 => {
-            if arg(0)? != AT_FDCWD {
-                Err(ERRNO_NOTCAPABLE)
-            } else {
-                let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
-                return Ok(table.open(&path, arg(2)?).unwrap_or_else(|errno| -errno));
-            }
+            let path = read_string(caller, arg(1)?).map_err(|errno| errno.to_string())?;
+            return Ok(table
+                .open_at(arg(0)?, &path, arg(2)?)
+                .unwrap_or_else(|errno| -errno));
         }
         29 => {
             let (reader, writer) = table.pipe();
@@ -1450,8 +1619,12 @@ fn path_stat(caller: &mut Caller<'_, VmState>, path: i32, output: i32, nofollow:
     let result = (|| -> Result<(), i32> {
         let path = read_string(caller, path)?;
         let stat = caller.data().legacy_fds.stat(&path, nofollow)?;
+        eprintln!("legacy stat path={path:?} mode={:#o}", stat.mode);
         write_memory(caller, output, &encode_stat(&stat))
     })();
+    if let Err(errno) = result {
+        eprintln!("legacy stat failed errno={errno}");
+    }
     result.map_or_else(|errno| -errno, |()| 0)
 }
 
@@ -1512,18 +1685,32 @@ fn normalize_absolute(raw: &str) -> anyhow::Result<String> {
     Ok(normalized.to_string_lossy().into_owned())
 }
 
-fn memory(caller: &mut Caller<'_, VmState>) -> Result<Extern, i32> {
-    caller.get_export("memory").ok_or(ERRNO_INVAL)
+fn memory(caller: &Caller<'_, VmState>) -> Result<crate::qemu_jit::QemuMemory, i32> {
+    caller.data().qemu_jit.memory.clone().ok_or(ERRNO_INVAL)
 }
 
 fn read_string(caller: &mut Caller<'_, VmState>, pointer: i32) -> Result<String, i32> {
-    let memory = memory(caller)?;
-    let memory = memory.into_memory().ok_or(ERRNO_INVAL)?;
-    let data = memory.data(caller);
     let start = usize::try_from(pointer).map_err(|_| ERRNO_INVAL)?;
-    let tail = data.get(start..).ok_or(ERRNO_INVAL)?;
-    let end = tail.iter().position(|byte| *byte == 0).ok_or(ERRNO_INVAL)?;
-    std::str::from_utf8(&tail[..end])
+    let bytes = match memory(caller)? {
+        crate::qemu_jit::QemuMemory::Plain(memory) => {
+            let data = memory.data(caller);
+            let tail = data.get(start..).ok_or(ERRNO_INVAL)?;
+            let end = tail.iter().position(|byte| *byte == 0).ok_or(ERRNO_INVAL)?;
+            tail[..end].to_vec()
+        }
+        crate::qemu_jit::QemuMemory::Shared(memory) => {
+            let tail = memory.data().get(start..).ok_or(ERRNO_INVAL)?;
+            let end = tail
+                .iter()
+                .position(|byte| unsafe { byte.get().read_volatile() } == 0)
+                .ok_or(ERRNO_INVAL)?;
+            tail[..end]
+                .iter()
+                .map(|byte| unsafe { byte.get().read_volatile() })
+                .collect()
+        }
+    };
+    std::str::from_utf8(&bytes)
         .map(str::to_owned)
         .map_err(|_| ERRNO_INVAL)
 }
@@ -1539,25 +1726,41 @@ fn read_memory(
     pointer: i32,
     output: &mut [u8],
 ) -> Result<(), i32> {
-    let memory = memory(caller)?.into_memory().ok_or(ERRNO_INVAL)?;
-    memory
-        .read(
-            caller,
-            usize::try_from(pointer).map_err(|_| ERRNO_INVAL)?,
-            output,
-        )
-        .map_err(|_| ERRNO_INVAL)
+    let start = usize::try_from(pointer).map_err(|_| ERRNO_INVAL)?;
+    match memory(caller)? {
+        crate::qemu_jit::QemuMemory::Plain(memory) => {
+            memory.read(caller, start, output).map_err(|_| ERRNO_INVAL)
+        }
+        crate::qemu_jit::QemuMemory::Shared(memory) => {
+            let source = memory
+                .data()
+                .get(start..start + output.len())
+                .ok_or(ERRNO_INVAL)?;
+            for (output, source) in output.iter_mut().zip(source) {
+                *output = unsafe { source.get().read_volatile() };
+            }
+            Ok(())
+        }
+    }
 }
 
 fn write_memory(caller: &mut Caller<'_, VmState>, pointer: i32, input: &[u8]) -> Result<(), i32> {
-    let memory = memory(caller)?.into_memory().ok_or(ERRNO_INVAL)?;
-    memory
-        .write(
-            caller,
-            usize::try_from(pointer).map_err(|_| ERRNO_INVAL)?,
-            input,
-        )
-        .map_err(|_| ERRNO_INVAL)
+    let start = usize::try_from(pointer).map_err(|_| ERRNO_INVAL)?;
+    match memory(caller)? {
+        crate::qemu_jit::QemuMemory::Plain(memory) => {
+            memory.write(caller, start, input).map_err(|_| ERRNO_INVAL)
+        }
+        crate::qemu_jit::QemuMemory::Shared(memory) => {
+            let destination = memory
+                .data()
+                .get(start..start + input.len())
+                .ok_or(ERRNO_INVAL)?;
+            for (destination, input) in destination.iter().zip(input) {
+                unsafe { destination.get().write_volatile(*input) };
+            }
+            Ok(())
+        }
+    }
 }
 
 fn io_errno(error: &std::io::Error) -> i32 {

@@ -1,6 +1,7 @@
 use anyhow::{Context, ensure};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use wasmtime::{
     Caller, Extern, ExternType, Instance, Linker, Memory, Module, Ref, SharedMemory, TypedFunc,
 };
@@ -21,22 +22,46 @@ impl QemuMemory {
 }
 
 pub(crate) struct QemuJit {
+    id: u64,
     pub(crate) memory: Option<QemuMemory>,
     blocks: HashMap<u32, TypedFunc<i32, i32>>,
     next_handle: u32,
     compiled_blocks: u64,
     executed_blocks: u64,
+    tb_ptr_ptr: Option<i32>,
+    remove_ptr: Option<i32>,
+    remove_count_ptr: Option<i32>,
 }
 
 impl QemuJit {
     pub(crate) fn new(memory: Option<QemuMemory>) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         Self {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             memory,
             blocks: HashMap::new(),
             next_handle: 1,
             compiled_blocks: 0,
             executed_blocks: 0,
+            tb_ptr_ptr: None,
+            remove_ptr: None,
+            remove_count_ptr: None,
         }
+    }
+
+    pub(crate) fn initialize_legacy(
+        &mut self,
+        tb_ptr_ptr: i32,
+        remove_ptr: i32,
+        remove_count_ptr: i32,
+    ) {
+        self.tb_ptr_ptr = Some(tb_ptr_ptr);
+        self.remove_ptr = Some(remove_ptr);
+        self.remove_count_ptr = Some(remove_count_ptr);
+        eprintln!(
+            "QEMU JIT initialized store={} tb_ptr_ptr={tb_ptr_ptr:#x}",
+            self.id
+        );
     }
 }
 
@@ -49,18 +74,56 @@ pub(crate) fn add_to_linker<T: HasQemuJit + Send + 'static>(
 ) -> anyhow::Result<()> {
     linker.func_wrap(
         "env",
+        "init_wasm32_js",
+        |mut caller: Caller<'_, T>, tb_ptr_ptr: i32, _core: i32, remove_ptr: i32, remove_count_ptr: i32, _gc_ptr: i32| {
+            let jit = caller.data_mut().qemu_jit();
+            eprintln!("QEMU JIT init store={} tb_ptr_ptr={tb_ptr_ptr:#x} remove_ptr={remove_ptr:#x} remove_count_ptr={remove_count_ptr:#x}", jit.id);
+            jit.initialize_legacy(tb_ptr_ptr, remove_ptr, remove_count_ptr);
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "instantiate_wasm",
+        |mut caller: Caller<'_, T>| -> wasmtime::Result<i32> {
+            compile_legacy(&mut caller).map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
+        },
+    )?;
+    linker.func_wrap(
+        "env",
+        "remove_module_js",
+        |mut caller: Caller<'_, T>| -> wasmtime::Result<()> {
+            remove_legacy(&mut caller).map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
+        },
+    )?;
+    linker.func_wrap(
+        "env",
         "instantiate_batch_js",
-        |mut caller: Caller<'_, T>, bytes: i32, len: i32, nfuncs: i32, helpers: i32, nhelpers: i32, _dump: i32| {
+        |mut caller: Caller<'_, T>,
+         bytes: i32,
+         len: i32,
+         nfuncs: i32,
+         helpers: i32,
+         nhelpers: i32,
+         _dump: i32| {
             compile_batch(&mut caller, bytes, len, nfuncs, helpers, nhelpers)
                 .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
         },
     )?;
-    linker.func_wrap("env", "wasm_tail_calls_supported_js", || 0_i32)?;
+    linker.func_wrap("env", "wasm_tail_calls_supported_js", || {
+        i32::from(std::env::var_os("OBELISK_QEMU_TAIL_CALLS").is_some())
+    })?;
     linker.func_wrap("env", "remove_batch_js", |_base: i32, _count: i32| {})?;
     linker.func_wrap(
         "env",
         "report_stats_js",
-        |batches: i32, blocks: i32, _full: i32, _hot: i32, _evictions: i32, _bytes: i32, _sites: i32, _linked: i32| {
+        |batches: i32,
+         blocks: i32,
+         _full: i32,
+         _hot: i32,
+         _evictions: i32,
+         _bytes: i32,
+         _sites: i32,
+         _linked: i32| {
             eprintln!("QEMU JIT batches={batches} blocks={blocks}");
         },
     )?;
@@ -70,19 +133,32 @@ pub(crate) fn add_to_linker<T: HasQemuJit + Send + 'static>(
     linker.func_wrap(
         "qemu_jit",
         "compile_batch",
-        |mut caller: Caller<'_, T>, bytes: i32, len: i32, nfuncs: i32, helpers: i32, nhelpers: i32, _dump: i32| {
+        |mut caller: Caller<'_, T>,
+         bytes: i32,
+         len: i32,
+         nfuncs: i32,
+         helpers: i32,
+         nhelpers: i32,
+         _dump: i32| {
             compile_batch(&mut caller, bytes, len, nfuncs, helpers, nhelpers)
                 .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
         },
     )?;
-    // Establish generated-block correctness before enabling the optional
-    // direct tail-call chaining optimization.
-    linker.func_wrap("qemu_jit", "tail_calls_supported", || 0_i32)?;
+    linker.func_wrap("qemu_jit", "tail_calls_supported", || {
+        i32::from(std::env::var_os("OBELISK_QEMU_TAIL_CALLS").is_some())
+    })?;
     linker.func_wrap("qemu_jit", "remove_batch", |_base: i32, _count: i32| {})?;
     linker.func_wrap(
         "qemu_jit",
         "report_stats",
-        |batches: i32, blocks: i32, _full: i32, _hot: i32, _evictions: i32, _bytes: i32, _sites: i32, _linked: i32| {
+        |batches: i32,
+         blocks: i32,
+         _full: i32,
+         _hot: i32,
+         _evictions: i32,
+         _bytes: i32,
+         _sites: i32,
+         _linked: i32| {
             eprintln!("QEMU JIT batches={batches} blocks={blocks}");
         },
     )?;
@@ -134,6 +210,136 @@ pub(crate) fn add_to_linker<T: HasQemuJit + Send + 'static>(
     Ok(())
 }
 
+fn compile_legacy<T: HasQemuJit>(caller: &mut Caller<'_, T>) -> anyhow::Result<i32> {
+    let jit = caller.data_mut().qemu_jit();
+    eprintln!(
+        "QEMU JIT instantiate store={} initialized={}",
+        jit.id,
+        jit.tb_ptr_ptr.is_some()
+    );
+    let memory = jit
+        .memory
+        .clone()
+        .context("QEMU JIT shared memory is unavailable")?;
+    let tb_ptr_ptr = jit.tb_ptr_ptr.context("QEMU JIT was not initialized")?;
+    let tb_ptr = read_i32(caller, &memory, tb_ptr_ptr)?;
+    let export_size = read_i32(caller, &memory, tb_ptr + 4)?;
+    let counter_size_ptr = tb_ptr + 8 + export_size;
+    let counter_size = read_i32(caller, &memory, counter_size_ptr)?;
+    let body_size_ptr = counter_size_ptr + 4 + counter_size;
+    let body_size = read_i32(caller, &memory, body_size_ptr)?;
+    let wasm_size_ptr = body_size_ptr + 4 + body_size;
+    let wasm_size = read_i32(caller, &memory, wasm_size_ptr)?;
+    let wasm_ptr = wasm_size_ptr + 4;
+    let helpers_size_ptr = wasm_ptr + wasm_size;
+    let helpers_size = read_i32(caller, &memory, helpers_size_ptr)?;
+    let helpers_ptr = helpers_size_ptr + 4;
+    ensure!(
+        wasm_size >= 0 && helpers_size >= 0 && helpers_size % 4 == 0,
+        "invalid legacy QEMU JIT module"
+    );
+
+    let wasm = read_memory(caller, &memory, wasm_ptr as usize, wasm_size as usize)?;
+    let helper_bytes = read_memory(caller, &memory, helpers_ptr as usize, helpers_size as usize)?;
+    let helper_indices = helper_bytes
+        .chunks_exact(4)
+        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    eprintln!("QEMU compiling TCG block bytes={wasm_size}");
+    let module = Module::new(caller.engine(), wasm)?;
+    let table = caller
+        .get_export("__indirect_function_table")
+        .and_then(Extern::into_table)
+        .context("QEMU function table export is unavailable")?;
+    let mut imports = Vec::new();
+    let mut helper = 0;
+    for import in module.imports() {
+        match (import.module(), import.name(), import.ty()) {
+            ("env", "buffer", ExternType::Memory(_)) => imports.push(memory.as_extern()),
+            ("helper", _, ExternType::Func(_)) => {
+                let index = *helper_indices
+                    .get(helper)
+                    .context("QEMU JIT helper vector is too short")?;
+                helper += 1;
+                let function = match table.get(&mut *caller, index.into()) {
+                    Some(Ref::Func(Some(function))) => function,
+                    _ => anyhow::bail!("QEMU helper table entry {index} is not a function"),
+                };
+                imports.push(Extern::Func(function));
+            }
+            (module, name, ty) => {
+                anyhow::bail!("unsupported QEMU JIT import {module}.{name}: {ty:?}")
+            }
+        }
+    }
+    let instance = Instance::new(&mut *caller, &module, &imports)?;
+    let function = instance
+        .get_func(&mut *caller, "start")
+        .context("QEMU JIT start export is missing")?;
+    let index = table.size(&mut *caller);
+    table.grow(&mut *caller, 1, Ref::Func(None))?;
+    table.set(&mut *caller, index, Ref::Func(Some(function)))?;
+    Ok(i32::try_from(index)?)
+}
+
+fn remove_legacy<T: HasQemuJit>(caller: &mut Caller<'_, T>) -> anyhow::Result<()> {
+    let jit = caller.data_mut().qemu_jit();
+    let memory = jit
+        .memory
+        .clone()
+        .context("QEMU JIT shared memory is unavailable")?;
+    let remove_ptr = jit
+        .remove_ptr
+        .context("QEMU JIT removal vector is unavailable")?;
+    let count_ptr = jit
+        .remove_count_ptr
+        .context("QEMU JIT removal count is unavailable")?;
+    let count = read_i32(caller, &memory, count_ptr)?;
+    ensure!(count >= 0, "invalid QEMU JIT removal count");
+    let table = caller
+        .get_export("__indirect_function_table")
+        .and_then(Extern::into_table)
+        .context("QEMU function table export is unavailable")?;
+    for offset in 0..count {
+        let index = read_i32(caller, &memory, remove_ptr + offset * 4)?;
+        ensure!(index >= 0, "invalid QEMU JIT table index");
+        table.set(&mut *caller, index as u64, Ref::Func(None))?;
+    }
+    write_i32(caller, &memory, count_ptr, 0)
+}
+
+fn read_i32<T>(
+    caller: &mut Caller<'_, T>,
+    memory: &QemuMemory,
+    offset: i32,
+) -> anyhow::Result<i32> {
+    ensure!(offset >= 0, "negative QEMU memory offset");
+    let bytes = read_memory(caller, memory, offset as usize, 4)?;
+    Ok(i32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+fn write_i32<T>(
+    caller: &mut Caller<'_, T>,
+    memory: &QemuMemory,
+    offset: i32,
+    value: i32,
+) -> anyhow::Result<()> {
+    ensure!(offset >= 0, "negative QEMU memory offset");
+    match memory {
+        QemuMemory::Plain(memory) => memory.write(caller, offset as usize, &value.to_le_bytes())?,
+        QemuMemory::Shared(memory) => {
+            let destination = memory
+                .data()
+                .get(offset as usize..offset as usize + 4)
+                .context("QEMU memory write is out of bounds")?;
+            for (destination, source) in destination.iter().zip(value.to_le_bytes()) {
+                unsafe { destination.get().write_volatile(source) };
+            }
+        }
+    }
+    Ok(())
+}
+
 fn compile_batch<T: HasQemuJit>(
     caller: &mut Caller<'_, T>,
     bytes_ptr: i32,
@@ -142,14 +348,34 @@ fn compile_batch<T: HasQemuJit>(
     helpers_ptr: i32,
     nhelpers: i32,
 ) -> anyhow::Result<i32> {
-    ensure!(bytes_ptr >= 0 && bytes_len >= 0 && nfuncs > 0, "invalid QEMU JIT batch");
-    ensure!(helpers_ptr >= 0 && nhelpers >= 0, "invalid QEMU JIT helper vector");
-    let memory = caller.data_mut().qemu_jit().memory.clone().context("QEMU JIT shared memory is unavailable")?;
+    ensure!(
+        bytes_ptr >= 0 && bytes_len >= 0 && nfuncs > 0,
+        "invalid QEMU JIT batch"
+    );
+    ensure!(
+        helpers_ptr >= 0 && nhelpers >= 0,
+        "invalid QEMU JIT helper vector"
+    );
+    let memory = caller
+        .data_mut()
+        .qemu_jit()
+        .memory
+        .clone()
+        .context("QEMU JIT shared memory is unavailable")?;
     let wasm = read_memory(caller, &memory, bytes_ptr as usize, bytes_len as usize)?;
     let helper_bytes = read_memory(caller, &memory, helpers_ptr as usize, nhelpers as usize * 4)?;
-    let helper_indices = helper_bytes.chunks_exact(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect::<Vec<_>>();
+    let helper_indices = helper_bytes
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    eprintln!("QEMU compiling batch functions={nfuncs} bytes={bytes_len}");
+    let started = std::time::Instant::now();
     let module = Module::new(caller.engine(), wasm)?;
-    let table = caller.get_export("__indirect_function_table").and_then(Extern::into_table).context("QEMU function table export is unavailable")?;
+    eprintln!("QEMU compiled batch module in {:?}", started.elapsed());
+    let table = caller
+        .get_export("__indirect_function_table")
+        .and_then(Extern::into_table)
+        .context("QEMU function table export is unavailable")?;
     let mut imports = Vec::new();
     let mut helper = 0;
     for import in module.imports() {
@@ -157,9 +383,14 @@ fn compile_batch<T: HasQemuJit>(
             ("env", "buffer", ExternType::Memory(_)) => imports.push(memory.as_extern()),
             ("env", "table", ExternType::Table(_)) => imports.push(Extern::Table(table)),
             ("helper", _, ExternType::Func(_)) => {
-                let index = *helper_indices.get(helper).context("QEMU JIT helper vector is too short")?;
+                let index = *helper_indices
+                    .get(helper)
+                    .context("QEMU JIT helper vector is too short")?;
                 helper += 1;
-                let function = match table.get(&mut *caller, index.into()) { Some(Ref::Func(Some(f))) => f, _ => anyhow::bail!("QEMU helper table entry {index} is not a function") };
+                let function = match table.get(&mut *caller, index.into()) {
+                    Some(Ref::Func(Some(f))) => f,
+                    _ => anyhow::bail!("QEMU helper table entry {index} is not a function"),
+                };
                 imports.push(Extern::Func(function));
             }
             (m, n, ty) => anyhow::bail!("unsupported QEMU JIT import {m}.{n}: {ty:?}"),
@@ -169,7 +400,9 @@ fn compile_batch<T: HasQemuJit>(
     let base = table.size(&mut *caller);
     table.grow(&mut *caller, nfuncs as u64, Ref::Func(None))?;
     for i in 0..nfuncs as u64 {
-        let function = instance.get_func(&mut *caller, &format!("f{i}")).context("QEMU JIT batch export is missing")?;
+        let function = instance
+            .get_func(&mut *caller, &format!("f{i}"))
+            .context("QEMU JIT batch export is missing")?;
         table.set(&mut *caller, base + i, Ref::Func(Some(function)))?;
     }
     eprintln!("QEMU compiled batch of {nfuncs} TCG blocks");

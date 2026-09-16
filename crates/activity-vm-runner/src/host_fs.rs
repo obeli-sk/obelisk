@@ -163,6 +163,9 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
         |mut caller: Caller<'_, VmState>, path: i32, output: i32| -> i32 {
             host_result(&mut caller, |caller, fs| {
                 let path = read_string(caller, path)?;
+                if std::env::var_os("OBELISK_QEMU_TRACE_HOSTFS").is_some() {
+                    eprintln!("hostfs mode {path}");
+                }
                 let mode = match fs.resolve(&path)? {
                     Resolved::VirtualDirectory => 0o040_555,
                     Resolved::Host { path, writable } => {
@@ -183,6 +186,9 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
         |mut caller: Caller<'_, VmState>, path: i32, output: i32| -> i32 {
             host_result(&mut caller, |caller, fs| {
                 let path = read_string(caller, path)?;
+                if std::env::var_os("OBELISK_QEMU_TRACE_HOSTFS").is_some() {
+                    eprintln!("hostfs stat {path}");
+                }
                 let size = match fs.resolve(&path)? {
                     Resolved::VirtualDirectory => 0,
                     Resolved::Host { path, .. } => std::fs::symlink_metadata(path)?.size(),

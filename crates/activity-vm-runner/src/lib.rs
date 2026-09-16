@@ -8,16 +8,24 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Instant;
+use tokio::io::AsyncReadExt;
 use wasm_workers::http_request_policy::HttpRequestPolicy;
 use wasmtime::{
-    Engine, Extern, ExternType, Linker, Memory, MemoryType, Module, Ref, SharedMemory, Store,
+    Engine, Extern, ExternType, Instance, Linker, Memory, MemoryType, Module, Ref, SharedMemory,
+    Store, Table, TableType,
 };
-use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
+use wasmtime_wasi::{
+    FsPerms, WasiCtxBuilder, async_trait,
+    cli::{IsTerminal, StdinStream},
+    p1,
+    p2::{InputStream, Pollable, StreamResult, pipe},
+};
 
 mod emscripten;
 mod host_fs;
 mod http_bridge;
 mod legacy_fd;
+mod legacy_wasi;
 mod qemu_jit;
 
 struct VmState {
@@ -26,7 +34,8 @@ struct VmState {
     host_fs: Arc<host_fs::HostFs>,
     legacy_fds: Arc<legacy_fd::LegacyFdTable>,
     fiber_next: Option<i32>,
-    fiber_entries: HashMap<i32, (i32, i32)>,
+    fiber_entries: HashMap<i32, emscripten::FiberEntry>,
+    active_fiber_entry: Option<emscripten::FiberEntry>,
     poll_calls: u64,
     pthread_spawn: Option<PthreadSpawn>,
 }
@@ -37,6 +46,8 @@ struct EmscriptenRuntime {
     engine: Engine,
     module: Module,
     memory: SharedMemory,
+    table_import: Option<(String, String, TableType)>,
+    legacy_jit: bool,
     host_fs: Arc<host_fs::HostFs>,
     legacy_fds: Arc<legacy_fd::LegacyFdTable>,
     mapdirs: Vec<MapDir>,
@@ -44,6 +55,92 @@ struct EmscriptenRuntime {
     stderr: pipe::MemoryOutputPipe,
     threads: Mutex<Vec<std::thread::JoinHandle<anyhow::Result<()>>>>,
     cancelled: Arc<AtomicBool>,
+}
+
+/// A serial input which supplies the snapshot-resume handshake once and then
+/// remains open. Returning `Closed` after the handshake makes QEMU's stdio
+/// character device treat stdin as a hangup and terminate the VM.
+struct ResumeInput {
+    bytes: Arc<Mutex<bytes::Bytes>>,
+}
+
+impl ResumeInput {
+    fn new() -> Self {
+        Self {
+            bytes: Arc::new(Mutex::new(bytes::Bytes::from_static(b"=\n"))),
+        }
+    }
+}
+
+#[async_trait]
+impl InputStream for ResumeInput {
+    fn read(&mut self, size: usize) -> StreamResult<bytes::Bytes> {
+        let mut bytes = self.bytes.lock().expect("resume input mutex poisoned");
+        let size = size.min(bytes.len());
+        eprintln!(
+            "QEMU resume p2 read requested={size} remaining={}",
+            bytes.len()
+        );
+        Ok(bytes.split_to(size))
+    }
+}
+
+#[async_trait]
+impl Pollable for ResumeInput {
+    async fn ready(&mut self) {
+        if self
+            .bytes
+            .lock()
+            .expect("resume input mutex poisoned")
+            .is_empty()
+        {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+impl IsTerminal for ResumeInput {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl StdinStream for ResumeInput {
+    fn async_stream(&self) -> Box<dyn tokio::io::AsyncRead + Send + Sync> {
+        Box::new(ResumeAsyncRead {
+            bytes: self.bytes.clone(),
+        })
+    }
+
+    fn p2_stream(&self) -> Box<dyn InputStream> {
+        Box::new(Self {
+            bytes: self.bytes.clone(),
+        })
+    }
+}
+
+struct ResumeAsyncRead {
+    bytes: Arc<Mutex<bytes::Bytes>>,
+}
+
+impl tokio::io::AsyncRead for ResumeAsyncRead {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let mut bytes = self.bytes.lock().expect("resume input mutex poisoned");
+        if bytes.is_empty() {
+            return std::task::Poll::Pending;
+        }
+        let size = buffer.remaining().min(bytes.len());
+        eprintln!(
+            "QEMU resume p1 read requested={size} remaining={}",
+            bytes.len()
+        );
+        buffer.put_slice(&bytes.split_to(size));
+        std::task::Poll::Ready(Ok(()))
+    }
 }
 
 impl qemu_jit::HasQemuJit for VmState {
@@ -102,6 +199,7 @@ pub async fn execute(
     let started = Instant::now();
     tracing::debug!("Preparing activity VM execution");
     let is_qemu = qemu_memory_type(&module)?.is_some();
+    let is_legacy_qemu = legacy_fd::is_required(&module);
     let queue = tempfile::tempdir()?;
     tokio::fs::write(
         queue.path().join("http-guest.sh"),
@@ -119,7 +217,7 @@ pub async fn execute(
         queue.path().to_owned(),
         "/obelisk-activity-vm-http".to_owned(),
     ));
-    let qemu_pack = if is_qemu {
+    let qemu_pack = if is_qemu && !is_legacy_qemu {
         let pack = tempfile::tempdir()?;
         tokio::fs::write(
             pack.path().join("info"),
@@ -134,7 +232,11 @@ pub async fn execute(
     } else {
         None
     };
-    let module_args = if is_qemu { qemu_args()? } else { guest_args };
+    let module_args = if is_qemu && !is_legacy_qemu {
+        qemu_args()?
+    } else {
+        guest_args
+    };
     let traces = Arc::new(Mutex::new(Vec::new()));
     let broker = tokio::spawn(http_bridge::serve(
         queue.path().to_owned(),
@@ -170,9 +272,18 @@ pub async fn execute(
     let _ = phase_logger_stop.send(());
     let _ = phase_logger.await;
     let mut output = result?;
+    replace_output_from_guest_files(
+        &mut output,
+        queue.path(),
+        max_stdout_bytes,
+        max_stderr_bytes,
+    )
+    .await?;
     if is_qemu {
-        if let Ok(console) = tokio::fs::read(queue.path().join("console.log")).await {
-            output.stdout = console;
+        if let Some(pack) = &qemu_pack
+            && let Ok(console) = tokio::fs::read(pack.path().join("console.log")).await
+        {
+            output.stderr.extend(console);
         }
     }
     drop(qemu_pack);
@@ -185,6 +296,46 @@ pub async fn execute(
         "Activity VM execution complete"
     );
     Ok(output)
+}
+
+async fn replace_output_from_guest_files(
+    output: &mut VmOutput,
+    queue: &Path,
+    max_stdout_bytes: usize,
+    max_stderr_bytes: usize,
+) -> anyhow::Result<()> {
+    let Some(stdout) = read_guest_output(queue.join("stdout"), max_stdout_bytes).await? else {
+        return Ok(());
+    };
+    let stderr = read_guest_output(queue.join("stderr"), max_stderr_bytes)
+        .await?
+        .unwrap_or_default();
+    let mut diagnostics = stderr;
+    diagnostics.append(&mut output.stderr);
+    diagnostics.append(&mut output.stdout);
+    output.stdout = stdout;
+    output.stderr = diagnostics;
+    if let Ok(exit_code) = tokio::fs::read_to_string(queue.join("exit-code")).await {
+        output.exit_code = exit_code
+            .trim()
+            .parse()
+            .context("parsing activity VM guest exit code")?;
+    }
+    Ok(())
+}
+
+async fn read_guest_output(path: PathBuf, max_bytes: usize) -> anyhow::Result<Option<Vec<u8>>> {
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let limit = u64::try_from(max_bytes)
+        .expect("32 bit systems are unsupported")
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(limit).read_to_end(&mut bytes).await?;
+    Ok(Some(bytes))
 }
 
 fn qemu_runtime_info(
@@ -237,9 +388,7 @@ fn qemu_args() -> anyhow::Result<Vec<String>> {
         "-display",
         "none",
         "-serial",
-        "chardev:activity-serial",
-        "-chardev",
-        "file,id=activity-serial,path=/pack/console.log",
+        "stdio",
         "-monitor",
         "none",
         "-incoming",
@@ -248,10 +397,14 @@ fn qemu_args() -> anyhow::Result<Vec<String>> {
         "cpu_reset,guest_errors",
         "-D",
         "/pack/qemu.log",
-        "-net",
-        "nic,model=e1000",
+        "-nic",
+        "none",
         "-m",
         "128M",
+        "-cpu",
+        "qemu64,+rdrand",
+        "-device",
+        "virtio-rng-pci",
         "-accel",
         "tcg,tb-size=500,thread=multi",
         "-smp",
@@ -264,10 +417,14 @@ fn qemu_args() -> anyhow::Result<Vec<String>> {
         "/image/bzImage",
         "-append",
         "earlyprintk=ttyS0,115200n8 console=ttyS0,115200n8 slub_debug=F root=/dev/vda rootwait acpi=off ro virtio_net.napi_tx=false loglevel=7 QEMU_MODE=1 init=/sbin/tini -- /sbin/init",
-        "-virtfs",
-        "local,path=/,mount_tag=wasi0,security_model=passthrough,id=wasi0",
-        "-virtfs",
-        "local,path=/pack,mount_tag=wasi1,security_model=passthrough,id=wasi1",
+        "-fsdev",
+        "local,path=/,security_model=passthrough,id=wasi0",
+        "-device",
+        "virtio-9p-pci,fsdev=wasi0,mount_tag=wasi0,ioeventfd=off",
+        "-fsdev",
+        "local,path=/pack,security_model=passthrough,id=wasi1",
+        "-device",
+        "virtio-9p-pci,fsdev=wasi1,mount_tag=wasi1,ioeventfd=off",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -285,6 +442,7 @@ async fn log_guest_phases(
         ("network-ready", "Activity VM network bridge ready"),
         ("command-start", "Activity VM command starting"),
         ("store-mount-failed", "Nix store mapping failed"),
+        ("network-failed", "Activity VM network bridge failed"),
     ];
     let mut observed = [false; PHASES.len()];
     loop {
@@ -344,8 +502,12 @@ fn run_module(
     let stdout = pipe::MemoryOutputPipe::new(max_stdout_bytes.saturating_add(1));
     let stderr = pipe::MemoryOutputPipe::new(max_stderr_bytes);
     let mut wasi = WasiCtxBuilder::new();
-    wasi.stdin(pipe::ClosedInputStream)
-        .stdout(stdout.clone())
+    if qemu_memory_type(module)?.is_some() {
+        wasi.stdin(ResumeInput::new());
+    } else {
+        wasi.stdin(pipe::ClosedInputStream);
+    }
+    wasi.stdout(stdout.clone())
         .stderr(stderr.clone())
         .arg("obelisk-activity-vm");
     for argument in guest_args {
@@ -375,14 +537,20 @@ fn run_module(
             legacy_fds: legacy_fds.clone(),
             fiber_next: None,
             fiber_entries: HashMap::new(),
+            active_fiber_entry: None,
             poll_calls: 0,
             pthread_spawn: None,
         },
     );
     let mut linker: Linker<VmState> = Linker::new(engine);
-    p1::add_to_linker_sync(&mut linker, |state: &mut VmState| &mut state.wasi)?;
+    let qemu_memory_type = qemu_memory_type(module)?;
+    if qemu_memory_type.is_none() {
+        p1::add_to_linker_sync(&mut linker, |state: &mut VmState| &mut state.wasi)?;
+    } else {
+        legacy_wasi::add_to_linker(&mut linker, stdout.clone(), stderr.clone())?;
+    }
     let mut emscripten_runtime = None;
-    if let Some(memory_type) = qemu_memory_type(module)? {
+    if let Some(memory_type) = qemu_memory_type {
         let memory = if memory_type.is_shared() {
             qemu_jit::QemuMemory::Shared(SharedMemory::new(engine, memory_type)?)
         } else {
@@ -390,10 +558,16 @@ fn run_module(
         };
         store.data_mut().qemu_jit.memory = Some(memory.clone());
         linker.define(&mut store, "env", "memory", memory.as_extern())?;
+        let table_import = qemu_table_import(module);
+        if let Some((import_module, import_name, table_type)) = &table_import {
+            let table = Table::new(&mut store, table_type.clone(), Ref::Func(None))?;
+            linker.define(&mut store, import_module, import_name, table)?;
+        }
         qemu_jit::add_to_linker(&mut linker)?;
         emscripten::add_invoke_wrappers(&mut linker, module)?;
         emscripten::add_longjmp(&mut linker)?;
         emscripten::add_ffi_call(&mut linker)?;
+        emscripten::add_platform_services(&mut linker)?;
         emscripten::add_platform_shims(&mut linker, module)?;
         emscripten::add_main_thread_init(&mut linker)?;
         emscripten::add_fiber_swap(&mut linker)?;
@@ -409,6 +583,10 @@ fn run_module(
                 engine: engine.clone(),
                 module: module.clone(),
                 memory,
+                table_import,
+                legacy_jit: module
+                    .imports()
+                    .any(|import| import.name() == "instantiate_wasm"),
                 host_fs,
                 legacy_fds,
                 mapdirs: mapdirs.to_vec(),
@@ -443,13 +621,46 @@ fn run_module(
         total_elapsed_ms = started.elapsed().as_millis(),
         "Activity VM module instantiated"
     );
-    let start = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
+    let start = instance.get_typed_func::<(), ()>(&mut store, "_start").ok();
+    if std::env::var_os("OBELISK_QEMU_PROBE_STDIN_POLL").is_some()
+        && instance.get_func(&mut store, "__syscall_poll").is_some()
+    {
+        let malloc = instance.get_typed_func::<i32, i32>(&mut store, "malloc")?;
+        let pollfd = malloc.call(&mut store, 8)?;
+        let memory = instance
+            .get_shared_memory(&mut store, "memory")
+            .context("missing shared QEMU memory")?;
+        for (cell, byte) in memory.data()[pollfd as usize..pollfd as usize + 8]
+            .iter()
+            .zip([0, 0, 0, 0, 1, 0, 0, 0])
+        {
+            // SAFETY: this allocation is private until __syscall_poll is called.
+            unsafe { cell.get().write_volatile(byte) };
+        }
+        let ready = instance
+            .get_typed_func::<(i32, i32, i32), i32>(&mut store, "__syscall_poll")?
+            .call(&mut store, (pollfd, 1, 0))?;
+        let mut result = [0_u8; 8];
+        for (byte, cell) in result
+            .iter_mut()
+            .zip(&memory.data()[pollfd as usize..pollfd as usize + 8])
+        {
+            // SAFETY: __syscall_poll has finished writing this allocation.
+            *byte = unsafe { cell.get().read_volatile() };
+        }
+        eprintln!("QEMU stdin poll probe ready={ready} pollfd={result:?}");
+    }
     let call_started = Instant::now();
     if std::env::var_os("OBELISK_QEMU_TRACE_STDERR").is_some() {
         let stderr = stderr.clone();
+        let stdout = stdout.clone();
         std::thread::spawn(move || {
             for _ in 0..60 {
                 std::thread::sleep(std::time::Duration::from_secs(1));
+                let contents = stdout.contents();
+                if !contents.is_empty() {
+                    eprintln!("QEMU live stdout: {}", String::from_utf8_lossy(&contents));
+                }
                 let contents = stderr.contents();
                 if !contents.is_empty() {
                     eprintln!("QEMU live stderr: {}", String::from_utf8_lossy(&contents));
@@ -463,10 +674,18 @@ fn run_module(
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(10));
             cancelled.store(true, Ordering::Relaxed);
-            engine.increment_epoch();
+            for _ in 0..30 {
+                engine.increment_epoch();
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
         });
     }
-    let call_result = emscripten::call_asyncify_root(&mut store, &instance, &start);
+    let call_result = if let Some(start) = start {
+        emscripten::call_asyncify_root(&mut store, &instance, &start)
+    } else {
+        call_emscripten_main(&mut store, &instance, guest_args)
+            .map_err(|error| wasmtime::Error::msg(format!("{error:#}")))
+    };
     eprintln!("QEMU root result: {call_result:?}");
     if let Some(runtime) = emscripten_runtime {
         join_pthreads(&runtime)?;
@@ -493,6 +712,57 @@ fn run_module(
         stderr: stderr.contents().to_vec(),
         http_client_traces: Vec::new(),
     })
+}
+
+fn call_emscripten_main(
+    store: &mut Store<VmState>,
+    instance: &Instance,
+    arguments: &[String],
+) -> anyhow::Result<()> {
+    instance
+        .get_typed_func::<(), ()>(&mut *store, "__wasm_call_ctors")?
+        .call(&mut *store, ())?;
+    let malloc = instance.get_typed_func::<i32, i32>(&mut *store, "malloc")?;
+    let memory = match store.data().qemu_jit.memory.as_ref() {
+        Some(qemu_jit::QemuMemory::Shared(memory)) => memory.clone(),
+        _ => bail!("missing Emscripten shared memory import"),
+    };
+    let mut argv = Vec::with_capacity(arguments.len() + 1);
+    for argument in
+        std::iter::once("obelisk-activity-vm").chain(arguments.iter().map(String::as_str))
+    {
+        let bytes = argument.as_bytes();
+        let pointer = malloc.call(&mut *store, i32::try_from(bytes.len() + 1)?)?;
+        write_shared_bytes(&memory, pointer, bytes)?;
+        write_shared_bytes(&memory, pointer + i32::try_from(bytes.len())?, &[0])?;
+        argv.push(pointer);
+    }
+    let argv_pointer = malloc.call(&mut *store, i32::try_from((argv.len() + 1) * 4)?)?;
+    for (index, pointer) in argv.iter().chain(std::iter::once(&0)).enumerate() {
+        write_shared_bytes(
+            &memory,
+            argv_pointer + i32::try_from(index * 4)?,
+            &pointer.to_le_bytes(),
+        )?;
+    }
+    let status = instance
+        .get_typed_func::<(i32, i32), i32>(&mut *store, "_emscripten_proxy_main")?
+        .call(&mut *store, (i32::try_from(argv.len())?, argv_pointer))?;
+    anyhow::ensure!(status == 0, "Emscripten main returned {status}");
+    Ok(())
+}
+
+fn write_shared_bytes(memory: &SharedMemory, pointer: i32, bytes: &[u8]) -> anyhow::Result<()> {
+    let start = usize::try_from(pointer)?;
+    let destination = memory
+        .data()
+        .get(start..start + bytes.len())
+        .context("Emscripten memory write is out of bounds")?;
+    for (destination, source) in destination.iter().zip(bytes) {
+        // SAFETY: this initialization happens before the argument is published to the guest.
+        unsafe { destination.get().write_volatile(*source) };
+    }
+    Ok(())
 }
 
 fn add_pthread_create(linker: &mut Linker<VmState>, spawn: PthreadSpawn) -> anyhow::Result<()> {
@@ -525,30 +795,28 @@ fn pthread_spawner(runtime: Arc<EmscriptenRuntime>) -> PthreadSpawn {
 }
 
 fn join_pthreads(runtime: &EmscriptenRuntime) -> anyhow::Result<()> {
-    let mut failures = Vec::new();
     loop {
-        let handle = runtime
-            .threads
-            .lock()
-            .expect("Emscripten thread mutex poisoned")
-            .pop();
-        let Some(handle) = handle else {
-            if failures.is_empty() {
+        let handle = {
+            let mut threads = runtime
+                .threads
+                .lock()
+                .expect("Emscripten thread mutex poisoned");
+            if threads.is_empty() {
                 return Ok(());
             }
-            anyhow::bail!("Emscripten pthread failures:\n{}", failures.join("\n\n"));
+            threads
+                .iter()
+                .position(std::thread::JoinHandle::is_finished)
+                .map(|index| threads.swap_remove(index))
         };
-        while !handle.is_finished() {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let stderr = runtime.stderr.contents();
-            if !stderr.is_empty() {
-                eprintln!("QEMU stderr: {}", String::from_utf8_lossy(&stderr));
+        if let Some(handle) = handle {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => return Err(error),
+                Err(_) => anyhow::bail!("Emscripten pthread panicked"),
             }
-        }
-        match handle.join() {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => failures.push(format!("{error:?}")),
-            Err(_) => failures.push("Emscripten pthread panicked".to_owned()),
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 }
@@ -576,7 +844,10 @@ fn run_pthread(
     );
 
     let mut wasi = WasiCtxBuilder::new();
-    wasi.stdin(pipe::ClosedInputStream)
+    // QEMU's PROXY_TO_PTHREAD build executes main() on a worker instance.
+    // The native snapshot builder leaves the guest blocked on this serial
+    // byte; make it available to that worker as well as the bootstrap store.
+    wasi.stdin(ResumeInput::new())
         .stdout(runtime.stdout.clone())
         .stderr(runtime.stderr.clone());
     for mapdir in &runtime.mapdirs {
@@ -600,17 +871,27 @@ fn run_pthread(
             legacy_fds: runtime.legacy_fds.clone(),
             fiber_next: None,
             fiber_entries: HashMap::new(),
+            active_fiber_entry: None,
             poll_calls: 0,
             pthread_spawn: Some(pthread_spawner(runtime.clone())),
         },
     );
     let mut linker = Linker::new(&runtime.engine);
-    p1::add_to_linker_sync(&mut linker, |state: &mut VmState| &mut state.wasi)?;
+    if legacy_fd::is_required(&runtime.module) {
+        legacy_wasi::add_to_linker(&mut linker, runtime.stdout.clone(), runtime.stderr.clone())?;
+    } else {
+        p1::add_to_linker_sync(&mut linker, |state: &mut VmState| &mut state.wasi)?;
+    }
     linker.define(&mut store, "env", "memory", memory.as_extern())?;
+    if let Some((import_module, import_name, table_type)) = &runtime.table_import {
+        let table = Table::new(&mut store, table_type.clone(), Ref::Func(None))?;
+        linker.define(&mut store, import_module, import_name, table)?;
+    }
     qemu_jit::add_to_linker(&mut linker)?;
     emscripten::add_invoke_wrappers(&mut linker, &runtime.module)?;
     emscripten::add_longjmp(&mut linker)?;
     emscripten::add_ffi_call(&mut linker)?;
+    emscripten::add_platform_services(&mut linker)?;
     emscripten::add_platform_shims(&mut linker, &runtime.module)?;
     emscripten::add_main_thread_init(&mut linker)?;
     emscripten::add_fiber_swap(&mut linker)?;
@@ -645,7 +926,8 @@ fn run_pthread(
         .get_typed_func::<(i32, i32), ()>(&mut store, "emscripten_stack_set_limits")?
         .call(&mut store, (stack_high as i32, stack_low as i32))?;
     instance
-        .get_typed_func::<i32, ()>(&mut store, "_emscripten_stack_restore")?
+        .get_typed_func::<i32, ()>(&mut store, "stackRestore")
+        .or_else(|_| instance.get_typed_func::<i32, ()>(&mut store, "_emscripten_stack_restore"))?
         .call(&mut store, stack_high as i32)?;
     instance
         .get_typed_func::<(i32, i32, i32, i32, i32, i32), ()>(
@@ -653,21 +935,88 @@ fn run_pthread(
             "_emscripten_thread_init",
         )?
         .call(&mut store, (pthread_ptr, 0, 0, 1, 0, 0))?;
-    let _ = instance
+    let tls_base = instance
         .get_typed_func::<(), i32>(&mut store, "_emscripten_tls_init")?
         .call(&mut store, ())?;
-    eprintln!("pthread {pthread_ptr:#x}: initialized");
+    let tls_initdone = read_shared_u32(&runtime.memory, tls_base as usize + 4)?;
+    // Mirrors Emscripten's worker bootstrap. Senders use this flag to choose
+    // the asynchronous mailbox notification path for a live pthread.
+    write_shared_u32(&runtime.memory, pthread_ptr as usize + 128, 1)?;
+    eprintln!(
+        "pthread {pthread_ptr:#x}: initialized tls_base={tls_base:#x} tls[4..8]={tls_initdone:#x}"
+    );
+    if let Some(init_wasm32) = instance
+        .get_export(&mut store, "init_wasm32")
+        .and_then(Extern::into_func)
+    {
+        init_wasm32.typed::<(), ()>(&store)?.call(&mut store, ())?;
+    } else if runtime.legacy_jit {
+        // Emscripten's browser worker calls QEMU's per-thread TCG initializer
+        // after installing TLS. Standalone Wasm does not export that helper,
+        // so reproduce its fixed wasm32 context setup here.
+        let malloc = instance.get_typed_func::<i32, i32>(&mut store, "malloc")?;
+        let stack = malloc.call(&mut store, 640)?;
+        let stack128 = malloc.call(&mut store, 640)?;
+        write_shared_u32(&runtime.memory, tls_base as usize + 4, 1 << 16)?;
+        write_shared_u32(&runtime.memory, tls_base as usize + 8, 0)?;
+        write_shared_u32(&runtime.memory, tls_base as usize + 12, 8)?;
+        write_shared_u32(&runtime.memory, tls_base as usize + 16, 16)?;
+        write_shared_u32(&runtime.memory, tls_base as usize + 20, 1)?;
+        write_shared_u32(&runtime.memory, tls_base as usize + 52, stack as u32)?;
+        write_shared_u32(
+            &runtime.memory,
+            tls_base as usize + 60,
+            (tls_base + 80) as u32,
+        )?;
+        write_shared_u32(&runtime.memory, tls_base as usize + 72, stack128 as u32)?;
+        store.data_mut().qemu_jit.initialize_legacy(
+            tls_base + 56,
+            tls_base + 96,
+            tls_base + 200_096,
+        );
+    }
 
     let table = instance
         .get_export(&mut store, "__indirect_function_table")
         .and_then(Extern::into_table)
         .context("Emscripten pthread function table is unavailable")?;
-    let function = match table.get(&mut store, start_routine as u64) {
-        Some(Ref::Func(Some(function))) => function,
-        _ => anyhow::bail!("Emscripten pthread entry {start_routine} is not a function"),
-    };
+    eprintln!(
+        "pthread {pthread_ptr:#x}: table size={} entry6761={}",
+        table.size(&store),
+        matches!(table.get(&mut store, 6761), Some(Ref::Func(Some(_))))
+    );
+    anyhow::ensure!(
+        matches!(
+            table.get(&mut store, start_routine as u64),
+            Some(Ref::Func(Some(_)))
+        ),
+        "Emscripten pthread entry {start_routine} is not a function"
+    );
+    if std::env::var_os("OBELISK_QEMU_PROBE_STDIN_POLL").is_some() {
+        let malloc = instance.get_typed_func::<i32, i32>(&mut store, "malloc")?;
+        let pollfd = malloc.call(&mut store, 8)?;
+        for (cell, byte) in runtime.memory.data()[pollfd as usize..pollfd as usize + 8]
+            .iter()
+            .zip([0, 0, 0, 0, 1, 0, 0, 0])
+        {
+            // SAFETY: this allocation is private until __syscall_poll is called.
+            unsafe { cell.get().write_volatile(byte) };
+        }
+        let ready = instance
+            .get_typed_func::<(i32, i32, i32), i32>(&mut store, "__syscall_poll")?
+            .call(&mut store, (pollfd, 1, 0))?;
+        let mut result = [0_u8; 8];
+        for (byte, cell) in result
+            .iter_mut()
+            .zip(&runtime.memory.data()[pollfd as usize..pollfd as usize + 8])
+        {
+            // SAFETY: __syscall_poll has finished writing this allocation.
+            *byte = unsafe { cell.get().read_volatile() };
+        }
+        eprintln!("pthread {pthread_ptr:#x}: stdin poll probe ready={ready} pollfd={result:?}");
+    }
     eprintln!("pthread {pthread_ptr:#x}: entering start routine");
-    let result = emscripten::call_asyncify_pthread(&mut store, &instance, &function, arg)?;
+    let result = emscripten::call_asyncify_pthread(&mut store, &instance, start_routine, arg)?;
     eprintln!("pthread {pthread_ptr:#x}: start routine returned {result}");
     let diagnostics = runtime.stderr.contents();
     if !diagnostics.is_empty() {
@@ -700,16 +1049,38 @@ fn read_shared_byte(byte: &UnsafeCell<u8>) -> u8 {
     unsafe { byte.get().read() }
 }
 
+fn write_shared_u32(memory: &SharedMemory, offset: usize, value: u32) -> anyhow::Result<()> {
+    let bytes = memory
+        .data()
+        .get(offset..offset + 4)
+        .context("Emscripten pthread metadata is out of bounds")?;
+    for (destination, source) in bytes.iter().zip(value.to_le_bytes()) {
+        // SAFETY: worker initialization owns its TLS fields before entry.
+        unsafe { destination.get().write_volatile(source) };
+    }
+    Ok(())
+}
+
 fn qemu_memory_type(module: &Module) -> anyhow::Result<Option<MemoryType>> {
-    let memory_type = module
-        .imports()
-        .find_map(
+    let memory_type =
+        module.imports().find_map(
             |import| match (import.module(), import.name(), import.ty()) {
                 ("env", "memory", ExternType::Memory(memory_type)) => Some(memory_type),
                 _ => None,
             },
         );
     Ok(memory_type)
+}
+
+fn qemu_table_import(module: &Module) -> Option<(String, String, TableType)> {
+    module.imports().find_map(|import| match import.ty() {
+        ExternType::Table(table_type) => Some((
+            import.module().to_owned(),
+            import.name().to_owned(),
+            table_type,
+        )),
+        _ => None,
+    })
 }
 
 pub fn compile(engine: &Engine, module_path: &Path) -> anyhow::Result<Module> {
@@ -834,6 +1205,7 @@ mod tests {
                 legacy_fds: legacy_fd::LegacyFdTable::new(&[]).unwrap(),
                 fiber_next: None,
                 fiber_entries: HashMap::new(),
+                active_fiber_entry: None,
                 poll_calls: 0,
                 pthread_spawn: None,
             },
