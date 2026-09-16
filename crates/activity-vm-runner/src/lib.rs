@@ -269,6 +269,11 @@ pub async fn execute(
     .await?;
     for name in [
         "exit-code",
+        "http-request-ready",
+        "http-request.json",
+        "http-response-body",
+        "http-response-ready",
+        "http-response.json",
         "phase-command-start",
         "phase-guest-launcher",
         "phase-network-ready",

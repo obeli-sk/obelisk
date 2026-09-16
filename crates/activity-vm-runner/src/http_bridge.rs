@@ -1,4 +1,4 @@
-use anyhow::{Context as _, bail};
+use anyhow::bail;
 use bytes::Bytes;
 use concepts::storage::http_client_trace::{HttpClientTrace, RequestTrace, ResponseTrace};
 use http_body_util::{BodyExt as _, Full};
@@ -6,14 +6,15 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::io::AsyncWriteExt as _;
 use wasm_workers::http_request_policy::HttpRequestPolicy;
 
 const MAX_REQUEST: usize = 1024 * 1024;
 const MAX_RESPONSE: usize = 256 * 1024 * 1024;
-const RESPONSE_CHUNK: usize = 256 * 1024;
 
 #[derive(Deserialize)]
 struct BridgeRequest {
+    id: u64,
     method: String,
     url: String,
     headers: Vec<(String, String)>,
@@ -22,16 +23,10 @@ struct BridgeRequest {
 
 #[derive(Serialize)]
 struct BridgeResponse {
+    id: u64,
     status: u16,
     headers: Vec<(String, String)>,
-    body_prefix: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Serialize)]
-struct BridgeDone {
     body_length: usize,
-    chunks: usize,
     error: Option<String>,
 }
 
@@ -41,44 +36,64 @@ pub async fn serve(
     traces: Arc<Mutex<Vec<HttpClientTrace>>>,
 ) -> anyhow::Result<()> {
     let policy = Arc::new(policy);
+    let request_path = queue.join("http-request.json");
+    let request_ready = queue.join("http-request-ready");
+    let response_path = queue.join("http-response.json");
+    let response_body = queue.join("http-response-body");
+    let response_ready = queue.join("http-response-ready");
     loop {
-        let mut entries = tokio::fs::read_dir(&queue).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.extension().and_then(|part| part.to_str()) != Some("request") {
-                continue;
-            }
-            let claimed = path.with_extension("working");
-            if tokio::fs::rename(&path, &claimed).await.is_err() {
-                continue;
-            }
-            let policy = policy.clone();
-            let traces = traces.clone();
-            tokio::spawn(async move {
-                if let Err(error) = process(&claimed, &policy, &traces).await {
-                    eprintln!("VM HTTP request {} failed: {error:#}", claimed.display());
-                }
-            });
+        let Some(id) = read_ready_id(&request_ready).await else {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            continue;
+        };
+        overwrite_existing(&request_ready, b"").await?;
+        if let Err(error) = process(
+            id,
+            &request_path,
+            &response_path,
+            &response_body,
+            &response_ready,
+            &policy,
+            &traces,
+        )
+        .await
+        {
+            eprintln!("VM HTTP request {id} failed: {error:#}");
+            publish_error(
+                id,
+                &response_path,
+                &response_body,
+                &response_ready,
+                &format!("{error:#}"),
+            )
+            .await?;
         }
-        tokio::time::sleep(Duration::from_millis(2)).await;
     }
 }
 
 async fn process(
-    path: &Path,
+    id: u64,
+    request_path: &Path,
+    response_path: &Path,
+    response_body: &Path,
+    response_ready: &Path,
     policy: &HttpRequestPolicy,
     traces: &Mutex<Vec<HttpClientTrace>>,
 ) -> anyhow::Result<()> {
-    let response_path = path.with_extension("response");
-    let temporary = path.with_extension("response.tmp");
-    let bytes = tokio::fs::read(path).await?;
+    let bytes = tokio::fs::read(request_path).await?;
     let request: BridgeRequest = serde_json::from_slice(&bytes)?;
+    if request.id != id {
+        bail!(
+            "request payload id {} does not match marker {id}",
+            request.id
+        );
+    }
     let request_trace = RequestTrace {
         sent_at: chrono::Utc::now(),
         uri: request.url.clone(),
         method: request.method.clone(),
     };
-    let result = execute(request, policy, path, &response_path, &temporary).await;
+    let result = execute(request, policy).await;
     traces
         .lock()
         .expect("trace mutex poisoned")
@@ -88,24 +103,25 @@ async fn process(
                 finished_at: chrono::Utc::now(),
                 status: result
                     .as_ref()
-                    .copied()
+                    .map(|response| response.status)
                     .map_err(std::string::ToString::to_string),
             }),
         });
-    if let Err(error) = result {
-        publish_error(&response_path, &temporary, &format!("{error:#}")).await?;
-    }
-    let _ = tokio::fs::remove_file(path).await;
+    let response = result?;
+    publish_response(id, response_path, response_body, response_ready, response).await?;
     Ok(())
+}
+
+struct ExecutedResponse {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Bytes,
 }
 
 async fn execute(
     request: BridgeRequest,
     policy: &HttpRequestPolicy,
-    request_path: &Path,
-    response_path: &Path,
-    response_temporary: &Path,
-) -> anyhow::Result<u16> {
+) -> anyhow::Result<ExecutedResponse> {
     if request.body.len() > MAX_REQUEST {
         bail!("request body exceeds {MAX_REQUEST} bytes");
     }
@@ -155,67 +171,72 @@ async fn execute(
     if body.len() > MAX_RESPONSE {
         bail!("response exceeds {MAX_RESPONSE} bytes");
     }
-    let prefix = request_path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .context("request has no UTF-8 identifier")?;
-    if !prefix
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        bail!("invalid request identifier");
-    }
-    publish(
-        response_temporary,
-        response_path,
-        &BridgeResponse {
-            status,
-            headers,
-            body_prefix: Some(prefix.to_owned()),
-            error: None,
-        },
-    )
-    .await?;
-    let chunks = body.len().div_ceil(RESPONSE_CHUNK);
-    for (index, chunk) in body.chunks(RESPONSE_CHUNK).enumerate() {
-        let final_path = request_path.with_file_name(format!("{prefix}.body-{index:08}"));
-        let temporary = final_path.with_extension(format!("body-{index:08}.tmp"));
-        tokio::fs::write(&temporary, chunk).await?;
-        tokio::fs::rename(temporary, final_path).await?;
-    }
-    let done = request_path.with_file_name(format!("{prefix}.done"));
-    let done_temporary = request_path.with_file_name(format!("{prefix}.done.tmp"));
-    publish(
-        &done_temporary,
-        &done,
-        &BridgeDone {
-            body_length: body.len(),
-            chunks,
-            error: None,
-        },
-    )
-    .await?;
-    Ok(status)
+    Ok(ExecutedResponse {
+        status,
+        headers,
+        body,
+    })
 }
 
-async fn publish_error(path: &Path, temporary: &Path, error: &str) -> anyhow::Result<()> {
-    publish(
-        temporary,
-        path,
-        &BridgeResponse {
+async fn publish_response(
+    id: u64,
+    response_path: &Path,
+    response_body: &Path,
+    response_ready: &Path,
+    response: ExecutedResponse,
+) -> anyhow::Result<()> {
+    overwrite_existing(response_body, &response.body).await?;
+    overwrite_existing(
+        response_path,
+        &serde_json::to_vec(&BridgeResponse {
+            id,
+            status: response.status,
+            headers: response.headers,
+            body_length: response.body.len(),
+            error: None,
+        })?,
+    )
+    .await?;
+    overwrite_existing(response_ready, format!("{id}\n").as_bytes()).await
+}
+
+async fn publish_error(
+    id: u64,
+    response_path: &Path,
+    response_body: &Path,
+    response_ready: &Path,
+    error: &str,
+) -> anyhow::Result<()> {
+    overwrite_existing(response_body, b"").await?;
+    overwrite_existing(
+        response_path,
+        &serde_json::to_vec(&BridgeResponse {
+            id,
             status: 502,
             headers: Vec::new(),
-            body_prefix: None,
+            body_length: 0,
             error: Some(error.to_owned()),
-        },
+        })?,
     )
-    .await
+    .await?;
+    overwrite_existing(response_ready, format!("{id}\n").as_bytes()).await
 }
 
-async fn publish<T: Serialize>(temporary: &Path, path: &Path, value: &T) -> anyhow::Result<()> {
-    tokio::fs::write(temporary, serde_json::to_vec(value)?).await?;
-    tokio::fs::rename(temporary, path).await?;
+async fn overwrite_existing(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .await?;
+    file.write_all(bytes).await?;
+    file.flush().await?;
     Ok(())
+}
+
+async fn read_ready_id(path: &Path) -> Option<u64> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    let value = std::str::from_utf8(&bytes).ok()?;
+    value.strip_suffix('\n')?.parse().ok()
 }
 
 fn filtered_header(name: &str) -> bool {
@@ -235,10 +256,9 @@ fn filtered_header(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MapDir, host_fs::HostFs};
     use hyper::Method;
     use secrecy::SecretString;
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::io::AsyncReadExt as _;
     use wasm_workers::http_request_policy::{
         AllowedHostPolicy, HostPattern, HttpRequestPolicy, MethodsPattern, PlaceholderSecret,
         ReplacementLocation,
@@ -291,12 +311,18 @@ mod tests {
         });
 
         let queue = tempfile::tempdir().unwrap();
-        let guest_mount = "/obelisk-activity-vm-http";
-        let host_fs = HostFs::new(&[MapDir::read_write(
-            queue.path().to_owned(),
-            guest_mount.to_owned(),
-        )])
-        .unwrap();
+        let mailbox_files = [
+            "http-request-ready",
+            "http-request.json",
+            "http-response-body",
+            "http-response-ready",
+            "http-response.json",
+        ];
+        for name in mailbox_files {
+            tokio::fs::write(queue.path().join(name), b"")
+                .await
+                .unwrap();
+        }
         let policy = HttpRequestPolicy {
             hosts: vec![AllowedHostPolicy {
                 pattern: HostPattern::parse_with_methods(
@@ -321,13 +347,10 @@ mod tests {
         let traces = Arc::new(Mutex::new(Vec::new()));
         let bridge = tokio::spawn(serve(queue.path().to_owned(), policy, traces.clone()));
 
-        let (request_path, writable) = host_fs
-            .test_host_path(&format!("{guest_mount}/qemu.request"))
-            .unwrap();
-        assert!(writable);
-        tokio::fs::write(
-            request_path,
-            serde_json::to_vec(&serde_json::json!({
+        overwrite_existing(
+            &queue.path().join("http-request.json"),
+            &serde_json::to_vec(&serde_json::json!({
+                "id": 7,
                 "method": "POST",
                 "url": format!("http://{address}/anything"),
                 "headers": [
@@ -340,12 +363,13 @@ mod tests {
         )
         .await
         .unwrap();
+        overwrite_existing(&queue.path().join("http-request-ready"), b"7\n")
+            .await
+            .unwrap();
 
-        let done_guest = format!("{guest_mount}/qemu.done");
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let (done, _) = host_fs.test_host_path(&done_guest).unwrap();
-                if tokio::fs::try_exists(done).await.unwrap() {
+                if read_ready_id(&queue.path().join("http-response-ready")).await == Some(7) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(2)).await;
@@ -354,28 +378,27 @@ mod tests {
         .await
         .expect("bridge did not publish completion");
 
-        let read_guest = |name: &str| {
-            host_fs
-                .test_host_path(&format!("{guest_mount}/{name}"))
-                .unwrap()
-                .0
-        };
-        let response: serde_json::Value =
-            serde_json::from_slice(&tokio::fs::read(read_guest("qemu.response")).await.unwrap())
-                .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(
+            &tokio::fs::read(queue.path().join("http-response.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(response["id"], 7);
         assert_eq!(response["status"], 200);
-        assert_eq!(response["body_prefix"], "qemu");
+        assert_eq!(response["body_length"], 9);
         assert_eq!(
-            tokio::fs::read(read_guest("qemu.body-00000000"))
+            tokio::fs::read(queue.path().join("http-response-body"))
                 .await
                 .unwrap(),
             b"bridge-ok"
         );
-        let done: serde_json::Value =
-            serde_json::from_slice(&tokio::fs::read(read_guest("qemu.done")).await.unwrap())
-                .unwrap();
-        assert_eq!(done["body_length"], 9);
-        assert_eq!(done["chunks"], 1);
+        let mut entries = std::fs::read_dir(queue.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(entries, mailbox_files);
         assert_eq!(traces.lock().unwrap().len(), 1);
 
         bridge.abort();
