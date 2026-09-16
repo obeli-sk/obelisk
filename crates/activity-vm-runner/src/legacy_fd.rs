@@ -42,6 +42,7 @@ enum Descriptor {
         file: File,
         path: PathBuf,
         writable: bool,
+        directory_offset: usize,
     },
     TtyInput,
     TtyOutput,
@@ -230,6 +231,7 @@ impl LegacyFdTable {
                 file,
                 path,
                 writable: mount.writable && flags & O_ACCMODE != O_RDONLY,
+                directory_offset: 0,
             },
         );
         descriptors.status_flags.insert(fd, flags);
@@ -275,10 +277,61 @@ impl LegacyFdTable {
                 file,
                 path,
                 writable: mount.writable && flags & O_ACCMODE != O_RDONLY,
+                directory_offset: 0,
             },
         );
         descriptors.status_flags.insert(fd, flags);
         Ok(fd)
+    }
+
+    fn getdents(&self, fd: i32, output: &mut [u8]) -> Result<usize, i32> {
+        use std::os::unix::fs::MetadataExt as _;
+        const RECORD_SIZE: usize = 280;
+        let mut descriptors = self
+            .descriptors
+            .lock()
+            .expect("legacy fd table mutex poisoned");
+        let Descriptor::File {
+            path,
+            directory_offset,
+            ..
+        } = descriptors.entries.get_mut(&fd).ok_or(ERRNO_BADF)?
+        else {
+            return Err(ERRNO_BADF);
+        };
+        let mut entries = vec![(".".to_owned(), 4_u8, path.metadata().map_err(|e| io_errno(&e))?.ino())];
+        let parent = path.parent().unwrap_or(path);
+        entries.push(("..".to_owned(), 4, parent.metadata().map_err(|e| io_errno(&e))?.ino()));
+        let read_dir = std::fs::read_dir(path).map_err(|error| io_errno(&error))?;
+        for entry in read_dir {
+            let entry = entry.map_err(|error| io_errno(&error))?;
+            let metadata = std::fs::symlink_metadata(entry.path()).map_err(|e| io_errno(&e))?;
+            let kind = if metadata.file_type().is_dir() {
+                4
+            } else if metadata.file_type().is_symlink() {
+                10
+            } else {
+                8
+            };
+            entries.push((entry.file_name().to_string_lossy().into_owned(), kind, metadata.ino()));
+        }
+        entries[2..].sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        let capacity = output.len() / RECORD_SIZE;
+        let start = *directory_offset;
+        let end = entries.len().min(start.saturating_add(capacity));
+        for (slot, (index, (name, kind, inode))) in entries[start..end].iter().enumerate().enumerate() {
+            let record = &mut output[slot * RECORD_SIZE..(slot + 1) * RECORD_SIZE];
+            record.fill(0);
+            record[0..8].copy_from_slice(&inode.to_le_bytes());
+            record[8..16].copy_from_slice(&(((start + index + 1) * RECORD_SIZE) as i64).to_le_bytes());
+            record[16..18].copy_from_slice(&(RECORD_SIZE as u16).to_le_bytes());
+            record[18] = *kind;
+            let bytes = name.as_bytes();
+            let length = bytes.len().min(255);
+            record[19..19 + length].copy_from_slice(&bytes[..length]);
+        }
+        *directory_offset = end;
+        Ok((end - start) * RECORD_SIZE)
     }
 
     fn close(&self, fd: i32) -> Result<(), i32> {
@@ -486,10 +539,12 @@ impl LegacyFdTable {
                 file,
                 path,
                 writable,
+                directory_offset,
             } => Descriptor::File {
                 file: file.try_clone().map_err(|error| io_errno(&error))?,
                 path: path.clone(),
                 writable: *writable,
+                directory_offset: *directory_offset,
             },
             Descriptor::TtyInput => Descriptor::TtyInput,
             Descriptor::TtyOutput => Descriptor::TtyOutput,
@@ -1158,6 +1213,21 @@ pub(crate) fn add_to_linker(linker: &mut Linker<VmState>) -> anyhow::Result<()> 
     )?;
     linker.func_wrap(
         "env",
+        "__syscall_getdents64",
+        |mut caller: Caller<'_, VmState>, fd: i32, output: i32, count: i32| {
+            let result = (|| -> Result<i32, i32> {
+                let count = usize::try_from(count).map_err(|_| ERRNO_INVAL)?;
+                let mut bytes = vec![0; count];
+                let table = caller.data().legacy_fds.clone();
+                let length = table.getdents(fd, &mut bytes)?;
+                write_memory(&mut caller, output, &bytes[..length])?;
+                i32::try_from(length).map_err(|_| ERRNO_INVAL)
+            })();
+            result.unwrap_or_else(|errno| -errno)
+        },
+    )?;
+    linker.func_wrap(
+        "env",
         "__syscall_readlinkat",
         |mut caller: Caller<'_, VmState>, dirfd: i32, path: i32, _buffer: i32, _size: i32| {
             let path = read_string(&mut caller, path).unwrap_or_else(|_| "<invalid>".to_owned());
@@ -1384,6 +1454,13 @@ fn dispatch_proxy(
             } else {
                 write_statfs(caller, arg(2)?).map(|()| 0)
             }
+        }
+        19 => {
+            let count = usize::try_from(arg(2)?).map_err(|_| "negative getdents size".to_owned())?;
+            let mut bytes = vec![0; count];
+            let length = table.getdents(arg(0)?, &mut bytes).map_err(|errno| errno.to_string())?;
+            write_memory(caller, arg(1)?, &bytes[..length]).map_err(|errno| errno.to_string())?;
+            return Ok(length as i32);
         }
         23 => return Ok(ioctl_call(caller, arg(0)?, arg(1)?, arg(2)?)),
         27 => {
