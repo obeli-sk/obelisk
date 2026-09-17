@@ -65,23 +65,6 @@ expression: components
   {
     "component_id": {
       "component_type": "activity",
-      "name": "test_hmac_sign_verify_activity",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/hmac_sign_verify.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 631
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
       "name": "test_make_record_activity",
       "component_digest": "sha256:<REDACTED>"
     },
@@ -93,39 +76,6 @@ expression: components
           "size": 84
         },
         "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "test_multifile_activity",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/multifile/index.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 169
-        },
-        "role": "js_entrypoint"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/multifile/lib/greeter.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 108
-        },
-        "role": "js_module"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/multifile/lib/util.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 63
-        },
-        "role": "js_module"
       }
     ]
   },
@@ -389,31 +339,6 @@ expression: components
           "size": 265
         },
         "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "webhook_endpoint",
-      "name": "test_multifile_webhook",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/webhook/multifile/index.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 175
-        },
-        "role": "js_entrypoint"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/webhook/multifile/lib/render.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 75
-        },
-        "role": "js_module"
       }
     ]
   },
@@ -720,31 +645,6 @@ expression: components
           "size": 274
         },
         "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_multifile_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/multifile/index.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 208
-        },
-        "role": "js_entrypoint"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/multifile/lib/math.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 141
-        },
-        "role": "js_module"
       }
     ]
   },

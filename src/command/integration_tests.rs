@@ -17,7 +17,9 @@ use toml_edit::{DocumentMut, value};
 
 mod activity_exec;
 mod activity_vm;
+mod crypto;
 mod greet_activity;
+mod multifile;
 mod util;
 
 /// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the resolved
@@ -235,13 +237,6 @@ ffqn = "testing:integration/activity-throw-null.throw-null"
 params = []
 return_type = "result<string>"
 
-[[activity_js]]
-name = "test_multifile_activity"
-location = "{ws}/crates/testing/test-programs/js/activity/multifile/index.js"
-ffqn = "testing:integration/activity-multifile.greet"
-params = [{{ name = "name", type = "string" }}]
-return_type = "result<string, string>"
-
 [[workflow_js]]
 name = "test_add_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/add_workflow.js"
@@ -430,27 +425,6 @@ ffqn = "testing:integration/workflow-return-wrong-type.return-wrong-type"
 params = []
 return_type = "result<u32>"
 
-[[workflow_js]]
-name = "test_multifile_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/multifile/index.js"
-ffqn = "testing:integration/workflow-multifile.add-three"
-params = [
-  {{ name = "a", type = "u32" }},
-  {{ name = "b", type = "u32" }},
-  {{ name = "c", type = "u32" }},
-]
-return_type = "result<u32, string>"
-
-[[activity_js]]
-name = "test_hmac_sign_verify_activity"
-location = "{ws}/crates/testing/test-programs/js/activity/hmac_sign_verify.js"
-ffqn = "testing:integration/activity-hmac.hmac-sign-verify"
-params = [
-  {{ name = "key", type = "string" }},
-  {{ name = "message", type = "string" }},
-]
-return_type = "result<string, string>"
-
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-inline"
 content = '''
@@ -540,11 +514,6 @@ routes = [{{ methods = ["POST"], route = "/body-json" }}]
 name = "test_body_form_data_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/body_form_data.js"
 routes = [{{ methods = ["POST"], route = "/body-form-data" }}]
-
-[[webhook_endpoint_js]]
-name = "test_multifile_webhook"
-location = "{ws}/crates/testing/test-programs/js/webhook/multifile/index.js"
-routes = [{{ methods = ["GET"], route = "/multifile" }}]
 "#,
     );
     debug!("Deployment TOML:{deployment_contents}");
@@ -606,7 +575,11 @@ impl TestServer {
         let (tmp_dir, server_path, deployment_path) =
             util::write_server_config(&ip, "", server_toml_tail);
         for (rel, content) in files {
-            std::fs::write(tmp_dir.path().join(rel), content).unwrap();
+            let path = tmp_dir.path().join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, content).unwrap();
         }
         std::fs::write(&deployment_path, deployment_toml).unwrap();
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
@@ -4957,38 +4930,6 @@ async fn hot_redeploy_webhook_js_remove_endpoint_webapi() {
     server.shutdown().await;
 }
 
-// ---- crypto.subtle ----
-
-#[tokio::test]
-async fn activity_js_crypto_subtle_hmac_sign_verify() {
-    const KEY: &str = "super-secret-key";
-    const MSG: &str = "hello world";
-
-    let server = TestServer::start(test_addr!(34)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/activity-hmac.hmac-sign-verify",
-            vec![json!(KEY), json!(MSG)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-
-    // The JS activity returns the HMAC-SHA256 signature as a hex string.
-    let js_hex = body["ok"].as_str().expect("expected ok string");
-
-    // Compute the expected HMAC-SHA256 on the Rust side and compare.
-    let mut mac = Hmac::<Sha256>::new_from_slice(KEY.as_bytes()).unwrap();
-    mac.update(MSG.as_bytes());
-    let mut expected = String::with_capacity(64);
-    for b in mac.finalize().into_bytes() {
-        write!(expected, "{b:02x}").unwrap();
-    }
-
-    assert_eq!(js_hex, expected, "JS HMAC-SHA256 signature must match Rust");
-    server.shutdown().await;
-}
-
 // ---- Backtrace API ----
 
 #[tokio::test]
@@ -5154,53 +5095,5 @@ async fn backtrace_source_workflow_calling_activity() {
         "unregistered source file must be 404"
     );
 
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_js_multifile() {
-    let server = TestServer::start(test_addr!(120)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/activity-multifile.greet",
-            vec![json!("world")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(
-        resp.json::<Value>().await.unwrap(),
-        json!({ "ok": "hello, world!!" })
-    );
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn workflow_js_multifile() {
-    let server = TestServer::start(test_addr!(121)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/workflow-multifile.add-three",
-            vec![json!(2), json!(3), json!(5)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(resp.json::<Value>().await.unwrap(), json!({ "ok": 10 }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn webhook_js_multifile() {
-    let server = TestServer::start(test_addr!(122)).await;
-    let resp = server
-        .client
-        .get(format!("{}/multifile", server.webhook_base_url))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
-    assert_eq!(
-        resp.json::<Value>().await.unwrap(),
-        json!({ "ok": true, "message": "multifile webhook works" })
-    );
     server.shutdown().await;
 }
