@@ -18,7 +18,7 @@ use concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES;
 use db_postgres::postgres_dao::{self, PostgresConfig};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -645,7 +645,7 @@ pub(crate) struct MaintenanceTomlConfig {
     pub(crate) gc: GarbageCollectionTomlConfig,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GarbageCollectionTomlConfig {
     #[serde(default = "default_gc_enabled")]
@@ -660,7 +660,7 @@ pub(crate) struct GarbageCollectionTomlConfig {
     pub(crate) retention: RetentionTomlConfig,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, Default)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetentionTomlConfig {
     #[serde(default)]
@@ -671,7 +671,7 @@ pub(crate) struct RetentionTomlConfig {
     pub(crate) system_events: RetentionPolicyTomlConfig,
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetentionPolicyTomlConfig {
     #[serde(default = "default_retention_enabled")]
