@@ -7,9 +7,6 @@ expression: functions
     "ffqn": "testing:integration/activity.add"
   },
   {
-    "ffqn": "testing:integration/activity-greet.greet"
-  },
-  {
     "ffqn": "testing:integration/fetch-get-denied.fetch-get"
   },
   {

@@ -65,23 +65,6 @@ expression: components
   {
     "component_id": {
       "component_type": "activity",
-      "name": "test_greet_activity",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/greet.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 113
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
       "name": "test_hmac_sign_verify_activity",
       "component_digest": "sha256:<REDACTED>"
     },

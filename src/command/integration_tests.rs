@@ -17,6 +17,7 @@ use toml_edit::{DocumentMut, value};
 
 mod activity_exec;
 mod activity_vm;
+mod greet_activity;
 mod util;
 
 /// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the resolved
@@ -177,15 +178,6 @@ params = [
   {{ name = "b", type = "u32" }},
 ]
 return_type = "result<u32, string>"
-
-[[activity_js]]
-name = "test_greet_activity"
-location = "{ws}/crates/testing/test-programs/js/activity/greet.js"
-ffqn = "testing:integration/activity-greet.greet"
-params = [
-  {{ name = "name", type = "string" }},
-]
-return_type = "result<string, string>"
 
 [[activity_js]]
 name = "test_fetch_denied_activity"
@@ -3424,84 +3416,6 @@ async fn submit_activity_and_get_result() {
     assert_eq!(resp.status().as_u16(), 201);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body, json!({ "ok": 8 }));
-    server.shutdown().await;
-}
-
-// ---- Activity: submit + events snapshot ----
-
-#[tokio::test]
-async fn greet_activity_events() {
-    let server = TestServer::start(test_addr!(5)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/activity-greet.greet",
-            vec![json!("World")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "Hello, World!" }));
-
-    let events = server.get_events(&exec_id).await;
-    let events = sanitize_json(&events);
-    insta::assert_json_snapshot!("greet_activity_events", events);
-    server.shutdown().await;
-}
-
-// ---- Activity: submit + logs snapshot ----
-
-#[tokio::test]
-async fn greet_activity_logs() {
-    let server = TestServer::start(test_addr!(6)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/activity-greet.greet",
-            vec![json!("World")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    // Consume the streamed body to wait for execution to finish.
-    let _: Value = resp.json().await.unwrap();
-
-    let logs = loop {
-        let logs = server.get_logs(&exec_id, 1).await;
-        if logs.as_array().expect("logs must be an array").len() == 1 {
-            break logs;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    let logs = sanitize_json(&logs);
-    insta::assert_json_snapshot!("greet_activity_logs", logs);
-    server.shutdown().await;
-}
-
-// ---- Activity: submit + status snapshot ----
-
-#[tokio::test]
-async fn greet_activity_status() {
-    let server = TestServer::start(test_addr!(7)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/activity-greet.greet",
-            vec![json!("World")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    // Consume the streamed body to wait for execution to finish.
-    let _: Value = resp.json().await.unwrap();
-
-    let status = server.get_status(&exec_id).await;
-    let status = sanitize_json(&status);
-    insta::assert_json_snapshot!("greet_activity_status", status);
     server.shutdown().await;
 }
 
