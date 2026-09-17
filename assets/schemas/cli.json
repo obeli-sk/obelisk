@@ -1152,6 +1152,32 @@
       "about": "Generate configuration files and WIT artifacts",
       "subcommands": [
         {
+          "name": "secret-config-digest",
+          "about": "Calculate reviewed configuration digests for exec and secret-exposing VM activities",
+          "options": [
+            {
+              "name": "--deployment",
+              "short": "d",
+              "help": "Path to the deployment TOML file",
+              "required": true,
+              "accepts": {
+                "path": true
+              }
+            },
+            {
+              "name": "--json",
+              "short": "j",
+              "help": "Output structured JSON"
+            }
+          ],
+          "positionals": [
+            {
+              "name": "component_name",
+              "help": "Limit output to this resolved component name"
+            }
+          ]
+        },
+        {
           "name": "wit-extensions",
           "about": "Generate extension WIT files that are automatically implemented by Obelisk based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants)",
           "options": [

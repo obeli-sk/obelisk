@@ -151,6 +151,22 @@ pub struct ComponentDigest(pub Digest);
 #[schemars(with = "String")]
 pub struct ContentDigest(pub Digest);
 
+#[derive(
+    Debug,
+    Clone,
+    derive_more::Display,
+    derive_more::FromStr,
+    derive_more::Deref,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+    schemars::JsonSchema,
+)]
+#[schemars(with = "String")]
+pub struct SecretExposureDigest(pub Digest);
+
 pub const CONTENT_DIGEST_DUMMY: ContentDigest = ContentDigest(DIGEST_DUMMY);
 pub const COMPONENT_DIGEST_DUMMY: ComponentDigest = ComponentDigest(DIGEST_DUMMY);
 pub const DIGEST_DUMMY: Digest = Digest([0; 32]);

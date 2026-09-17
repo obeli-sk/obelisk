@@ -4,7 +4,6 @@ database.postgres.password = "${POSTGRES_PASSWORD}"
 database.postgres.db_name =  "${POSTGRES_DATABASE}"
 database.postgres.provision_policy = "auto"
 
-allow_exec_activities = true
 
 [[outbound_http.allowed_host]]
 pattern = "*"

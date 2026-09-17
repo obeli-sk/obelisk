@@ -27,7 +27,7 @@ use crate::config::{content_digest_to_exec_file, wasm_cache_metadata_dir};
 use crate::oci;
 use anyhow::{Context, anyhow, bail, ensure};
 use concepts::cas::Cas;
-use concepts::component_id::{ComponentDigest, ContentDigest, Digest};
+use concepts::component_id::{ComponentDigest, ContentDigest, Digest, SecretExposureDigest};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, FunctionFqn, ReturnType, StrVariant,
     prefixed_ulid::ExecutorId, storage::LogLevel,
@@ -570,6 +570,74 @@ pub(crate) struct ResolvedExecProgram {
     pub(crate) content_digest: ContentDigest,
 }
 
+fn hash_len_prefixed(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update(
+        u64::try_from(bytes.len())
+            .expect("64 bit length")
+            .to_be_bytes(),
+    );
+    hasher.update(bytes);
+}
+
+fn sorted_secret_names(names: &[String]) -> anyhow::Result<Vec<&str>> {
+    let mut names = names.iter().map(String::as_str).collect::<Vec<_>>();
+    names.sort_unstable();
+    ensure!(
+        !names.windows(2).any(|pair| pair[0] == pair[1]),
+        "exposed_secrets contains duplicate names"
+    );
+    Ok(names)
+}
+
+fn hash_strings<'a>(hasher: &mut Sha256, values: impl ExactSizeIterator<Item = &'a str>) {
+    hasher.update(
+        u64::try_from(values.len())
+            .expect("64 bit item count")
+            .to_be_bytes(),
+    );
+    for value in values {
+        hash_len_prefixed(hasher, value.as_bytes());
+    }
+}
+
+pub(crate) fn exec_secret_exposure_digest(
+    content_digest: &ContentDigest,
+    exposed_secrets: &[String],
+) -> anyhow::Result<SecretExposureDigest> {
+    let mut hasher = Sha256::new();
+    hash_len_prefixed(&mut hasher, b"obelisk-secret-exposure/activity-exec/v1");
+    hasher.update(content_digest.0.0);
+    let names = sorted_secret_names(exposed_secrets)?;
+    hash_strings(&mut hasher, names.into_iter());
+    Ok(SecretExposureDigest(Digest(hasher.finalize().into())))
+}
+
+fn vm_secret_exposure_digest(
+    source: &ResolvedExecProgram,
+    entrypoint: Option<&[String]>,
+    runtime_digest: &ContentDigest,
+    closure: &[String],
+    exposed_secrets: &[String],
+) -> anyhow::Result<SecretExposureDigest> {
+    let mut hasher = Sha256::new();
+    hash_len_prefixed(&mut hasher, b"obelisk-secret-exposure/activity-vm/v1");
+    if let Some(entrypoint) = entrypoint {
+        hasher.update([1]);
+        hash_strings(&mut hasher, entrypoint.iter().map(String::as_str));
+    } else {
+        hasher.update([0]);
+        hasher.update(source.content_digest.0.0);
+    }
+    hasher.update(runtime_digest.0.0);
+    let mut closure = closure.to_vec();
+    closure.sort_unstable();
+    closure.dedup();
+    hash_strings(&mut hasher, closure.iter().map(String::as_str));
+    let names = sorted_secret_names(exposed_secrets)?;
+    hash_strings(&mut hasher, names.into_iter());
+    Ok(SecretExposureDigest(Digest(hasher.finalize().into())))
+}
+
 async fn write_inline_exec_file_to_cache_dir(
     exec_path: &Path,
     exec_cache_dir: &Path,
@@ -666,6 +734,8 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         secret_registry: &Arc<SecretRegistry>,
         global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error> {
+        let secret_exposure_digest =
+            exec_secret_exposure_digest(&resolved_program.content_digest, &self.exposed_secrets)?;
         let verified = verify_function_interface(
             self.interface,
             &self.ffqn,
@@ -698,13 +768,16 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         let env_vars =
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
         // Resolve secret values only when an execution uses them.
-        let resolved_secrets = if self.secrets.is_empty() {
+        let resolved_secrets = if self.exposed_secrets.is_empty() {
             None
         } else {
-            let resolver =
-                restricted_secret_registry(secret_registry, &[], self.secrets.iter().cloned());
+            let resolver = restricted_secret_registry(
+                secret_registry,
+                &[],
+                self.exposed_secrets.iter().cloned(),
+            );
             Some(ExecSecrets {
-                names: self.secrets,
+                names: self.exposed_secrets,
                 resolver,
             })
         };
@@ -731,6 +804,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
+            secret_exposure_digest,
         })
     }
 }
@@ -751,6 +825,7 @@ pub(crate) struct ActivityExecConfigVerified {
     pub(crate) component_id: ComponentId,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
+    pub(crate) secret_exposure_digest: SecretExposureDigest,
 }
 
 impl ActivityExecConfigVerified {
@@ -843,7 +918,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
                 logs_store_min_level,
                 env_vars: env_vars.clone(),
                 max_output_bytes,
-                secrets: secret_names.clone(),
+                exposed_secrets: secret_names.clone(),
                 params_via_stdin,
             }
             .resolve(wasm_cache_dir)
@@ -877,7 +952,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             logs_store_min_level,
             env_vars,
             max_output_bytes,
-            secrets: secret_names,
+            exposed_secrets: secret_names,
             params_via_stdin,
         };
         let store = std::env::var_os("OBELISK_ACTIVITY_VM_STORE_DIR")
@@ -895,6 +970,18 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
         let closure =
             crate::command::server::activity_vm_nix::resolve(&store_paths, &nix_caches, &store)
                 .await?;
+        let runtime_digest = utils::sha256sum::calculate_sha256_file(runtime).await?;
+        let closure_identities = closure
+            .iter()
+            .map(|basename| format!("/nix/store/{basename}"))
+            .collect::<Vec<_>>();
+        let secret_exposure_digest = vm_secret_exposure_digest(
+            &source,
+            entrypoint.as_deref(),
+            &runtime_digest,
+            &closure_identities,
+            &exposed_secrets,
+        )?;
         let resolved_store_paths = closure
             .into_iter()
             .map(|basename| store.join(basename))
@@ -933,7 +1020,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             hasher.update(serde_json::to_vec(host)?);
         }
         let digest = ContentDigest(Digest(hasher.finalize().into()));
-        let verified = exec_config.fetch_and_verify(
+        let mut verified = exec_config.fetch_and_verify(
             ResolvedExecProgram {
                 program: source.program,
                 content_digest: digest,
@@ -942,6 +1029,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             secret_registry,
             global_executor_instance_limiter,
         )?;
+        verified.secret_exposure_digest = secret_exposure_digest;
         Ok(ActivityVmConfigVerified {
             runtime: runtime.to_owned(),
             source_location,
@@ -1582,7 +1670,7 @@ pub(crate) async fn resolve_local_refs(
             logs_store_min_level: a.logs_store_min_level,
             env_vars: a.env_vars,
             max_output_bytes: a.max_output_bytes,
-            secrets: a.secrets,
+            exposed_secrets: a.exposed_secrets,
             params_via_stdin: a.params_via_stdin,
         });
     }
@@ -2867,7 +2955,7 @@ pub struct ActivityExecComponentConfigResolved {
     pub max_output_bytes: u64,
     /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
     /// table) to expose to the script in the stdin JSON `secrets` object.
-    pub secrets: Vec<String>,
+    pub exposed_secrets: Vec<String>,
     pub params_via_stdin: bool,
 }
 
@@ -2988,6 +3076,24 @@ pub struct DeploymentResolved {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exec_secret_exposure_digest_binds_code_and_complete_sorted_secret_set() {
+        let code_a = ContentDigest(Digest([1; 32]));
+        let code_b = ContentDigest(Digest([2; 32]));
+        let first =
+            exec_secret_exposure_digest(&code_a, &["B".to_owned(), "A".to_owned()]).unwrap();
+        let reordered =
+            exec_secret_exposure_digest(&code_a, &["A".to_owned(), "B".to_owned()]).unwrap();
+        let different_code =
+            exec_secret_exposure_digest(&code_b, &["A".to_owned(), "B".to_owned()]).unwrap();
+        let different_secrets = exec_secret_exposure_digest(&code_a, &["A".to_owned()]).unwrap();
+
+        assert_eq!(first, reordered);
+        assert_ne!(first, different_code);
+        assert_ne!(first, different_secrets);
+        assert!(exec_secret_exposure_digest(&code_a, &["A".to_owned(), "A".to_owned()]).is_err());
+    }
 
     #[test]
     fn cron_verification_accepts_optional_seconds_field() {

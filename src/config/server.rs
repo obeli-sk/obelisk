@@ -11,8 +11,9 @@ use crate::config::env_var::{
     StartupEnvVars, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
     interpolate_startup_env_vars,
 };
-use crate::config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
-use concepts::ContentDigest;
+use crate::config::secret_registry::{
+    PublicEnvToml, SecretExposureDigests, SecretRegistry, SecretsToml,
+};
 use concepts::component_id::Digest;
 use concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES;
 use db_postgres::postgres_dao::{self, PostgresConfig};
@@ -39,16 +40,16 @@ pub(crate) struct ServerConfigToml {
     /// Operator-owned secret registry. Maps a logical secret name to a source
     /// (currently only `{ env = "VAR" }`). Env-backed secrets are resolved and
     /// their source variables wiped from the process environment at startup, before
-    /// the tokio runtime starts. Deployments reference these names in `activity_exec`
-    /// `secrets` and `allowed_host[].secrets`; they cannot interpolate them.
+    /// the tokio runtime starts. Deployments reference these names in
+    /// `activity_exec.exposed_secrets`, `activity_vm.exposed_secrets`, and
+    /// `allowed_host[].secrets`; they cannot interpolate them.
     #[serde(default)]
     pub(crate) secrets: SecretsToml,
     /// Operator-owned allowlist of process environment variables that deployments may read.
     #[serde(default)]
     pub(crate) public_env: PublicEnvToml,
-    /// Permit deployments to run host processes through `activity_exec`.
-    /// `false` denies all (default), `true` allows any, a map from exec activity
-    /// names to `sha256:...` content digests allows only the named scripts.
+    /// Permit deployments to run host processes through `activity_exec`, keyed by
+    /// component name and the accepted secret exposure digest set.
     #[serde(default)]
     pub(crate) allow_exec_activities: AllowExecActivities,
     /// Operator-owned allowlist for component-originated HTTP requests.
@@ -183,91 +184,16 @@ impl Default for MaxDeploymentFileBytes {
     }
 }
 
-/// Exec activity policy: deny all, allow any, or allow only named scripts whose
-/// content digest matches the configured digest of the exact script text.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) enum AllowExecActivities {
-    #[default]
-    Deny,
-    AllowAny,
-    Allowlist(BTreeMap<String, ContentDigest>),
-}
+/// Exec activity policy: component name -> reviewed secret exposure digests.
+pub(crate) type AllowExecActivities = BTreeMap<String, SecretExposureDigests>;
 
-impl<'de> Deserialize<'de> for AllowExecActivities {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct AllowExecActivitiesVisitor;
-        impl<'de> serde::de::Visitor<'de> for AllowExecActivitiesVisitor {
-            type Value = AllowExecActivities;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str(
-                    "a boolean or a map from exec activity names to `sha256:...` content digests",
-                )
-            }
-
-            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
-                Ok(if v {
-                    AllowExecActivities::AllowAny
-                } else {
-                    AllowExecActivities::Deny
-                })
-            }
-
-            // The `OBELISK__ALLOW_EXEC_ACTIVITIES` env override arrives as a string.
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                match v.parse::<bool>() {
-                    Ok(v) => self.visit_bool(v),
-                    Err(_) => Err(E::invalid_value(serde::de::Unexpected::Str(v), &self)),
-                }
-            }
-
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut digests = BTreeMap::new();
-                while let Some((name, digest)) = map.next_entry::<String, ContentDigest>()? {
-                    if digests.insert(name.clone(), digest).is_some() {
-                        return Err(serde::de::Error::custom(format!(
-                            "duplicate exec activity name `{name}`"
-                        )));
-                    }
-                }
-                Ok(AllowExecActivities::Allowlist(digests))
-            }
-        }
-        deserializer.deserialize_any(AllowExecActivitiesVisitor)
-    }
-}
-
-impl JsonSchema for AllowExecActivities {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        std::borrow::Cow::Borrowed("AllowExecActivities")
-    }
-
-    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({
-            "anyOf": [
-                {"type": "boolean"},
-                {"type": "object", "additionalProperties": {"type": "string"}}
-            ]
-        })
-    }
-}
-
-impl AllowExecActivities {
-    pub(crate) fn audit(&self) -> serde_json::Value {
-        match self {
-            Self::Deny => serde_json::json!({"mode": "deny"}),
-            Self::AllowAny => serde_json::json!({"mode": "allow_any"}),
-            Self::Allowlist(entries) => serde_json::json!({
-                "mode": "allowlist",
-                "entries": entries.iter().map(|(name, digest)| {
-                    (name, digest.to_string())
-                }).collect::<BTreeMap<_, _>>(),
-            }),
-        }
-    }
+pub(crate) fn audit_exec_activities(entries: &AllowExecActivities) -> serde_json::Value {
+    serde_json::json!({
+        "mode": if entries.is_empty() { "deny" } else { "allowlist" },
+        "entries": entries.iter().map(|(name, digests)| {
+            (name, digests.iter().map(ToString::to_string).collect::<Vec<_>>())
+        }).collect::<BTreeMap<_, _>>(),
+    })
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -1114,31 +1040,18 @@ mod tests {
             "sha256:abababababababababababababababababababababababababababababababab";
 
         #[test]
-        fn deserialize_bool_and_map() {
-            let actual: TestConfig = toml::from_str("allow = true").unwrap();
-            assert_eq!(AllowExecActivities::AllowAny, actual.allow);
-            let actual: TestConfig = toml::from_str("allow = false").unwrap();
-            assert_eq!(AllowExecActivities::Deny, actual.allow);
+        fn deserialize_scalar_or_list_map() {
+            toml::from_str::<TestConfig>("allow = true").unwrap_err();
+            toml::from_str::<TestConfig>("allow = false").unwrap_err();
             let actual: TestConfig = toml::from_str("").unwrap();
-            assert_eq!(AllowExecActivities::Deny, actual.allow);
+            assert!(actual.allow.is_empty());
             let actual: TestConfig =
                 toml::from_str(&format!("[allow]\ngreet = \"{DIGEST}\"")).unwrap();
-            assert_eq!(
-                AllowExecActivities::Allowlist(BTreeMap::from([(
-                    "greet".to_string(),
-                    DIGEST.parse().unwrap()
-                )])),
-                actual.allow
-            );
-            toml::from_str::<TestConfig>(&format!("allow = [\"{DIGEST}\"]")).unwrap_err();
-        }
-
-        #[test]
-        fn deserialize_bool_string_as_sent_by_env_override() {
-            // `OBELISK__ALLOW_EXEC_ACTIVITIES=true` reaches serde as a string.
-            let actual: TestConfig = toml::from_str(r#"allow = "true""#).unwrap();
-            assert_eq!(AllowExecActivities::AllowAny, actual.allow);
-            toml::from_str::<TestConfig>(r#"allow = "yes""#).unwrap_err();
+            let digests = actual.allow.get("greet").unwrap();
+            assert_eq!(digests.iter().next().unwrap().to_string(), DIGEST);
+            let actual: TestConfig =
+                toml::from_str(&format!("[allow]\ngreet = [\"{DIGEST}\"]")).unwrap();
+            assert_eq!(actual.allow["greet"].iter().count(), 1);
         }
     }
 

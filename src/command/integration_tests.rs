@@ -488,6 +488,36 @@ routes = [{{ methods = ["POST"], route = "/body-form-data" }}]
     (db_dir, server_path, deployment_path)
 }
 
+async fn authorize_test_deployment(
+    server_path: &std::path::Path,
+    deployment_path: &std::path::Path,
+) {
+    test_utils::set_up();
+    let registry = std::sync::Arc::new(
+        crate::config::secret_registry::SecretRegistry::from_test_values([
+            (
+                "MY_SECRET".to_owned(),
+                secrecy::SecretString::from("s3cret_value"),
+            ),
+            (
+                "VM_SECRET".to_owned(),
+                secrecy::SecretString::from("swordfish"),
+            ),
+        ])
+        .with_public_env([
+            "PATH".to_owned(),
+            "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_owned(),
+        ]),
+    );
+    let outputs =
+        crate::command::server::generate_secret_config_digests(deployment_path, None, registry)
+            .await
+            .unwrap();
+    crate::command::server::fix_server_secret_config_digests(server_path, &outputs)
+        .await
+        .unwrap();
+}
+
 struct TestServer {
     ip: String,
     base_url: String,
@@ -525,6 +555,7 @@ impl TestServer {
 
     async fn start(ip: String) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
+        authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
@@ -549,6 +580,7 @@ impl TestServer {
             std::fs::write(path, content).unwrap();
         }
         std::fs::write(&deployment_path, deployment_toml).unwrap();
+        authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
@@ -576,6 +608,7 @@ impl TestServer {
                 })
             });
         std::fs::write(&deployment_path, deployment_doc.to_string()).unwrap();
+        authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
@@ -629,6 +662,23 @@ impl TestServer {
         let base_dirs = BaseDirs::new();
         let config_holder = ConfigHolder::new(project_dirs, base_dirs, Some(server_path)).unwrap();
         let config = config_holder.load_config().unwrap();
+        let secret_registry = std::sync::Arc::new(
+            crate::config::secret_registry::SecretRegistry::from_test_values([
+                (
+                    "MY_SECRET".to_string(),
+                    secrecy::SecretString::from("s3cret_value"),
+                ),
+                (
+                    "VM_SECRET".to_string(),
+                    secrecy::SecretString::from("swordfish"),
+                ),
+            ])
+            .with_public_env([
+                "PATH".to_string(),
+                "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_string(),
+            ])
+            .with_exposure_config(&config.secrets),
+        );
 
         let (termination_sender, termination_watcher) = watch::channel(());
 
@@ -676,22 +726,7 @@ impl TestServer {
                 params,
                 prepared_dirs,
                 termination_watcher,
-                std::sync::Arc::new(
-                    crate::config::secret_registry::SecretRegistry::from_test_values([
-                        (
-                            "MY_SECRET".to_string(),
-                            secrecy::SecretString::from("s3cret_value"),
-                        ),
-                        (
-                            "VM_SECRET".to_string(),
-                            secrecy::SecretString::from("swordfish"),
-                        ),
-                    ])
-                    .with_public_env([
-                        "PATH".to_string(),
-                        "OBELISK_PHASE5_DEFINITELY_MISSING_VAR".to_string(),
-                    ]),
-                ),
+                secret_registry,
             ))
             .await
         });
@@ -779,6 +814,7 @@ impl TestServer {
         std::fs::write(&server_path, server_doc.to_string()).unwrap();
 
         let deployment_path = tmp_dir.path().join("deployment.toml");
+        authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }

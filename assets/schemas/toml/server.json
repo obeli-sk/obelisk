@@ -11,10 +11,10 @@
       "default": null
     },
     "secrets": {
-      "description": "Operator-owned secret registry. Maps a logical secret name to a source\n(currently only `{ env = \"VAR\" }`). Env-backed secrets are resolved and\ntheir source variables wiped from the process environment at startup, before\nthe tokio runtime starts. Deployments reference these names in `activity_exec`\n`secrets` and `allowed_host[].secrets`; they cannot interpolate them.",
+      "description": "Operator-owned secret registry. Maps a logical secret name to a source\n(currently only `{ env = \"VAR\" }`). Env-backed secrets are resolved and\ntheir source variables wiped from the process environment at startup, before\nthe tokio runtime starts. Deployments reference these names in\n`activity_exec.exposed_secrets`, `activity_vm.exposed_secrets`, and\n`allowed_host[].secrets`; they cannot interpolate them.",
       "type": "object",
       "additionalProperties": {
-        "$ref": "#/$defs/SecretSourceToml"
+        "$ref": "#/$defs/SecretConfigToml"
       },
       "default": {}
     },
@@ -26,8 +26,12 @@
       }
     },
     "allow_exec_activities": {
-      "description": "Permit deployments to run host processes through `activity_exec`.\n`false` denies all (default), `true` allows any, a map from exec activity\nnames to `sha256:...` content digests allows only the named scripts.",
-      "$ref": "#/$defs/AllowExecActivities"
+      "description": "Permit deployments to run host processes through `activity_exec`, keyed by\ncomponent name and the accepted secret exposure digest set.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
     },
     "outbound_http": {
       "description": "Operator-owned allowlist for component-originated HTTP requests.\nAn empty allowlist denies every outbound request.",
@@ -85,22 +89,25 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "SecretSourceToml": {
-      "description": "Source of a secret in the `[secrets]` table.",
-      "anyOf": [
-        {
+    "SecretConfigToml": {
+      "description": "Source and exposure authorization for a secret in the `[secrets]` table.",
+      "type": "object",
+      "properties": {
+        "env": {
           "description": "Read the secret from a process environment variable at startup.",
+          "type": "string"
+        },
+        "exposed_to": {
           "type": "object",
-          "properties": {
-            "env": {
-              "type": "string"
-            }
+          "additionalProperties": {
+            "type": "string"
           },
-          "additionalProperties": false,
-          "required": [
-            "env"
-          ]
+          "default": {}
         }
+      },
+      "additionalProperties": false,
+      "required": [
+        "env"
       ]
     },
     "PublicEnvToml": {
@@ -116,19 +123,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "AllowExecActivities": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      ]
     },
     "OutboundHttpToml": {
       "type": "object",

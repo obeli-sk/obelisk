@@ -11,7 +11,6 @@ pub(super) fn write_server_config(
     let server_contents = format!(
         r#"api.listening_addr = "{ip}:{API_PORT}"
 {server_toml_api_lines}
-allow_exec_activities = true
 webui.enabled = false
 external.listening_addr = "{ip}:{WEBHOOK_PORT}"
 
@@ -26,6 +25,10 @@ directory = "{tmp_dir}"
 
 [public_env]
 allowed = ["PATH", "OBELISK_PHASE5_DEFINITELY_MISSING_VAR"]
+
+[secrets]
+MY_SECRET = {{ env = "MY_SECRET" }}
+VM_SECRET = {{ env = "VM_SECRET" }}
 
 [[outbound_http.allowed_host]]
 pattern = "*"

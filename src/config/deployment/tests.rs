@@ -463,7 +463,7 @@ mod activity_exec {
             logs_store_min_level: LogLevelToml::default(),
             env_vars: vec![],
             max_output_bytes: default_max_output_bytes(),
-            secrets: vec!["MY_SECRET".to_string()],
+            exposed_secrets: vec!["MY_SECRET".to_string()],
             params_via_stdin: false,
         }
     }
@@ -489,7 +489,7 @@ mod activity_exec {
             logs_store_min_level: LogLevelToml::default(),
             env_vars: vec![],
             max_output_bytes: default_max_output_bytes(),
-            secrets: Vec::new(),
+            exposed_secrets: Vec::new(),
             params_via_stdin: false,
         }
     }

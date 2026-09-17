@@ -787,7 +787,7 @@
           "minimum": 0,
           "default": 4096
         },
-        "secrets": {
+        "exposed_secrets": {
           "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to expose to the script in the stdin JSON `secrets` object.",
           "type": "array",
           "items": {

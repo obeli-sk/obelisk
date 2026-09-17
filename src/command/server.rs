@@ -74,6 +74,7 @@ use crate::config::server::SQLITE_FILE_NAME;
 use crate::config::server::ServerConfigToml;
 use crate::config::server::TimersWatcherTomlConfig;
 use crate::config::server::WasmtimeAllocatorConfig;
+use crate::config::server::audit_exec_activities;
 use crate::config::wasm_cache_metadata_dir;
 use crate::init;
 use crate::init::Guard;
@@ -122,6 +123,7 @@ use concepts::time::Now;
 use concepts::time::TokioSleep;
 use db_postgres::postgres_dao::PostgresPool;
 use db_sqlite::sqlite_dao::SqlitePool;
+use directories::BaseDirs;
 use executor::AbortOnDropHandle;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::WorkerTasksHandle;
@@ -138,7 +140,7 @@ use secrecy::ExposeSecret as _;
 use secrecy::SecretString;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -737,6 +739,7 @@ pub(crate) async fn verify(
     fix: bool,
     secret_registry: Arc<SecretRegistry>,
 ) -> Result<(), anyhow::Error> {
+    let deployment_path_for_fix = deployment.clone();
     ensure!(
         !skip_db || deployment.is_some(),
         "cannot skip database when deployment TOML file is not specified"
@@ -846,6 +849,29 @@ pub(crate) async fn verify(
         (config_holder, config, secret_registry)
     };
 
+    let (config_holder, config, secret_registry) = if fix
+        && let (Some(server_config_path), Some(deployment_path)) = (
+            config_holder.config_source.as_deref(),
+            deployment_path_for_fix.as_deref(),
+        ) {
+        let outputs =
+            generate_secret_config_digests(deployment_path, None, secret_registry.clone()).await?;
+        fix_server_secret_config_digests(server_config_path, &outputs).await?;
+        let ServerStartup {
+            config_holder,
+            config,
+            legacy_api_token: _,
+            secret_registry,
+        } = prepare_server_startup(
+            config_holder.config_source,
+            EnvVarSecretsCleanup::Noop,
+            verify_params.runtime_config_availability,
+        )?;
+        (config_holder, config, secret_registry)
+    } else {
+        (config_holder, config, secret_registry)
+    };
+
     let (termination_sender, mut termination_watcher) = watch::channel(());
     let prepared_dirs = prepare_dirs(
         &config,
@@ -854,23 +880,6 @@ pub(crate) async fn verify(
         &secret_registry,
     )
     .await?;
-    let config = if fix
-        && let (Some(server_config_path), Some(deployment)) = (
-            config_holder.config_source.as_deref(),
-            deployment_opt.as_ref(),
-        ) {
-        let allowlist = fix_server_exec_digests(
-            server_config_path,
-            &deployment.activities_exec,
-            &prepared_dirs.wasm_cache_dir,
-        )
-        .await?;
-        let mut config = config;
-        config.allow_exec_activities = AllowExecActivities::Allowlist(allowlist);
-        config
-    } else {
-        config
-    };
     let engines = create_engines(&config, &prepared_dirs)?;
     let termination_notifier = utils::spawn::spawn_named("termination_notifier", async move {
         termination_notifier(termination_sender).await;
@@ -1168,50 +1177,6 @@ pub(crate) async fn deployment_verify_config(
     params: VerifyParams,
     termination_watcher: &mut watch::Receiver<()>,
 ) -> Result<DeploymentVerified, anyhow::Error> {
-    if params.runtime_config_availability == RuntimeConfigAvailability::Strict
-        && !deployment.activities_exec.is_empty()
-    {
-        match &server_verified.allow_exec_activities {
-            AllowExecActivities::AllowAny => {}
-            AllowExecActivities::Deny => {
-                let lines = exec_content_digest_lines(
-                    &deployment.activities_exec,
-                    &prepared_dirs.wasm_cache_dir,
-                )
-                .await?
-                .into_iter()
-                .map(|(_, _, line)| line)
-                .collect::<Vec<_>>();
-                bail!(
-                    "deployment contains exec activities, which run outside the WASM sandbox; \
-                     enable them with `allow_exec_activities = true` in server.toml or \
-                     `OBELISK__ALLOW_EXEC_ACTIVITIES=true`, or allowlist the reviewed scripts \
-                     by adding to server.toml:\n[allow_exec_activities]\n{}",
-                    lines.join("\n")
-                );
-            }
-            AllowExecActivities::Allowlist(allowed) => {
-                let rejected = exec_content_digest_lines(
-                    &deployment.activities_exec,
-                    &prepared_dirs.wasm_cache_dir,
-                )
-                .await?
-                .into_iter()
-                .filter(|(name, digest, _)| allowed.get(name.as_str()) != Some(digest))
-                .map(|(_, _, line)| line)
-                .collect::<Vec<_>>();
-                if !rejected.is_empty() {
-                    bail!(
-                        "deployment contains exec activities, which run outside the WASM sandbox, \
-                         whose content digests are not in the `allow_exec_activities` allowlist \
-                         in server.toml; review each script, then allow it by adding its line under \
-                         `[allow_exec_activities]`:\n{}",
-                        rejected.join("\n")
-                    );
-                }
-            }
-        }
-    }
     // Materialize deployment-owned WASM blobs from the CAS onto disk before compiling.
     let deployment =
         DeploymentRunnable::resolve(deployment, cas.as_ref(), &prepared_dirs.wasm_cache_dir)
@@ -1233,92 +1198,169 @@ pub(crate) async fn deployment_verify_config(
         server_verified.global_http_config.clone(),
     ))
     .await?;
+    if params.runtime_config_availability == RuntimeConfigAvailability::Strict {
+        verify_secret_exposure_authorization(server_verified, &deployment_verified)?;
+    }
     trace!("Verified deployment: {deployment_verified:#?}");
     Ok(deployment_verified)
 }
 
-/// For each exec activity, the digest of the exact script text that runs plus a
-/// server.toml-pasteable allowlist line: `name = "sha256:..." # ffqn`.
-async fn exec_content_digest_lines(
-    activities_exec: &[crate::config::deployment::ActivityExecComponentConfigResolved],
-    wasm_cache_dir: &Path,
-) -> anyhow::Result<Vec<(ConfigName, ContentDigest, String)>> {
-    let mut digests_with_lines = Vec::with_capacity(activities_exec.len());
-    for activity in activities_exec {
-        let resolved = activity.resolve(wasm_cache_dir).await?;
-        let digest = resolved.content_digest;
-        let line = format!(
-            "\"{name}\" = \"{digest}\" # {ffqn}",
-            name = activity.name,
-            ffqn = activity.ffqn
+fn verify_secret_exposure_authorization(
+    server: &ServerVerified,
+    deployment: &DeploymentVerified,
+) -> anyhow::Result<()> {
+    let mut rejected = Vec::new();
+    for exec in &deployment.activities_exec {
+        let name = exec.component_id.name.as_ref();
+        let digest = &exec.secret_exposure_digest;
+        let exec_allowed = server
+            .allow_exec_activities
+            .get(name)
+            .is_some_and(|digests| digests.contains(digest));
+        if !exec_allowed {
+            rejected.push(format!(
+                "exec activity `{name}` is not authorized:\n[allow_exec_activities]\n\"{name}\" = \"{digest}\""
+            ));
+        }
+        collect_rejected_secret_exposures(
+            &server.secret_registry,
+            name,
+            digest,
+            exec.secrets.as_ref().map_or(&[], |secrets| &secrets.names),
+            &mut rejected,
         );
-        digests_with_lines.push((activity.name.clone(), digest, line));
     }
-    Ok(digests_with_lines)
+    for vm in &deployment.activities_vm {
+        let name = vm.activity.component_id.name.as_ref();
+        collect_rejected_secret_exposures(
+            &server.secret_registry,
+            name,
+            &vm.activity.secret_exposure_digest,
+            &vm.exposed_secrets,
+            &mut rejected,
+        );
+    }
+    ensure!(
+        rejected.is_empty(),
+        "deployment requests unauthorized native execution or secret exposure:\n\n{}",
+        rejected.join("\n\n")
+    );
+    Ok(())
 }
 
-async fn fix_server_exec_digests(
-    server_config_path: &Path,
-    activities_exec: &[crate::config::deployment::ActivityExecComponentConfigResolved],
-    wasm_cache_dir: &Path,
-) -> anyhow::Result<BTreeMap<String, ContentDigest>> {
-    if activities_exec.is_empty() {
-        // Do not output empty `[allow_exec_activities]` table
-        return Ok(BTreeMap::new());
+fn collect_rejected_secret_exposures(
+    registry: &SecretRegistry,
+    component_name: &str,
+    digest: &concepts::component_id::SecretExposureDigest,
+    secrets: &[String],
+    rejected: &mut Vec<String>,
+) {
+    for secret in secrets {
+        if !registry.exposure_allowed(secret, component_name, digest) {
+            rejected.push(format!(
+                "secret `{secret}` is not exposed to component `{component_name}`:\n\
+                 [secrets.{secret}.exposed_to]\n\"{component_name}\" = \"{digest}\""
+            ));
+        }
     }
-    let allowlist = exec_content_digest_lines(activities_exec, wasm_cache_dir)
-        .await?
-        .into_iter()
-        .map(|(name, digest, _)| (name.to_string(), digest))
-        .collect::<BTreeMap<_, _>>();
+}
+
+fn append_digest_value(item: &mut Item, digest: &str) -> anyhow::Result<()> {
+    let value = item
+        .as_value_mut()
+        .context("secret exposure authorization must be a digest or digest array")?;
+    match value {
+        toml_edit::Value::String(current) => {
+            if current.value() != digest {
+                let mut values = toml_edit::Array::new();
+                values.push(current.value());
+                values.push(digest);
+                *value = toml_edit::Value::Array(values);
+            }
+        }
+        toml_edit::Value::Array(values) => {
+            let found = values.iter().any(|value| value.as_str() == Some(digest));
+            if !found {
+                values.push(digest);
+            }
+        }
+        _ => bail!("secret exposure authorization must be a digest or digest array"),
+    }
+    Ok(())
+}
+
+pub(crate) async fn fix_server_secret_config_digests(
+    server_config_path: &Path,
+    outputs: &[SecretConfigDigestOutput],
+) -> anyhow::Result<()> {
     let server_toml = tokio::fs::read_to_string(server_config_path)
         .await
         .with_context(|| format!("cannot read server config {server_config_path:?}"))?;
     let mut doc = server_toml
         .parse::<DocumentMut>()
         .context("cannot parse server config as TOML")?;
-    if let Some(table) = doc
-        .get_mut("allow_exec_activities")
-        .and_then(Item::as_table_mut)
-    {
-        table.retain(|name, _| allowlist.contains_key(name));
-        for (name, digest) in &allowlist {
-            let replacement = value(digest.to_string());
+    for output in outputs {
+        let name = &output.component_name;
+        let digest = output.secret_exposure_digest.to_string();
+        if output.component_kind == "activity_exec" {
+            if doc.get("allow_exec_activities").is_none() {
+                doc.insert("allow_exec_activities", Item::Table(Table::new()));
+            }
+            let table = doc["allow_exec_activities"]
+                .as_table_mut()
+                .context("allow_exec_activities must be a table")?;
             if let Some(item) = table.get_mut(name) {
-                let decor = item.as_value().map(|value| value.decor().clone());
-                *item = replacement;
-                if let Some(decor) = decor {
-                    *item.as_value_mut().unwrap().decor_mut() = decor;
-                }
+                append_digest_value(item, &digest)?;
             } else {
-                table.insert(name, replacement);
+                table.insert(name, value(&digest));
             }
         }
-        table.sort_values();
-    } else {
-        let mut table = Table::new();
-        for (name, digest) in &allowlist {
-            table.insert(name, value(digest.to_string()));
+        for secret in &output.exposed_secrets {
+            let secret_item = doc
+                .get_mut("secrets")
+                .and_then(Item::as_table_mut)
+                .and_then(|secrets| secrets.get_mut(secret))
+                .with_context(|| format!("secret `{secret}` is not registered"))?;
+            if let Some(inline) = secret_item.as_inline_table_mut() {
+                if !inline.contains_key("exposed_to") {
+                    inline.insert(
+                        "exposed_to",
+                        toml_edit::Value::InlineTable(toml_edit::InlineTable::new()),
+                    );
+                }
+                let exposed_to = inline
+                    .get_mut("exposed_to")
+                    .and_then(toml_edit::Value::as_inline_table_mut)
+                    .context("secret exposed_to must be a table")?;
+                if let Some(current) = exposed_to.get_mut(name) {
+                    let mut item = Item::Value(current.clone());
+                    append_digest_value(&mut item, &digest)?;
+                    *current = item.into_value().expect("value preserved");
+                } else {
+                    exposed_to.insert(name, digest.clone().into());
+                }
+            } else {
+                let secret_table = secret_item
+                    .as_table_mut()
+                    .context("secret configuration must be a table")?;
+                if !secret_table.contains_key("exposed_to") {
+                    secret_table.insert("exposed_to", Item::Table(Table::new()));
+                }
+                let exposed_to = secret_table["exposed_to"]
+                    .as_table_mut()
+                    .context("secret exposed_to must be a table")?;
+                if let Some(item) = exposed_to.get_mut(name) {
+                    append_digest_value(item, &digest)?;
+                } else {
+                    exposed_to.insert(name, value(&digest));
+                }
+            }
         }
-        if let Some(prefix) = doc
-            .as_table()
-            .key("allow_exec_activities")
-            .and_then(|key| key.leaf_decor().prefix())
-            .cloned()
-        {
-            table.decor_mut().set_prefix(prefix);
-        }
-        doc.insert("allow_exec_activities", Item::Table(table));
     }
     tokio::fs::write(server_config_path, doc.to_string())
         .await
-        .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
-    info!(
-        "Updated {} exec activity digest(s) in {}",
-        allowlist.len(),
-        server_config_path.display()
-    );
-    Ok(allowlist)
+        .with_context(|| format!("cannot write server config {server_config_path:?}"))?;
+    Ok(())
 }
 
 /// Look up the current deployment from the database.
@@ -2302,12 +2344,6 @@ impl ServerVerified {
             .global_executor_instance_limiter
             .as_semaphore();
         let database_subscription_interruption = config.database.get_subscription_interruption();
-        if config.allow_exec_activities == AllowExecActivities::AllowAny {
-            warn!(
-                "`allow_exec_activities = true` permits deployments to run arbitrary host \
-                 programs; consider allowlisting reviewed scripts by content digest instead"
-            );
-        }
         // Unregistered secret names in these entries are reported by `config_prepass::preflight`
         // (which runs before this) using `server_outbound_allowed_hosts`; here they resolve to
         // nothing and are dropped.
@@ -2408,6 +2444,7 @@ pub(crate) struct ServerCompiledLinked {
     frame_files: Vec<(ComponentDigest, FrameFilesToSource)>,
     max_persisted_value_size_bytes: u64,
     http_policy_audits: Vec<serde_json::Value>,
+    secret_exposure_audits: Vec<SecretConfigDigestOutput>,
 }
 
 impl ServerCompiledLinked {
@@ -2421,6 +2458,7 @@ impl ServerCompiledLinked {
     ) -> Result<Self, anyhow::Error> {
         trace!("Verified deployment: {deployment_verified:#?}");
         let http_policy_audits = deployment_verified.http_policy_audits();
+        let secret_exposure_audits = deployment_verified.secret_config_digests();
         let DeploymentVerified {
             runtime_config_availability,
             activities_wasm,
@@ -2503,6 +2541,7 @@ impl ServerCompiledLinked {
             frame_files: linked.all_frame_files,
             max_persisted_value_size_bytes: server_verified.max_persisted_value_size_bytes,
             http_policy_audits,
+            secret_exposure_audits,
         })
     }
 
@@ -3571,6 +3610,13 @@ async fn switch_hot_redeploy(
         &server_configuration_event_id,
     )
     .await?;
+    record_secret_exposure_audits(
+        db_pool.as_ref(),
+        deployment_id,
+        server_compiled_linked.secret_exposure_audits,
+        &server_configuration_event_id,
+    )
+    .await?;
 
     debug!("Swapping webhook registry");
     webhook_registry.swap(
@@ -3639,6 +3685,31 @@ async fn record_http_policy_audits(
     Ok(())
 }
 
+async fn record_secret_exposure_audits(
+    db_pool: &dyn DbPool,
+    deployment_id: DeploymentId,
+    audits: impl IntoIterator<Item = SecretConfigDigestOutput>,
+    server_configuration_event_id: &SystemEventId,
+) -> Result<(), anyhow::Error> {
+    for audit in audits {
+        crate::server::system_event_writer::record(
+            db_pool,
+            concepts::storage::SystemEventCode::ComponentSecretExposureAuthorized,
+            None,
+            Some(deployment_id),
+            serde_json::json!({
+                "component_name": audit.component_name,
+                "component_kind": audit.component_kind,
+                "secret_exposure_digest": audit.secret_exposure_digest,
+                "exposed_secrets": audit.exposed_secrets,
+                "server_configuration_event_id": server_configuration_event_id,
+            }),
+        )
+        .await;
+    }
+    Ok(())
+}
+
 async fn record_server_configuration_audit(
     db_pool: &dyn DbPool,
     server_verified: &ServerVerified,
@@ -3649,7 +3720,7 @@ async fn record_server_configuration_audit(
         "obelisk_version": PKG_VERSION,
         "environment": server_verified.environment_audit,
         "deployment_security": {
-            "exec": server_verified.allow_exec_activities.audit(),
+            "exec": audit_exec_activities(&server_verified.allow_exec_activities),
             "http": server_verified.server_http_policy_audit,
         },
     });
@@ -3756,6 +3827,13 @@ async fn spawn_tasks_and_threads(
         db_pool.as_ref(),
         deployment_id,
         server_compiled_linked.http_policy_audits.clone(),
+        &server_configuration_event_id,
+    )
+    .await?;
+    record_secret_exposure_audits(
+        db_pool.as_ref(),
+        deployment_id,
+        server_compiled_linked.secret_exposure_audits.clone(),
         &server_configuration_event_id,
     )
     .await?;
@@ -4081,6 +4159,105 @@ pub(crate) struct DeploymentVerified {
     http_servers_to_webhook_names: Vec<(HttpServer, Vec<ConfigName>)>,
     fuel: Option<u64>,
     global_http_config: GlobalHttpConfig,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct SecretConfigDigestOutput {
+    pub(crate) component_name: String,
+    pub(crate) component_kind: &'static str,
+    pub(crate) secret_exposure_digest: concepts::component_id::SecretExposureDigest,
+    pub(crate) exposed_secrets: Vec<String>,
+}
+
+impl DeploymentVerified {
+    fn secret_config_digests(&self) -> Vec<SecretConfigDigestOutput> {
+        self.activities_exec
+            .iter()
+            .map(|exec| SecretConfigDigestOutput {
+                component_name: exec.component_id.name.to_string(),
+                component_kind: "activity_exec",
+                secret_exposure_digest: exec.secret_exposure_digest.clone(),
+                exposed_secrets: exec
+                    .secrets
+                    .as_ref()
+                    .map_or_else(Vec::new, |secrets| secrets.names.clone()),
+            })
+            .chain(
+                self.activities_vm
+                    .iter()
+                    .filter(|vm| !vm.exposed_secrets.is_empty())
+                    .map(|vm| SecretConfigDigestOutput {
+                        component_name: vm.activity.component_id.name.to_string(),
+                        component_kind: "activity_vm",
+                        secret_exposure_digest: vm.activity.secret_exposure_digest.clone(),
+                        exposed_secrets: vm.exposed_secrets.clone(),
+                    }),
+            )
+            .collect()
+    }
+}
+
+pub(crate) async fn generate_secret_config_digests(
+    deployment_path: &Path,
+    component_name: Option<&str>,
+    secret_registry: Arc<SecretRegistry>,
+) -> anyhow::Result<Vec<SecretConfigDigestOutput>> {
+    let (deployment, cas) = resolve_deployment_offline(deployment_path).await?;
+    let mut undeclared_public_env = BTreeSet::new();
+    config_prepass::collect_deployment_unregistered_public_env(
+        &deployment,
+        &secret_registry,
+        &mut undeclared_public_env,
+    );
+    let secret_registry = Arc::new(
+        secret_registry
+            .as_ref()
+            .clone()
+            .allow_unavailable_public_env(undeclared_public_env),
+    );
+    let config_holder = ConfigHolder::new(crate::project_dirs(), BaseDirs::new(), None)?;
+    let mut config = config_holder.load_config()?;
+    let env_vars = crate::config::env_var::StartupEnvVars::capture();
+    config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
+    let prepared_dirs = prepare_dirs(
+        &config,
+        &PrepareDirsParams {
+            clean_cache: false,
+            clean_codegen_cache: false,
+        },
+        &config_holder.path_prefixes,
+        &secret_registry,
+    )
+    .await?;
+    let engines = create_engines(&config, &prepared_dirs)?;
+    let server_verified = Box::pin(server_verify(config, engines, secret_registry)).await?;
+    let (_termination_sender, mut termination_watcher) = watch::channel(());
+    let verified = deployment_verify_config(
+        &server_verified,
+        &prepared_dirs,
+        deployment,
+        cas,
+        VerifyParams {
+            dir_params: PrepareDirsParams {
+                clean_cache: false,
+                clean_codegen_cache: false,
+            },
+            runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
+            suppress_type_checking_errors: false,
+            suppress_linking_errors: false,
+        },
+        &mut termination_watcher,
+    )
+    .await?;
+    let mut outputs = verified.secret_config_digests();
+    if let Some(component_name) = component_name {
+        outputs.retain(|output| output.component_name == component_name);
+        ensure!(
+            !outputs.is_empty(),
+            "exec or secret-exposing VM component `{component_name}` not found"
+        );
+    }
+    Ok(outputs)
 }
 
 impl DeploymentVerified {
@@ -6309,15 +6486,15 @@ mod tests {
     use crate::{
         command::server::{
             DeploymentRunnable, DeploymentVerified, PrepareDirsParams, RuntimeConfigAvailability,
-            ServerCompiledLinked, ServerVerified, VerifyParams, compile_activity_inline,
-            compute_content_digest,
+            SecretConfigDigestOutput, ServerCompiledLinked, ServerVerified, VerifyParams,
+            compile_activity_inline, compute_content_digest,
             config_prepass::{
                 collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
                 global_secret_replacements, host_allowlist_snippet,
                 report_missing_outbound_http_secret_replacements,
             },
-            create_engines, deployment_verify_config, fix_server_exec_digests, prepare_dirs,
-            resolve_deployment_offline, webhook_global_http_allowlist,
+            create_engines, deployment_verify_config, fix_server_secret_config_digests,
+            prepare_dirs, resolve_deployment_offline, webhook_global_http_allowlist,
         },
         config::{
             config_holder::ConfigHolder,
@@ -6325,7 +6502,7 @@ mod tests {
                 AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn, ScriptLocationResolved,
             },
             secret_registry::SecretRegistry,
-            server::{AllowExecActivities, ServerConfigToml},
+            server::ServerConfigToml,
         },
     };
     use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
@@ -6338,7 +6515,6 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::watch;
-    use toml_edit::DocumentMut;
     use wasm_workers::http_request_policy::GlobalHttpConfig;
 
     fn get_workspace_dir() -> PathBuf {
@@ -6353,6 +6529,19 @@ mod tests {
                 secrecy::SecretString::from("s3cret_value"),
             )])
             .with_public_env(["PATH".to_string()]),
+        )
+    }
+
+    fn test_secret_registry_with_grants(
+        grants: impl IntoIterator<Item = (String, concepts::component_id::SecretExposureDigest)>,
+    ) -> Arc<SecretRegistry> {
+        Arc::new(
+            SecretRegistry::from_test_values([(
+                "MY_SECRET".to_string(),
+                secrecy::SecretString::from("s3cret_value"),
+            )])
+            .with_public_env(["PATH".to_string()])
+            .with_exposure_grants("MY_SECRET", grants),
         )
     }
 
@@ -6772,7 +6961,7 @@ mod tests {
             Some(server_toml_empty_path.to_path_buf()),
         )?;
         let config = config_holder.load_config()?;
-        assert_eq!(config.allow_exec_activities, AllowExecActivities::Deny);
+        assert!(config.allow_exec_activities.is_empty());
         let (deployment, cas) =
             resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
@@ -6808,7 +6997,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(err.to_string().contains("run outside the WASM sandbox"));
+        assert!(err.to_string().contains("not authorized"));
         assert!(err.to_string().contains("exec-stream"));
         // The error must contain a pasteable allowlist block.
         assert!(err.to_string().contains("[allow_exec_activities]\n"));
@@ -6839,52 +7028,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fix_server_exec_digests_replaces_policy_with_sorted_map() -> Result<(), anyhow::Error>
+    async fn fix_server_secret_config_digests_appends_authorizations() -> Result<(), anyhow::Error>
     {
-        use std::fmt::Write as _;
-
-        test_utils::set_up();
-
-        let workspace = get_workspace_dir();
-        let (deployment, _cas) =
-            resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let dir = tempfile::tempdir()?;
         let server_config_path = dir.path().join("server.toml");
-        let wrong = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-        let mut server_toml = "# formatting is preserved\n[allow_exec_activities]\n".to_string();
-        for activity in deployment.activities_exec.iter().rev() {
-            writeln!(
-                server_toml,
-                "\"{}\" = \"{wrong}\" # reviewed",
-                activity.name
-            )?;
-        }
-        writeln!(server_toml, "stale = \"{wrong}\"\n")?;
-        server_toml.push_str("[api]\nenabled = false\n");
+        let old = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        let new: concepts::component_id::SecretExposureDigest =
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111".parse()?;
+        let server_toml = format!(
+            "[allow_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ env = \"TOKEN\", exposed_to = {{ worker = \"{old}\" }} }}\n"
+        );
         tokio::fs::write(&server_config_path, server_toml).await?;
-
-        let allowlist =
-            fix_server_exec_digests(&server_config_path, &deployment.activities_exec, dir.path())
-                .await?;
+        fix_server_secret_config_digests(
+            &server_config_path,
+            &[SecretConfigDigestOutput {
+                component_name: "worker".to_owned(),
+                component_kind: "activity_exec",
+                secret_exposure_digest: new.clone(),
+                exposed_secrets: vec!["TOKEN".to_owned()],
+            }],
+        )
+        .await?;
         let fixed = tokio::fs::read_to_string(&server_config_path).await?;
-        let doc = fixed.parse::<DocumentMut>()?;
-        let table = doc["allow_exec_activities"].as_table().unwrap();
-        assert_eq!(
-            table.iter().map(|(name, _)| name).collect::<Vec<_>>(),
-            allowlist.keys().map(String::as_str).collect::<Vec<_>>()
-        );
-        assert!(fixed.contains("# formatting is preserved"));
-        assert_eq!(
-            fixed.matches("# reviewed").count(),
-            allowlist.len(),
-            "{fixed}"
-        );
-        assert!(!fixed.contains("stale ="));
-        assert!(fixed.contains("[api]\nenabled = false"));
-        assert_eq!(
-            toml::from_str::<ServerConfigToml>(&fixed)?.allow_exec_activities,
-            AllowExecActivities::Allowlist(allowlist)
-        );
+        let config = toml::from_str::<ServerConfigToml>(&fixed)?;
+        assert_eq!(config.allow_exec_activities["worker"].iter().count(), 2);
+        assert!(config.allow_exec_activities["worker"].contains(&new));
+        assert!(config.secrets["TOKEN"].exposed_to["worker"].contains(&new));
         Ok(())
     }
 
@@ -6907,7 +7076,11 @@ mod tests {
             .iter()
             .map(|activity| match &activity.location {
                 ScriptLocationResolved::Content { content, .. } => {
-                    compute_content_digest(content.as_bytes())
+                    crate::config::deployment::exec_secret_exposure_digest(
+                        &compute_content_digest(content.as_bytes()),
+                        &activity.exposed_secrets,
+                    )
+                    .unwrap()
                 }
                 ScriptLocationResolved::Oci { .. } => {
                     unreachable!("fixture uses only inline/local scripts")
@@ -6941,15 +7114,20 @@ mod tests {
 
         // An allowlist missing the first digest must reject the deployment,
         // printing the missing digest so it can be copy-pasted after review.
-        config.allow_exec_activities = AllowExecActivities::Allowlist(
-            deployment
-                .activities_exec
-                .iter()
-                .skip(1)
-                .zip(digests.iter().skip(1))
-                .map(|(activity, digest)| (activity.name.to_string(), digest.clone()))
-                .collect(),
-        );
+        config.allow_exec_activities = deployment
+            .activities_exec
+            .iter()
+            .skip(1)
+            .zip(digests.iter().skip(1))
+            .map(|(activity, digest)| {
+                (
+                    activity.name.to_string(),
+                    crate::config::secret_registry::SecretExposureDigests::new(vec![
+                        digest.clone(),
+                    ]),
+                )
+            })
+            .collect();
         let server_verified = Box::pin(ServerVerified::new(
             engines.clone(),
             config.clone(),
@@ -6974,16 +7152,31 @@ mod tests {
         );
 
         // The full allowlist must pass strict verification.
-        config.allow_exec_activities = AllowExecActivities::Allowlist(
-            deployment
-                .activities_exec
-                .iter()
-                .zip(digests)
-                .map(|(activity, digest)| (activity.name.to_string(), digest))
-                .collect(),
-        );
-        let server_verified =
-            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
+        config.allow_exec_activities = deployment
+            .activities_exec
+            .iter()
+            .zip(&digests)
+            .map(|(activity, digest)| {
+                (
+                    activity.name.to_string(),
+                    crate::config::secret_registry::SecretExposureDigests::new(vec![
+                        digest.clone(),
+                    ]),
+                )
+            })
+            .collect();
+        let grants = deployment
+            .activities_exec
+            .iter()
+            .zip(&digests)
+            .map(|(activity, digest)| (activity.name.to_string(), digest.clone()))
+            .collect::<Vec<_>>();
+        let server_verified = Box::pin(ServerVerified::new(
+            engines,
+            config,
+            test_secret_registry_with_grants(grants),
+        ))
+        .await?;
         deployment_verify_config(
             &server_verified,
             &prepared_dirs,

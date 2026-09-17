@@ -34,6 +34,49 @@ impl Generate {
         secret_registry: Arc<SecretRegistry>,
     ) -> Result<(), anyhow::Error> {
         match self {
+            Generate::SecretConfigDigest {
+                deployment,
+                component_name,
+                json,
+            } => {
+                let outputs = crate::command::server::generate_secret_config_digests(
+                    &deployment,
+                    component_name.as_deref(),
+                    secret_registry,
+                )
+                .await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&outputs)?);
+                } else {
+                    for output in outputs {
+                        println!(
+                            "{} `{}`\n  secret exposure digest: {}",
+                            output.component_kind,
+                            output.component_name,
+                            output.secret_exposure_digest
+                        );
+                        if output.exposed_secrets.is_empty() {
+                            println!("  exposed secrets: none");
+                        } else {
+                            println!("  exposed secrets: {}", output.exposed_secrets.join(", "));
+                        }
+                        if output.component_kind == "activity_exec" {
+                            println!(
+                                "\n[allow_exec_activities]\n\"{}\" = \"{}\"",
+                                output.component_name, output.secret_exposure_digest
+                            );
+                        }
+                        for secret in output.exposed_secrets {
+                            println!(
+                                "\n[secrets.{secret}.exposed_to]\n\"{}\" = \"{}\"",
+                                output.component_name, output.secret_exposure_digest
+                            );
+                        }
+                        println!();
+                    }
+                }
+                Ok(())
+            }
             Generate::ServerConfig {
                 json,
                 trusted,

@@ -3,11 +3,13 @@
 use crate::command::server::RuntimeConfigAvailability;
 use crate::config::env_var::StartupEnvVars;
 use anyhow::bail;
+use concepts::component_id::SecretExposureDigest;
 use hashbrown::{HashMap, HashSet};
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use worker_common::SecretResolver;
@@ -15,16 +17,70 @@ use worker_common::SecretResolver;
 pub(crate) const API_TOKEN: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_LEGACY: &str = "OBELISK__API__TOKEN";
 
-/// Source of a secret in the `[secrets]` table.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(untagged, deny_unknown_fields)]
-pub(crate) enum SecretSourceToml {
-    /// Read the secret from a process environment variable at startup.
-    Env { env: String },
+#[derive(Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(with = "String")]
+pub(crate) struct SecretExposureDigests(Vec<SecretExposureDigest>);
+
+impl SecretExposureDigests {
+    #[cfg(test)]
+    pub(crate) fn new(digests: Vec<SecretExposureDigest>) -> Self {
+        Self(digests)
+    }
+
+    pub(crate) fn contains(&self, digest: &SecretExposureDigest) -> bool {
+        self.0.contains(digest)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &SecretExposureDigest> {
+        self.0.iter()
+    }
 }
 
-/// The `[secrets]` table: logical name -> source.
-pub(crate) type SecretsToml = IndexMap<String, SecretSourceToml>;
+impl<'de> Deserialize<'de> for SecretExposureDigests {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum OneOrMany {
+            One(SecretExposureDigest),
+            Many(Vec<SecretExposureDigest>),
+        }
+        let values = match OneOrMany::deserialize(deserializer)? {
+            OneOrMany::One(value) => vec![value],
+            OneOrMany::Many(values) => values,
+        };
+        let mut seen = HashSet::new();
+        for value in &values {
+            if !seen.insert(value.clone()) {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate secret exposure digest `{value}`"
+                )));
+            }
+        }
+        Ok(Self(values))
+    }
+}
+
+impl Serialize for SecretExposureDigests {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [value] => value.serialize(serializer),
+            values => values.serialize(serializer),
+        }
+    }
+}
+
+/// Source and exposure authorization for a secret in the `[secrets]` table.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SecretConfigToml {
+    /// Read the secret from a process environment variable at startup.
+    pub(crate) env: String,
+    #[serde(default)]
+    pub(crate) exposed_to: BTreeMap<String, SecretExposureDigests>,
+}
+
+/// The `[secrets]` table: logical name -> source and exposure authorization.
+pub(crate) type SecretsToml = IndexMap<String, SecretConfigToml>;
 
 /// Public environment variables that deployments may read.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, JsonSchema)]
@@ -56,6 +112,7 @@ pub(crate) struct SecretRegistry {
     public_allowed: HashSet<String>,
     /// Values captured for the public allowlist during startup.
     public_values: HashMap<String, String>,
+    exposure_grants: HashMap<String, BTreeMap<String, SecretExposureDigests>>,
     environment_audit: serde_json::Value,
 }
 
@@ -73,6 +130,7 @@ impl SecretRegistry {
             sensitive: HashSet::default(),
             public_allowed: HashSet::default(),
             public_values: HashMap::default(),
+            exposure_grants: HashMap::default(),
             environment_audit: serde_json::json!({
                 "public_env": {},
                 "secrets": {},
@@ -117,6 +175,14 @@ impl SecretRegistry {
         self.sensitive.contains(name)
     }
 
+    pub(crate) fn allow_unavailable_public_env(
+        mut self,
+        names: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.public_allowed.extend(names);
+        self
+    }
+
     pub(crate) fn secret_lookup(&self, name: &str) -> Option<SecretString> {
         self.values.get(name).cloned()
     }
@@ -138,6 +204,7 @@ impl SecretRegistry {
             sensitive,
             public_allowed: HashSet::default(),
             public_values: HashMap::default(),
+            exposure_grants: HashMap::default(),
             environment_audit: serde_json::json!({
                 "public_env": {},
                 "secrets": {},
@@ -152,6 +219,31 @@ impl SecretRegistry {
             .public_allowed
             .iter()
             .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
+            .collect();
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_exposure_grants(
+        mut self,
+        secret_name: impl Into<String>,
+        grants: impl IntoIterator<Item = (String, SecretExposureDigest)>,
+    ) -> Self {
+        self.exposure_grants.insert(
+            secret_name.into(),
+            grants
+                .into_iter()
+                .map(|(name, digest)| (name, SecretExposureDigests::new(vec![digest])))
+                .collect(),
+        );
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_exposure_config(mut self, secrets: &SecretsToml) -> Self {
+        self.exposure_grants = secrets
+            .iter()
+            .map(|(name, config)| (name.clone(), config.exposed_to.clone()))
             .collect();
         self
     }
@@ -175,31 +267,33 @@ impl SecretRegistry {
 
         let mut missing_env_vars = BTreeSet::new();
         let mut secret_audit = std::collections::BTreeMap::new();
-        for (logical_name, source) in secrets {
-            match source {
-                SecretSourceToml::Env { env } => {
-                    let present = env_vars.lookup(&env).is_some()
-                        || was_legacy_token_wiped.is_some_and(|_| env == API_TOKEN_LEGACY);
-                    secret_audit.insert(
-                        logical_name.clone(),
-                        serde_json::json!({"env": env, "present": present}),
-                    );
-                    let value = if let Some(value) = env_vars.lookup(&env) {
-                        SecretString::from(value)
-                    } else if let Some(value) = was_legacy_token_wiped
-                        && env == API_TOKEN_LEGACY
-                    {
-                        // backcompat: avoid failing here if [[secrets]] contains the token and it was wiped already.
-                        value.clone()
-                    } else {
-                        missing_env_vars.insert(env.clone());
-                        SecretString::from(String::new())
-                    };
-                    values.insert(logical_name.clone(), value);
-                    sensitive.insert(env);
-                    sensitive.insert(logical_name);
-                }
-            }
+        let mut exposure_grants = HashMap::new();
+        for (logical_name, config) in secrets {
+            let SecretConfigToml { env, exposed_to } = config;
+            let present = env_vars.lookup(&env).is_some()
+                || was_legacy_token_wiped.is_some_and(|_| env == API_TOKEN_LEGACY);
+            secret_audit.insert(
+                logical_name.clone(),
+                serde_json::json!({
+                    "present": present,
+                    "exposed_to": exposed_to,
+                }),
+            );
+            let value = if let Some(value) = env_vars.lookup(&env) {
+                SecretString::from(value)
+            } else if let Some(value) = was_legacy_token_wiped
+                && env == API_TOKEN_LEGACY
+            {
+                // backcompat: avoid failing here if [[secrets]] contains the token and it was wiped already.
+                value.clone()
+            } else {
+                missing_env_vars.insert(env.clone());
+                SecretString::from(String::new())
+            };
+            values.insert(logical_name.clone(), value);
+            exposure_grants.insert(logical_name.clone(), exposed_to);
+            sensitive.insert(env);
+            sensitive.insert(logical_name);
         }
         if runtime_config_availability == RuntimeConfigAvailability::Strict
             && !missing_env_vars.is_empty()
@@ -228,11 +322,24 @@ impl SecretRegistry {
             sensitive,
             public_allowed,
             public_values,
+            exposure_grants,
             environment_audit: serde_json::json!({
                 "public_env": public_env_audit,
                 "secrets": secret_audit,
             }),
         })
+    }
+
+    pub(crate) fn exposure_allowed(
+        &self,
+        secret_name: &str,
+        component_name: &str,
+        digest: &SecretExposureDigest,
+    ) -> bool {
+        self.exposure_grants
+            .get(secret_name)
+            .and_then(|components| components.get(component_name))
+            .is_some_and(|digests| digests.contains(digest))
     }
 }
 
@@ -311,8 +418,9 @@ mod tests {
         let mut secrets = SecretsToml::new();
         secrets.insert(
             "LOGICAL".to_string(),
-            SecretSourceToml::Env {
+            SecretConfigToml {
                 env: SRC.to_string(),
+                exposed_to: BTreeMap::new(),
             },
         );
         let registry = SecretRegistry::resolve(
@@ -336,7 +444,7 @@ mod tests {
             serde_json::json!({
                 "public_env": {},
                 "secrets": {
-                    "LOGICAL": {"env": SRC, "present": true},
+                    "LOGICAL": {"present": true, "exposed_to": {}},
                 },
             })
         );
@@ -361,8 +469,9 @@ mod tests {
         let mut secrets = SecretsToml::new();
         secrets.insert(
             "LOGICAL".to_string(),
-            SecretSourceToml::Env {
+            SecretConfigToml {
                 env: "OBELISK_TEST_DEFINITELY_UNSET_2B9C".to_string(),
+                exposed_to: BTreeMap::new(),
             },
         );
         let err = SecretRegistry::resolve(
