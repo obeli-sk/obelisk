@@ -260,23 +260,6 @@ expression: components
   {
     "component_id": {
       "component_type": "webhook_endpoint",
-      "name": "test_get_status_webhook",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/webhook/get_status.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 253
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "webhook_endpoint",
       "name": "test_headers_webhook",
       "component_digest": "sha256:<REDACTED>"
     },
