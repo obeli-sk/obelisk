@@ -985,9 +985,9 @@ fn run_module(
     };
     eprintln!("QEMU root result: {call_result:?}");
     let mut serial = Vec::new();
-    if let Some(runtime) = emscripten_runtime {
-        if let Err(error) = join_pthreads(&runtime, mapdirs) {
-            if is_shutdown_trap(&error) && guest_has_completed(&runtime, mapdirs) {
+    if let Some(runtime) = emscripten_runtime.as_ref() {
+        if let Err(error) = join_pthreads(runtime, mapdirs) {
+            if is_shutdown_trap(&error) && guest_has_completed(runtime, mapdirs) {
                 eprintln!("QEMU pthread stopped after guest completion: {error:#}");
             } else {
                 let console = runtime.legacy_fds.tty_output();
@@ -999,10 +999,18 @@ fn run_module(
         }
         serial = runtime.legacy_fds.tty_output();
     }
+    let guest_completed = emscripten_runtime
+        .as_ref()
+        .is_some_and(|runtime| guest_has_completed(runtime, mapdirs))
+        || guest_completion_exists(mapdirs);
     let exit_code = match call_result {
         Ok(()) => 0,
         Err(error) => match error.downcast_ref::<wasmtime_wasi::I32Exit>() {
             Some(exit) => exit.0,
+            None if is_completed_shutdown_interrupt(&error, guest_completed) => {
+                eprintln!("QEMU root stopped after guest completion: {error:#}");
+                0
+            }
             None => bail!(
                 "VM trapped: {error:?}\nguest stderr:\n{}",
                 String::from_utf8_lossy(&stderr.contents())
@@ -1141,6 +1149,13 @@ fn is_shutdown_trap(error: &anyhow::Error) -> bool {
                 wasmtime::Trap::UnreachableCodeReached | wasmtime::Trap::Interrupt
             )
         })
+}
+
+fn is_completed_shutdown_interrupt(error: &wasmtime::Error, guest_completed: bool) -> bool {
+    guest_completed
+        && error
+            .downcast_ref::<wasmtime::Trap>()
+            .is_some_and(|trap| *trap == wasmtime::Trap::Interrupt)
 }
 
 fn join_pthreads(runtime: &EmscriptenRuntime, mapdirs: &[MapDir]) -> anyhow::Result<()> {
@@ -1549,6 +1564,16 @@ mod tests {
         let mapdir = MapDir::read_write(share.path().to_owned(), "/share".to_owned());
 
         assert!(guest_completion_exists(&[mapdir]));
+    }
+
+    #[test]
+    fn only_accepts_root_interrupt_after_guest_completion() {
+        let interrupt = wasmtime::Error::from(wasmtime::Trap::Interrupt);
+        assert!(!is_completed_shutdown_interrupt(&interrupt, false));
+        assert!(is_completed_shutdown_interrupt(&interrupt, true));
+
+        let unreachable = wasmtime::Error::from(wasmtime::Trap::UnreachableCodeReached);
+        assert!(!is_completed_shutdown_interrupt(&unreachable, true));
     }
 
     #[test]
