@@ -1214,12 +1214,12 @@ fn verify_secret_exposure_authorization(
         let name = exec.component_id.name.as_ref();
         let digest = &exec.secret_exposure_digest;
         let exec_allowed = server
-            .allow_exec_activities
+            .allowed_exec_activities
             .get(name)
             .is_some_and(|digests| digests.contains(digest));
         if !exec_allowed {
             rejected.push(format!(
-                "exec activity `{name}` is not authorized:\n[allow_exec_activities]\n\"{name}\" = \"{digest}\""
+                "exec activity `{name}` is not authorized:\n[allowed_exec_activities]\n\"{name}\" = \"{digest}\""
             ));
         }
         collect_rejected_secret_exposures(
@@ -1303,12 +1303,12 @@ pub(crate) async fn fix_server_secret_config_digests(
         let name = &output.component_name;
         let digest = output.secret_exposure_digest.to_string();
         if output.component_kind == "activity_exec" {
-            if doc.get("allow_exec_activities").is_none() {
-                doc.insert("allow_exec_activities", Item::Table(Table::new()));
+            if doc.get("allowed_exec_activities").is_none() {
+                doc.insert("allowed_exec_activities", Item::Table(Table::new()));
             }
-            let table = doc["allow_exec_activities"]
+            let table = doc["allowed_exec_activities"]
                 .as_table_mut()
-                .context("allow_exec_activities must be a table")?;
+                .context("allowed_exec_activities must be a table")?;
             if let Some(item) = table.get_mut(name) {
                 append_digest_value(item, &digest)?;
             } else {
@@ -2237,7 +2237,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
     launch: ServerVerifiedLaunch,
-    allow_exec_activities: AllowExecActivities,
+    allowed_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
     fuel: Option<u64>,
     global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
@@ -2389,7 +2389,7 @@ impl ServerVerified {
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 workflows_max_replay_captured_writes,
             },
-            allow_exec_activities: config.allow_exec_activities,
+            allowed_exec_activities: config.allowed_exec_activities,
             http_servers,
             fuel,
             global_executor_instance_limiter,
@@ -3720,7 +3720,7 @@ async fn record_server_configuration_audit(
         "obelisk_version": PKG_VERSION,
         "environment": server_verified.environment_audit,
         "deployment_security": {
-            "exec": audit_exec_activities(&server_verified.allow_exec_activities),
+            "exec": audit_exec_activities(&server_verified.allowed_exec_activities),
             "http": server_verified.server_http_policy_audit,
         },
     });
@@ -6961,7 +6961,7 @@ mod tests {
             Some(server_toml_empty_path.to_path_buf()),
         )?;
         let config = config_holder.load_config()?;
-        assert!(config.allow_exec_activities.is_empty());
+        assert!(config.allowed_exec_activities.is_empty());
         let (deployment, cas) =
             resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let prepared_dirs = prepare_dirs(
@@ -7000,7 +7000,7 @@ mod tests {
         assert!(err.to_string().contains("not authorized"));
         assert!(err.to_string().contains("exec-stream"));
         // The error must contain a pasteable allowlist block.
-        assert!(err.to_string().contains("[allow_exec_activities]\n"));
+        assert!(err.to_string().contains("[allowed_exec_activities]\n"));
         assert!(err.to_string().contains("\"sha256:"));
 
         let verified = deployment_verify_config(
@@ -7036,7 +7036,7 @@ mod tests {
         let new: concepts::component_id::SecretExposureDigest =
             "sha256:1111111111111111111111111111111111111111111111111111111111111111".parse()?;
         let server_toml = format!(
-            "[allow_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ env = \"TOKEN\", exposed_to = {{ worker = \"{old}\" }} }}\n"
+            "[allowed_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ env = \"TOKEN\", exposed_to = {{ worker = \"{old}\" }} }}\n"
         );
         tokio::fs::write(&server_config_path, server_toml).await?;
         fix_server_secret_config_digests(
@@ -7051,8 +7051,8 @@ mod tests {
         .await?;
         let fixed = tokio::fs::read_to_string(&server_config_path).await?;
         let config = toml::from_str::<ServerConfigToml>(&fixed)?;
-        assert_eq!(config.allow_exec_activities["worker"].iter().count(), 2);
-        assert!(config.allow_exec_activities["worker"].contains(&new));
+        assert_eq!(config.allowed_exec_activities["worker"].iter().count(), 2);
+        assert!(config.allowed_exec_activities["worker"].contains(&new));
         assert!(config.secrets["TOKEN"].exposed_to["worker"].contains(&new));
         Ok(())
     }
@@ -7114,7 +7114,7 @@ mod tests {
 
         // An allowlist missing the first digest must reject the deployment,
         // printing the missing digest so it can be copy-pasted after review.
-        config.allow_exec_activities = deployment
+        config.allowed_exec_activities = deployment
             .activities_exec
             .iter()
             .skip(1)
@@ -7144,7 +7144,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(err.to_string().contains("allow_exec_activities"));
+        assert!(err.to_string().contains("allowed_exec_activities"));
         assert!(err.to_string().contains(&digests[0].to_string()));
         assert!(
             err.to_string()
@@ -7152,7 +7152,7 @@ mod tests {
         );
 
         // The full allowlist must pass strict verification.
-        config.allow_exec_activities = deployment
+        config.allowed_exec_activities = deployment
             .activities_exec
             .iter()
             .zip(&digests)

@@ -62,7 +62,7 @@ impl Generate {
                         }
                         if output.component_kind == "activity_exec" {
                             println!(
-                                "\n[allow_exec_activities]\n\"{}\" = \"{}\"",
+                                "\n[allowed_exec_activities]\n\"{}\" = \"{}\"",
                                 output.component_name, output.secret_exposure_digest
                             );
                         }

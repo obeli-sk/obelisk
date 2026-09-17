@@ -231,7 +231,7 @@ mod tests {
     fn trusted_server_config_allows_outbound_http_but_not_exec() {
         let config: ServerConfigToml = toml::from_str(OBELISK_TRUSTED_SERVER_TOML).unwrap();
 
-        assert!(config.allow_exec_activities.is_empty());
+        assert!(config.allowed_exec_activities.is_empty());
         assert!(config.secrets.is_empty());
         let [host] = config.outbound_http.allowed_hosts.as_slice() else {
             panic!("expected one outbound HTTP host");

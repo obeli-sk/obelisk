@@ -50,7 +50,7 @@
 ## Allow reviewed executable and exposed-secret configurations by component name.
 ## Values may be one digest or an array for overlapping deployments. Generate entries with
 ## `obelisk generate secret-config-digest -d deployment.toml`.
-# [allow_exec_activities]
+# [allowed_exec_activities]
 # greet = "sha256:..."
 
 ## Global outbound HTTP policy. Component-originated requests must be allowed by both

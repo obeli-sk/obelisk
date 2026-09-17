@@ -51,7 +51,7 @@ pub(crate) struct ServerConfigToml {
     /// Permit deployments to run host processes through `activity_exec`, keyed by
     /// component name and the accepted secret exposure digest set.
     #[serde(default)]
-    pub(crate) allow_exec_activities: AllowExecActivities,
+    pub(crate) allowed_exec_activities: AllowExecActivities,
     /// Operator-owned allowlist for component-originated HTTP requests.
     /// An empty allowlist denies every outbound request.
     #[serde(default)]

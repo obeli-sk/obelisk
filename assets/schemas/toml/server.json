@@ -25,7 +25,7 @@
         "allowed": []
       }
     },
-    "allow_exec_activities": {
+    "allowed_exec_activities": {
       "description": "Permit deployments to run host processes through `activity_exec`, keyed by\ncomponent name and the accepted secret exposure digest set.",
       "type": "object",
       "additionalProperties": {
