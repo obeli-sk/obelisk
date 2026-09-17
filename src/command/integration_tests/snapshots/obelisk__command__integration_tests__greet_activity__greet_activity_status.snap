@@ -1,5 +1,5 @@
 ---
-source: src/command/integration_tests.rs
+source: src/command/integration_tests/greet_activity.rs
 expression: status
 ---
 {

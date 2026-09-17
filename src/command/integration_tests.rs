@@ -15,8 +15,14 @@ use crate::{
 };
 use toml_edit::{DocumentMut, value};
 
+mod activity_exec;
 mod activity_vm;
+mod crypto;
+mod greet_activity;
+mod multifile;
 mod util;
+mod webhook_js;
+mod workflow_cancellation;
 
 /// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the resolved
 /// `ActivityStubExtInlineConfigResolved` the tests used to construct in-memory.
@@ -178,15 +184,6 @@ params = [
 return_type = "result<u32, string>"
 
 [[activity_js]]
-name = "test_greet_activity"
-location = "{ws}/crates/testing/test-programs/js/activity/greet.js"
-ffqn = "testing:integration/activity-greet.greet"
-params = [
-  {{ name = "name", type = "string" }},
-]
-return_type = "result<string, string>"
-
-[[activity_js]]
 name = "test_fetch_denied_activity"
 location = "{ws}/crates/testing/test-programs/js/activity/fetch_get.js"
 ffqn = "testing:integration/fetch-get-denied.fetch-get"
@@ -241,13 +238,6 @@ location = "{ws}/crates/testing/test-programs/js/activity/throw_null.js"
 ffqn = "testing:integration/activity-throw-null.throw-null"
 params = []
 return_type = "result<string>"
-
-[[activity_js]]
-name = "test_multifile_activity"
-location = "{ws}/crates/testing/test-programs/js/activity/multifile/index.js"
-ffqn = "testing:integration/activity-multifile.greet"
-params = [{{ name = "name", type = "string" }}]
-return_type = "result<string, string>"
 
 [[workflow_js]]
 name = "test_add_workflow"
@@ -387,36 +377,6 @@ params = [
 return_type = "result<string, string>"
 
 [[workflow_js]]
-name = "test_rethrow_child_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/rethrow_child_error.js"
-ffqn = "testing:integration/workflow-rethrow-child-error.rethrow-child-error"
-params = [
-  {{ name = "id", type = "u64" }},
-]
-return_type = "result<string, string>"
-
-[[workflow_js]]
-name = "test_cancel_child_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/cancel_child_error.js"
-ffqn = "testing:integration/workflow-cancel-child-error.cancel-child-error"
-params = []
-return_type = "result<string, string>"
-
-[[workflow_js]]
-name = "test_cancel_sleep_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/cancel_sleep_error.js"
-ffqn = "testing:integration/workflow-cancel-sleep-error.cancel-sleep-error"
-params = []
-return_type = "result<string>"
-
-[[workflow_js]]
-name = "test_cancel_delay_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/cancel_delay_error.js"
-ffqn = "testing:integration/workflow-cancel-delay-error.cancel-delay-error"
-params = []
-return_type = "result<string, string>"
-
-[[workflow_js]]
 name = "test_math_random_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/math_random.js"
 ffqn = "testing:integration/workflow-math-random.math-random"
@@ -437,45 +397,6 @@ ffqn = "testing:integration/workflow-return-wrong-type.return-wrong-type"
 params = []
 return_type = "result<u32>"
 
-[[workflow_js]]
-name = "test_multifile_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/multifile/index.js"
-ffqn = "testing:integration/workflow-multifile.add-three"
-params = [
-  {{ name = "a", type = "u32" }},
-  {{ name = "b", type = "u32" }},
-  {{ name = "c", type = "u32" }},
-]
-return_type = "result<u32, string>"
-
-[[activity_js]]
-name = "test_hmac_sign_verify_activity"
-location = "{ws}/crates/testing/test-programs/js/activity/hmac_sign_verify.js"
-ffqn = "testing:integration/activity-hmac.hmac-sign-verify"
-params = [
-  {{ name = "key", type = "string" }},
-  {{ name = "message", type = "string" }},
-]
-return_type = "result<string, string>"
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-add.add"
-location = "{ws}/crates/testing/test-programs/exec/add.sh"
-params = [
-  {{ name = "a", type = "u32" }},
-  {{ name = "b", type = "u32" }},
-]
-return_type = "result<u32, string>"
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-greet.greet-include"
-location = "{ws}/crates/testing/test-programs/exec/greet.sh"
-params = [
-  {{ name = "name", type = "string" }},
-]
-return_type = "result<string, string>"
-env_vars = ["PATH"] # for jq
-
 [[activity_exec]]
 ffqn = "testing:integration/exec-greet.greet-inline"
 content = '''
@@ -489,83 +410,6 @@ params = [
 ]
 return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-env.read-env"
-location = "{ws}/crates/testing/test-programs/exec/read-env.sh"
-return_type = "result<string, string>"
-env_vars = [{{key = "MY_VAR", value = "hello_from_exec_env"}}]
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-error.fail"
-content = '''#!/usr/bin/env bash
-echo '"something went wrong"'
-exit 1
-'''
-return_type = "result<string, string>"
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-record.make-record"
-content = '''#!/usr/bin/env bash
-printf '{{"name": "Alice", "count": 42}}'
-'''
-return_type = "result<record {{ name: string, count: u32 }}, string>"
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-stdin.expose-secrets"
-location = "{ws}/crates/testing/test-programs/exec/expose-secrets.sh"
-return_type = "result<string, string>"
-env_vars = ["PATH"] # for jq
-secrets = ["MY_SECRET"]
-
-[[activity_exec]]
-content = '''#!/bin/sh
-true
-'''
-ffqn = "testing:integration/exec-void.void-ok"
-return_type = "result"
-
-[[activity_exec]]
-content = '''#!/bin/sh
-false
-'''
-ffqn = "testing:integration/exec-void.void-err"
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-args.echo-args"
-content = '''#!/usr/bin/env bash
-# Receives two u32 params as JSON args: $1 and $2
-printf '{{"a": %s, "b": %s}}' "$1" "$2"
-'''
-params = [
-  {{ name = "a", type = "u32" }},
-  {{ name = "b", type = "u32" }},
-]
-return_type = "result<record {{ a: u32, b: u32 }}, string>"
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-stdin-args.echo-args"
-content = '''#!/usr/bin/env bash
-set -euo pipefail
-# Receives params via the stdin JSON `params` array instead of argv.
-jq -c '{{a: .params[0], b: .params[1]}}' /dev/stdin
-'''
-params = [
-  {{ name = "a", type = "u32" }},
-  {{ name = "b", type = "u32" }},
-]
-return_type = "result<record {{ a: u32, b: u32 }}, string>"
-env_vars = ["PATH"] # for jq
-params_via_stdin = true
-
-[[activity_exec]]
-ffqn = "testing:integration/exec-stream.stream-test"
-content = '''#!/usr/bin/env bash
-echo "line1" >&2
-sleep 0.1
-echo "line2" >&2
-'''
-env_vars = ["PATH"] # for sleep
 
 [[activity_stub]]
 ffqn = "testing:integration/stubs.my-stub"
@@ -614,11 +458,6 @@ location = "{ws}/crates/testing/test-programs/js/webhook/generate_execution_id.j
 routes = [{{ methods = ["GET"], route = "/generate-execution-id" }}]
 
 [[webhook_endpoint_js]]
-name = "test_get_status_webhook"
-location = "{ws}/crates/testing/test-programs/js/webhook/get_status.js"
-routes = [{{ methods = ["GET"], route = "/get-status" }}]
-
-[[webhook_endpoint_js]]
 name = "test_import_call_activity_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/import_call_activity.js"
 routes = [{{ methods = ["GET"], route = "/import-call-activity" }}]
@@ -642,11 +481,6 @@ routes = [{{ methods = ["POST"], route = "/body-json" }}]
 name = "test_body_form_data_webhook"
 location = "{ws}/crates/testing/test-programs/js/webhook/body_form_data.js"
 routes = [{{ methods = ["POST"], route = "/body-form-data" }}]
-
-[[webhook_endpoint_js]]
-name = "test_multifile_webhook"
-location = "{ws}/crates/testing/test-programs/js/webhook/multifile/index.js"
-routes = [{{ methods = ["GET"], route = "/multifile" }}]
 "#,
     );
     debug!("Deployment TOML:{deployment_contents}");
@@ -691,6 +525,30 @@ impl TestServer {
 
     async fn start(ip: String) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
+    /// Launch a server whose deployment is exactly `deployment_toml`, letting a self-contained
+    /// test carry its own manifest instead of the shared `write_test_configs` fixtures.
+    /// `server_toml_tail` is appended to the generated `server.toml`; `files` are written into
+    /// the deployment directory (e.g. a script referenced from a `location`).
+    async fn start_inline_deployment(
+        ip: String,
+        server_toml_tail: &str,
+        deployment_toml: &str,
+        files: &[(&str, &str)],
+    ) -> Self {
+        let (tmp_dir, server_path, deployment_path) =
+            util::write_server_config(&ip, "", server_toml_tail);
+        for (rel, content) in files {
+            let path = tmp_dir.path().join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, content).unwrap();
+        }
+        std::fs::write(&deployment_path, deployment_toml).unwrap();
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
@@ -3501,84 +3359,6 @@ async fn submit_activity_and_get_result() {
     server.shutdown().await;
 }
 
-// ---- Activity: submit + events snapshot ----
-
-#[tokio::test]
-async fn greet_activity_events() {
-    let server = TestServer::start(test_addr!(5)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/activity-greet.greet",
-            vec![json!("World")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "Hello, World!" }));
-
-    let events = server.get_events(&exec_id).await;
-    let events = sanitize_json(&events);
-    insta::assert_json_snapshot!("greet_activity_events", events);
-    server.shutdown().await;
-}
-
-// ---- Activity: submit + logs snapshot ----
-
-#[tokio::test]
-async fn greet_activity_logs() {
-    let server = TestServer::start(test_addr!(6)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/activity-greet.greet",
-            vec![json!("World")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    // Consume the streamed body to wait for execution to finish.
-    let _: Value = resp.json().await.unwrap();
-
-    let logs = loop {
-        let logs = server.get_logs(&exec_id, 1).await;
-        if logs.as_array().expect("logs must be an array").len() == 1 {
-            break logs;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    let logs = sanitize_json(&logs);
-    insta::assert_json_snapshot!("greet_activity_logs", logs);
-    server.shutdown().await;
-}
-
-// ---- Activity: submit + status snapshot ----
-
-#[tokio::test]
-async fn greet_activity_status() {
-    let server = TestServer::start(test_addr!(7)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/activity-greet.greet",
-            vec![json!("World")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    // Consume the streamed body to wait for execution to finish.
-    let _: Value = resp.json().await.unwrap();
-
-    let status = server.get_status(&exec_id).await;
-    let status = sanitize_json(&status);
-    insta::assert_json_snapshot!("greet_activity_status", status);
-    server.shutdown().await;
-}
-
 // ---- Workflow: submit + events + replay ----
 
 #[tokio::test]
@@ -4408,122 +4188,6 @@ async fn submit_scheduled_execution_via_schedule_extension() {
     server.shutdown().await;
 }
 
-/// A caught `ChildError` re-thrown with `throw e` transparently
-/// reproduces the child's original err payload as the workflow's err.
-#[tokio::test]
-async fn submit_workflow_rethrows_child_execution_error() {
-    let server = TestServer::start(test_addr!(87)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/workflow-rethrow-child-error.rethrow-child-error",
-            vec![json!(7u64)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": "boom" }));
-
-    server.shutdown().await;
-}
-
-/// A child execution cancelled out-of-band surfaces to an awaiting JS parent as a
-/// `ChildError` with `.cancelled === true` and `.failureKind === "cancelled"`
-/// whose `.value` is projected onto the child's string err type.
-#[tokio::test]
-async fn submit_workflow_child_cancelled_surfaces_child_execution_error() {
-    use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
-
-    let server = TestServer::start(test_addr!(88)).await;
-    let parent_id = server.generate_execution_id().await;
-
-    // The child id is deterministic either way, but the parent's named join set makes it
-    // a well-known string (first child of `n:cancel-set`) we can reconstruct here instead
-    // of replaying the parent's generated join-set id.
-    let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("cancel-set")).unwrap();
-    let child_id = ExecutionId::Derived(
-        parent_id
-            .parse::<ExecutionId>()
-            .unwrap()
-            .next_level(&join_set_id),
-    )
-    .to_string();
-
-    // Cancel concurrently with the follow so the parent is still blocked on joinNext.
-    let follow = server.submit_follow_with_id(
-        &parent_id,
-        "testing:integration/workflow-cancel-child-error.cancel-child-error",
-        vec![],
-    );
-    let cancel = server.cancel_execution_with_retries(&child_id);
-    let (resp, ()) = tokio::join!(follow, cancel);
-
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "cancelled-child-observed" }));
-
-    server.shutdown().await;
-}
-
-/// A cancelled named sleep throws a payload-less `ChildError`; re-throwing it
-/// serializes its undefined `.value` as a null workflow err payload.
-#[tokio::test]
-async fn submit_workflow_cancelled_sleep_rethrows_null() {
-    use concepts::prefixed_ulid::DelayId;
-    use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
-
-    let server = TestServer::start(test_addr!(90)).await;
-    let execution_id = server.generate_execution_id().await;
-    let execution_id = execution_id.parse::<ExecutionId>().unwrap();
-    let join_set_id =
-        JoinSetId::new(JoinSetKind::OneOff, StrVariant::from("1-cancel-sleep")).unwrap();
-    let delay_id = DelayId::new(&execution_id, &join_set_id).to_string();
-    let execution_id = execution_id.to_string();
-
-    let follow = server.submit_follow_with_id(
-        &execution_id,
-        "testing:integration/workflow-cancel-sleep-error.cancel-sleep-error",
-        vec![],
-    );
-    let cancel = server.cancel_delay_with_retries(&delay_id);
-    let (resp, ()) = tokio::join!(follow, cancel);
-
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(resp.json::<Value>().await.unwrap(), json!({ "err": null }));
-
-    server.shutdown().await;
-}
-
-/// A cancelled join-set delay throws a `ChildError` with cancellation metadata
-/// and no business error payload.
-#[tokio::test]
-async fn submit_workflow_cancelled_delay_surfaces_child_error() {
-    use concepts::prefixed_ulid::DelayId;
-    use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
-
-    let server = TestServer::start(test_addr!(91)).await;
-    let execution_id = server.generate_execution_id().await;
-    let execution_id = execution_id.parse::<ExecutionId>().unwrap();
-    let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("cancel-delay")).unwrap();
-    let delay_id = DelayId::new(&execution_id, &join_set_id).to_string();
-    let execution_id = execution_id.to_string();
-
-    let follow = server.submit_follow_with_id(
-        &execution_id,
-        "testing:integration/workflow-cancel-delay-error.cancel-delay-error",
-        vec![],
-    );
-    let cancel = server.cancel_delay_with_retries(&delay_id);
-    let (resp, ()) = tokio::join!(follow, cancel);
-
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(
-        resp.json::<Value>().await.unwrap(),
-        json!({ "ok": "cancelled-delay-observed" })
-    );
-
-    server.shutdown().await;
-}
-
 // ---- Execution listing ----
 
 #[tokio::test]
@@ -4719,123 +4383,6 @@ async fn idempotent_submit_same_execution_id() {
     assert_eq!(resp2.status().as_u16(), 200);
     let body2: Value = resp2.json().await.unwrap();
     assert_eq!(body1, body2);
-    server.shutdown().await;
-}
-
-/// A JS webhook's `getStatus` reports the first-class `cancelling` state
-/// (via `get-status-v2`).
-///
-/// The seed needs an *uncancellable* child, not just one execution: the running
-/// server's cancellation driver finishes any `cancelling` execution once all its
-/// join-set members have responded, so a lone one would be `Finished(Cancelled)`
-/// before the webhook reads it. An uncancellable child that never responds is an
-/// await barrier the driver can't clear, holding the parent in `cancelling`.
-#[tokio::test]
-async fn webhook_js_get_status_cancelling() {
-    use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
-    use concepts::storage::{
-        AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, JoinSetRequest,
-    };
-    use concepts::{
-        ComponentId, ExecutionId, ExecutionMetadata, JoinSetId, JoinSetKind, Params, StrVariant,
-    };
-
-    // Uncancellable child (no `-cancellable` suffix) → permanent await barrier.
-    const PARENT_FFQN: FunctionFqn =
-        FunctionFqn::new_static("testing:cancel/ifc", "parent-cancellable");
-    const CHILD_FFQN: FunctionFqn = FunctionFqn::new_static("testing:cancel/ifc", "child");
-
-    let server = TestServer::start(test_addr!(86)).await;
-
-    // Seed a cancelling parent with an unfinished uncancellable child directly in
-    // the server's sqlite DB.
-    let parent_id = {
-        let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())
-            .await
-            .unwrap();
-        let conn = pool.connection().await.unwrap();
-        let now = chrono::Utc::now();
-        let create = |execution_id: ExecutionId, ffqn: FunctionFqn| CreateRequest {
-            created_at: now,
-            execution_id,
-            ffqn,
-            params: Params::empty(),
-            parent: None,
-            scheduled_at: now,
-            component_id: ComponentId::dummy_workflow(),
-            deployment_id: DEPLOYMENT_ID_DUMMY,
-            metadata: ExecutionMetadata::empty(),
-            scheduled_by: None,
-            paused: false,
-            max_persisted_value_size_bytes: u64::MAX,
-        };
-
-        let parent_id = ExecutionId::generate();
-        let version = conn
-            .create(create(parent_id.clone(), PARENT_FFQN))
-            .await
-            .unwrap();
-        let join_set_id = JoinSetId::new(JoinSetKind::OneOff, StrVariant::empty()).unwrap();
-        let version = conn
-            .append(
-                parent_id.clone(),
-                version,
-                AppendRequest {
-                    created_at: now,
-                    event: ExecutionRequest::HistoryEvent {
-                        event: HistoryEvent::JoinSetCreate {
-                            join_set_id: join_set_id.clone(),
-                        },
-                    },
-                },
-            )
-            .await
-            .unwrap();
-        let child_id = parent_id.next_level(&join_set_id);
-        conn.append(
-            parent_id.clone(),
-            version,
-            AppendRequest {
-                created_at: now,
-                event: ExecutionRequest::HistoryEvent {
-                    event: HistoryEvent::JoinSetRequest {
-                        join_set_id,
-                        request: JoinSetRequest::ChildExecutionRequest {
-                            child_execution_id: child_id.clone(),
-                            target_ffqn: CHILD_FFQN,
-                            params: concepts::storage::PersistedParams::Inline(Params::empty()),
-                            params_hash: None,
-                            result: Ok(()),
-                        },
-                    },
-                },
-            },
-        )
-        .await
-        .unwrap();
-        conn.create(create(ExecutionId::Derived(child_id), CHILD_FFQN))
-            .await
-            .unwrap();
-        conn.append_cancel_workflow_requested_with_retries(&parent_id, now)
-            .await
-            .unwrap();
-        pool.close().await;
-        parent_id
-    };
-
-    let resp = server
-        .client
-        .get(format!("{}/get-status", server.webhook_base_url))
-        .header("x-execution-id", parent_id.to_string())
-        .send()
-        .await
-        .expect("webhook request failed");
-    assert_eq!(resp.status().as_u16(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(
-        body["executionStatus"]["status"],
-        serde_json::json!("cancelling")
-    );
     server.shutdown().await;
 }
 
@@ -5117,38 +4664,6 @@ async fn hot_redeploy_webhook_js_remove_endpoint_webapi() {
     server.shutdown().await;
 }
 
-// ---- crypto.subtle ----
-
-#[tokio::test]
-async fn activity_js_crypto_subtle_hmac_sign_verify() {
-    const KEY: &str = "super-secret-key";
-    const MSG: &str = "hello world";
-
-    let server = TestServer::start(test_addr!(34)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/activity-hmac.hmac-sign-verify",
-            vec![json!(KEY), json!(MSG)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-
-    // The JS activity returns the HMAC-SHA256 signature as a hex string.
-    let js_hex = body["ok"].as_str().expect("expected ok string");
-
-    // Compute the expected HMAC-SHA256 on the Rust side and compare.
-    let mut mac = Hmac::<Sha256>::new_from_slice(KEY.as_bytes()).unwrap();
-    mac.update(MSG.as_bytes());
-    let mut expected = String::with_capacity(64);
-    for b in mac.finalize().into_bytes() {
-        write!(expected, "{b:02x}").unwrap();
-    }
-
-    assert_eq!(js_hex, expected, "JS HMAC-SHA256 signature must match Rust");
-    server.shutdown().await;
-}
-
 // ---- Backtrace API ----
 
 #[tokio::test]
@@ -5314,247 +4829,5 @@ async fn backtrace_source_workflow_calling_activity() {
         "unregistered source file must be 404"
     );
 
-    server.shutdown().await;
-}
-
-// ---- Activity exec: native process activities ----
-
-#[tokio::test]
-async fn activity_exec_add() {
-    let server = TestServer::start(test_addr!(50)).await;
-    let resp = server
-        .submit_follow("testing:integration/exec-add.add", vec![json!(3), json!(5)])
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": 8 }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_greet_inline() {
-    activity_exec_greet(test_addr!(52), "inline").await;
-}
-
-#[tokio::test]
-async fn activity_exec_greet_include() {
-    activity_exec_greet(test_addr!(53), "include").await;
-}
-
-async fn activity_exec_greet(ip: String, suffix: &str) {
-    let server = TestServer::start(ip).await;
-    let resp = server
-        .submit_follow(
-            &format!("testing:integration/exec-greet.greet-{suffix}"),
-            vec![json!("World")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "Hello, World!" }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_record_return_type() {
-    let server = TestServer::start(test_addr!(54)).await;
-    let resp = server
-        .submit_follow("testing:integration/exec-record.make-record", vec![])
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": { "name": "Alice", "count": 42 } }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_stdin_secrets() {
-    let server = TestServer::start(test_addr!(55)).await;
-    let resp = server
-        .submit_follow("testing:integration/exec-stdin.expose-secrets", vec![])
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    // Secrets are serialized as a JSON object under the `secrets` key to stdin; the script wraps it as a JSON string.
-    let ok_val = body["ok"].as_str().expect("expected ok string");
-    let parsed: Value = serde_json::from_str(ok_val).expect("inner value must be valid JSON");
-    assert_eq!(
-        parsed,
-        json!({ "secrets": { "MY_SECRET": "s3cret_value" } })
-    );
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_void_ok() {
-    let server = TestServer::start(test_addr!(56)).await;
-    let resp = server
-        .submit_follow("testing:integration/exec-void.void-ok", vec![])
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": null }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_void_err() {
-    let server = TestServer::start(test_addr!(57)).await;
-    let resp = server
-        .submit_follow("testing:integration/exec-void.void-err", vec![])
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": null }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_args_passthrough() {
-    let server = TestServer::start(test_addr!(58)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/exec-args.echo-args",
-            vec![json!(10), json!(20)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    // The bash script receives JSON-serialized params as positional args ($1=10, $2=20)
-    // and echoes them back as a JSON record: {"a": 10, "b": 20}
-    assert_eq!(body, json!({ "ok": { "a": 10, "b": 20 } }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_args_via_stdin() {
-    let server = TestServer::start(test_addr!(82)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/exec-stdin-args.echo-args",
-            vec![json!(10), json!(20)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    // With params_via_stdin, params arrive in the stdin JSON `params` array
-    // (argv carries none); the script echoes them back as {"a": 10, "b": 20}.
-    assert_eq!(body, json!({ "ok": { "a": 10, "b": 20 } }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_env_vars() {
-    let server = TestServer::start(test_addr!(59)).await;
-    let resp = server
-        .submit_follow("testing:integration/exec-env.read-env", vec![])
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "hello_from_exec_env" }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_error_exit() {
-    let server = TestServer::start(test_addr!(60)).await;
-    let resp = server
-        .submit_follow("testing:integration/exec-error.fail", vec![])
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": "something went wrong" }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_exec_stream_logs() {
-    let server = TestServer::start(test_addr!(61)).await;
-    let exec_id = server.generate_execution_id().await;
-
-    info!("About to submit the execution");
-    let resp = server
-        .submit_follow_with_id(
-            &exec_id,
-            "testing:integration/exec-stream.stream-test",
-            vec![],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": null }));
-
-    let stderr_entries = loop {
-        let logs = server.get_logs(&exec_id, 2).await;
-        debug!("Fetched logs: {logs:?}");
-        let stderr_entries: Vec<Value> = logs
-            .as_array()
-            .expect("logs must be an array")
-            .iter()
-            .filter(|entry| entry["type"] == "stream" && entry["stream_type"] == "stderr")
-            .cloned()
-            .collect();
-        if stderr_entries.len() == 2 {
-            break stderr_entries;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
-
-    // Streaming must produce 2 separate stderr entries (one per echo).
-    assert_eq!(
-        2,
-        stderr_entries.len(),
-        "expected 2 stderr stream entries, got {}: {stderr_entries:?}",
-        stderr_entries.len(),
-    );
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn activity_js_multifile() {
-    let server = TestServer::start(test_addr!(120)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/activity-multifile.greet",
-            vec![json!("world")],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(
-        resp.json::<Value>().await.unwrap(),
-        json!({ "ok": "hello, world!!" })
-    );
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn workflow_js_multifile() {
-    let server = TestServer::start(test_addr!(121)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/workflow-multifile.add-three",
-            vec![json!(2), json!(3), json!(5)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(resp.json::<Value>().await.unwrap(), json!({ "ok": 10 }));
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn webhook_js_multifile() {
-    let server = TestServer::start(test_addr!(122)).await;
-    let resp = server
-        .client
-        .get(format!("{}/multifile", server.webhook_base_url))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
-    assert_eq!(
-        resp.json::<Value>().await.unwrap(),
-        json!({ "ok": true, "message": "multifile webhook works" })
-    );
     server.shutdown().await;
 }

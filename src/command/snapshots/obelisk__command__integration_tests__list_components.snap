@@ -6,131 +6,7 @@ expression: components
   {
     "component_id": {
       "component_type": "activity",
-      "name": "exec-add.add",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/exec/add.sh",
-          "digest": "sha256:<REDACTED>",
-          "size": 40
-        },
-        "role": "exec_program"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-args.echo-args",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": []
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-env.read-env",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/exec/read-env.sh",
-          "digest": "sha256:<REDACTED>",
-          "size": 37
-        },
-        "role": "exec_program"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-error.fail",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": []
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-greet.greet-include",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/exec/greet.sh",
-          "digest": "sha256:<REDACTED>",
-          "size": 167
-        },
-        "role": "exec_program"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
       "name": "exec-greet.greet-inline",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": []
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-record.make-record",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": []
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-stdin-args.echo-args",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": []
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-stdin.expose-secrets",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/exec/expose-secrets.sh",
-          "digest": "sha256:<REDACTED>",
-          "size": 59
-        },
-        "role": "exec_program"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-stream.stream-test",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": []
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-void.void-err",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": []
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "exec-void.void-ok",
       "component_digest": "sha256:<REDACTED>"
     },
     "files": []
@@ -189,40 +65,6 @@ expression: components
   {
     "component_id": {
       "component_type": "activity",
-      "name": "test_greet_activity",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/greet.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 113
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "test_hmac_sign_verify_activity",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/hmac_sign_verify.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 631
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
       "name": "test_make_record_activity",
       "component_digest": "sha256:<REDACTED>"
     },
@@ -234,39 +76,6 @@ expression: components
           "size": 84
         },
         "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "activity",
-      "name": "test_multifile_activity",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/multifile/index.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 169
-        },
-        "role": "js_entrypoint"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/multifile/lib/greeter.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 108
-        },
-        "role": "js_module"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/activity/multifile/lib/util.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 63
-        },
-        "role": "js_module"
       }
     ]
   },
@@ -451,23 +260,6 @@ expression: components
   {
     "component_id": {
       "component_type": "webhook_endpoint",
-      "name": "test_get_status_webhook",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/webhook/get_status.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 253
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "webhook_endpoint",
       "name": "test_headers_webhook",
       "component_digest": "sha256:<REDACTED>"
     },
@@ -530,31 +322,6 @@ expression: components
           "size": 265
         },
         "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "webhook_endpoint",
-      "name": "test_multifile_webhook",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/webhook/multifile/index.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 175
-        },
-        "role": "js_entrypoint"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/webhook/multifile/lib/render.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 75
-        },
-        "role": "js_module"
       }
     ]
   },
@@ -655,57 +422,6 @@ expression: components
           "path": "crates/testing/test-programs/js/workflow/call_stub.js",
           "digest": "sha256:<REDACTED>",
           "size": 390
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_cancel_child_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/cancel_child_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 1394
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_cancel_delay_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/cancel_delay_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 1077
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_cancel_sleep_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/cancel_sleep_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 1032
         },
         "role": "js_entrypoint"
       }
@@ -859,48 +575,6 @@ expression: components
           "path": "crates/testing/test-programs/js/workflow/math_random.js",
           "digest": "sha256:<REDACTED>",
           "size": 274
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_multifile_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/multifile/index.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 208
-        },
-        "role": "js_entrypoint"
-      },
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/multifile/lib/math.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 141
-        },
-        "role": "js_module"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_rethrow_child_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/rethrow_child_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 859
         },
         "role": "js_entrypoint"
       }

@@ -7,9 +7,6 @@ expression: functions
     "ffqn": "testing:integration/activity.add"
   },
   {
-    "ffqn": "testing:integration/activity-greet.greet"
-  },
-  {
     "ffqn": "testing:integration/fetch-get-denied.fetch-get"
   },
   {
@@ -28,46 +25,7 @@ expression: functions
     "ffqn": "testing:integration/activity-throw-null.throw-null"
   },
   {
-    "ffqn": "testing:integration/activity-multifile.greet"
-  },
-  {
-    "ffqn": "testing:integration/activity-hmac.hmac-sign-verify"
-  },
-  {
-    "ffqn": "testing:integration/exec-add.add"
-  },
-  {
-    "ffqn": "testing:integration/exec-greet.greet-include"
-  },
-  {
     "ffqn": "testing:integration/exec-greet.greet-inline"
-  },
-  {
-    "ffqn": "testing:integration/exec-env.read-env"
-  },
-  {
-    "ffqn": "testing:integration/exec-error.fail"
-  },
-  {
-    "ffqn": "testing:integration/exec-record.make-record"
-  },
-  {
-    "ffqn": "testing:integration/exec-stdin.expose-secrets"
-  },
-  {
-    "ffqn": "testing:integration/exec-void.void-ok"
-  },
-  {
-    "ffqn": "testing:integration/exec-void.void-err"
-  },
-  {
-    "ffqn": "testing:integration/exec-args.echo-args"
-  },
-  {
-    "ffqn": "testing:integration/exec-stdin-args.echo-args"
-  },
-  {
-    "ffqn": "testing:integration/exec-stream.stream-test"
   },
   {
     "ffqn": "testing:integration/stubs.my-stub"
@@ -118,18 +76,6 @@ expression: functions
     "ffqn": "testing:integration/workflow-join-next-try-semantics.join-next-try-semantics"
   },
   {
-    "ffqn": "testing:integration/workflow-rethrow-child-error.rethrow-child-error"
-  },
-  {
-    "ffqn": "testing:integration/workflow-cancel-child-error.cancel-child-error"
-  },
-  {
-    "ffqn": "testing:integration/workflow-cancel-sleep-error.cancel-sleep-error"
-  },
-  {
-    "ffqn": "testing:integration/workflow-cancel-delay-error.cancel-delay-error"
-  },
-  {
     "ffqn": "testing:integration/workflow-math-random.math-random"
   },
   {
@@ -137,8 +83,5 @@ expression: functions
   },
   {
     "ffqn": "testing:integration/workflow-return-wrong-type.return-wrong-type"
-  },
-  {
-    "ffqn": "testing:integration/workflow-multifile.add-three"
   }
 ]
