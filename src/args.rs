@@ -540,6 +540,17 @@ pub(crate) enum Deployment {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Generate {
+    /// Calculate reviewed configuration digests for exec and secret-exposing VM activities.
+    SecretConfigDigest {
+        /// Path to the deployment TOML file.
+        #[arg(long, short)]
+        deployment: PathBuf,
+        /// Limit output to this resolved component name.
+        component_name: Option<String>,
+        /// Output structured JSON.
+        #[arg(short, long)]
+        json: bool,
+    },
     /// Generate extension WIT files that are automatically implemented by Obelisk
     /// based on the exported interfaces of the component (e.g. `-schedule`, `-await-next` variants).
     WitExtensions {

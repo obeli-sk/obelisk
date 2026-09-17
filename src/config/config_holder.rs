@@ -226,13 +226,12 @@ async fn write_config_file(
 mod tests {
     use super::{OBELISK_TRUSTED_SERVER_TOML, ServerConfigToml};
     use crate::config::deployment::MethodsInput;
-    use crate::config::server::AllowExecActivities;
 
     #[test]
-    fn trusted_server_config_allows_exec_and_outbound_http_without_secrets() {
+    fn trusted_server_config_allows_outbound_http_but_not_exec() {
         let config: ServerConfigToml = toml::from_str(OBELISK_TRUSTED_SERVER_TOML).unwrap();
 
-        assert_eq!(config.allow_exec_activities, AllowExecActivities::AllowAny);
+        assert!(config.allowed_exec_activities.is_empty());
         assert!(config.secrets.is_empty());
         let [host] = config.outbound_http.allowed_hosts.as_slice() else {
             panic!("expected one outbound HTTP host");

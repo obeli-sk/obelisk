@@ -183,7 +183,7 @@
           "format": "uint64",
           "minimum": 0
         },
-        "secrets": {
+        "exposed_secrets": {
           "type": "array",
           "items": {
             "type": "string"

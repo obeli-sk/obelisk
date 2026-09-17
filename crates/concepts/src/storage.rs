@@ -1529,6 +1529,7 @@ pub enum SystemEventCode {
     DeploymentSwitchCompleted,
     DeploymentSwitchFailed,
     ComponentHttpPolicyApplied,
+    ComponentSecretExposureAuthorized,
     OutboundHttpDenied,
     AdminExecutionDeleteStarted,
     AdminExecutionDeleteCompleted,
@@ -1558,6 +1559,7 @@ impl SystemEventCode {
             Self::DeploymentSwitchCompleted => "deployment.switch.completed",
             Self::DeploymentSwitchFailed => "deployment.switch.failed",
             Self::ComponentHttpPolicyApplied => "component.http_policy.applied",
+            Self::ComponentSecretExposureAuthorized => "component.secret_exposure.authorized",
             Self::OutboundHttpDenied => "outbound_http.denied",
             Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
             Self::AdminExecutionDeleteCompleted => "admin.execution.delete.completed",
@@ -1599,6 +1601,7 @@ impl SystemEventCode {
             Self::DeploymentSwitchCompleted => "Deployment switch completed",
             Self::DeploymentSwitchFailed => "Deployment switch failed",
             Self::ComponentHttpPolicyApplied => "Component HTTP policy applied",
+            Self::ComponentSecretExposureAuthorized => "Component secret exposure authorized",
             Self::OutboundHttpDenied => "Outbound HTTP request denied",
             Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
             Self::AdminExecutionDeleteCompleted => "Execution tree deletion completed",
@@ -1693,6 +1696,9 @@ impl SystemEvent {
             "deployment.switch.failed" => SystemEventCode::DeploymentSwitchFailed.message(),
             "component.http_policy.applied" => {
                 SystemEventCode::ComponentHttpPolicyApplied.message()
+            }
+            "component.secret_exposure.authorized" => {
+                SystemEventCode::ComponentSecretExposureAuthorized.message()
             }
             "outbound_http.denied" => SystemEventCode::OutboundHttpDenied.message(),
             "admin.execution.delete.started" => {
@@ -3769,6 +3775,7 @@ mod tests {
             SystemEventCode::DeploymentSwitchCompleted,
             SystemEventCode::DeploymentSwitchFailed,
             SystemEventCode::ComponentHttpPolicyApplied,
+            SystemEventCode::ComponentSecretExposureAuthorized,
             SystemEventCode::OutboundHttpDenied,
             SystemEventCode::AdminExecutionDeleteStarted,
             SystemEventCode::AdminExecutionDeleteCompleted,

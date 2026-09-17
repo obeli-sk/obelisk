@@ -14,8 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[workflows].lock_extension_leeway`; configure it on each workflow component.
 - **Breaking:** *(config)* Removed the `${DEPLOYMENT_DIR}/` path prefix. Deployment-owned files
   use bare paths relative to `deployment.toml`.
-- **Breaking:** *(config)* Removed unnamed `allow_exec_activities` digest lists. Use a map from
-  activity names to content digests.
+- **Breaking:** *(config)* Renamed `allow_exec_activities` to `allowed_exec_activities`. Its values
+  are now secret exposure digests, which bind the executable content and complete exposed-secret
+  set, instead of executable content digests. Existing approvals must be regenerated with
+  `obelisk generate secret-config-digest`. Boolean values and unnamed digest lists are no longer
+  accepted; approvals must map activity names to one or more secret exposure digests.
+- **Breaking:** *(config)* Renamed `activity_exec.secrets` to
+  `activity_exec.exposed_secrets`.
 - **Breaking:** *(api)* Removed the `hot_redeploy` REST request alias. Use `apply` when switching
   deployments without restarting.
 - **Breaking:** *(grpc)* Removed the deprecated `function_name_prefix` execution filter. Use the
@@ -28,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- *(secrets)* Added `SecretExposureDigest` authorization for native exec and VM plaintext secret
+  exposure. Server secret entries grant reviewed component name and digest pairs through
+  `exposed_to`, and `obelisk generate secret-config-digest` produces reviewable, pasteable grants.
+  Digest identity binds executable content and the complete exposed-secret set. Exec activities
+  also require the same digest under `[allowed_exec_activities]`.
 - *(activity-vm)* Added experimental `[[activity_vm]]` deployment components for running
   Nix-packaged Linux programs inside a container2wasm appliance hosted by Wasmtime. The
   host fetches and verifies declared Nix closures and exposes the cache read-only through virtio-9p,

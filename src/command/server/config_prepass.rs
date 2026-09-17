@@ -312,7 +312,7 @@ pub(super) fn preflight(
         }
         // Exec activities reference secrets directly (exposed on stdin), not via `allowed_host`.
         for exec in &deployment.activities_exec {
-            for name in &exec.secrets {
+            for name in &exec.exposed_secrets {
                 if secret_registry.secret_lookup(name).is_none() {
                     unregistered.insert(name.clone());
                 }
@@ -440,7 +440,7 @@ pub(super) fn collect_deployment_unregistered_secrets(
         collect_unregistered_allowed_host_secrets(hosts, secret_registry, unregistered);
     }
     for exec in &deployment.activities_exec {
-        for name in &exec.secrets {
+        for name in &exec.exposed_secrets {
             if secret_registry.secret_lookup(name).is_none() {
                 unregistered.insert(name.clone());
             }

@@ -270,7 +270,7 @@ fn find_component_for_push(
                     params,
                     return_type,
                     max_output_bytes: cfg.max_output_bytes,
-                    secrets: cfg.secrets.clone(),
+                    exposed_secrets: cfg.exposed_secrets.clone(),
                     params_via_stdin: cfg.params_via_stdin,
                 },
             })
@@ -518,7 +518,7 @@ fn build_component_table(
         params,
         return_type,
         max_output_bytes,
-        secrets,
+        exposed_secrets,
         params_via_stdin,
     } = metadata
     {
@@ -542,12 +542,12 @@ fn build_component_table(
         if *params_via_stdin {
             t["params_via_stdin"] = value(true);
         }
-        if !secrets.is_empty() {
+        if !exposed_secrets.is_empty() {
             let mut arr = toml_edit::Array::new();
-            for s in secrets {
+            for s in exposed_secrets {
                 arr.push(s.clone());
             }
-            t["secrets"] = Item::Value(toml_edit::Value::Array(arr));
+            t["exposed_secrets"] = Item::Value(toml_edit::Value::Array(arr));
         }
         if let Some(duration) = lock_duration {
             write_lock_expiry(&mut t, *duration);
@@ -941,7 +941,7 @@ mod tests {
             }],
             return_type: Some("result<string>".to_string()),
             max_output_bytes: 1024,
-            secrets: Vec::new(),
+            exposed_secrets: Vec::new(),
             params_via_stdin: false,
         };
         let content_digest: ContentDigest =

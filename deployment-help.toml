@@ -195,9 +195,9 @@
 ## The child receives `{"params":[...]}` on stdin (alongside `secrets`, if configured).
 ## Default: false.
 # params_via_stdin = false
-## Secrets: operator-owned secret names from the server.toml `[secrets]` table, piped to the child's stdin as JSON.
+## Exposed secrets: operator-owned secret names authorized in server.toml, piped to the child's stdin as JSON.
 ## The child receives `{"secrets":{"NAME":"value",...}}` on stdin. Use `jq .secrets.NAME /dev/stdin` or equivalent to parse.
-# secrets = ["MY_SECRET"]
+# exposed_secrets = ["MY_SECRET"]
 
 ### EXPERIMENTAL VM Activity components — run Nix-packaged Linux executables in a Wasmtime sandbox
 ### WARNING: activity_vm configuration, guest ABI, cache layout, and runtime behavior may

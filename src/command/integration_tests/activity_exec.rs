@@ -124,7 +124,7 @@ jq -R . /dev/stdin
 '''
 return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
-secrets = ["MY_SECRET"]
+exposed_secrets = ["MY_SECRET"]
 "#;
     let server =
         TestServer::start_inline_deployment(test_addr!(55), "", deployment_toml, &[]).await;

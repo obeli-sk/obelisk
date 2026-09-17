@@ -751,7 +751,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
     /// table) to expose to the script in the stdin JSON `secrets` object.
     #[serde(default)]
-    pub(crate) secrets: Vec<String>,
+    pub(crate) exposed_secrets: Vec<String>,
     /// Pass parameters to the program via the stdin JSON `params` array instead
     /// of argv. Use this for large payloads that would exceed the `execve` argument-size
     /// limit. Defaults to `false` (parameters passed as command-line arguments).
