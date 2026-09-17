@@ -798,7 +798,37 @@
       "type": "object",
       "properties": {
         "gc": {
-          "$ref": "#/$defs/GarbageCollectionTomlConfig"
+          "$ref": "#/$defs/GarbageCollectionTomlConfig",
+          "default": {
+            "enabled": true,
+            "interval": {
+              "seconds": 30
+            },
+            "batch_size": 1000,
+            "batch_delay": {
+              "milliseconds": 25
+            },
+            "retention": {
+              "executions": {
+                "enabled": true,
+                "max_age": {
+                  "hours": 720
+                }
+              },
+              "deployments": {
+                "enabled": true,
+                "max_age": {
+                  "hours": 720
+                }
+              },
+              "system_events": {
+                "enabled": true,
+                "max_age": {
+                  "hours": 720
+                }
+              }
+            }
+          }
         }
       },
       "additionalProperties": false
@@ -829,7 +859,27 @@
           }
         },
         "retention": {
-          "$ref": "#/$defs/RetentionTomlConfig"
+          "$ref": "#/$defs/RetentionTomlConfig",
+          "default": {
+            "executions": {
+              "enabled": true,
+              "max_age": {
+                "hours": 720
+              }
+            },
+            "deployments": {
+              "enabled": true,
+              "max_age": {
+                "hours": 720
+              }
+            },
+            "system_events": {
+              "enabled": true,
+              "max_age": {
+                "hours": 720
+              }
+            }
+          }
         }
       },
       "additionalProperties": false
@@ -838,13 +888,31 @@
       "type": "object",
       "properties": {
         "executions": {
-          "$ref": "#/$defs/RetentionPolicyTomlConfig"
+          "$ref": "#/$defs/RetentionPolicyTomlConfig",
+          "default": {
+            "enabled": true,
+            "max_age": {
+              "hours": 720
+            }
+          }
         },
         "deployments": {
-          "$ref": "#/$defs/RetentionPolicyTomlConfig"
+          "$ref": "#/$defs/RetentionPolicyTomlConfig",
+          "default": {
+            "enabled": true,
+            "max_age": {
+              "hours": 720
+            }
+          }
         },
         "system_events": {
-          "$ref": "#/$defs/RetentionPolicyTomlConfig"
+          "$ref": "#/$defs/RetentionPolicyTomlConfig",
+          "default": {
+            "enabled": true,
+            "max_age": {
+              "hours": 720
+            }
+          }
         }
       },
       "additionalProperties": false

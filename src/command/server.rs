@@ -68,6 +68,7 @@ use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::AllowExecActivities;
 use crate::config::server::CancelWatcherTomlConfig;
 use crate::config::server::DatabaseConfigToml;
+use crate::config::server::GarbageCollectionTomlConfig;
 use crate::config::server::HttpServer;
 use crate::config::server::SQLITE_FILE_NAME;
 use crate::config::server::ServerConfigToml;
@@ -1691,11 +1692,10 @@ pub(crate) async fn run_internal(
         .as_semaphore();
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
-    let maintenance_gc = config
-        .maintenance
-        .gc
+    let maintenance_gc_config = config.maintenance.gc;
+    let maintenance_gc = maintenance_gc_config
         .enabled
-        .then(|| maintenance_gc::ValidatedConfig::new(config.maintenance.gc))
+        .then(|| maintenance_gc::ValidatedConfig::new(maintenance_gc_config))
         .transpose()?;
     let database = config.database.clone();
 
@@ -1954,6 +1954,7 @@ pub(crate) async fn run_internal(
         global_webhook_instance_limiter,
         timers_watcher,
         cancel_watcher,
+        maintenance_gc_config,
         maintenance_gc,
         &cancel_registry,
         &termination_watcher,
@@ -3641,6 +3642,7 @@ async fn record_http_policy_audits(
 async fn record_server_configuration_audit(
     db_pool: &dyn DbPool,
     server_verified: &ServerVerified,
+    maintenance_gc_config: GarbageCollectionTomlConfig,
 ) -> Option<SystemEventId> {
     let snapshot = serde_json::json!({
         "format": "obelisk-server-configuration-v1",
@@ -3660,6 +3662,9 @@ async fn record_server_configuration_audit(
         None,
         serde_json::json!({
             "obelisk_version": PKG_VERSION,
+            "maintenance": {
+                "gc": maintenance_gc_config,
+            },
         }),
         digest,
         bytes,
@@ -3730,6 +3735,7 @@ async fn spawn_tasks_and_threads(
     global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
+    maintenance_gc_config: GarbageCollectionTomlConfig,
     maintenance_gc: Option<maintenance_gc::ValidatedConfig>,
     cancel_registry: &CancelRegistry,
     termination_watcher: &watch::Receiver<()>,
@@ -3738,10 +3744,13 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
-    let server_configuration_event_id =
-        record_server_configuration_audit(db_pool.as_ref(), &server_verified)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
+    let server_configuration_event_id = record_server_configuration_audit(
+        db_pool.as_ref(),
+        &server_verified,
+        maintenance_gc_config,
+    )
+    .await
+    .ok_or_else(|| anyhow::anyhow!("cannot persist server configuration audit"))?;
     server_verified.server_configuration_event_id = Some(server_configuration_event_id);
     record_http_policy_audits(
         db_pool.as_ref(),
@@ -3840,21 +3849,22 @@ async fn spawn_tasks_and_threads(
         log_forwarder_sender.clone(),
         DEFAULT_SUBMIT_CONCURRENCY,
     );
-    let maintenance_gc = maintenance_gc.map(|config| {
-        maintenance_gc::spawn(
+    let maintenance_gc = if let Some(config) = maintenance_gc {
+        Some(maintenance_gc::spawn(
             db_pool.clone(),
             deployment_switch_manager.clone(),
             termination_watcher.clone(),
             config,
-        )
-    });
+        ))
+    } else {
+        warn!("Periodic garbage collection is disabled");
+        None
+    };
     let server_init = ServerInit {
         server_verified,
         deployment_ctx,
-        // deployment_id,
         db_pool,
         db_close,
-        // exec_join_handles,
         timers_watcher,
         cancel_watcher,
         cancellation_driver,
