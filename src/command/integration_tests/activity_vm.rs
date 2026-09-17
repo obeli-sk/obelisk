@@ -217,8 +217,7 @@ secrets = ["VM_SECRET"]
 replace_in = ["headers"]
 "#,
     );
-    let server =
-        TestServer::start_inline_deployment(ip, &server_toml, &deployment_toml, &[]).await;
+    let server = TestServer::start_inline_deployment(ip, &server_toml, &deployment_toml, &[]).await;
     let response = server.submit_follow("testing:vm/http.run", vec![]).await;
     assert_eq!(response.status().as_u16(), 201);
     assert_eq!(

@@ -126,7 +126,8 @@ return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
 secrets = ["MY_SECRET"]
 "#;
-    let server = TestServer::start_inline_deployment(test_addr!(55), "", deployment_toml, &[]).await;
+    let server =
+        TestServer::start_inline_deployment(test_addr!(55), "", deployment_toml, &[]).await;
     let resp = server
         .submit_follow("testing:integration/exec-stdin.expose-secrets", vec![])
         .await;
@@ -291,7 +292,8 @@ echo "line2" >&2
 '''
 env_vars = ["PATH"] # for sleep
 "#;
-    let server = TestServer::start_inline_deployment(test_addr!(61), "", deployment_toml, &[]).await;
+    let server =
+        TestServer::start_inline_deployment(test_addr!(61), "", deployment_toml, &[]).await;
     let exec_id = server.generate_execution_id().await;
 
     info!("About to submit the execution");

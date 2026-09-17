@@ -38,57 +38,57 @@ location = "./multifile-webhook/index.js"
 routes = [{ methods = ["GET"], route = "/multifile" }]
 "#;
 
-const ADD_JS: &str = r#"export default function add(a, b) {
+const ADD_JS: &str = r"export default function add(a, b) {
     return a + b;
 }
-"#;
+";
 
-const ACTIVITY_INDEX_JS: &str = r#"import { greet } from './lib/greeter.js';
+const ACTIVITY_INDEX_JS: &str = r"import { greet } from './lib/greeter.js';
 import { exclaim } from './lib/util.js';
 
 export default function multifileActivity(name) {
     return exclaim(greet(name));
 }
-"#;
+";
 
-const ACTIVITY_GREETER_JS: &str = r#"import { exclaim } from './util.js';
+const ACTIVITY_GREETER_JS: &str = r"import { exclaim } from './util.js';
 
 export function greet(name) {
     return exclaim(`hello, ${name}`);
 }
-"#;
+";
 
-const ACTIVITY_UTIL_JS: &str = r#"export function exclaim(message) {
+const ACTIVITY_UTIL_JS: &str = r"export function exclaim(message) {
     return message + '!';
 }
-"#;
+";
 
-const WORKFLOW_INDEX_JS: &str = r#"import * as activity from 'testing:integration/activity';
+const WORKFLOW_INDEX_JS: &str = r"import * as activity from 'testing:integration/activity';
 import { computeTotal } from './lib/math.js';
 
 export default function multifileWorkflow(a, b, c) {
     return computeTotal(activity.add(a, b), c);
 }
-"#;
+";
 
-const WORKFLOW_MATH_JS: &str = r#"import * as activity from 'testing:integration/activity';
+const WORKFLOW_MATH_JS: &str = r"import * as activity from 'testing:integration/activity';
 
 export function computeTotal(partial, c) {
     return activity.add(partial, c);
 }
-"#;
+";
 
-const WEBHOOK_INDEX_JS: &str = r#"import { renderJson } from './lib/render.js';
+const WEBHOOK_INDEX_JS: &str = r"import { renderJson } from './lib/render.js';
 
 export default function multifileWebhook(_request) {
     return renderJson({ ok: true, message: 'multifile webhook works' });
 }
-"#;
+";
 
-const WEBHOOK_RENDER_JS: &str = r#"export function renderJson(payload) {
+const WEBHOOK_RENDER_JS: &str = r"export function renderJson(payload) {
     return Response.json(payload);
 }
-"#;
+";
 
 async fn start(ip: String) -> TestServer {
     let files = [
