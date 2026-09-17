@@ -3863,10 +3863,8 @@ async fn spawn_tasks_and_threads(
     let server_init = ServerInit {
         server_verified,
         deployment_ctx,
-        // deployment_id,
         db_pool,
         db_close,
-        // exec_join_handles,
         timers_watcher,
         cancel_watcher,
         cancellation_driver,
