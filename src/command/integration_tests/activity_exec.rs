@@ -1,17 +1,5 @@
 use super::*;
 
-impl TestServer {
-    async fn start_activity_exec(ip: String, deployment_toml: &str, files: &[(&str, &str)]) -> Self {
-        let (tmp_dir, server_path, deployment_path) = util::write_server_config(&ip, "", "");
-        for (rel, content) in files {
-            std::fs::write(tmp_dir.path().join(rel), content).unwrap();
-        }
-        std::fs::write(&deployment_path, deployment_toml).unwrap();
-        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
-    }
-}
-
 async fn activity_exec_case(
     ip: String,
     deployment_toml: &str,
@@ -20,7 +8,7 @@ async fn activity_exec_case(
     params: Vec<Value>,
     expected: Value,
 ) {
-    let server = TestServer::start_activity_exec(ip, deployment_toml, files).await;
+    let server = TestServer::start_inline_deployment(ip, "", deployment_toml, files).await;
     let response = server.submit_follow(ffqn, params).await;
     assert_eq!(response.status().as_u16(), 201, "submitting {ffqn}");
     assert_eq!(response.json::<Value>().await.unwrap(), expected, "{ffqn}");
@@ -138,7 +126,7 @@ return_type = "result<string, string>"
 env_vars = ["PATH"] # for jq
 secrets = ["MY_SECRET"]
 "#;
-    let server = TestServer::start_activity_exec(test_addr!(55), deployment_toml, &[]).await;
+    let server = TestServer::start_inline_deployment(test_addr!(55), "", deployment_toml, &[]).await;
     let resp = server
         .submit_follow("testing:integration/exec-stdin.expose-secrets", vec![])
         .await;
@@ -303,7 +291,7 @@ echo "line2" >&2
 '''
 env_vars = ["PATH"] # for sleep
 "#;
-    let server = TestServer::start_activity_exec(test_addr!(61), deployment_toml, &[]).await;
+    let server = TestServer::start_inline_deployment(test_addr!(61), "", deployment_toml, &[]).await;
     let exec_id = server.generate_execution_id().await;
 
     info!("About to submit the execution");

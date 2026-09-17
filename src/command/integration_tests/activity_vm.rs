@@ -1,15 +1,5 @@
 use super::*;
 
-impl TestServer {
-    async fn start_activity_vm(ip: String, server_toml_lines: &str, deployment_toml: &str) -> Self {
-        let (tmp_dir, server_path, deployment_path) =
-            util::write_server_config(&ip, "", server_toml_lines);
-        std::fs::write(&deployment_path, deployment_toml).unwrap();
-        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
-    }
-}
-
 async fn activity_vm_case(
     ip: String,
     server_toml: &str,
@@ -18,7 +8,7 @@ async fn activity_vm_case(
     params: Vec<Value>,
     expected: Value,
 ) {
-    let server = TestServer::start_activity_vm(ip, server_toml, deployment_toml).await;
+    let server = TestServer::start_inline_deployment(ip, server_toml, deployment_toml, &[]).await;
     let response = server.submit_follow(ffqn, params).await;
     assert_eq!(response.status().as_u16(), 201, "submitting {ffqn}");
     assert_eq!(response.json::<Value>().await.unwrap(), expected, "{ffqn}");
@@ -227,7 +217,8 @@ secrets = ["VM_SECRET"]
 replace_in = ["headers"]
 "#,
     );
-    let server = TestServer::start_activity_vm(ip, &server_toml, &deployment_toml).await;
+    let server =
+        TestServer::start_inline_deployment(ip, &server_toml, &deployment_toml, &[]).await;
     let response = server.submit_follow("testing:vm/http.run", vec![]).await;
     assert_eq!(response.status().as_u16(), 201);
     assert_eq!(

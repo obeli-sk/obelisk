@@ -601,6 +601,26 @@ impl TestServer {
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
     }
 
+    /// Launch a server whose deployment is exactly `deployment_toml`, letting a self-contained
+    /// test carry its own manifest instead of the shared `write_test_configs` fixtures.
+    /// `server_toml_tail` is appended to the generated `server.toml`; `files` are written into
+    /// the deployment directory (e.g. a script referenced from a `location`).
+    async fn start_inline_deployment(
+        ip: String,
+        server_toml_tail: &str,
+        deployment_toml: &str,
+        files: &[(&str, &str)],
+    ) -> Self {
+        let (tmp_dir, server_path, deployment_path) =
+            util::write_server_config(&ip, "", server_toml_tail);
+        for (rel, content) in files {
+            std::fs::write(tmp_dir.path().join(rel), content).unwrap();
+        }
+        std::fs::write(&deployment_path, deployment_toml).unwrap();
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
     async fn start_with_server_lines_and_component(
         ip: String,
         server_toml_lines: &str,
