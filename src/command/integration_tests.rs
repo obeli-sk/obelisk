@@ -21,6 +21,7 @@ mod crypto;
 mod greet_activity;
 mod multifile;
 mod util;
+mod workflow_cancellation;
 
 /// Append an inline `[[activity_stub]]` to a deployment manifest, mirroring the resolved
 /// `ActivityStubExtInlineConfigResolved` the tests used to construct in-memory.
@@ -372,36 +373,6 @@ ffqn = "testing:integration/workflow-join-next-try-semantics.join-next-try-seman
 params = [
   {{ name = "id", type = "u64" }},
 ]
-return_type = "result<string, string>"
-
-[[workflow_js]]
-name = "test_rethrow_child_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/rethrow_child_error.js"
-ffqn = "testing:integration/workflow-rethrow-child-error.rethrow-child-error"
-params = [
-  {{ name = "id", type = "u64" }},
-]
-return_type = "result<string, string>"
-
-[[workflow_js]]
-name = "test_cancel_child_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/cancel_child_error.js"
-ffqn = "testing:integration/workflow-cancel-child-error.cancel-child-error"
-params = []
-return_type = "result<string, string>"
-
-[[workflow_js]]
-name = "test_cancel_sleep_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/cancel_sleep_error.js"
-ffqn = "testing:integration/workflow-cancel-sleep-error.cancel-sleep-error"
-params = []
-return_type = "result<string>"
-
-[[workflow_js]]
-name = "test_cancel_delay_error_workflow"
-location = "{ws}/crates/testing/test-programs/js/workflow/cancel_delay_error.js"
-ffqn = "testing:integration/workflow-cancel-delay-error.cancel-delay-error"
-params = []
 return_type = "result<string, string>"
 
 [[workflow_js]]
@@ -4217,122 +4188,6 @@ async fn submit_scheduled_execution_via_schedule_extension() {
     let status = server.get_status(scheduled_exec_id).await;
     assert_eq!(status["ffqn"], json!("testing:integration/activity.add"));
     assert_eq!(status["pending_state"]["status"], json!("pending_at"));
-
-    server.shutdown().await;
-}
-
-/// A caught `ChildError` re-thrown with `throw e` transparently
-/// reproduces the child's original err payload as the workflow's err.
-#[tokio::test]
-async fn submit_workflow_rethrows_child_execution_error() {
-    let server = TestServer::start(test_addr!(87)).await;
-    let resp = server
-        .submit_follow(
-            "testing:integration/workflow-rethrow-child-error.rethrow-child-error",
-            vec![json!(7u64)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "err": "boom" }));
-
-    server.shutdown().await;
-}
-
-/// A child execution cancelled out-of-band surfaces to an awaiting JS parent as a
-/// `ChildError` with `.cancelled === true` and `.failureKind === "cancelled"`
-/// whose `.value` is projected onto the child's string err type.
-#[tokio::test]
-async fn submit_workflow_child_cancelled_surfaces_child_execution_error() {
-    use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
-
-    let server = TestServer::start(test_addr!(88)).await;
-    let parent_id = server.generate_execution_id().await;
-
-    // The child id is deterministic either way, but the parent's named join set makes it
-    // a well-known string (first child of `n:cancel-set`) we can reconstruct here instead
-    // of replaying the parent's generated join-set id.
-    let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("cancel-set")).unwrap();
-    let child_id = ExecutionId::Derived(
-        parent_id
-            .parse::<ExecutionId>()
-            .unwrap()
-            .next_level(&join_set_id),
-    )
-    .to_string();
-
-    // Cancel concurrently with the follow so the parent is still blocked on joinNext.
-    let follow = server.submit_follow_with_id(
-        &parent_id,
-        "testing:integration/workflow-cancel-child-error.cancel-child-error",
-        vec![],
-    );
-    let cancel = server.cancel_execution_with_retries(&child_id);
-    let (resp, ()) = tokio::join!(follow, cancel);
-
-    assert_eq!(resp.status().as_u16(), 201);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body, json!({ "ok": "cancelled-child-observed" }));
-
-    server.shutdown().await;
-}
-
-/// A cancelled named sleep throws a payload-less `ChildError`; re-throwing it
-/// serializes its undefined `.value` as a null workflow err payload.
-#[tokio::test]
-async fn submit_workflow_cancelled_sleep_rethrows_null() {
-    use concepts::prefixed_ulid::DelayId;
-    use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
-
-    let server = TestServer::start(test_addr!(90)).await;
-    let execution_id = server.generate_execution_id().await;
-    let execution_id = execution_id.parse::<ExecutionId>().unwrap();
-    let join_set_id =
-        JoinSetId::new(JoinSetKind::OneOff, StrVariant::from("1-cancel-sleep")).unwrap();
-    let delay_id = DelayId::new(&execution_id, &join_set_id).to_string();
-    let execution_id = execution_id.to_string();
-
-    let follow = server.submit_follow_with_id(
-        &execution_id,
-        "testing:integration/workflow-cancel-sleep-error.cancel-sleep-error",
-        vec![],
-    );
-    let cancel = server.cancel_delay_with_retries(&delay_id);
-    let (resp, ()) = tokio::join!(follow, cancel);
-
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(resp.json::<Value>().await.unwrap(), json!({ "err": null }));
-
-    server.shutdown().await;
-}
-
-/// A cancelled join-set delay throws a `ChildError` with cancellation metadata
-/// and no business error payload.
-#[tokio::test]
-async fn submit_workflow_cancelled_delay_surfaces_child_error() {
-    use concepts::prefixed_ulid::DelayId;
-    use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
-
-    let server = TestServer::start(test_addr!(91)).await;
-    let execution_id = server.generate_execution_id().await;
-    let execution_id = execution_id.parse::<ExecutionId>().unwrap();
-    let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("cancel-delay")).unwrap();
-    let delay_id = DelayId::new(&execution_id, &join_set_id).to_string();
-    let execution_id = execution_id.to_string();
-
-    let follow = server.submit_follow_with_id(
-        &execution_id,
-        "testing:integration/workflow-cancel-delay-error.cancel-delay-error",
-        vec![],
-    );
-    let cancel = server.cancel_delay_with_retries(&delay_id);
-    let (resp, ()) = tokio::join!(follow, cancel);
-
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(
-        resp.json::<Value>().await.unwrap(),
-        json!({ "ok": "cancelled-delay-observed" })
-    );
 
     server.shutdown().await;
 }

@@ -447,57 +447,6 @@ expression: components
   {
     "component_id": {
       "component_type": "workflow",
-      "name": "test_cancel_child_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/cancel_child_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 1394
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_cancel_delay_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/cancel_delay_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 1077
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_cancel_sleep_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/cancel_sleep_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 1032
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
       "name": "test_date_now_workflow",
       "component_digest": "sha256:<REDACTED>"
     },
@@ -643,23 +592,6 @@ expression: components
           "path": "crates/testing/test-programs/js/workflow/math_random.js",
           "digest": "sha256:<REDACTED>",
           "size": 274
-        },
-        "role": "js_entrypoint"
-      }
-    ]
-  },
-  {
-    "component_id": {
-      "component_type": "workflow",
-      "name": "test_rethrow_child_error_workflow",
-      "component_digest": "sha256:<REDACTED>"
-    },
-    "files": [
-      {
-        "file": {
-          "path": "crates/testing/test-programs/js/workflow/rethrow_child_error.js",
-          "digest": "sha256:<REDACTED>",
-          "size": 859
         },
         "role": "js_entrypoint"
       }
