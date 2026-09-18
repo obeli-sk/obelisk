@@ -1029,8 +1029,11 @@ pub(crate) enum Execution {
         /// Follow the stream of events until the execution finishes.
         #[arg(short, long)]
         follow: bool,
+        /// Follow logs until the execution finishes, then print its result.
+        #[arg(long)]
+        follow_logs: bool,
         /// Do not attempt to reconnect on connection error while following the status stream.
-        #[arg(long, requires = "follow")]
+        #[arg(long)]
         no_reconnect: bool,
         /// Create the execution in paused state so it won't run until explicitly unpaused or advanced.
         #[arg(long)]
@@ -1358,6 +1361,36 @@ mod tests {
 
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
         assert!(err.to_string().contains("API token must not be empty"));
+    }
+
+    #[test]
+    fn execution_submit_follow_logs_accepts_no_reconnect() {
+        let args = Args::try_parse_from([
+            "obelisk",
+            "execution",
+            "submit",
+            "--follow-logs",
+            "--no-reconnect",
+            "example:pkg/interface.function",
+        ])
+        .unwrap();
+
+        let Subcommand::Execution(ExecutionArgs {
+            command:
+                Execution::Submit {
+                    follow,
+                    follow_logs,
+                    no_reconnect,
+                    ..
+                },
+            ..
+        }) = args.command
+        else {
+            panic!("expected execution submit");
+        };
+        assert!(!follow);
+        assert!(follow_logs);
+        assert!(no_reconnect);
     }
 
     #[test]
