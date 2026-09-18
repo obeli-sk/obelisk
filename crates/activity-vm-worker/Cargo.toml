@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
-publish = false
 
 [dependencies]
 activity-vm-runner.workspace = true
