@@ -155,6 +155,11 @@
                 "schema": {
                   "type": "string"
                 }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -574,6 +579,11 @@
             "description": "Current deployment ID",
             "content": {
               "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
                 "schema": {
                   "type": "string"
                 }

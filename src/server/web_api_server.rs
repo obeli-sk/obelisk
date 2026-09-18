@@ -538,12 +538,21 @@ pub(crate) mod admin {
         ))
     }
 
-    #[utoipa::path(get, path = "/v1/admin/server-run-id", tag = "admin", responses((status = 200, body = String)))]
-    pub(crate) async fn server_run_id() -> Response {
-        pretty_json_response(
-            StatusCode::OK,
-            &concepts::storage::initialize_server_run_id(),
-        )
+    #[utoipa::path(
+        get,
+        path = "/v1/admin/server-run-id",
+        tag = "admin",
+        responses((
+            status = 200,
+            content((String = "text/plain"), (String = "application/json"))
+        ))
+    )]
+    pub(crate) async fn server_run_id(accept: TextDefaultAcceptHeader) -> Response {
+        let id = concepts::storage::initialize_server_run_id();
+        match accept.into() {
+            AcceptHeader::Json => pretty_json_response(StatusCode::OK, &id),
+            AcceptHeader::Text => id.to_string().into_response(),
+        }
     }
 
     #[utoipa::path(post, path = "/v1/admin/system-events/retain", tag = "admin", request_body = RetainSystemEventsRequest, responses((status = 200, body = RetainSystemEventsResponse)))]
@@ -4246,9 +4255,11 @@ pub(crate) mod deployment {
         get,
         path = "/v1/deployment-id",
         tag = "deployments",
-        responses(
-            (status = 200, description = "Current deployment ID", body = String)
-        )
+        responses((
+            status = 200,
+            description = "Current deployment ID",
+            content((String = "text/plain"), (String = "application/json"))
+        ))
     )]
     pub(crate) async fn current(
         state: State<Arc<WebApiState>>,
@@ -5358,17 +5369,43 @@ impl From<ErrorWrapper<SubmitError>> for HttpResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        AcceptHeader, RetVal, format_execution_status_text, nonzero_page_length,
-        parse_join_set_filter,
+        AcceptHeader, RetVal, TextDefaultAcceptHeader, admin, format_execution_status_text,
+        nonzero_page_length, parse_join_set_filter,
     };
     use chrono::{DateTime, Utc};
     use concepts::{
         ExecutionFailureKind, SupportedFunctionReturnValue,
+        prefixed_ulid::ServerRunId,
         storage::{
             ExecutionRequest, PendingState, PendingStateFinished, PendingStateFinishedError,
             PendingStateFinishedResultKind,
         },
     };
+
+    #[tokio::test]
+    async fn server_run_id_defaults_to_text_and_supports_json() {
+        let text_response = admin::server_run_id(TextDefaultAcceptHeader::Text).await;
+        assert_eq!(
+            text_response.headers()[http::header::CONTENT_TYPE],
+            "text/plain; charset=utf-8"
+        );
+        let text = axum::body::to_bytes(text_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text_id: ServerRunId = std::str::from_utf8(&text).unwrap().parse().unwrap();
+
+        let json_response = admin::server_run_id(TextDefaultAcceptHeader::Json).await;
+        assert_eq!(
+            json_response.headers()[http::header::CONTENT_TYPE],
+            "application/json"
+        );
+        let json = axum::body::to_bytes(json_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json_id: ServerRunId = serde_json::from_slice(&json).unwrap();
+
+        assert_eq!(text_id, json_id);
+    }
 
     #[test]
     fn pagination_length_must_be_nonzero() {
