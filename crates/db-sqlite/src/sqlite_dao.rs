@@ -5701,7 +5701,7 @@ impl DbAdmin for SqlitePool {
                     let details: String = row.get(7)?;
                     Ok(SystemEvent {
                         event_id: row.get::<_, String>(0)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err)))?, server_run_id: row.get::<_, String>(1)?.parse().map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(err)))?, created_at: row.get(2)?,
-                        level: match level.as_str() { "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
+                        level: match level.as_str() { "debug" => SystemEventLevel::Debug, "warning" => SystemEventLevel::Warning, "error" => SystemEventLevel::Error, _ => SystemEventLevel::Info },
                         code: row.get(4)?,
                         dedupe_key: None,
                         cas_digest: row.get::<_, Option<String>>(8)?.map(|digest| digest.parse()).transpose().map_err(|err| rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(err)))?,

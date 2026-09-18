@@ -6040,6 +6040,7 @@ impl DbAdmin for PostgresConnection {
                     })?,
                     created_at: get(&row, 2)?,
                     level: match level.as_str() {
+                        "debug" => SystemEventLevel::Debug,
                         "warning" => SystemEventLevel::Warning,
                         "error" => SystemEventLevel::Error,
                         _ => SystemEventLevel::Info,

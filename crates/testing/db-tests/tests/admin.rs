@@ -49,6 +49,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         serde_json::json!({"version": "test"}),
     )
     .unwrap();
+    first.level = SystemEventLevel::Debug;
     first.server_run_id = "Srv_01M281KSH954NC9NHNMCN09S6W".parse().unwrap();
     let first_id = first.event_id;
     admin.append_system_event(first).await.unwrap();
@@ -89,6 +90,16 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         .unwrap();
     assert_eq!(warning.len(), 1);
     assert_eq!(warning[0].event_id, second_id);
+    let debug = admin
+        .list_system_events(SystemEventFilter {
+            level: Some(SystemEventLevel::Debug),
+            limit: 100,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(debug.len(), 1);
+    assert_eq!(debug[0].event_id, first_id);
     let first_run = admin
         .list_system_events(SystemEventFilter {
             server_run_id: Some(

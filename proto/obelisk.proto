@@ -1382,6 +1382,7 @@ enum SystemEventLevel {
     SYSTEM_EVENT_LEVEL_INFO = 1;
     SYSTEM_EVENT_LEVEL_WARNING = 2;
     SYSTEM_EVENT_LEVEL_ERROR = 3;
+    SYSTEM_EVENT_LEVEL_DEBUG = 4;
 }
 message SystemEvent {
     string event_id = 1;

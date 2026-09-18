@@ -1484,6 +1484,7 @@ pub struct ExecutionGcResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemEventLevel {
+    Debug,
     Info,
     Warning,
     Error,
@@ -1493,6 +1494,7 @@ impl SystemEventLevel {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Debug => "debug",
             Self::Info => "info",
             Self::Warning => "warning",
             Self::Error => "error",
@@ -1577,11 +1579,12 @@ impl SystemEventCode {
     #[must_use]
     pub fn level(self) -> SystemEventLevel {
         match self {
-            Self::ServerStartupFailed
-            | Self::DeploymentSubmitFailed
+            Self::ServerStartupFailed => SystemEventLevel::Error,
+            Self::DeploymentSubmitFailed
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
+            Self::ComponentHttpPolicyApplied => SystemEventLevel::Debug,
             _ => SystemEventLevel::Info,
         }
     }
@@ -3746,7 +3749,7 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
-    use super::{SystemEvent, SystemEventCode, SystemEventValidationError};
+    use super::{SystemEvent, SystemEventCode, SystemEventLevel, SystemEventValidationError};
     use crate::ExecutionFailureKind;
     use crate::JoinSetId;
     use crate::Params;
@@ -3791,6 +3794,22 @@ mod tests {
             assert!(code.as_str().chars().count() <= 64);
             assert!(code.message().chars().count() <= 512);
         }
+    }
+
+    #[test]
+    fn system_event_code_levels_distinguish_debug_and_failures() {
+        assert_eq!(
+            SystemEventCode::ComponentHttpPolicyApplied.level(),
+            SystemEventLevel::Debug
+        );
+        assert_eq!(
+            SystemEventCode::ServerStartupFailed.level(),
+            SystemEventLevel::Error
+        );
+        assert_eq!(
+            SystemEventCode::DeploymentSubmitFailed.level(),
+            SystemEventLevel::Warning
+        );
     }
 
     #[test]

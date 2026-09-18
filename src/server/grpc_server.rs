@@ -2065,6 +2065,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                 server_run_id: event.server_run_id.to_string(),
                 created_at: Some(event.created_at.into()),
                 level: match event.level {
+                    storage::SystemEventLevel::Debug => grpc_gen::SystemEventLevel::Debug as i32,
                     storage::SystemEventLevel::Info => grpc_gen::SystemEventLevel::Info as i32,
                     storage::SystemEventLevel::Warning => {
                         grpc_gen::SystemEventLevel::Warning as i32
@@ -2088,6 +2089,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         let level = request
             .level
             .map(|level| match grpc_gen::SystemEventLevel::try_from(level) {
+                Ok(grpc_gen::SystemEventLevel::Debug) => Ok(storage::SystemEventLevel::Debug),
                 Ok(grpc_gen::SystemEventLevel::Info) => Ok(storage::SystemEventLevel::Info),
                 Ok(grpc_gen::SystemEventLevel::Warning) => Ok(storage::SystemEventLevel::Warning),
                 Ok(grpc_gen::SystemEventLevel::Error) => Ok(storage::SystemEventLevel::Error),
@@ -2144,6 +2146,9 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                         server_run_id: event.server_run_id.to_string(),
                         created_at: Some(event.created_at.into()),
                         level: match event.level {
+                            storage::SystemEventLevel::Debug => {
+                                grpc_gen::SystemEventLevel::Debug as i32
+                            }
                             storage::SystemEventLevel::Info => {
                                 grpc_gen::SystemEventLevel::Info as i32
                             }

@@ -419,10 +419,11 @@ pub(crate) mod admin {
             .level
             .as_deref()
             .map(|level| match level {
+                "debug" => Ok(storage::SystemEventLevel::Debug),
                 "info" => Ok(storage::SystemEventLevel::Info),
                 "warning" => Ok(storage::SystemEventLevel::Warning),
                 "error" => Ok(storage::SystemEventLevel::Error),
-                _ => Err(precondition("level must be info, warning, or error")),
+                _ => Err(precondition("level must be debug, info, warning, or error")),
             })
             .transpose()?;
         let limit = query.limit.unwrap_or(100);
