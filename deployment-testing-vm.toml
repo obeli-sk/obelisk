@@ -1,17 +1,17 @@
 # Linux VM activity MVP
+# Find Nix store paths using `nix eval --raw nixpkgs#jq.outPath`
 
 [[activity_vm]]
 ffqn = "testing:vm/echo.greet"
 params = [{ name = "name", type = "string" }]
 content = '''#!/usr/bin/env bash
-name="$1"
-name="${name#\"}"
-name="${name%\"}"
+name=$(echo $1 | jq -r .)
 echo "\"Hello, $name\""
 '''
 return_type = "result<string, string>"
 store_paths = [
   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+  "/nix/store/wm4pfgq6l2wgc2cqfvfidl5y3mc9r2xx-jq-1.8.2-bin",
 ]
 
 [[activity_vm]]
@@ -28,19 +28,23 @@ nixos_cache.enabled = false
 url = "https://trynix.dev/examples/cache"
 public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
 
+# Test with
+# obelisk execution submit --follow \
+#    testing:vm/bash.run -- \
+#    '"curl -v http://obelisk-host:5005/v1/admin/node-run-id -H \"Authorization: Bearer <yourtoken>\""'
 [[activity_vm]]
 ffqn = "testing:vm/bash.run"
 max_retries = 0
 params = [{ name = "command", type = "string" }]
 content = '''#!/usr/bin/env bash
-command="$1"
-command="${command#\"}"
-command="${command%\"}"
+command=$(echo $1 | jq -r .)
+echo "Running $command"
 bash -c "$command"
 '''
 store_paths = [
   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
   "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
+  "/nix/store/wm4pfgq6l2wgc2cqfvfidl5y3mc9r2xx-jq-1.8.2-bin",
 ]
 [[activity_vm.allowed_host]]
 pattern = "*://*:*"
