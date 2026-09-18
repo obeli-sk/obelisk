@@ -2,7 +2,7 @@ use chrono::Duration;
 use concepts::{
     ComponentId, ExecutionId, JoinSetId, JoinSetKind, Params, SUPPORTED_RETURN_VALUE_OK_EMPTY,
     StrVariant,
-    prefixed_ulid::{DeploymentId, ServerRunId, SystemEventId},
+    prefixed_ulid::{DeploymentId, NodeRunId, SystemEventId},
     storage::{
         AppendRequest, CAS_GC_BATCH_SIZE_BYTES, CreateRequest, DbPoolCloseable,
         DeleteDeploymentResult, DeleteExecutionTreeResult, DeploymentFileRecord, DeploymentRecord,
@@ -50,7 +50,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     )
     .unwrap();
     first.level = SystemEventLevel::Debug;
-    first.server_run_id = "Srv_01M281KSH954NC9NHNMCN09S6W".parse().unwrap();
+    first.node_run_id = "NodeRun_01M281KSH954NC9NHNMCN09S6W".parse().unwrap();
     let first_id = first.event_id;
     admin.append_system_event(first).await.unwrap();
     assert_eq!(
@@ -76,7 +76,7 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
         serde_json::json!({"threshold_percent": 90}),
     )
     .unwrap();
-    second.server_run_id = "Srv_01M281KSH954NC9NHNMCN09S6X".parse().unwrap();
+    second.node_run_id = "NodeRun_01M281KSH954NC9NHNMCN09S6X".parse().unwrap();
     let second_id = second.event_id;
     admin.append_system_event(second).await.unwrap();
 
@@ -102,9 +102,9 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
     assert_eq!(debug[0].event_id, first_id);
     let first_run = admin
         .list_system_events(SystemEventFilter {
-            server_run_id: Some(
-                "Srv_01M281KSH954NC9NHNMCN09S6W"
-                    .parse::<ServerRunId>()
+            node_run_id: Some(
+                "NodeRun_01M281KSH954NC9NHNMCN09S6W"
+                    .parse::<NodeRunId>()
                     .unwrap(),
             ),
             limit: 100,

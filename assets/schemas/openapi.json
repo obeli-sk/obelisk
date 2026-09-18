@@ -141,12 +141,12 @@
         }
       }
     },
-    "/v1/admin/server-run-id": {
+    "/v1/admin/node-run-id": {
       "get": {
         "tags": [
           "admin"
         ],
-        "operationId": "server_run_id",
+        "operationId": "node_run_id",
         "responses": {
           "200": {
             "description": "",
@@ -194,69 +194,51 @@
         "operationId": "list_system_events",
         "parameters": [
           {
-            "name": "server_run_id",
-            "in": "path",
-            "required": true,
+            "name": "node_run_id",
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "level",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "code",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "deployment_id",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "before",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "limit",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -3772,7 +3754,7 @@
         "type": "object",
         "required": [
           "event_id",
-          "server_run_id",
+          "node_run_id",
           "created_at",
           "level",
           "code",
@@ -3809,7 +3791,7 @@
           "message": {
             "type": "string"
           },
-          "server_run_id": {
+          "node_run_id": {
             "type": "string"
           }
         }

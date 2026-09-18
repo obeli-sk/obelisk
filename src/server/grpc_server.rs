@@ -22,7 +22,7 @@ use concepts::SupportedFunctionReturnValue;
 use concepts::component_id::ComponentDigest;
 use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::DeploymentId;
-use concepts::prefixed_ulid::ServerRunId;
+use concepts::prefixed_ulid::NodeRunId;
 use concepts::prefixed_ulid::SystemEventId;
 use concepts::storage;
 use concepts::storage::BacktraceFilter;
@@ -2062,7 +2062,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         Ok(tonic::Response::new(grpc_gen::GetSystemEventResponse {
             event: Some(grpc_gen::SystemEvent {
                 event_id: event.event_id.to_string(),
-                server_run_id: event.server_run_id.to_string(),
+                node_run_id: event.node_run_id.to_string(),
                 created_at: Some(event.created_at.into()),
                 level: match event.level {
                     storage::SystemEventLevel::Debug => grpc_gen::SystemEventLevel::Debug as i32,
@@ -2115,9 +2115,9 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
             .map_err(map_to_status)?
             .list_system_events(storage::SystemEventFilter {
                 event_id: None,
-                server_run_id: request
-                    .server_run_id
-                    .map(|id| id.parse::<ServerRunId>())
+                node_run_id: request
+                    .node_run_id
+                    .map(|id| id.parse::<NodeRunId>())
                     .transpose()
                     .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?,
                 level,
@@ -2143,7 +2143,7 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                     let message = event.message().to_owned();
                     grpc_gen::SystemEvent {
                         event_id: event.event_id.to_string(),
-                        server_run_id: event.server_run_id.to_string(),
+                        node_run_id: event.node_run_id.to_string(),
                         created_at: Some(event.created_at.into()),
                         level: match event.level {
                             storage::SystemEventLevel::Debug => {
@@ -2193,12 +2193,12 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
         }))
     }
 
-    async fn get_server_run_id(
+    async fn get_node_run_id(
         &self,
-        _request: tonic::Request<grpc_gen::GetServerRunIdRequest>,
-    ) -> TonicRespResult<grpc_gen::GetServerRunIdResponse> {
-        Ok(tonic::Response::new(grpc_gen::GetServerRunIdResponse {
-            server_run_id: storage::initialize_server_run_id().to_string(),
+        _request: tonic::Request<grpc_gen::GetNodeRunIdRequest>,
+    ) -> TonicRespResult<grpc_gen::GetNodeRunIdResponse> {
+        Ok(tonic::Response::new(grpc_gen::GetNodeRunIdResponse {
+            node_run_id: storage::initialize_node_run_id().to_string(),
         }))
     }
 

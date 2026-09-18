@@ -21,7 +21,7 @@ use concepts::{
     ComponentType, ExecutionId, FinishedExecutionFailure, FunctionFqn, JoinSetId,
     SupportedFunctionReturnValue,
     component_id::ComponentDigest,
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ServerRunId, SystemEventId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, NodeRunId, SystemEventId},
     storage::{
         self, BacktraceFilter, CancelOutcome, DbErrorGeneric, DbErrorRead, DbErrorReadWithTimeout,
         DbErrorWrite, DbErrorWriteNonRetriable, DbPool, DelayCancelOutcome, ExecutionEvent,
@@ -135,7 +135,7 @@ async fn until_terminated<T>(
         admin::list_system_events,
         admin::get_system_event,
         admin::storage_status,
-        admin::server_run_id,
+        admin::node_run_id,
         admin::retain_system_events,
     ),
     components(schemas(
@@ -347,7 +347,7 @@ fn admin_router() -> Router<Arc<WebApiState>> {
             routing::post(admin::retain_system_events),
         )
         .route("/storage", routing::get(admin::storage_status))
-        .route("/server-run-id", routing::get(admin::server_run_id))
+        .route("/node-run-id", routing::get(admin::node_run_id))
 }
 
 pub(crate) mod admin {
@@ -365,7 +365,7 @@ pub(crate) mod admin {
         #[schema(value_type = String)]
         pub(crate) event_id: SystemEventId,
         #[schema(value_type = String)]
-        pub(crate) server_run_id: ServerRunId,
+        pub(crate) node_run_id: NodeRunId,
         pub(crate) created_at: DateTime<Utc>,
         pub(crate) level: String,
         pub(crate) code: String,
@@ -398,9 +398,10 @@ pub(crate) mod admin {
     }
 
     #[derive(Debug, Default, Deserialize, IntoParams)]
+    #[into_params(parameter_in = Query)]
     pub(crate) struct SystemEventsQuery {
         #[param(value_type = Option<String>)]
-        server_run_id: Option<ServerRunId>,
+        node_run_id: Option<NodeRunId>,
         level: Option<String>,
         code: Option<String>,
         #[param(value_type = Option<String>)]
@@ -437,7 +438,7 @@ pub(crate) mod admin {
             .map_err(|err| ErrorWrapper(err, AcceptHeader::Json))?
             .list_system_events(storage::SystemEventFilter {
                 event_id: None,
-                server_run_id: query.server_run_id,
+                node_run_id: query.node_run_id,
                 level,
                 code: query.code,
                 deployment_id: query.deployment_id,
@@ -459,7 +460,7 @@ pub(crate) mod admin {
                 let message = event.message().to_owned();
                 SystemEventResponse {
                     event_id: event.event_id,
-                    server_run_id: event.server_run_id,
+                    node_run_id: event.node_run_id,
                     created_at: event.created_at,
                     level: event.level.as_str().into(),
                     code: event.code,
@@ -503,7 +504,7 @@ pub(crate) mod admin {
         let message = event.message().to_owned();
         let response = SystemEventResponse {
             event_id: event.event_id,
-            server_run_id: event.server_run_id,
+            node_run_id: event.node_run_id,
             created_at: event.created_at,
             level: event.level.as_str().into(),
             code: event.code,
@@ -540,15 +541,15 @@ pub(crate) mod admin {
 
     #[utoipa::path(
         get,
-        path = "/v1/admin/server-run-id",
+        path = "/v1/admin/node-run-id",
         tag = "admin",
         responses((
             status = 200,
             content((String = "text/plain"), (String = "application/json"))
         ))
     )]
-    pub(crate) async fn server_run_id(accept: TextDefaultAcceptHeader) -> Response {
-        let id = concepts::storage::initialize_server_run_id();
+    pub(crate) async fn node_run_id(accept: TextDefaultAcceptHeader) -> Response {
+        let id = concepts::storage::initialize_node_run_id();
         match accept.into() {
             AcceptHeader::Json => pretty_json_response(StatusCode::OK, &id),
             AcceptHeader::Text => id.to_string().into_response(),
@@ -5375,7 +5376,7 @@ mod tests {
     use chrono::{DateTime, Utc};
     use concepts::{
         ExecutionFailureKind, SupportedFunctionReturnValue,
-        prefixed_ulid::ServerRunId,
+        prefixed_ulid::NodeRunId,
         storage::{
             ExecutionRequest, PendingState, PendingStateFinished, PendingStateFinishedError,
             PendingStateFinishedResultKind,
@@ -5383,8 +5384,8 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn server_run_id_defaults_to_text_and_supports_json() {
-        let text_response = admin::server_run_id(TextDefaultAcceptHeader::Text).await;
+    async fn node_run_id_defaults_to_text_and_supports_json() {
+        let text_response = admin::node_run_id(TextDefaultAcceptHeader::Text).await;
         assert_eq!(
             text_response.headers()[http::header::CONTENT_TYPE],
             "text/plain; charset=utf-8"
@@ -5392,9 +5393,9 @@ mod tests {
         let text = axum::body::to_bytes(text_response.into_body(), usize::MAX)
             .await
             .unwrap();
-        let text_id: ServerRunId = std::str::from_utf8(&text).unwrap().parse().unwrap();
+        let text_id: NodeRunId = std::str::from_utf8(&text).unwrap().parse().unwrap();
 
-        let json_response = admin::server_run_id(TextDefaultAcceptHeader::Json).await;
+        let json_response = admin::node_run_id(TextDefaultAcceptHeader::Json).await;
         assert_eq!(
             json_response.headers()[http::header::CONTENT_TYPE],
             "application/json"
@@ -5402,7 +5403,7 @@ mod tests {
         let json = axum::body::to_bytes(json_response.into_body(), usize::MAX)
             .await
             .unwrap();
-        let json_id: ServerRunId = serde_json::from_slice(&json).unwrap();
+        let json_id: NodeRunId = serde_json::from_slice(&json).unwrap();
 
         assert_eq!(text_id, json_id);
     }

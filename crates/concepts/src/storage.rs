@@ -18,8 +18,8 @@ use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
+use crate::prefixed_ulid::NodeRunId;
 use crate::prefixed_ulid::RunId;
-use crate::prefixed_ulid::ServerRunId;
 use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
@@ -1505,7 +1505,7 @@ impl SystemEventLevel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
     pub event_id: SystemEventId,
-    pub server_run_id: ServerRunId,
+    pub node_run_id: NodeRunId,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
@@ -1630,15 +1630,15 @@ pub enum SystemEventValidationError {
     DetailsTooLarge,
 }
 
-static SERVER_RUN_ID: std::sync::OnceLock<ServerRunId> = std::sync::OnceLock::new();
+static NODE_RUN_ID: std::sync::OnceLock<NodeRunId> = std::sync::OnceLock::new();
 
 #[must_use]
-pub fn initialize_server_run_id() -> ServerRunId {
-    *SERVER_RUN_ID.get_or_init(ServerRunId::generate)
+pub fn initialize_node_run_id() -> NodeRunId {
+    *NODE_RUN_ID.get_or_init(NodeRunId::generate)
 }
 
-fn server_run_id() -> ServerRunId {
-    initialize_server_run_id()
+fn node_run_id() -> NodeRunId {
+    initialize_node_run_id()
 }
 
 impl SystemEvent {
@@ -1657,7 +1657,7 @@ impl SystemEvent {
         }
         Ok(Self {
             event_id: SystemEventId::generate(),
-            server_run_id: server_run_id(),
+            node_run_id: node_run_id(),
             created_at: Utc::now(),
             level: code.level(),
             code: code.as_str().to_owned(),
@@ -1738,7 +1738,7 @@ impl SystemEvent {
 #[derive(Debug, Clone, Default)]
 pub struct SystemEventFilter {
     pub event_id: Option<SystemEventId>,
-    pub server_run_id: Option<ServerRunId>,
+    pub node_run_id: Option<NodeRunId>,
     pub level: Option<SystemEventLevel>,
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,

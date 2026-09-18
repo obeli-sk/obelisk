@@ -2,7 +2,7 @@ use crate::config::secret_registry::API_TOKEN;
 use clap::Parser;
 use concepts::{
     ComponentType, ExecutionId, FunctionFqn, FunctionFqnParseError,
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ServerRunId, SystemEventId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, NodeRunId, SystemEventId},
 };
 use secrecy::SecretString;
 
@@ -157,8 +157,8 @@ pub(crate) enum Admin {
     Events(AdminEvents),
     #[command(subcommand)]
     Storage(AdminStorage),
-    /// Print the ID of the current server run.
-    ServerRunId {
+    /// Print the ID of the current node run.
+    NodeRunId {
         /// Output as JSON instead of plain text.
         #[arg(long)]
         json: bool,
@@ -189,9 +189,9 @@ pub(crate) enum AdminEvents {
     },
     /// List persisted operator-visible system events.
     List {
-        /// Only show events emitted by this server run.
+        /// Only show events emitted by this node run.
         #[arg(long)]
-        server_run_id: Option<ServerRunId>,
+        node_run_id: Option<NodeRunId>,
         #[arg(long)]
         level: Option<String>,
         #[arg(long)]
