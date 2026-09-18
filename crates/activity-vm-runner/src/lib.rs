@@ -109,8 +109,8 @@ pub async fn execute(
             &env,
             max_stdout_bytes,
             max_stderr_bytes,
-            cancelled,
-            activity_completed,
+            &cancelled,
+            &activity_completed,
         )
     })
     .await?;
@@ -267,8 +267,8 @@ fn run_module(
     env: &HashMap<String, String>,
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
-    cancelled: Arc<AtomicBool>,
-    activity_completed: Arc<AtomicBool>,
+    cancelled: &Arc<AtomicBool>,
+    activity_completed: &Arc<AtomicBool>,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let mut linker = Linker::new(engine);
@@ -378,8 +378,8 @@ mod tests {
             &HashMap::new(),
             1024,
             1024,
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            &Arc::new(AtomicBool::new(false)),
+            &Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
         assert_eq!(output.exit_code, 0);
@@ -412,8 +412,8 @@ mod tests {
             &HashMap::new(),
             1024,
             1024,
-            Arc::new(AtomicBool::new(false)),
-            activity_completed,
+            &Arc::new(AtomicBool::new(false)),
+            &activity_completed,
         )
         .unwrap();
         signal_thread.join().unwrap();
