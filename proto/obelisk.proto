@@ -1379,10 +1379,10 @@ message CleanupResponse {
 
 enum SystemEventLevel {
     SYSTEM_EVENT_LEVEL_UNSPECIFIED = 0;
-    SYSTEM_EVENT_LEVEL_INFO = 1;
-    SYSTEM_EVENT_LEVEL_WARNING = 2;
-    SYSTEM_EVENT_LEVEL_ERROR = 3;
-    SYSTEM_EVENT_LEVEL_DEBUG = 4;
+    SYSTEM_EVENT_LEVEL_DEBUG = 1;
+    SYSTEM_EVENT_LEVEL_INFO = 2;
+    SYSTEM_EVENT_LEVEL_WARNING = 3;
+    SYSTEM_EVENT_LEVEL_ERROR = 4;
 }
 message SystemEvent {
     string event_id = 1;
