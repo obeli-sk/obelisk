@@ -453,6 +453,35 @@ pub(super) fn collect_deployment_unregistered_secrets(
             }
         }
     }
+    for names in deployment
+        .activities_wasm
+        .iter()
+        .map(|component| &component.exposed_secrets)
+        .chain(
+            deployment
+                .activities_js
+                .iter()
+                .map(|component| &component.exposed_secrets),
+        )
+        .chain(
+            deployment
+                .webhooks_wasm
+                .iter()
+                .map(|component| &component.exposed_secrets),
+        )
+        .chain(
+            deployment
+                .webhooks_js
+                .iter()
+                .map(|component| &component.exposed_secrets),
+        )
+    {
+        for name in names {
+            if secret_registry.secret_lookup(name).is_none() {
+                unregistered.insert(name.clone());
+            }
+        }
+    }
 }
 
 /// Append every secret name in `allowed_host` `entries` the operator registry does not know onto

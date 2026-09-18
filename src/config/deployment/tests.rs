@@ -824,6 +824,7 @@ mod export {
             forward_stderr: ComponentStdOutputToml::default(),
             logs_store_min_level: LogLevelToml::default(),
             env_vars: vec![],
+            exposed_secrets: vec![],
             allowed_hosts: vec![],
         }
     }

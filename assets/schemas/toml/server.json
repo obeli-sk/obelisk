@@ -11,7 +11,7 @@
       "default": null
     },
     "secrets": {
-      "description": "Operator-owned secret registry. Maps a logical secret name to a source\n(currently only `{ env = \"VAR\" }`). Env-backed secrets are resolved and\ntheir source variables wiped from the process environment at startup, before\nthe tokio runtime starts. Deployments reference these names in\n`activity_exec.exposed_secrets`, `activity_vm.exposed_secrets`, and\n`allowed_host[].secrets`; they cannot interpolate them.",
+      "description": "Operator-owned secret registry. Maps a logical secret name to a source\n(currently only `{ env = \"VAR\" }`). Env-backed secrets are resolved and\ntheir source variables wiped from the process environment at startup, before\nthe tokio runtime starts. Deployments reference these names in\ncomponent `exposed_secrets` and\n`allowed_host[].secrets`; they cannot interpolate them.",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/SecretConfigToml"

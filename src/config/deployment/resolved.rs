@@ -448,6 +448,7 @@ pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
+    pub(crate) secret_exposure_digest: SecretExposureDigest,
 }
 
 impl ActivityWasmConfigVerified {
@@ -497,7 +498,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
 
         // Validate no collision between env_vars and secret env names
-        validate_no_env_collision(&env_vars, &allowed_hosts)?;
+        validate_no_env_collision(&env_vars, &allowed_hosts, &self.exposed_secrets)?;
 
         let component_digest = ComponentDigest(content_digest.0);
         let component_id = ComponentId::new(
@@ -505,12 +506,22 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             StrVariant::from(common.name),
             component_digest,
         )?;
-        let secrets = restricted_secret_registry(secret_registry, &allowed_hosts, None);
+        let secret_exposure_digest = component_secret_exposure_digest(
+            &component_id.component_digest,
+            &self.exposed_secrets,
+        )?;
+        let exposed_secrets: Arc<[String]> = self.exposed_secrets.into();
+        let secrets = restricted_secret_registry(
+            secret_registry,
+            &allowed_hosts,
+            exposed_secrets.iter().cloned(),
+        );
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into_std_output_config(),
             forward_stderr: self.forward_stderr.into_std_output_config(),
             env_vars,
+            exposed_secrets,
             fuel,
             allowed_hosts,
             global_http_config,
@@ -530,6 +541,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
+            secret_exposure_digest,
         })
     }
 }
@@ -546,6 +558,7 @@ pub(crate) struct ActivityJsConfigVerified {
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
     pub(crate) logs_store_min_level: Option<LogLevel>,
+    pub(crate) secret_exposure_digest: SecretExposureDigest,
 }
 
 impl ActivityJsConfigVerified {
@@ -598,6 +611,18 @@ fn hash_strings<'a>(hasher: &mut Sha256, values: impl ExactSizeIterator<Item = &
     for value in values {
         hash_len_prefixed(hasher, value.as_bytes());
     }
+}
+
+fn component_secret_exposure_digest(
+    component_digest: &ComponentDigest,
+    exposed_secrets: &[String],
+) -> anyhow::Result<SecretExposureDigest> {
+    let mut hasher = Sha256::new();
+    hash_len_prefixed(&mut hasher, b"obelisk-secret-exposure/component/v1");
+    hasher.update(component_digest.0.0);
+    let names = sorted_secret_names(exposed_secrets)?;
+    hash_strings(&mut hasher, names.into_iter());
+    Ok(SecretExposureDigest(Digest(hasher.finalize().into())))
 }
 
 pub(crate) fn exec_secret_exposure_digest(
@@ -884,7 +909,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
         )?;
         let resolved_env =
             resolve_env_vars_plaintext(env_vars.clone(), ignore_missing_env_vars, secret_registry)?;
-        validate_no_env_collision(&resolved_env, &allowed_host_configs)?;
+        validate_no_env_collision(&resolved_env, &allowed_host_configs, &exposed_secrets)?;
         let secret_names: Vec<String> = allowed_host_configs
             .iter()
             .flat_map(|host| host.secret_names.iter().cloned())
@@ -1284,13 +1309,23 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
         let (allowed_hosts, _advisories) =
             resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
-        validate_no_env_collision(&env_vars, &allowed_hosts)?;
-        let secrets = restricted_secret_registry(secret_registry, &allowed_hosts, None);
+        validate_no_env_collision(&env_vars, &allowed_hosts, &self.exposed_secrets)?;
+        let secret_exposure_digest = component_secret_exposure_digest(
+            &component_id.component_digest,
+            &self.exposed_secrets,
+        )?;
+        let exposed_secrets: Arc<[String]> = self.exposed_secrets.into();
+        let secrets = restricted_secret_registry(
+            secret_registry,
+            &allowed_hosts,
+            exposed_secrets.iter().cloned(),
+        );
         let activity_config = ActivityConfig {
             component_id: component_id.clone(),
             forward_stdout: self.forward_stdout.into_std_output_config(),
             forward_stderr: self.forward_stderr.into_std_output_config(),
             env_vars,
+            exposed_secrets,
             fuel,
             allowed_hosts,
             global_http_config,
@@ -1316,6 +1351,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
+            secret_exposure_digest,
         })
     }
 }
@@ -1544,6 +1580,7 @@ pub(crate) async fn resolve_local_refs(
             forward_stderr: a.forward_stderr,
             logs_store_min_level: a.logs_store_min_level,
             env_vars: a.env_vars,
+            exposed_secrets: a.exposed_secrets,
             allowed_hosts: a.allowed_hosts,
         });
     }
@@ -1603,6 +1640,7 @@ pub(crate) async fn resolve_local_refs(
             forward_stdout: w.forward_stdout,
             forward_stderr: w.forward_stderr,
             env_vars: w.env_vars,
+            exposed_secrets: w.exposed_secrets,
             backtrace: resolve_backtrace(&w.backtrace, &w.component_files)?,
             backtrace_persist: w.backtrace_persist,
             logs_store_min_level: w.logs_store_min_level,
@@ -1633,6 +1671,7 @@ pub(crate) async fn resolve_local_refs(
             forward_stderr: w.forward_stderr,
             logs_store_min_level: w.logs_store_min_level,
             env_vars: w.env_vars,
+            exposed_secrets: w.exposed_secrets,
             backtrace_persist: w.backtrace_persist,
             allowed_hosts: w.allowed_hosts,
         });
@@ -2120,6 +2159,8 @@ pub(crate) struct WebhookWasmComponentConfigVerified {
     pub(crate) forward_stdout: Option<StdOutputConfig>,
     pub(crate) forward_stderr: Option<StdOutputConfig>,
     pub(crate) env_vars: Arc<[EnvVar]>,
+    pub(crate) exposed_secrets: Arc<[String]>,
+    pub(crate) secret_exposure_digest: SecretExposureDigest,
     pub(crate) frame_files_to_sources: FrameFilesToSource,
     pub(crate) backtrace_persist: bool,
     pub(crate) subscription_interruption: Option<Duration>,
@@ -2171,6 +2212,8 @@ pub(crate) struct WebhookJsConfigVerified {
     pub(crate) forward_stdout: Option<StdOutputConfig>,
     pub(crate) forward_stderr: Option<StdOutputConfig>,
     pub(crate) env_vars: Arc<[EnvVar]>,
+    pub(crate) exposed_secrets: Arc<[String]>,
+    pub(crate) secret_exposure_digest: SecretExposureDigest,
     pub(crate) backtrace_persist: bool,
     pub(crate) logs_store_min_level: Option<LogLevel>,
     pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
@@ -2234,8 +2277,17 @@ impl WebhookWasmComponentConfigResolvedExt for WebhookWasmComponentConfigResolve
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
         let (allowed_hosts, _advisories) =
             resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
-        validate_no_env_collision(&env_vars, &allowed_hosts)?;
-        let secrets = restricted_secret_registry(secret_registry, &allowed_hosts, None);
+        validate_no_env_collision(&env_vars, &allowed_hosts, &self.exposed_secrets)?;
+        let secret_exposure_digest = component_secret_exposure_digest(
+            &component_id.component_digest,
+            &self.exposed_secrets,
+        )?;
+        let exposed_secrets: Arc<[String]> = self.exposed_secrets.into();
+        let secrets = restricted_secret_registry(
+            secret_registry,
+            &allowed_hosts,
+            exposed_secrets.iter().cloned(),
+        );
         Ok((
             common.name,
             WebhookWasmComponentConfigVerified {
@@ -2249,6 +2301,8 @@ impl WebhookWasmComponentConfigResolvedExt for WebhookWasmComponentConfigResolve
                 forward_stdout: self.forward_stdout.into_std_output_config(),
                 forward_stderr: self.forward_stderr.into_std_output_config(),
                 env_vars,
+                exposed_secrets,
+                secret_exposure_digest,
                 frame_files_to_sources,
                 backtrace_persist: self.backtrace_persist,
                 subscription_interruption,
@@ -2301,8 +2355,17 @@ impl WebhookJsComponentConfigResolvedExt for WebhookJsComponentConfigResolved {
             resolve_env_vars_plaintext(self.env_vars, ignore_missing_env_vars, secret_registry)?;
         let (allowed_hosts, _advisories) =
             resolve_allowed_hosts(self.allowed_hosts, ignore_missing_env_vars, secret_registry)?;
-        validate_no_env_collision(&env_vars, &allowed_hosts)?;
-        let secrets = restricted_secret_registry(secret_registry, &allowed_hosts, None);
+        validate_no_env_collision(&env_vars, &allowed_hosts, &self.exposed_secrets)?;
+        let secret_exposure_digest = component_secret_exposure_digest(
+            &component_id.component_digest,
+            &self.exposed_secrets,
+        )?;
+        let exposed_secrets: Arc<[String]> = self.exposed_secrets.into();
+        let secrets = restricted_secret_registry(
+            secret_registry,
+            &allowed_hosts,
+            exposed_secrets.iter().cloned(),
+        );
         Ok((
             self.name,
             WebhookJsConfigVerified {
@@ -2318,6 +2381,8 @@ impl WebhookJsComponentConfigResolvedExt for WebhookJsComponentConfigResolved {
                 forward_stdout: self.forward_stdout.into_std_output_config(),
                 forward_stderr: self.forward_stderr.into_std_output_config(),
                 env_vars,
+                exposed_secrets,
+                secret_exposure_digest,
                 backtrace_persist: self.backtrace_persist,
                 logs_store_min_level: self.logs_store_min_level.into_log_level(),
                 allowed_hosts,
@@ -2794,6 +2859,7 @@ fn restricted_secret_registry(
 fn validate_no_env_collision(
     env_vars: &[EnvVar],
     allowed_hosts: &[AllowedHostConfig],
+    exposed_secrets: &[String],
 ) -> Result<(), anyhow::Error> {
     let env_var_keys: hashbrown::HashSet<_> = env_vars.iter().map(|e| e.key.as_str()).collect();
     for host in allowed_hosts {
@@ -2803,6 +2869,12 @@ fn validate_no_env_collision(
                 "secret env var `{key}` collides with an `env_vars` entry"
             );
         }
+    }
+    for key in exposed_secrets {
+        ensure!(
+            !env_var_keys.contains(key.as_str()),
+            "secret env var `{key}` collides with an `env_vars` entry"
+        );
     }
     Ok(())
 }
@@ -2934,6 +3006,7 @@ pub struct ActivityJsComponentConfigResolved {
     pub forward_stderr: ComponentStdOutputToml,
     pub logs_store_min_level: LogLevelToml,
     pub env_vars: Vec<EnvVarConfig>,
+    pub exposed_secrets: Vec<String>,
     pub allowed_hosts: Vec<AllowedHostToml>,
 }
 
@@ -3024,6 +3097,7 @@ pub struct WebhookWasmComponentConfigResolved {
     pub forward_stdout: ComponentStdOutputToml,
     pub forward_stderr: ComponentStdOutputToml,
     pub env_vars: Vec<EnvVarConfig>,
+    pub exposed_secrets: Vec<String>,
     pub backtrace: ComponentBacktraceConfigResolved,
     pub backtrace_persist: bool,
     pub logs_store_min_level: LogLevelToml,
@@ -3043,6 +3117,7 @@ pub struct WebhookJsComponentConfigResolved {
     pub forward_stderr: ComponentStdOutputToml,
     pub logs_store_min_level: LogLevelToml,
     pub env_vars: Vec<EnvVarConfig>,
+    pub exposed_secrets: Vec<String>,
     pub backtrace_persist: bool,
     pub allowed_hosts: Vec<AllowedHostToml>,
 }
@@ -3093,6 +3168,28 @@ mod tests {
         assert_ne!(first, different_code);
         assert_ne!(first, different_secrets);
         assert!(exec_secret_exposure_digest(&code_a, &["A".to_owned(), "A".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn component_secret_exposure_digest_binds_component_and_sorted_secret_set() {
+        let component_a = ComponentDigest(Digest([1; 32]));
+        let component_b = ComponentDigest(Digest([2; 32]));
+        let first =
+            component_secret_exposure_digest(&component_a, &["B".to_owned(), "A".to_owned()])
+                .unwrap();
+        let reordered =
+            component_secret_exposure_digest(&component_a, &["A".to_owned(), "B".to_owned()])
+                .unwrap();
+        let different_component =
+            component_secret_exposure_digest(&component_b, &["A".to_owned(), "B".to_owned()])
+                .unwrap();
+
+        assert_eq!(first, reordered);
+        assert_ne!(first, different_component);
+        assert!(
+            component_secret_exposure_digest(&component_a, &["A".to_owned(), "A".to_owned()])
+                .is_err()
+        );
     }
 
     #[test]

@@ -55,6 +55,7 @@ mod bench {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
+            exposed_secrets: Arc::from([]),
             fuel: None,
             allowed_hosts: Arc::from([]),
             global_http_config: wasm_workers::http_request_policy::GlobalHttpConfig::default(),

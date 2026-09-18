@@ -30,13 +30,16 @@
 ## plaintext exposure grants. At startup, before the runtime starts, each
 ## env-backed secret is read into memory and its source variable is removed from the process
 ## environment, so no deployment or worker thread can read it. Deployments reference these
-## names (never the raw env var) in `activity_exec.exposed_secrets`,
-## `activity_vm.exposed_secrets`, and `allowed_host.secrets`;
+## names (never the raw env var) in component `exposed_secrets` and
+## `allowed_host.secrets`;
 ## they cannot interpolate a registered secret via `${...}`.
 # [secrets]
 # OPENAI_KEY     = { env = "OPENAI_API_KEY" }   # logical name may differ from the source
 # DB_PASSWORD    = { env = "DB_PASSWORD" }
 ## Exposed plaintext must be authorized for the component's generated digest.
+## Add `exposed_secrets` to deployment.toml, run
+## `obelisk generate secret-config-digest -d deployment.toml`, then copy the
+## generated `[secrets.<name>.exposed_to]` entry here. Do not use `[public_env]` for credentials.
 # [secrets.DB_PASSWORD.exposed_to]
 # migration = "sha256:..."
 

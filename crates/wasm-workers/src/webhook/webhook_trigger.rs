@@ -34,6 +34,7 @@ use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use log_activities::obelisk::log::log::Host;
 use route_recognizer::{Match, Router};
+use secrecy::ExposeSecret as _;
 use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
@@ -640,6 +641,7 @@ pub struct WebhookEndpointConfig {
     pub forward_stdout: Option<StdOutputConfig>,
     pub forward_stderr: Option<StdOutputConfig>,
     pub env_vars: Arc<[EnvVar]>,
+    pub exposed_secrets: Arc<[String]>,
     pub fuel: Option<u64>,
     pub backtrace_persist: bool,
     pub subscription_interruption: Option<Duration>,
@@ -1962,6 +1964,11 @@ impl WebhookEndpointCtx {
         for env_var in config.env_vars.as_ref() {
             wasi_ctx.env(&env_var.key, &env_var.val);
         }
+        for name in config.exposed_secrets.iter() {
+            if let Some(value) = config.secrets.secret_lookup(name) {
+                wasi_ctx.env(name, value.expose_secret());
+            }
+        }
         if let Some(js_config) = &config.js_config {
             let entry_source = js_config
                 .files
@@ -2493,6 +2500,7 @@ pub(crate) mod tests {
                 forward_stdout: None,
                 forward_stderr: None,
                 env_vars: Arc::from([]),
+                exposed_secrets: Arc::from([]),
                 fuel: None,
                 backtrace_persist: false,
                 subscription_interruption: None,
@@ -2652,6 +2660,7 @@ pub(crate) mod tests {
                             forward_stdout: Some(StdOutputConfig::Stdout),
                             forward_stderr: Some(StdOutputConfig::Stdout),
                             env_vars: Arc::from([]),
+                            exposed_secrets: Arc::from([]),
                             fuel: None,
                             backtrace_persist: false,
                             subscription_interruption: None,
@@ -2948,6 +2957,7 @@ pub(crate) mod tests {
                         forward_stdout: Some(StdOutputConfig::Stdout),
                         forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
+                        exposed_secrets: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
                         subscription_interruption: None,
@@ -3145,6 +3155,7 @@ pub(crate) mod tests {
                         forward_stdout: Some(StdOutputConfig::Stdout),
                         forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
+                        exposed_secrets: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
                         subscription_interruption: None,
@@ -3280,6 +3291,7 @@ pub(crate) mod tests {
                         forward_stdout: Some(StdOutputConfig::Stdout),
                         forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
+                        exposed_secrets: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
                         subscription_interruption: None,
@@ -3432,6 +3444,7 @@ pub(crate) mod tests {
                         forward_stdout: Some(StdOutputConfig::Stdout),
                         forward_stderr: Some(StdOutputConfig::Stdout),
                         env_vars: Arc::from([]),
+                        exposed_secrets: Arc::from([]),
                         fuel: None,
                         backtrace_persist: false,
                         subscription_interruption: None,
@@ -3838,6 +3851,7 @@ pub(crate) mod tests {
                             forward_stdout: Some(StdOutputConfig::Stdout),
                             forward_stderr: Some(StdOutputConfig::Stdout),
                             env_vars: Arc::from([]),
+                            exposed_secrets: Arc::from([]),
                             fuel: None,
                             backtrace_persist,
                             subscription_interruption: None,

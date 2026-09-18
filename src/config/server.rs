@@ -41,7 +41,7 @@ pub(crate) struct ServerConfigToml {
     /// (currently only `{ env = "VAR" }`). Env-backed secrets are resolved and
     /// their source variables wiped from the process environment at startup, before
     /// the tokio runtime starts. Deployments reference these names in
-    /// `activity_exec.exposed_secrets`, `activity_vm.exposed_secrets`, and
+    /// component `exposed_secrets` and
     /// `allowed_host[].secrets`; they cannot interpolate them.
     #[serde(default)]
     pub(crate) secrets: SecretsToml,

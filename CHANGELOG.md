@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- *(secrets)* WASM and JavaScript activities and webhook endpoints can declare
+  `exposed_secrets`, which are injected as environment variables at execution or request time.
+  Plaintext exposure requires an operator grant under `[secrets.<name>.exposed_to]` bound to the
+  component digest and complete secret set. `obelisk generate secret-config-digest` generates the
+  required grants.
+
 ## [0.42.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.41.6...v0.42.0-rc.2)
 
 This release candidate adds experimental Linux VM and WASIp3 activity support, operator APIs for
