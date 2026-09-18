@@ -102,6 +102,12 @@ params = [
 return_type = "result<u32, string>"
 
 [[workflow_js]]
+location = "crates/testing/test-programs/js/workflow/import_ext_submit_error.js"
+ffqn = "testing:integration/workflow-import-ext-submit-error.submit-error"
+params = []
+return_type = "result<string, string>"
+
+[[workflow_js]]
 location = "crates/testing/test-programs/js/workflow/import_stub_activity.js"
 ffqn = "testing:integration/workflow-import-stub-activity.call-stub"
 params = [

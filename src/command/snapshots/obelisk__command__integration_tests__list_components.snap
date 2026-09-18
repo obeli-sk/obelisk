@@ -481,6 +481,23 @@ expression: components
   {
     "component_id": {
       "component_type": "workflow",
+      "name": "test_import_ext_submit_error_workflow",
+      "component_digest": "sha256:<REDACTED>"
+    },
+    "files": [
+      {
+        "file": {
+          "path": "crates/testing/test-programs/js/workflow/import_ext_submit_error.js",
+          "digest": "sha256:<REDACTED>",
+          "size": 522
+        },
+        "role": "js_entrypoint"
+      }
+    ]
+  },
+  {
+    "component_id": {
+      "component_type": "workflow",
       "name": "test_import_schedule_activity_workflow",
       "component_digest": "sha256:<REDACTED>"
     },
