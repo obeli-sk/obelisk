@@ -92,18 +92,22 @@ impl args::Execution {
                 ffqn,
                 params,
                 follow,
+                follow_logs,
                 no_reconnect,
                 paused,
                 json,
             } => {
+                let follow = follow || follow_logs;
                 let opts = if json {
                     SubmitOutputOpts::Json {
                         follow,
+                        follow_logs,
                         no_reconnect,
                     }
                 } else {
                     SubmitOutputOpts::Plain {
                         follow,
+                        follow_logs,
                         no_reconnect,
                     }
                 };
@@ -224,8 +228,16 @@ impl args::Execution {
 
 #[derive(PartialEq)]
 pub(crate) enum SubmitOutputOpts {
-    Plain { follow: bool, no_reconnect: bool },
-    Json { follow: bool, no_reconnect: bool },
+    Plain {
+        follow: bool,
+        follow_logs: bool,
+        no_reconnect: bool,
+    },
+    Json {
+        follow: bool,
+        follow_logs: bool,
+        no_reconnect: bool,
+    },
 }
 
 #[instrument(skip_all)]
@@ -276,17 +288,19 @@ pub(crate) async fn submit(
         FunctionFqnOrShort::Ffqn(ffqn) => ffqn,
     };
     let execution_id = execution_id.unwrap_or_else(ExecutionId::generate);
-    let (follow, no_reconnect, json) = match opts {
+    let (follow, follow_logs_enabled, no_reconnect, json) = match opts {
         SubmitOutputOpts::Plain {
             follow,
+            follow_logs,
             no_reconnect,
-        } => (follow, no_reconnect, false),
+        } => (follow, follow_logs, no_reconnect, false),
         SubmitOutputOpts::Json {
             follow,
+            follow_logs,
             no_reconnect,
-        } => (follow, no_reconnect, true),
+        } => (follow, follow_logs, no_reconnect, true),
     };
-    let request_follow = follow && json;
+    let request_follow = follow && json && !follow_logs_enabled;
     let url = format!("{api_url}/v1/executions/{execution_id}?follow={request_follow}");
     loop {
         let response = client
@@ -316,7 +330,28 @@ pub(crate) async fn submit(
                     } else {
                         println!("{}", response.ok);
                     }
-                    return if follow {
+                    return if follow_logs_enabled {
+                        let logs_opts =
+                            LogsOpts::from_args(args::LogLevelArg::Debug, None, false, false, 20)?;
+                        follow_logs(
+                            client_startup,
+                            api_url,
+                            &execution_id,
+                            &logs_opts,
+                            None,
+                            json,
+                        )
+                        .await?;
+                        get_execution_result_rest(
+                            client_startup,
+                            api_url,
+                            execution_id,
+                            false,
+                            no_reconnect,
+                            json,
+                        )
+                        .await
+                    } else if follow {
                         get_execution_result_rest(
                             client_startup,
                             api_url,

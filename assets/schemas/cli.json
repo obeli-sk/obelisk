@@ -295,6 +295,10 @@
               "help": "Follow the stream of events until the execution finishes"
             },
             {
+              "name": "--follow-logs",
+              "help": "Follow logs until the execution finishes, then print its result"
+            },
+            {
               "name": "--no-reconnect",
               "help": "Do not attempt to reconnect on connection error while following the status stream"
             },

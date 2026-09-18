@@ -29,9 +29,9 @@ url = "https://trynix.dev/examples/cache"
 public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
 
 # Test with
-# obelisk execution submit --follow \
-#    testing:vm/bash.run -- \
-#    '"curl -v http://obelisk-host:5005/v1/admin/node-run-id -H \"Authorization: Bearer <yourtoken>\""'
+# echo 'curl -v http://obelisk-host:5005/v1/admin/node-run-id -H "Authorization: Bearer <token>"' \
+#   | jq -R '[.]' \
+#   | obelisk execution submit --follow-logs testing:vm/bash.run -
 [[activity_vm]]
 ffqn = "testing:vm/bash.run"
 max_retries = 0
