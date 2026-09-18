@@ -13,8 +13,8 @@ on:
         required: false
         type: string
         default: "latest"
-      update_latest:
-        description: "Update the Docker Hub latest tag"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags"
         required: true
         type: boolean
         default: true
@@ -30,8 +30,8 @@ on:
         required: false
         type: string
         default: "latest"
-      update_latest:
-        description: "Update the Docker Hub latest tag"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags"
         required: true
         type: boolean
       publish_release:
@@ -57,8 +57,8 @@ jobs:
     steps:
       - name: Validate inputs
         run: |
-          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
-            echo "::error::update_latest requires publish_release"
+          if [ "${{ inputs.push_unversioned_tags }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
+            echo "::error::push_unversioned_tags requires publish_release"
             exit 1
           fi
 
@@ -224,5 +224,5 @@ jobs:
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
-      update_latest: ${{ inputs.update_latest }}
+      push_unversioned_tags: ${{ inputs.push_unversioned_tags }}
       publish_release: ${{ inputs.publish_release }}

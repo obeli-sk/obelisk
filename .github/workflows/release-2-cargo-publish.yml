@@ -23,11 +23,16 @@ on:
         required: true
         type: boolean
         default: false
-      update_latest:
-        description: "Update the Docker Hub latest tag (requires publishing the release)"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags (requires publishing the release)"
         required: true
         type: boolean
         default: true
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
+        required: true
+        type: boolean
+        default: false
       publish_release:
         description: "Publish the GitHub release after artifacts and Docker images are uploaded"
         required: true
@@ -58,8 +63,12 @@ on:
         description: "Stop after cargo publish"
         required: true
         type: boolean
-      update_latest:
-        description: "Update the Docker Hub latest tag (requires publishing the release)"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags (requires publishing the release)"
+        required: true
+        type: boolean
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
         required: true
         type: boolean
       publish_release:
@@ -90,8 +99,8 @@ jobs:
             echo "::error::dry_run requires stop_after_step_2"
             exit 1
           fi
-          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
-            echo "::error::update_latest requires publish_release"
+          if [ "${{ inputs.push_unversioned_tags }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
+            echo "::error::push_unversioned_tags requires publish_release"
             exit 1
           fi
 
@@ -177,5 +186,6 @@ jobs:
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
-      update_latest: ${{ inputs.update_latest }}
+      push_unversioned_tags: ${{ inputs.push_unversioned_tags }}
+      prerelease: ${{ inputs.prerelease }}
       publish_release: ${{ inputs.publish_release }}

@@ -13,8 +13,8 @@ on:
         required: false
         type: string
         default: "latest"
-      update_latest:
-        description: "Update the Docker Hub latest tag"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags"
         required: true
         type: boolean
         default: true
@@ -30,8 +30,8 @@ on:
         required: false
         type: string
         default: "latest"
-      update_latest:
-        description: "Update the Docker Hub latest tag"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags"
         required: true
         type: boolean
       publish_release:
@@ -49,8 +49,8 @@ jobs:
     steps:
       - name: Validate inputs
         run: |
-          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
-            echo "::error::update_latest requires publish_release"
+          if [ "${{ inputs.push_unversioned_tags }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
+            echo "::error::push_unversioned_tags requires publish_release"
             exit 1
           fi
 
@@ -111,12 +111,12 @@ jobs:
         run: |
           docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
           IMAGE_BASE="getobelisk/obelisk"
-          TAGS=(
-            "${IMAGE_BASE}:${{ matrix.image_tag }}"
-            "${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}"
-          )
-          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
-            TAGS+=("${IMAGE_BASE}:latest")
+          TAGS=("${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}")
+          if [ "${{ inputs.push_unversioned_tags }}" = "true" ]; then
+            TAGS+=("${IMAGE_BASE}:${{ matrix.image_tag }}")
+            if [ "${{ matrix.image_tag }}" = "ubuntu" ]; then
+              TAGS+=("${IMAGE_BASE}:latest")
+            fi
           fi
           PUSH=true scripts/build-docker-image.sh \
             tmp/obelisk \
@@ -165,7 +165,7 @@ jobs:
 
   verify-download-sh:
     needs: publish-release
-    if: ${{ inputs.publish_release && inputs.update_latest }}
+    if: ${{ inputs.publish_release && inputs.push_unversioned_tags }}
     uses: ./.github/workflows/release-5-verify-download-sh.yml
     secrets: inherit
     with:

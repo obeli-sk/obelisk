@@ -13,11 +13,16 @@ on:
         required: false
         type: string
         default: "latest"
-      update_latest:
-        description: "Update the Docker Hub latest tag"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags"
         required: true
         type: boolean
         default: true
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
+        required: true
+        type: boolean
+        default: false
       publish_release:
         description: "Publish the GitHub release after artifacts and Docker images are uploaded"
         required: true
@@ -30,8 +35,12 @@ on:
         required: false
         type: string
         default: "latest"
-      update_latest:
-        description: "Update the Docker Hub latest tag"
+      push_unversioned_tags:
+        description: "Push unversioned Docker tags"
+        required: true
+        type: boolean
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
         required: true
         type: boolean
       publish_release:
@@ -50,8 +59,8 @@ jobs:
     steps:
       - name: Validate inputs
         run: |
-          if [ "${{ inputs.update_latest }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
-            echo "::error::update_latest requires publish_release"
+          if [ "${{ inputs.push_unversioned_tags }}" = "true" ] && [ "${{ inputs.publish_release }}" != "true" ]; then
+            echo "::error::push_unversioned_tags requires publish_release"
             exit 1
           fi
 
@@ -79,7 +88,7 @@ jobs:
               "name": "obelisk-'"$TAG"'",
               "body": '"$body"',
               "draft": true,
-              "prerelease": false
+              "prerelease": ${{ inputs.prerelease }}
             }' \
             https://api.github.com/repos/obeli-sk/obelisk/releases
           )
@@ -98,6 +107,10 @@ jobs:
 
           if [ "$(jq -r .target_commitish release.json)" != "$SHA" ]; then
             echo "::error::Release $TAG targets a different commit"
+            exit 1
+          fi
+          if [ "$(jq -r .prerelease release.json)" != "${{ inputs.prerelease }}" ]; then
+            echo "::error::Release $TAG has a different prerelease setting"
             exit 1
           fi
 
@@ -128,5 +141,5 @@ jobs:
     secrets: inherit
     with:
       ref: ${{ needs.create-github-release.outputs.sha }}
-      update_latest: ${{ inputs.update_latest }}
+      push_unversioned_tags: ${{ inputs.push_unversioned_tags }}
       publish_release: ${{ inputs.publish_release }}
