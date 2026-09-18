@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.42.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.41.6...v0.42.0-rc.2) - 2026-09-17
+## [0.42.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.41.6...v0.42.0-rc.2)
 
 ### Removed
 
@@ -71,7 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(system-events)* Added persisted operator-visible system events for server configuration,
   deployment lifecycle and policy failures. Startup events record execution, deployment and CAS
   retention configuration, and disabling automatic GC emits a warning. Events can be listed,
-  inspected and retained through the admin CLI and REST/gRPC APIs, and filtered by node run.
+  inspected and retained through the admin CLI and REST/gRPC APIs, and filtered by node run or
+  `debug`, `info`, `warning` and `error` level.
 - *(admin)* Added a node run ID to distinguish events emitted by different starts of a node.
   `obelisk admin node-run-id` and the REST/gRPC admin APIs expose the current ID.
 - *(config)* Added `[limits].max_persisted_value_size_bytes`, defaulting to 1 MiB. Each new
@@ -112,6 +113,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variants for interpreted runtimes. Workflow `submit-json` and its error type move alongside
   `call-json` and `schedule-json`, allowing dynamic dispatch to be granted independently from
   other workflow and webhook support capabilities.
+- **Breaking:** *(wit)* The persisted-value size limit adds `value-too-large` errors to submission,
+  scheduling, stubbing and result contracts. The affected packages are now `obelisk:types@6.0.0`,
+  `obelisk:workflow@7.0.0` and `obelisk:webhook@7.0.0`; the `function` record also moves from the
+  `execution` interface to a dedicated `function` interface.
 - **Breaking:** *(executor)* The default execution lock expiry is now 30 seconds instead of 1
   second, and workflow lock extension starts 15 seconds before expiry instead of 100 milliseconds.
   A workflow extends its lock only after persisting progress since the previous extension, avoiding
