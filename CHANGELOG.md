@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.41.6...v0.42.0-rc.2) - 2026-09-17
+
 ### Removed
 
 - **Breaking:** *(config)* Removed deprecated deployment `component_digest` overrides. Component
@@ -30,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are no longer interpreted as named join sets.
 - **Breaking:** *(api)* Log pagination cursors must use the opaque cursor returned by the API;
   RFC 3339 timestamps are no longer accepted as cursors. Use `after` for timestamp filtering.
+- **Breaking:** *(api)* Deployment submission now requires a caller-provided `deployment_id`.
+  Retrying a submission with the same ID and content is idempotent; reusing an ID for different
+  content is rejected.
 
 ### Added
 
@@ -63,6 +68,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(workflow)* `join-next-for` workflow-support function blocks until the next response arrives and
   requires it to belong to a given function. Its `join-next-for-error` reports `function-mismatch`
   when the next response belongs to a different function or is a delay.
+- *(system-events)* Added persisted operator-visible system events for server configuration,
+  deployment lifecycle and policy failures. Startup events record execution, deployment and CAS
+  retention configuration, and disabling automatic GC emits a warning. Events can be listed,
+  inspected and retained through the admin CLI and REST/gRPC APIs, and filtered by server run.
+- *(admin)* Added a server run ID to distinguish events emitted by different starts of the same
+  server. `obelisk admin server-run-id` and the REST/gRPC admin APIs expose the current ID.
+- *(config)* Added `[limits].max_persisted_value_size_bytes`, defaulting to 1 MiB. Each new
+  execution tree snapshots its limit, while executions created by older releases retain their
+  previous unlimited contract.
+- *(config)* Added `[limits].max_transport_message_size_bytes`, defaulting to 512 MiB, as the
+  shared maximum for gRPC messages and equivalent REST request bodies.
+- *(history)* Persisted random values and child-execution parameters now carry fingerprints used
+  during replay to detect incompatible history.
+- *(wasm)* Added experimental WASIp3 component support for activities and webhook endpoints.
+- *(gc)* Added automatic retention and background garbage collection for execution trees,
+  inactive deployments, system events, and unreferenced metadata and CAS blobs. CAS batches are
+  bounded by both item count and bytes.
 
 ### Changed
 
@@ -101,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflows record the requested function in their event history exactly as native Rust workflows
   do. The execution log is therefore identical across languages, allowing a workflow to be replayed
   after switching its implementation between JS and Rust mid-execution.
+- *(server)* Shutdown now cancels in-flight REST, gRPC and webhook requests and waits for their
+  cleanup before database connections are closed.
 
 ### Fixed
 
@@ -113,6 +137,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different `retval_hash` values, so a self-fulfilled stub recorded by one language failed the
   determinism check when the workflow was replayed under the other, blocking mid-execution
   JS/Rust switches for any workflow that self-fulfills a stub.
+- *(http)* REST deployment submission accepts request bodies up to the configured transport limit,
+  matching gRPC instead of failing at Axum's smaller default limit.
+- *(http-js)* JavaScript activities and webhook endpoints preserve bodyless `GET` requests instead
+  of adding an empty body.
+- *(deployment)* Unregistered-secret submission failures are returned as structured API errors.
+
 
 ## [0.41.6](https://github.com/obeli-sk/obelisk/compare/v0.41.5...v0.41.6)
 
