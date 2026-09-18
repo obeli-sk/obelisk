@@ -85,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(gc)* Added automatic retention and background garbage collection for execution trees,
   inactive deployments, system events, and unreferenced metadata and CAS blobs. CAS batches are
   bounded by both item count and bytes.
+- *(cli)* `obelisk execution submit --follow-logs` streams execution logs until completion and
+  then prints the result. A lone `-` parameter reads the JSON parameter array from stdin.
 
 ### Changed
 

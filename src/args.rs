@@ -1047,6 +1047,8 @@ pub(crate) enum Execution {
         ///
         /// - File reference prefixed with @, e.g. @file.json (file must contain a valid JSON array)
         ///
+        /// - `-` to read a JSON array from stdin
+        ///
         /// - Multiple arguments after --, e.g. -- '"first"' @secondparam.json null 1
         ///
         /// - For functions with no parameters: [] (JSON array variant) or no arguments.
@@ -1215,69 +1217,85 @@ pub(crate) enum Execution {
 pub(crate) mod params {
     use clap::error::ErrorKind;
     use serde_json::Value;
+    use std::io::Read as _;
 
     pub(crate) fn parse_params(params: Vec<String>) -> Result<Vec<serde_json::Value>, clap::Error> {
-        if params.is_empty() {
-            Ok(vec![]) // no params, does not matter if `--` was present.
-        } else if params.len() == 1 && !dashdash() {
-            let mut params = params;
-            let json_array = params.pop().expect("checked that len == 1");
-            // Single JSON Array, or a `@`-prefixed file containing the array.
-            let json_array = if let Some(file_path) = json_array.strip_prefix('@') {
-                std::fs::read_to_string(file_path).map_err(|err| {
-                    clap::Error::raw(
-                        ErrorKind::Io,
-                        format!(
-                            "parameter parsing failed: failed to read file '{file_path}': {err}"
-                        ),
-                    )
-                })?
-            } else {
-                json_array
-            };
-            let json_value = serde_json::from_str(&json_array).map_err(|err| {
-                clap::Error::raw(
-                    ErrorKind::ValueValidation,
-                    format!("Invalid JSON array for parameters: {err}"),
-                )
-            })?;
-            let Value::Array(params) = json_value else {
-                return Err(clap::Error::raw(
-                    ErrorKind::ValueValidation,
-                    "Parameter provided as JSON must be a JSON array.",
-                ));
-            };
-            Ok(params)
-        } else {
-            // Fallback to raw arguments. Each argument is interpreted as a JSON value or a file starting with `@` that contains the JSON.
-            let mut parsed_params: Vec<Value> = Vec::new();
-            for (idx, arg) in params.into_iter().enumerate() {
-                let arg = if let Some(file_path) = arg.strip_prefix('@') {
+        match params.as_slice() {
+            [] => Ok(vec![]),
+            [stdin] if stdin == "-" => {
+                let mut json_array = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut json_array)
+                    .map_err(|err| {
+                        clap::Error::raw(
+                            ErrorKind::Io,
+                            format!("parameter parsing failed: failed to read stdin: {err}"),
+                        )
+                    })?;
+                parse_json_array(&json_array)
+            }
+            [json_array] if !dashdash() => {
+                let json_array = if let Some(file_path) = json_array.strip_prefix('@') {
                     std::fs::read_to_string(file_path).map_err(|err| {
                         clap::Error::raw(
                             ErrorKind::Io,
                             format!(
-                                "{}-th parameter parsing failed: failed to read file '{file_path}': {err}",
-                                idx + 1
+                                "parameter parsing failed: failed to read file '{file_path}': {err}"
                             ),
                         )
                     })?
                 } else {
-                    arg
+                    json_array.clone()
                 };
-                let json = serde_json::from_str(&arg).map_err(|err| {
-                    clap::Error::raw(
-                        ErrorKind::ValueValidation,
-                        format!(
-                            "cannot parse {}-th parameter `{arg}` as JSON -  {err}",
-                            idx + 1
-                        ),
-                    )
-                })?;
-                parsed_params.push(json);
+                parse_json_array(&json_array)
             }
-            Ok(parsed_params)
+            _ => {
+                // Fallback to raw arguments. Each argument is interpreted as a JSON value or a file starting with `@` that contains the JSON.
+                let mut parsed_params: Vec<Value> = Vec::new();
+                for (idx, arg) in params.into_iter().enumerate() {
+                    let arg = if let Some(file_path) = arg.strip_prefix('@') {
+                        std::fs::read_to_string(file_path).map_err(|err| {
+                            clap::Error::raw(
+                                ErrorKind::Io,
+                                format!(
+                                    "{}-th parameter parsing failed: failed to read file '{file_path}': {err}",
+                                    idx + 1
+                                ),
+                            )
+                        })?
+                    } else {
+                        arg
+                    };
+                    let json = serde_json::from_str(&arg).map_err(|err| {
+                        clap::Error::raw(
+                            ErrorKind::ValueValidation,
+                            format!(
+                                "cannot parse {}-th parameter `{arg}` as JSON -  {err}",
+                                idx + 1
+                            ),
+                        )
+                    })?;
+                    parsed_params.push(json);
+                }
+                Ok(parsed_params)
+            }
         }
+    }
+
+    fn parse_json_array(json_array: &str) -> Result<Vec<Value>, clap::Error> {
+        let json_value = serde_json::from_str(json_array).map_err(|err| {
+            clap::Error::raw(
+                ErrorKind::ValueValidation,
+                format!("Invalid JSON array for parameters: {err}"),
+            )
+        })?;
+        let Value::Array(params) = json_value else {
+            return Err(clap::Error::raw(
+                ErrorKind::ValueValidation,
+                "Parameter provided as JSON must be a JSON array.",
+            ));
+        };
+        Ok(params)
     }
 
     fn dashdash() -> bool {
