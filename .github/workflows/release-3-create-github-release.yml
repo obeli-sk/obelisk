@@ -76,39 +76,41 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: Find or create GitHub Release
         id: create-release
         run: |
           echo "Releasing $TAG $SHA"
-          body=$(./scripts/extract-release-info.sh "$VERSION" | jq -R -s .)
-          status=$(curl -sS -o release.json -w '%{http_code}' \
-            -H "Content-Type: application/json" \
+          curl --fail -L \
+            -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -d '{
-              "tag_name": "'"$TAG"'",
-              "target_commitish": "'"$SHA"'",
-              "name": "obelisk-'"$TAG"'",
-              "body": '"$body"',
-              "draft": true,
-              "prerelease": ${{ inputs.prerelease }}
-            }' \
-            https://api.github.com/repos/obeli-sk/obelisk/releases
-          )
-
-          # A rerun may find the release created by an earlier partial attempt.
-          if [ "$status" = "422" ]; then
-            curl --fail -L \
-              -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/obeli-sk/obelisk/releases?per_page=100" > releases.json
+          MATCH_COUNT=$(jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | length' releases.json)
+          if [ "$MATCH_COUNT" = "0" ]; then
+            body=$(./scripts/extract-release-info.sh "$VERSION" | jq -R -s .)
+            status=$(curl -sS -o release.json -w '%{http_code}' \
+              -H "Content-Type: application/json" \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/obeli-sk/obelisk/releases?per_page=100" \
-              | jq --arg tag "$TAG" '.[] | select(.tag_name == $tag)' > release.json
-            if [ ! -s release.json ]; then
-              echo "::error::Release $TAG already exists but was not found in the release list"
+              -d '{
+                "tag_name": "'"$TAG"'",
+                "target_commitish": "'"$SHA"'",
+                "name": "obelisk-'"$TAG"'",
+                "body": '"$body"',
+                "draft": true,
+                "prerelease": ${{ inputs.prerelease }}
+              }' \
+              https://api.github.com/repos/obeli-sk/obelisk/releases
+            )
+            if [ "$status" != "201" ]; then
+              cat release.json
               exit 1
             fi
-          elif [ "$status" != "201" ]; then
-            cat release.json
+          elif [ "$MATCH_COUNT" = "1" ]; then
+            jq --arg tag "$TAG" '.[] | select(.tag_name == $tag)' releases.json > release.json
+          else
+            echo "::error::Found $MATCH_COUNT releases for $TAG; delete duplicates before retrying"
+            jq --arg tag "$TAG" '.[] | select(.tag_name == $tag) | {id, draft, html_url}' releases.json
             exit 1
           fi
 
@@ -132,11 +134,11 @@ jobs:
               exit 0
             fi
 
-            echo "Release tag $TAG not readable yet, retrying ($attempt/30)"
+            echo "Release ID $RELEASE_ID not readable yet, retrying ($attempt/30)"
             sleep 2
           done
 
-          echo "Timed out waiting for release tag $TAG to become readable"
+          echo "Timed out waiting for release ID $RELEASE_ID to become readable"
           exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
