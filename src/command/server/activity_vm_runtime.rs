@@ -7,9 +7,10 @@ const RUNTIME_LOCATION: &str = embedded_assets::ACTIVITY_VM_RUNTIME_LOCATION;
 const RUNTIME_ARTIFACT_KIND: &str = "activity-vm-runtime.v1";
 
 pub(crate) async fn fetch(cache_root: &Path) -> anyhow::Result<PathBuf> {
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     if let Some(module) = std::env::var_os("OBELISK_ACTIVITY_VM_RUNTIME_MODULE").map(PathBuf::from)
     {
+        tracing::warn!("Overriding activity-vm-runtime with {module:?}");
         ensure!(module.is_file(), "local activity VM module is missing");
         return Ok(module);
     }
