@@ -5,4 +5,4 @@ secrets = ["VM_SECRET"]
 replace_in = ["headers"]
 
 [secrets]
-VM_SECRET = { env = "VM_SECRET_VALUE" }
+VM_SECRET = { env = "VM_SECRET_VALUE" , exposed_to = { "stdin.run" = "sha256:eebdf95cf5963e88f6e631159bd5095bad7d6f1bdde93bbb26c34df591148d44" } }

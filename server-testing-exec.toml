@@ -1,0 +1,8 @@
+[public_env]
+allowed = ["PATH"]
+
+[allowed_exec_activities]
+"exec-stream.stream-test" = "sha256:f2790bee4e20e256384255387d5150676a24014df96ef6803ff55d04acd8ca9b"
+"exec-greet.greet-include" = "sha256:e280e2c202954ef2a8ac1a688d0b64495c659cc576983f13fe250c09864b97fa"
+"exec-greet.greet-inline" = "sha256:1ec5be7b3c95ed39f954012679ac3e023aef91eeb3822c4839ae2b1b4263677d"
+"exec-busy.busy" = "sha256:e0827ee2b71b4c56fa46573a659c73feb1f354512308aa29c2f2df0cb25c49b5"

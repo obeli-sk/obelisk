@@ -5975,8 +5975,8 @@ async fn delete_deployment_tx(
 impl DbAdmin for PostgresConnection {
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.client.lock().await.execute(
-            "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-            &[&event.event_id.to_string(), &event.server_run_id.to_string(), &event.created_at, &event.level.as_str(), &event.code,
+            "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+            &[&event.event_id.to_string(), &event.node_run_id.to_string(), &event.created_at, &event.level.as_str(), &event.code,
               &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &event.cas_digest.map(|digest| digest.to_string())],
         ).await?;
         Ok(())
@@ -6004,8 +6004,8 @@ impl DbAdmin for PostgresConnection {
         )
         .await?;
         tx.execute(
-            "INSERT INTO t_system_event (event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
-            &[&event.event_id.to_string(), &event.server_run_id.to_string(), &event.created_at, &event.level.as_str(), &event.code,
+            "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
+            &[&event.event_id.to_string(), &event.node_run_id.to_string(), &event.created_at, &event.level.as_str(), &event.code,
               &event.execution_id.map(|id| id.to_string()), &event.deployment_id.map(|id| id.to_string()), &Json(event.details), &event.dedupe_key, &digest.to_string()],
         ).await?;
         tx.commit().await?;
@@ -6017,12 +6017,12 @@ impl DbAdmin for PostgresConnection {
         filter: SystemEventFilter,
     ) -> Result<Vec<SystemEvent>, DbErrorRead> {
         let rows = self.client.lock().await.query(
-            "SELECT event_id, server_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
-             WHERE ($1::text IS NULL OR event_id = $1) AND ($2::text IS NULL OR server_run_id = $2)
+            "SELECT event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, cas_digest FROM t_system_event
+             WHERE ($1::text IS NULL OR event_id = $1) AND ($2::text IS NULL OR node_run_id = $2)
                AND ($3::text IS NULL OR level = $3) AND ($4::text IS NULL OR code = $4)
                AND ($5::text IS NULL OR deployment_id = $5) AND ($6::text IS NULL OR event_id < $6)
              ORDER BY event_id DESC LIMIT $7",
-            &[&filter.event_id.map(|id| id.to_string()), &filter.server_run_id.map(|id| id.to_string()), &filter.level.map(SystemEventLevel::as_str),
+            &[&filter.event_id.map(|id| id.to_string()), &filter.node_run_id.map(|id| id.to_string()), &filter.level.map(SystemEventLevel::as_str),
               &filter.code, &filter.deployment_id.map(|id| id.to_string()), &filter.before_event_id.map(|id| id.to_string()),
               &i64::from(filter.limit.clamp(1, 1000))],
         ).await?;
@@ -6035,11 +6035,12 @@ impl DbAdmin for PostgresConnection {
                     event_id: get::<String, _>(&row, 0)?.parse().map_err(|err| {
                         consistency_db_err(format!("invalid system event ID: {err}"))
                     })?,
-                    server_run_id: get::<String, _>(&row, 1)?.parse().map_err(|err| {
-                        consistency_db_err(format!("invalid server run ID: {err}"))
-                    })?,
+                    node_run_id: get::<String, _>(&row, 1)?
+                        .parse()
+                        .map_err(|err| consistency_db_err(format!("invalid node run ID: {err}")))?,
                     created_at: get(&row, 2)?,
                     level: match level.as_str() {
+                        "debug" => SystemEventLevel::Debug,
                         "warning" => SystemEventLevel::Warning,
                         "error" => SystemEventLevel::Error,
                         _ => SystemEventLevel::Info,

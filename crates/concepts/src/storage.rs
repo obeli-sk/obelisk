@@ -18,8 +18,8 @@ use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::DeploymentId;
 use crate::prefixed_ulid::ExecutionIdDerived;
 use crate::prefixed_ulid::ExecutorId;
+use crate::prefixed_ulid::NodeRunId;
 use crate::prefixed_ulid::RunId;
-use crate::prefixed_ulid::ServerRunId;
 use crate::prefixed_ulid::SystemEventId;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
@@ -1484,6 +1484,7 @@ pub struct ExecutionGcResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemEventLevel {
+    Debug,
     Info,
     Warning,
     Error,
@@ -1493,6 +1494,7 @@ impl SystemEventLevel {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Debug => "debug",
             Self::Info => "info",
             Self::Warning => "warning",
             Self::Error => "error",
@@ -1503,7 +1505,7 @@ impl SystemEventLevel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
     pub event_id: SystemEventId,
-    pub server_run_id: ServerRunId,
+    pub node_run_id: NodeRunId,
     pub created_at: DateTime<Utc>,
     pub level: SystemEventLevel,
     pub code: String,
@@ -1577,11 +1579,12 @@ impl SystemEventCode {
     #[must_use]
     pub fn level(self) -> SystemEventLevel {
         match self {
-            Self::ServerStartupFailed
-            | Self::DeploymentSubmitFailed
+            Self::ServerStartupFailed => SystemEventLevel::Error,
+            Self::DeploymentSubmitFailed
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
+            Self::ComponentHttpPolicyApplied => SystemEventLevel::Debug,
             _ => SystemEventLevel::Info,
         }
     }
@@ -1627,15 +1630,15 @@ pub enum SystemEventValidationError {
     DetailsTooLarge,
 }
 
-static SERVER_RUN_ID: std::sync::OnceLock<ServerRunId> = std::sync::OnceLock::new();
+static NODE_RUN_ID: std::sync::OnceLock<NodeRunId> = std::sync::OnceLock::new();
 
 #[must_use]
-pub fn initialize_server_run_id() -> ServerRunId {
-    *SERVER_RUN_ID.get_or_init(ServerRunId::generate)
+pub fn initialize_node_run_id() -> NodeRunId {
+    *NODE_RUN_ID.get_or_init(NodeRunId::generate)
 }
 
-fn server_run_id() -> ServerRunId {
-    initialize_server_run_id()
+fn node_run_id() -> NodeRunId {
+    initialize_node_run_id()
 }
 
 impl SystemEvent {
@@ -1654,7 +1657,7 @@ impl SystemEvent {
         }
         Ok(Self {
             event_id: SystemEventId::generate(),
-            server_run_id: server_run_id(),
+            node_run_id: node_run_id(),
             created_at: Utc::now(),
             level: code.level(),
             code: code.as_str().to_owned(),
@@ -1735,7 +1738,7 @@ impl SystemEvent {
 #[derive(Debug, Clone, Default)]
 pub struct SystemEventFilter {
     pub event_id: Option<SystemEventId>,
-    pub server_run_id: Option<ServerRunId>,
+    pub node_run_id: Option<NodeRunId>,
     pub level: Option<SystemEventLevel>,
     pub code: Option<String>,
     pub deployment_id: Option<DeploymentId>,
@@ -3746,7 +3749,7 @@ mod tests {
     use super::PendingStateFinished;
     use super::PendingStateFinishedError;
     use super::PendingStateFinishedResultKind;
-    use super::{SystemEvent, SystemEventCode, SystemEventValidationError};
+    use super::{SystemEvent, SystemEventCode, SystemEventLevel, SystemEventValidationError};
     use crate::ExecutionFailureKind;
     use crate::JoinSetId;
     use crate::Params;
@@ -3791,6 +3794,22 @@ mod tests {
             assert!(code.as_str().chars().count() <= 64);
             assert!(code.message().chars().count() <= 512);
         }
+    }
+
+    #[test]
+    fn system_event_code_levels_distinguish_debug_and_failures() {
+        assert_eq!(
+            SystemEventCode::ComponentHttpPolicyApplied.level(),
+            SystemEventLevel::Debug
+        );
+        assert_eq!(
+            SystemEventCode::ServerStartupFailed.level(),
+            SystemEventLevel::Error
+        );
+        assert_eq!(
+            SystemEventCode::DeploymentSubmitFailed.level(),
+            SystemEventLevel::Warning
+        );
     }
 
     #[test]

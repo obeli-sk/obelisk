@@ -967,7 +967,7 @@ pub mod prefixed_ulid {
         pub struct Delay;
         pub struct Dep;
         pub struct Sysevt;
-        pub struct Srv;
+        pub struct NodeRun;
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
@@ -976,7 +976,7 @@ pub mod prefixed_ulid {
     pub type DelayIdTopLevel = PrefixedUlid<prefix::Delay>; // Never used directly, tracking top level ExecutionId
     pub type DeploymentId = PrefixedUlid<prefix::Dep>;
     pub type SystemEventId = PrefixedUlid<prefix::Sysevt>;
-    pub type ServerRunId = PrefixedUlid<prefix::Srv>;
+    pub type NodeRunId = PrefixedUlid<prefix::NodeRun>;
 
     #[cfg(any(test, feature = "test"))]
     pub const DEPLOYMENT_ID_DUMMY: DeploymentId = DeploymentId::from_parts(0, 0);

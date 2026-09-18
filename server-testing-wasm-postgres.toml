@@ -1,11 +1,3 @@
-
-[log.file]
-level = "info,obeli_sk_wasm_workers=debug"
-enabled = true
-target = true
-directory = "."
-prefix = "obelisk.log" # File name prefix
-
 [[outbound_http.allowed_host]]
 pattern = "*"
 methods = "*"
@@ -18,3 +10,10 @@ replace_in = ["headers", "params", "body"]
 
 [secrets]
 MY_SECRET = { env = "MY_SECRET" }
+
+[database.postgres]
+host =     "${POSTGRES_HOST}"
+user =     "${POSTGRES_USER}"
+password = "${POSTGRES_PASSWORD}"
+db_name =  "${POSTGRES_DATABASE}"
+provision_policy = "auto"

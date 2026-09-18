@@ -1,0 +1,3 @@
+[[outbound_http.allowed_host]]
+pattern = "http://localhost:5005"
+methods = ["GET"]

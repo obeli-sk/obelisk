@@ -71,9 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(system-events)* Added persisted operator-visible system events for server configuration,
   deployment lifecycle and policy failures. Startup events record execution, deployment and CAS
   retention configuration, and disabling automatic GC emits a warning. Events can be listed,
-  inspected and retained through the admin CLI and REST/gRPC APIs, and filtered by server run.
-- *(admin)* Added a server run ID to distinguish events emitted by different starts of the same
-  server. `obelisk admin server-run-id` and the REST/gRPC admin APIs expose the current ID.
+  inspected and retained through the admin CLI and REST/gRPC APIs, and filtered by node run.
+- *(admin)* Added a node run ID to distinguish events emitted by different starts of a node.
+  `obelisk admin node-run-id` and the REST/gRPC admin APIs expose the current ID.
 - *(config)* Added `[limits].max_persisted_value_size_bytes`, defaulting to 1 MiB. Each new
   execution tree snapshots its limit, while executions created by older releases retain their
   previous unlimited contract.

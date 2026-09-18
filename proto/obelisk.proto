@@ -61,7 +61,7 @@ service AdminRepository {
     rpc ListSystemEvents(ListSystemEventsRequest) returns (ListSystemEventsResponse);
     rpc GetSystemEvent(GetSystemEventRequest) returns (GetSystemEventResponse);
     rpc GetStorageStatus(GetStorageStatusRequest) returns (GetStorageStatusResponse);
-    rpc GetServerRunId(GetServerRunIdRequest) returns (GetServerRunIdResponse);
+    rpc GetNodeRunId(GetNodeRunIdRequest) returns (GetNodeRunIdResponse);
     rpc RetainSystemEvents(RetainSystemEventsRequest) returns (RetainSystemEventsResponse);
 }
 
@@ -1379,9 +1379,10 @@ message CleanupResponse {
 
 enum SystemEventLevel {
     SYSTEM_EVENT_LEVEL_UNSPECIFIED = 0;
-    SYSTEM_EVENT_LEVEL_INFO = 1;
-    SYSTEM_EVENT_LEVEL_WARNING = 2;
-    SYSTEM_EVENT_LEVEL_ERROR = 3;
+    SYSTEM_EVENT_LEVEL_DEBUG = 1;
+    SYSTEM_EVENT_LEVEL_INFO = 2;
+    SYSTEM_EVENT_LEVEL_WARNING = 3;
+    SYSTEM_EVENT_LEVEL_ERROR = 4;
 }
 message SystemEvent {
     string event_id = 1;
@@ -1392,7 +1393,7 @@ message SystemEvent {
     optional ExecutionId execution_id = 6;
     optional DeploymentId deployment_id = 7;
     string details_json = 8;
-    string server_run_id = 9;
+    string node_run_id = 9;
 }
 message ListSystemEventsRequest {
     optional SystemEventLevel level = 1;
@@ -1400,7 +1401,7 @@ message ListSystemEventsRequest {
     optional DeploymentId deployment_id = 3;
     optional string before_event_id = 4;
     uint32 limit = 5;
-    optional string server_run_id = 6;
+    optional string node_run_id = 6;
 }
 message ListSystemEventsResponse {
     repeated SystemEvent events = 1;
@@ -1421,9 +1422,9 @@ message GetStorageStatusResponse {
     optional uint64 cas_blob_count = 5;
     optional uint64 cas_bytes = 6;
 }
-message GetServerRunIdRequest {}
-message GetServerRunIdResponse {
-    string server_run_id = 1;
+message GetNodeRunIdRequest {}
+message GetNodeRunIdResponse {
+    string node_run_id = 1;
 }
 message RetainSystemEventsRequest {
     google.protobuf.Duration max_age = 1;

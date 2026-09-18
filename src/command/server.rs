@@ -650,7 +650,7 @@ pub(crate) async fn run(
     params: RunParams,
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
-    let _server_run_id = concepts::storage::initialize_server_run_id();
+    let _node_run_id = concepts::storage::initialize_node_run_id();
     let _guard: Guard = init::init(&config)?;
     let deployment = if let Some(deployment_path) = deployment {
         Some(LocalDeployment::from_path(&deployment_path).await?)
@@ -6862,7 +6862,8 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn server_verify(
-        #[values("server-sqlite.toml", "server-postgres.toml")] server_toml: &'static str,
+        #[values("server-testing-wasm.toml", "server-testing-wasm-postgres.toml")]
+        server_toml: &'static str,
         #[values(
             "deployment-testing-wasm-local.toml",
             "deployment-testing-wasm-oci.toml"
@@ -7066,7 +7067,7 @@ mod tests {
         let config_holder = ConfigHolder::new(
             crate::project_dirs(),
             BaseDirs::new(),
-            Some(workspace.join("server-sqlite.toml")),
+            Some(workspace.join("server-testing-exec.toml")),
         )?;
         let mut config = config_holder.load_config()?;
         let (deployment, cas) =

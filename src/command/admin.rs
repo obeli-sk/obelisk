@@ -221,7 +221,7 @@ impl args::Admin {
                 print_result(json, &response, &message)
             }
             Self::Events(args::AdminEvents::List {
-                server_run_id,
+                node_run_id,
                 level,
                 code,
                 limit,
@@ -232,7 +232,7 @@ impl args::Admin {
                     client
                         .get(format!("{api_url}/v1/admin/system-events"))
                         .query(&[
-                            ("server_run_id", server_run_id.map(|id| id.to_string())),
+                            ("node_run_id", node_run_id.map(|id| id.to_string())),
                             ("level", level),
                             ("code", code),
                         ])
@@ -295,10 +295,10 @@ impl args::Admin {
                 );
                 print_result(json, &response, &message)
             }
-            Self::ServerRunId { json, api_url } => {
-                let id: concepts::prefixed_ulid::ServerRunId = send_json(
+            Self::NodeRunId { json, api_url } => {
+                let id: concepts::prefixed_ulid::NodeRunId = send_json(
                     client
-                        .get(format!("{api_url}/v1/admin/server-run-id"))
+                        .get(format!("{api_url}/v1/admin/node-run-id"))
                         .header(ACCEPT, "application/json"),
                 )
                 .await?;

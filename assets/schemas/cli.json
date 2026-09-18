@@ -1070,8 +1070,8 @@
               "about": "List persisted operator-visible system events",
               "options": [
                 {
-                  "name": "--server-run-id",
-                  "help": "Only show events emitted by this server run"
+                  "name": "--node-run-id",
+                  "help": "Only show events emitted by this node run"
                 },
                 {
                   "name": "--level"
@@ -1132,8 +1132,8 @@
           ]
         },
         {
-          "name": "server-run-id",
-          "about": "Print the ID of the current server run",
+          "name": "node-run-id",
+          "about": "Print the ID of the current node run",
           "options": [
             {
               "name": "--json",
