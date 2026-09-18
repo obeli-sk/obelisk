@@ -4997,7 +4997,16 @@ async fn compile_and_link(
         tokio::task::spawn_blocking(move || {
             let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
             let span = info_span!(parent: parent_span, "activity_vm_runtime_compile");
-            span.in_scope(|| activity_vm_runner::compile(&engine, &runtime))
+            span.in_scope(|| {
+                debug!(runtime_path = %runtime.display(), "Compiling activity VM runtime");
+                let started = std::time::Instant::now();
+                let module = activity_vm_runner::compile(&engine, &runtime);
+                debug!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "Activity VM runtime compiled"
+                );
+                module
+            })
         })
     });
 
