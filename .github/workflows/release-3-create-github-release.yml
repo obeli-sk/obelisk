@@ -51,6 +51,10 @@ defaults:
   run:
     shell: bash -xe {0}
 
+concurrency:
+  group: obelisk-release-pipeline
+  cancel-in-progress: false
+
 jobs:
   create-github-release:
     runs-on: ubuntu-24.04
