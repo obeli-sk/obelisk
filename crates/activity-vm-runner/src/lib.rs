@@ -6,7 +6,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt as _;
 use wasm_workers::http_request_policy::HttpRequestPolicy;
 use wasmtime::{Engine, Linker, Module, Store};
@@ -86,11 +86,14 @@ pub async fn execute(
         policy,
         traces.clone(),
     ));
+    let activity_completed = Arc::new(AtomicBool::new(false));
     let (phase_logger_stop, phase_logger_stop_rx) = tokio::sync::oneshot::channel();
     let phase_logger = tokio::spawn(log_guest_phases(
         queue.path().to_owned(),
         started,
         phase_logger_stop_rx,
+        activity_completed.clone(),
+        engine.clone(),
     ));
     let engine = engine.clone();
     tracing::debug!(
@@ -107,13 +110,23 @@ pub async fn execute(
             max_stdout_bytes,
             max_stderr_bytes,
             cancelled,
+            activity_completed,
         )
     })
     .await?;
     broker.abort();
     let _ = broker.await;
+    let vm_returned_at = started.elapsed();
     let _ = phase_logger_stop.send(());
-    let _ = phase_logger.await;
+    if let Ok(Some(activity_completed_at)) = phase_logger.await {
+        tracing::debug!(
+            activity_completed_ms = activity_completed_at.as_millis(),
+            vm_termination_ms = vm_returned_at
+                .saturating_sub(activity_completed_at)
+                .as_millis(),
+            "Activity VM termination measured"
+        );
+    }
     let mut output = result?;
     replace_output_from_guest_files(
         &mut output,
@@ -181,23 +194,29 @@ async fn log_guest_phases(
     queue: PathBuf,
     started: Instant,
     mut stop: tokio::sync::oneshot::Receiver<()>,
-) {
+    activity_completed: Arc<AtomicBool>,
+    engine: Engine,
+) -> Option<Duration> {
     const PHASES: &[(&str, &str)] = &[
         ("guest-launcher", "Linux reached the activity VM launcher"),
         ("store-mounted", "Nix store mapped"),
         ("network-ready", "Activity VM network bridge ready"),
         ("command-start", "Activity VM command starting"),
+        ("activity-complete", "Activity VM command completed"),
         ("store-mount-failed", "Nix store mapping failed"),
         ("network-failed", "Activity VM network bridge failed"),
     ];
     let mut observed = [false; PHASES.len()];
+    let mut activity_completed_at = None;
     loop {
         log_available_guest_phases(&queue, started, &mut observed, PHASES).await;
-        if observed[..PHASES.len() - 1]
-            .iter()
-            .all(|observed| *observed)
-        {
-            return;
+        if observed[4] && activity_completed_at.is_none() {
+            activity_completed_at = Some(started.elapsed());
+            activity_completed.store(true, Ordering::Release);
+            engine.increment_epoch();
+        }
+        if observed[..5].iter().all(|observed| *observed) {
+            return activity_completed_at;
         }
         tokio::select! {
             _ = &mut stop => break,
@@ -205,6 +224,12 @@ async fn log_guest_phases(
         }
     }
     log_available_guest_phases(&queue, started, &mut observed, PHASES).await;
+    if observed[4] && activity_completed_at.is_none() {
+        activity_completed_at = Some(started.elapsed());
+        activity_completed.store(true, Ordering::Release);
+        engine.increment_epoch();
+    }
+    activity_completed_at
 }
 
 async fn log_available_guest_phases(
@@ -243,6 +268,7 @@ fn run_module(
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
     cancelled: Arc<AtomicBool>,
+    activity_completed: Arc<AtomicBool>,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let mut linker = Linker::new(engine);
@@ -276,12 +302,18 @@ fn run_module(
             })?;
     }
     let mut store = Store::new(engine, wasi.build_p1());
+    let cancelled_for_deadline = cancelled.clone();
+    let activity_completed_for_deadline = activity_completed.clone();
     store.epoch_deadline_callback(move |_| {
-        Ok(if cancelled.load(Ordering::Relaxed) {
-            wasmtime::UpdateDeadline::Interrupt
-        } else {
-            wasmtime::UpdateDeadline::Continue(1)
-        })
+        Ok(
+            if cancelled_for_deadline.load(Ordering::Relaxed)
+                || activity_completed_for_deadline.load(Ordering::Acquire)
+            {
+                wasmtime::UpdateDeadline::Interrupt
+            } else {
+                wasmtime::UpdateDeadline::Continue(1)
+            },
+        )
     });
     store.set_epoch_deadline(1);
     let instantiate_started = Instant::now();
@@ -295,6 +327,13 @@ fn run_module(
     let call_started = Instant::now();
     let exit_code = match start.call(&mut store, ()) {
         Ok(()) => 0,
+        Err(error)
+            if activity_completed.load(Ordering::Acquire)
+                && !cancelled.load(Ordering::Relaxed)
+                && error.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt) =>
+        {
+            0
+        }
         Err(error) => match error.downcast_ref::<wasmtime_wasi::I32Exit>() {
             Some(exit) => exit.0,
             None => bail!("VM trapped: {error:?}"),
@@ -303,7 +342,7 @@ fn run_module(
     tracing::debug!(
         elapsed_ms = call_started.elapsed().as_millis(),
         total_elapsed_ms = started.elapsed().as_millis(),
-        exit_code,
+        runtime_exit_code = exit_code,
         "Activity VM module returned"
     );
     Ok(VmOutput {
@@ -340,8 +379,44 @@ mod tests {
             1024,
             1024,
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
+        assert_eq!(output.exit_code, 0);
+    }
+
+    #[test]
+    fn activity_completion_interrupts_the_vm() {
+        let mut config = wasmtime::Config::new();
+        config.epoch_interruption(true);
+        let engine = Engine::new(&config).unwrap();
+        let module = Module::new(
+            &engine,
+            wat::parse_str("(module (func (export \"_start\") (loop br 0)))").unwrap(),
+        )
+        .unwrap();
+        let activity_completed = Arc::new(AtomicBool::new(false));
+        let signal = activity_completed.clone();
+        let signal_engine = engine.clone();
+        let signal_thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            signal.store(true, Ordering::Release);
+            signal_engine.increment_epoch();
+        });
+
+        let output = run_module(
+            &engine,
+            &module,
+            &[],
+            &[],
+            &HashMap::new(),
+            1024,
+            1024,
+            Arc::new(AtomicBool::new(false)),
+            activity_completed,
+        )
+        .unwrap();
+        signal_thread.join().unwrap();
         assert_eq!(output.exit_code, 0);
     }
 
