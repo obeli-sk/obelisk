@@ -83,6 +83,6 @@ status=$?
 set -e
 printf '%s\n' "$status" > /obelisk-activity-vm-http/exit-code.tmp
 mv /obelisk-activity-vm-http/exit-code.tmp /obelisk-activity-vm-http/exit-code
-# The host consumes exit-code. Keep the VM launcher successful so init performs the
-# same clean shutdown path for successful and unsuccessful activity commands.
+mark_phase activity-complete "$status"
+# Keep the launcher successful if the host does not interrupt before fallback shutdown.
 exit 0

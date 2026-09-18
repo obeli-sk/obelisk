@@ -1584,7 +1584,8 @@ impl SystemEventCode {
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
-            Self::ComponentHttpPolicyApplied => SystemEventLevel::Debug,
+            Self::ComponentHttpPolicyApplied
+            | SystemEventCode::ComponentSecretExposureAuthorized => SystemEventLevel::Debug,
             _ => SystemEventLevel::Info,
         }
     }

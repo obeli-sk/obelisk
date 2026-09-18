@@ -8,7 +8,7 @@ use concepts::storage::{DbPool, RetentionPolicy, SystemEventCode};
 use executor::AbortOnDropHandle;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 #[derive(Clone, Copy)]
 pub(super) struct ValidatedConfig {
@@ -179,13 +179,13 @@ pub(super) fn spawn(
             ("system_events", config.system_events),
         ] {
             if let Some(max_age) = retention {
-                info!(
+                debug!(
                     record_type,
                     max_age_seconds = max_age.as_secs(),
                     "Periodic retention enabled"
                 );
             } else {
-                info!(record_type, "Periodic retention disabled");
+                warn!(record_type, "Periodic retention disabled");
             }
         }
         loop {

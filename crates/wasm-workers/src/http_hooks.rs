@@ -312,12 +312,12 @@ impl WasiHttpHooks for HttpHooks {
         );
         let clock_fn = self.clock_fn.clone_box();
         let http_policy = self.http_policy.clone();
-        span.in_scope(|| tracing::debug!("Sending {request:?}"));
+        span.in_scope(|| tracing::trace!("Sending {request:?}"));
         Box::new(
             async move {
                 http_policy.apply_body_replacement(&mut request).await;
                 let resp_result = default_send_request(request, options).await;
-                tracing::debug!(
+                tracing::trace!(
                     "Got response {:?}",
                     resp_result.as_ref().map(|(resp, _io)| resp.status())
                 );
