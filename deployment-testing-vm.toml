@@ -29,13 +29,13 @@ url = "https://trynix.dev/examples/cache"
 public_key = "trynix-examples-1:dZOV2uGWvjHo6IC5ZqCCu0dmIRzLm9pyOQJBDnBsXRY="
 
 [[activity_vm]]
-ffqn = "testing:vm/http.run"
+ffqn = "testing:vm/bash.run"
+max_retries = 0
 params = [{ name = "command", type = "string" }]
 content = '''#!/usr/bin/env bash
 command="$1"
 command="${command#\"}"
 command="${command%\"}"
-echo "got command $command"
 bash -c "$command"
 '''
 store_paths = [
