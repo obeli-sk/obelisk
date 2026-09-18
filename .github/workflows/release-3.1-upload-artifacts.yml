@@ -13,6 +13,10 @@ on:
         required: false
         type: string
         default: "latest"
+      release_id:
+        description: "GitHub release ID"
+        required: true
+        type: string
       push_unversioned_tags:
         description: "Push unversioned Docker tags"
         required: true
@@ -30,6 +34,10 @@ on:
         required: false
         type: string
         default: "latest"
+      release_id:
+        description: "GitHub release ID"
+        required: true
+        type: string
       push_unversioned_tags:
         description: "Push unversioned Docker tags"
         required: true
@@ -118,7 +126,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG > release.json
+            https://api.github.com/repos/obeli-sk/obelisk/releases/${{ inputs.release_id }} > release.json
           RELEASE_ID=$(jq -r '.id' release.json)
           echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
           if [ "$(jq -r .target_commitish release.json)" != "${{ steps.git-info.outputs.sha }}" ]; then
@@ -142,9 +150,6 @@ jobs:
             fi
             echo "asset_exists=false" >> $GITHUB_OUTPUT
           fi
-        env:
-          TAG: ${{ steps.git-info.outputs.tag }}
-
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         if: ${{ steps.release-info.outputs.asset_exists == 'false' }}
         with:
@@ -197,7 +202,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG" > release.json
+            "https://api.github.com/repos/obeli-sk/obelisk/releases/${{ inputs.release_id }}" > release.json
 
           expected=$(printf '%s\n' \
             x86_64-unknown-linux-gnu x86_64-unknown-linux-gnu-embedded \
@@ -224,5 +229,6 @@ jobs:
     secrets: inherit
     with:
       ref: ${{ inputs.ref }}
+      release_id: ${{ inputs.release_id }}
       push_unversioned_tags: ${{ inputs.push_unversioned_tags }}
       publish_release: ${{ inputs.publish_release }}

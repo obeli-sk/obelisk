@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.42.0-rc.2](https://github.com/obeli-sk/obelisk/compare/v0.41.6...v0.42.0-rc.2)
 
+This release candidate adds experimental Linux VM and WASIp3 activity support, operator APIs for
+retention and garbage collection, persisted system events, and workflow replay diagnostics. It
+also strengthens secret exposure and deployment environment authorization, introduces persisted
+value and transport limits, and updates the JavaScript and WIT runtime contracts. Review the
+breaking configuration, API, JavaScript and WIT changes below before upgrading from 0.41.
+
 ### Removed
 
 - **Breaking:** *(config)* Removed deprecated deployment `component_digest` overrides. Component

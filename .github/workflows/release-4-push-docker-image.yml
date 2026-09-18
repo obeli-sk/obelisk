@@ -13,6 +13,10 @@ on:
         required: false
         type: string
         default: "latest"
+      release_id:
+        description: "GitHub release ID"
+        required: true
+        type: string
       push_unversioned_tags:
         description: "Push unversioned Docker tags"
         required: true
@@ -30,6 +34,10 @@ on:
         required: false
         type: string
         default: "latest"
+      release_id:
+        description: "GitHub release ID"
+        required: true
+        type: string
       push_unversioned_tags:
         description: "Push unversioned Docker tags"
         required: true
@@ -101,11 +109,26 @@ jobs:
       - name: Download and extract binary
         run: |
           mkdir tmp
-          gh release download "$TAG" --pattern '${{ matrix.tarfile }}' --dir tmp
+          curl --fail -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/obeli-sk/obelisk/releases/$RELEASE_ID" > release.json
+          ASSET_ID=$(jq -r --arg name '${{ matrix.tarfile }}' '.assets[] | select(.name == $name) | .id' release.json)
+          if [ -z "$ASSET_ID" ]; then
+            echo "::error::Release asset ${{ matrix.tarfile }} not found"
+            exit 1
+          fi
+          curl --fail -L \
+            -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/obeli-sk/obelisk/releases/assets/$ASSET_ID" \
+            -o "tmp/${{ matrix.tarfile }}"
           tar xvfz "tmp/${{ matrix.tarfile }}" -C tmp
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.git-info.outputs.tag }}
+          RELEASE_ID: ${{ inputs.release_id }}
 
       - name: Build and push docker image
         run: |
@@ -142,18 +165,12 @@ jobs:
         run: |
           VERSION="$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)"
           TAG="v$VERSION"
-          RELEASE_ID=$(curl --fail -L \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG" \
-            | jq -r .id)
           curl --fail -X PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -d '{"draft":false}' \
-            "https://api.github.com/repos/obeli-sk/obelisk/releases/$RELEASE_ID"
+            "https://api.github.com/repos/obeli-sk/obelisk/releases/${{ inputs.release_id }}"
 
   verify-github-release:
     needs: publish-release

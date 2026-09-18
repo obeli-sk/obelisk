@@ -250,8 +250,8 @@ test-programs-stub-workflow-builder = { path = "crates/testing/test-programs/stu
 test-programs-wasip3-activity-builder = { path = "crates/testing/test-programs/wasip3/activity/builder" }
 test-programs-wasip3-webhook-builder = { path = "crates/testing/test-programs/wasip3/webhook/builder" }
 test-utils = { path = "crates/testing/test-utils" }
-activity-vm-runner = { package = "obelisk-activity-vm-runner", path = "crates/activity-vm-runner" }
-activity-vm-worker = { package = "obelisk-activity-vm-worker", path = "crates/activity-vm-worker" }
+activity-vm-runner = { package = "obelisk-activity-vm-runner", path = "crates/activity-vm-runner", version = "0.42.0-rc.2" }
+activity-vm-worker = { package = "obelisk-activity-vm-worker", path = "crates/activity-vm-worker", version = "0.42.0-rc.2" }
 worker-common = { package = "obeli-sk-worker-common", path = "crates/worker-common", version = "0.42.0-rc.2" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.42.0-rc.2" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.42.0-rc.2" }

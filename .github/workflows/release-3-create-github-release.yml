@@ -51,11 +51,16 @@ defaults:
   run:
     shell: bash -xe {0}
 
+concurrency:
+  group: obelisk-release-pipeline
+  cancel-in-progress: false
+
 jobs:
   create-github-release:
     runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.git-info.outputs.sha }}
+      release_id: ${{ steps.create-release.outputs.release_id }}
     steps:
       - name: Validate inputs
         run: |
@@ -75,33 +80,71 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: Find or create Git tag
         run: |
-          echo "Releasing $TAG $SHA"
-          body=$(./scripts/extract-release-info.sh "$VERSION" | jq -R -s .)
-          status=$(curl -sS -o release.json -w '%{http_code}' \
-            -H "Content-Type: application/json" \
+          jq -n --arg ref "refs/tags/$TAG" --arg sha "$SHA" '{ref: $ref, sha: $sha}' > create-tag.json
+          status=$(curl -sS -o tag-ref.json -w '%{http_code}' \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -d '{
-              "tag_name": "'"$TAG"'",
-              "target_commitish": "'"$SHA"'",
-              "name": "obelisk-'"$TAG"'",
-              "body": '"$body"',
-              "draft": true,
-              "prerelease": ${{ inputs.prerelease }}
-            }' \
-            https://api.github.com/repos/obeli-sk/obelisk/releases
-          )
-
-          # A rerun may find the release created by an earlier partial attempt.
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data-binary @create-tag.json \
+            https://api.github.com/repos/obeli-sk/obelisk/git/refs)
           if [ "$status" = "422" ]; then
             curl --fail -L \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG" > release.json
+              "https://api.github.com/repos/obeli-sk/obelisk/git/ref/tags/$TAG" > tag-ref.json
           elif [ "$status" != "201" ]; then
-            cat release.json
+            cat tag-ref.json
+            exit 1
+          fi
+          if [ "$(jq -r .object.type tag-ref.json)" != "commit" ] || [ "$(jq -r .object.sha tag-ref.json)" != "$SHA" ]; then
+            echo "::error::Tag $TAG does not point to commit $SHA"
+            jq '.object | {type, sha}' tag-ref.json
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.git-info.outputs.sha }}
+          TAG: ${{ steps.git-info.outputs.tag }}
+
+      - name: Find or create GitHub Release
+        id: create-release
+        run: |
+          echo "Releasing $TAG $SHA"
+          curl --fail -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/obeli-sk/obelisk/releases?per_page=100" > releases.json
+          MATCH_COUNT=$(jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | length' releases.json)
+          if [ "$MATCH_COUNT" = "0" ]; then
+            body=$(./scripts/extract-release-info.sh "$VERSION" | jq -R -s .)
+            status=$(curl -sS -o release.json -w '%{http_code}' \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -d '{
+                "tag_name": "'"$TAG"'",
+                "target_commitish": "'"$SHA"'",
+                "name": "obelisk-'"$TAG"'",
+                "body": '"$body"',
+                "draft": true,
+                "prerelease": ${{ inputs.prerelease }}
+              }' \
+              https://api.github.com/repos/obeli-sk/obelisk/releases
+            )
+            if [ "$status" != "201" ]; then
+              cat release.json
+              exit 1
+            fi
+          elif [ "$MATCH_COUNT" = "1" ]; then
+            jq --arg tag "$TAG" '.[] | select(.tag_name == $tag)' releases.json > release.json
+          else
+            echo "::error::Found $MATCH_COUNT releases for $TAG; delete duplicates before retrying"
+            jq --arg tag "$TAG" '.[] | select(.tag_name == $tag) | {id, draft, html_url}' releases.json
             exit 1
           fi
 
@@ -113,21 +156,23 @@ jobs:
             echo "::error::Release $TAG has a different prerelease setting"
             exit 1
           fi
+          RELEASE_ID=$(jq -r .id release.json)
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
 
           for attempt in {1..30}; do
             if curl --fail -L \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GITHUB_TOKEN" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/obeli-sk/obelisk/releases/tags/$TAG"; then
+              "https://api.github.com/repos/obeli-sk/obelisk/releases/$RELEASE_ID"; then
               exit 0
             fi
 
-            echo "Release tag $TAG not readable yet, retrying ($attempt/30)"
+            echo "Release ID $RELEASE_ID not readable yet, retrying ($attempt/30)"
             sleep 2
           done
 
-          echo "Timed out waiting for release tag $TAG to become readable"
+          echo "Timed out waiting for release ID $RELEASE_ID to become readable"
           exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -141,5 +186,6 @@ jobs:
     secrets: inherit
     with:
       ref: ${{ needs.create-github-release.outputs.sha }}
+      release_id: ${{ needs.create-github-release.outputs.release_id }}
       push_unversioned_tags: ${{ inputs.push_unversioned_tags }}
       publish_release: ${{ inputs.publish_release }}
