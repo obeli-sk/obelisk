@@ -2733,16 +2733,25 @@ pub(crate) struct EventCallCursor {
     next_version: Version,
     // Starts with whole replay history, pops front upon consuming each event.
     replay_versions: VecDeque<Version>,
+    initial_replay_event_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReplayProgress {
+    pub(crate) replayed_event_count: usize,
+    pub(crate) remaining_event_count: usize,
 }
 
 impl EventCallCursor {
     pub(crate) fn new(next_version: Version, event_history: &[(HistoryEvent, Version)]) -> Self {
+        let initial_replay_event_count = event_history.len();
         Self {
             next_version,
             replay_versions: event_history
                 .iter()
                 .map(|(_, version)| version.clone())
                 .collect(),
+            initial_replay_event_count,
         }
     }
 
@@ -2754,6 +2763,14 @@ impl EventCallCursor {
     /// live tip. Once exhausted, subsequent calls produce brand-new events.
     pub(crate) fn is_replaying_persisted(&self) -> bool {
         !self.replay_versions.is_empty()
+    }
+
+    pub(crate) fn replay_progress(&self) -> Option<ReplayProgress> {
+        let remaining_event_count = self.replay_versions.len();
+        (remaining_event_count > 0).then_some(ReplayProgress {
+            replayed_event_count: self.initial_replay_event_count - remaining_event_count,
+            remaining_event_count,
+        })
     }
 
     fn next(&mut self, kind: EventCallKind) -> EventCall {

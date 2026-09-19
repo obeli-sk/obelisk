@@ -2,7 +2,7 @@ use super::caching_db_connection::WorkflowDbConnection;
 use super::deadline_tracker::DeadlineTracker;
 use super::event_history::{
     ApplyError, EventCallCursor, EventHistory, JoinNextRequestingFfqn, OneOffChildExecutionRequest,
-    OneOffDelayRequest, Schedule, Stub, SubmitChildExecution,
+    OneOffDelayRequest, ReplayProgress, Schedule, Stub, SubmitChildExecution,
 };
 use super::host_exports::latest::ScheduleAtTypes;
 use super::host_exports::latest::obelisk::types as typesTypes;
@@ -992,6 +992,10 @@ pub enum BacktraceCapture {
 impl WorkflowCtx {
     pub(crate) fn version(&self) -> &Version {
         self.event_call_cursor.version()
+    }
+
+    pub(crate) fn replay_progress(&self) -> Option<ReplayProgress> {
+        self.event_call_cursor.replay_progress()
     }
 
     fn should_capture_backtrace(&self) -> bool {

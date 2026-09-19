@@ -1533,6 +1533,7 @@ pub enum SystemEventCode {
     ComponentHttpPolicyApplied,
     ComponentSecretExposureAuthorized,
     OutboundHttpDenied,
+    WorkflowReplayLockExpired,
     AdminExecutionDeleteStarted,
     AdminExecutionDeleteCompleted,
     AdminExecutionRetainStarted,
@@ -1563,6 +1564,7 @@ impl SystemEventCode {
             Self::ComponentHttpPolicyApplied => "component.http_policy.applied",
             Self::ComponentSecretExposureAuthorized => "component.secret_exposure.authorized",
             Self::OutboundHttpDenied => "outbound_http.denied",
+            Self::WorkflowReplayLockExpired => "workflow.replay_lock_expired",
             Self::AdminExecutionDeleteStarted => "admin.execution.delete.started",
             Self::AdminExecutionDeleteCompleted => "admin.execution.delete.completed",
             Self::AdminExecutionRetainStarted => "admin.execution.retain.started",
@@ -1583,6 +1585,7 @@ impl SystemEventCode {
             Self::DeploymentSubmitFailed
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
+            | Self::WorkflowReplayLockExpired
             | Self::MaintenanceGcFailed => SystemEventLevel::Warning,
             Self::ComponentHttpPolicyApplied
             | SystemEventCode::ComponentSecretExposureAuthorized => SystemEventLevel::Debug,
@@ -1607,6 +1610,7 @@ impl SystemEventCode {
             Self::ComponentHttpPolicyApplied => "Component HTTP policy applied",
             Self::ComponentSecretExposureAuthorized => "Component secret exposure authorized",
             Self::OutboundHttpDenied => "Outbound HTTP request denied",
+            Self::WorkflowReplayLockExpired => "Workflow replay exceeded its execution lock",
             Self::AdminExecutionDeleteStarted => "Execution tree deletion started",
             Self::AdminExecutionDeleteCompleted => "Execution tree deletion completed",
             Self::AdminExecutionRetainStarted => "Execution retention started",
@@ -1705,6 +1709,7 @@ impl SystemEvent {
                 SystemEventCode::ComponentSecretExposureAuthorized.message()
             }
             "outbound_http.denied" => SystemEventCode::OutboundHttpDenied.message(),
+            "workflow.replay_lock_expired" => SystemEventCode::WorkflowReplayLockExpired.message(),
             "admin.execution.delete.started" => {
                 SystemEventCode::AdminExecutionDeleteStarted.message()
             }
@@ -3781,6 +3786,7 @@ mod tests {
             SystemEventCode::ComponentHttpPolicyApplied,
             SystemEventCode::ComponentSecretExposureAuthorized,
             SystemEventCode::OutboundHttpDenied,
+            SystemEventCode::WorkflowReplayLockExpired,
             SystemEventCode::AdminExecutionDeleteStarted,
             SystemEventCode::AdminExecutionDeleteCompleted,
             SystemEventCode::AdminExecutionRetainStarted,
