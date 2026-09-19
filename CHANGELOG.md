@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.2...v0.42.0-rc.3)
+
+This release candidate adds opt-in plaintext secret exposure to WASM and JavaScript activities and
+webhook endpoints, with operator grants bound to the component digest and complete secret set.
+
 ### Added
 
 - *(secrets)* WASM and JavaScript activities and webhook endpoints can declare
