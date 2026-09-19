@@ -327,6 +327,13 @@ params = [
 return_type = "result<u32, string>"
 
 [[workflow_js]]
+name = "test_import_ext_submit_error_workflow"
+location = "{ws}/crates/testing/test-programs/js/workflow/import_ext_submit_error.js"
+ffqn = "testing:integration/workflow-import-ext-submit-error.submit-error"
+params = []
+return_type = "result<string, string>"
+
+[[workflow_js]]
 name = "test_import_stub_activity_workflow"
 location = "{ws}/crates/testing/test-programs/js/workflow/import_stub_activity.js"
 ffqn = "testing:integration/workflow-import-stub-activity.call-stub"
@@ -555,6 +562,13 @@ impl TestServer {
 
     async fn start(ip: String) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
+        authorize_test_deployment(&server_path, &deployment_path).await;
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
+    async fn start_with_server_lines(ip: String, server_toml_lines: &str) -> Self {
+        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, server_toml_lines);
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
@@ -4184,6 +4198,31 @@ async fn submit_workflow_with_get_result() {
     let events = server.get_events(&exec_id).await;
     let events = sanitize_json(&events);
     insta::assert_json_snapshot!("workflow_add_via_activity_events", events);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn typed_js_submit_throws_when_child_params_exceed_persisted_value_limit() {
+    let server = TestServer::start_with_server_lines(
+        test_addr!(150),
+        "limits.max_persisted_value_size_bytes = 256",
+    )
+    .await;
+    let exec_id = server.generate_execution_id().await;
+
+    let resp = server
+        .submit_follow_with_id(
+            &exec_id,
+            "testing:integration/workflow-import-ext-submit-error.submit-error",
+            vec![],
+        )
+        .await;
+    assert_eq!(resp.status().as_u16(), 201);
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "ok": "typed submit threw" })
+    );
+
     server.shutdown().await;
 }
 
