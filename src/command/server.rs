@@ -1210,6 +1210,24 @@ fn verify_secret_exposure_authorization(
     deployment: &DeploymentVerified,
 ) -> anyhow::Result<()> {
     let mut rejected = Vec::new();
+    for activity in &deployment.activities_wasm {
+        collect_rejected_secret_exposures(
+            &server.secret_registry,
+            activity.component_id().name.as_ref(),
+            &activity.secret_exposure_digest,
+            &activity.activity_config.exposed_secrets,
+            &mut rejected,
+        );
+    }
+    for activity in &deployment.activities_js {
+        collect_rejected_secret_exposures(
+            &server.secret_registry,
+            activity.component_id().name.as_ref(),
+            &activity.secret_exposure_digest,
+            &activity.activity_config.exposed_secrets,
+            &mut rejected,
+        );
+    }
     for exec in &deployment.activities_exec {
         let name = exec.component_id.name.as_ref();
         let digest = &exec.secret_exposure_digest;
@@ -1237,6 +1255,24 @@ fn verify_secret_exposure_authorization(
             name,
             &vm.activity.secret_exposure_digest,
             &vm.exposed_secrets,
+            &mut rejected,
+        );
+    }
+    for webhook in deployment.webhooks_wasm_by_names.values() {
+        collect_rejected_secret_exposures(
+            &server.secret_registry,
+            webhook.component_id.name.as_ref(),
+            &webhook.secret_exposure_digest,
+            &webhook.exposed_secrets,
+            &mut rejected,
+        );
+    }
+    for webhook in deployment.webhooks_js_by_names.values() {
+        collect_rejected_secret_exposures(
+            &server.secret_registry,
+            webhook.component_id.name.as_ref(),
+            &webhook.secret_exposure_digest,
+            &webhook.exposed_secrets,
             &mut rejected,
         );
     }
@@ -4171,17 +4207,37 @@ pub(crate) struct SecretConfigDigestOutput {
 
 impl DeploymentVerified {
     fn secret_config_digests(&self) -> Vec<SecretConfigDigestOutput> {
-        self.activities_exec
+        self.activities_wasm
             .iter()
-            .map(|exec| SecretConfigDigestOutput {
-                component_name: exec.component_id.name.to_string(),
-                component_kind: "activity_exec",
-                secret_exposure_digest: exec.secret_exposure_digest.clone(),
-                exposed_secrets: exec
-                    .secrets
-                    .as_ref()
-                    .map_or_else(Vec::new, |secrets| secrets.names.clone()),
+            .filter(|activity| !activity.activity_config.exposed_secrets.is_empty())
+            .map(|activity| SecretConfigDigestOutput {
+                component_name: activity.component_id().name.to_string(),
+                component_kind: "activity_wasm",
+                secret_exposure_digest: activity.secret_exposure_digest.clone(),
+                exposed_secrets: activity.activity_config.exposed_secrets.to_vec(),
             })
+            .chain(
+                self.activities_js
+                    .iter()
+                    .filter(|activity| !activity.activity_config.exposed_secrets.is_empty())
+                    .map(|activity| SecretConfigDigestOutput {
+                        component_name: activity.component_id().name.to_string(),
+                        component_kind: "activity_js",
+                        secret_exposure_digest: activity.secret_exposure_digest.clone(),
+                        exposed_secrets: activity.activity_config.exposed_secrets.to_vec(),
+                    }),
+            )
+            .chain(self.activities_exec.iter().map(|exec| {
+                SecretConfigDigestOutput {
+                    component_name: exec.component_id.name.to_string(),
+                    component_kind: "activity_exec",
+                    secret_exposure_digest: exec.secret_exposure_digest.clone(),
+                    exposed_secrets: exec
+                        .secrets
+                        .as_ref()
+                        .map_or_else(Vec::new, |secrets| secrets.names.clone()),
+                }
+            }))
             .chain(
                 self.activities_vm
                     .iter()
@@ -4191,6 +4247,28 @@ impl DeploymentVerified {
                         component_kind: "activity_vm",
                         secret_exposure_digest: vm.activity.secret_exposure_digest.clone(),
                         exposed_secrets: vm.exposed_secrets.clone(),
+                    }),
+            )
+            .chain(
+                self.webhooks_wasm_by_names
+                    .values()
+                    .filter(|webhook| !webhook.exposed_secrets.is_empty())
+                    .map(|webhook| SecretConfigDigestOutput {
+                        component_name: webhook.component_id.name.to_string(),
+                        component_kind: "webhook_endpoint_wasm",
+                        secret_exposure_digest: webhook.secret_exposure_digest.clone(),
+                        exposed_secrets: webhook.exposed_secrets.to_vec(),
+                    }),
+            )
+            .chain(
+                self.webhooks_js_by_names
+                    .values()
+                    .filter(|webhook| !webhook.exposed_secrets.is_empty())
+                    .map(|webhook| SecretConfigDigestOutput {
+                        component_name: webhook.component_id.name.to_string(),
+                        component_kind: "webhook_endpoint_js",
+                        secret_exposure_digest: webhook.secret_exposure_digest.clone(),
+                        exposed_secrets: webhook.exposed_secrets.to_vec(),
                     }),
             )
             .collect()
@@ -4521,6 +4599,7 @@ impl DeploymentVerified {
                         key: "TARGET_URL".to_string(),
                         value: target_url.clone(),
                     }],
+                    exposed_secrets: Vec::new(),
                     backtrace: crate::config::deployment::ComponentBacktraceConfigResolved::default(
                     ),
                     backtrace_persist: false,
@@ -5214,6 +5293,7 @@ async fn compile_and_link(
                                 forward_stdout: webhook.forward_stdout,
                                 forward_stderr: webhook.forward_stderr,
                                 env_vars: webhook.env_vars,
+                                exposed_secrets: webhook.exposed_secrets,
                                 fuel,
                                 backtrace_persist: webhook.backtrace_persist,
                                 subscription_interruption: webhook.subscription_interruption,
@@ -5258,6 +5338,7 @@ async fn compile_and_link(
                                 forward_stdout: webhook_js.forward_stdout,
                                 forward_stderr: webhook_js.forward_stderr,
                                 env_vars: webhook_js.env_vars,
+                                exposed_secrets: webhook_js.exposed_secrets,
                                 fuel,
                                 backtrace_persist: webhook_js.backtrace_persist,
                                 subscription_interruption: None,

@@ -614,6 +614,9 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) logs_store_min_level: LogLevelToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
+    /// Registered secrets exposed to the component as environment variables.
+    #[serde(default)]
+    pub(crate) exposed_secrets: Vec<String>,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
@@ -872,6 +875,9 @@ pub(crate) struct WebhookWasmComponentConfigToml {
     pub(crate) forward_stderr: ComponentStdOutputToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
+    /// Registered secrets exposed to the component as environment variables.
+    #[serde(default)]
+    pub(crate) exposed_secrets: Vec<String>,
     #[serde(default)]
     pub(crate) backtrace: ComponentBacktraceConfig,
     /// Capture and persist backtraces for requests handled by this webhook.
@@ -917,6 +923,9 @@ pub(crate) struct WebhookJsComponentConfigToml {
     pub(crate) logs_store_min_level: LogLevelToml,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVarConfig>,
+    /// Registered secrets exposed to the component as environment variables.
+    #[serde(default)]
+    pub(crate) exposed_secrets: Vec<String>,
     /// Capture and persist backtraces for requests handled by this webhook.
     #[serde(default)]
     pub(crate) backtrace_persist: bool,
@@ -949,6 +958,9 @@ pub struct ActivityWasmComponentConfigToml {
     pub forward_stderr: ComponentStdOutputToml,
     #[serde(default)]
     pub env_vars: Vec<EnvVarConfig>,
+    /// Registered secrets exposed to the component as environment variables.
+    #[serde(default)]
+    pub exposed_secrets: Vec<String>,
     #[serde(default)]
     pub logs_store_min_level: LogLevelToml,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.

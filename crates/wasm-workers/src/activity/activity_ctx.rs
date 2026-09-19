@@ -6,6 +6,7 @@ use crate::std_output_stream::{LogStream, StdOutput};
 use concepts::storage::LogLevel;
 use concepts::time::ClockFn;
 use executor::worker::WorkerContext;
+use secrecy::ExposeSecret as _;
 use wasmtime::Engine;
 use wasmtime::{Store, component::ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -89,6 +90,11 @@ pub(crate) fn store(
     }
     for env_var in config.env_vars.iter() {
         wasi_ctx.env(&env_var.key, &env_var.val);
+    }
+    for name in config.exposed_secrets.iter() {
+        if let Some(value) = config.secrets.secret_lookup(name) {
+            wasi_ctx.env(name, value.expose_secret());
+        }
     }
 
     // Generate fresh placeholders for this execution run

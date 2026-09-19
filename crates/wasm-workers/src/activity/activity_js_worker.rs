@@ -503,6 +503,7 @@ mod tests {
                 forward_stdout: None,
                 forward_stderr: None,
                 env_vars: Arc::from([]),
+                exposed_secrets: Arc::from([]),
                 fuel: None,
                 allowed_hosts: allowed_hosts.clone(),
                 global_http_config: allowed_hosts.into(),

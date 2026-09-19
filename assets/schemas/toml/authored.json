@@ -140,6 +140,14 @@
           },
           "default": []
         },
+        "exposed_secrets": {
+          "description": "Registered secrets exposed to the component as environment variables.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
         "logs_store_min_level": {
           "$ref": "#/$defs/LogLevelToml",
           "default": "debug"
@@ -661,6 +669,14 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
+        },
+        "exposed_secrets": {
+          "description": "Registered secrets exposed to the component as environment variables.",
+          "type": "array",
+          "items": {
+            "type": "string"
           },
           "default": []
         },
@@ -1269,6 +1285,14 @@
           },
           "default": []
         },
+        "exposed_secrets": {
+          "description": "Registered secrets exposed to the component as environment variables.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
         "backtrace": {
           "$ref": "#/$defs/ComponentBacktraceConfig",
           "default": {
@@ -1391,6 +1415,14 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/EnvVarConfig"
+          },
+          "default": []
+        },
+        "exposed_secrets": {
+          "description": "Registered secrets exposed to the component as environment variables.",
+          "type": "array",
+          "items": {
+            "type": "string"
           },
           "default": []
         },

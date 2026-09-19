@@ -33,6 +33,7 @@ pub struct ActivityConfig {
     pub forward_stdout: Option<StdOutputConfig>,
     pub forward_stderr: Option<StdOutputConfig>,
     pub env_vars: Arc<[EnvVar]>,
+    pub exposed_secrets: Arc<[String]>,
     pub fuel: Option<u64>,
     pub allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]>,
     pub global_http_config: crate::http_request_policy::GlobalHttpConfig,
@@ -634,6 +635,7 @@ pub(crate) mod tests {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
+            exposed_secrets: Arc::from([]),
 
             fuel: None,
             allowed_hosts: Arc::from([]),
@@ -659,6 +661,7 @@ pub(crate) mod tests {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
+            exposed_secrets: Arc::from([]),
 
             fuel: None,
             allowed_hosts: allowed_hosts.clone(),
@@ -1921,6 +1924,7 @@ pub(crate) mod tests {
                         forward_stdout: None,
                         forward_stderr: None,
                         env_vars: Arc::from([]),
+                        exposed_secrets: Arc::from([]),
                         fuel: None,
                         allowed_hosts: allowed_hosts.clone(),
                         global_http_config: allowed_hosts.into(),
@@ -2043,6 +2047,7 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
+                exposed_secrets: Arc::default(),
 
                 fuel: None,
                 allowed_hosts: Arc::from([]),
@@ -2120,6 +2125,7 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
+                exposed_secrets: Arc::default(),
 
                 fuel: None,
                 allowed_hosts: Arc::from([]),
@@ -2203,6 +2209,7 @@ pub(crate) mod tests {
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
                 env_vars: Arc::default(),
+                exposed_secrets: Arc::default(),
 
                 fuel: None,
                 allowed_hosts: Arc::from([]),
