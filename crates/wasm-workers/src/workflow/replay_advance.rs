@@ -1,3 +1,4 @@
+use crate::workflow::event_history::ReplayProgress;
 use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use chrono::DateTime;
 use concepts::{
@@ -163,7 +164,7 @@ impl From<ReplayInternalError> for AdvanceError {
             ReplayInternalError::LimitReached { reason, version } => {
                 Self::LimitReached { reason, version }
             }
-            ReplayInternalError::LockExpired(_) => {
+            ReplayInternalError::LockExpired { .. } => {
                 unreachable!(
                     "advance() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
                 )
@@ -217,7 +218,10 @@ pub(crate) enum ReplayInternalError {
     #[error("limit reached: {reason}")]
     LimitReached { reason: String, version: Version },
     #[error("lock expired")]
-    LockExpired(Version),
+    LockExpired {
+        version: Version,
+        replay_progress: Option<ReplayProgress>,
+    },
     #[error("executor closing")]
     ExecutorClosing(Version),
 }
@@ -228,7 +232,7 @@ impl From<ReplayInternalError> for ReplayError {
             ReplayInternalError::LimitReached { reason, version } => {
                 Self::LimitReached { reason, version }
             }
-            ReplayInternalError::LockExpired(_) => {
+            ReplayInternalError::LockExpired { .. } => {
                 unreachable!(
                     "replay() asserts DeadlineTrackerFactoryForReplay, which never expires the lock"
                 )

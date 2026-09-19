@@ -9,9 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.42.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.2...v0.42.0-rc.3)
 
 This release candidate adds opt-in plaintext secret exposure to WASM and JavaScript activities and
-webhook endpoints, with operator grants bound to the component digest and complete secret set.
+webhook endpoints, with operator grants bound to the component digest and complete secret set. It
+also surfaces workflows whose persisted history cannot be replayed within the execution lock.
 
 ### Added
+
+- *(workflow)* A deduplicated warning system event identifies workflows whose execution lock
+  expires before replay reaches the persisted history tip and suggests increasing `lock_expiry` or
+  using replay/advance.
 
 - *(secrets)* WASM and JavaScript activities and webhook endpoints can declare
   `exposed_secrets`, which are injected as environment variables at execution or request time.

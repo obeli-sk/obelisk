@@ -1,5 +1,5 @@
 use super::deadline_tracker::DeadlineTrackerFactory;
-use super::event_history::ApplyError;
+use super::event_history::{ApplyError, ReplayProgress};
 use super::replay_advance::merge_requested_overrides_into_fresh_prefix;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::activity::cancel_registry::CancelRegistry;
@@ -25,7 +25,8 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DeploymentId, ExecutorId, RunId};
 use concepts::storage::{
     AppendRequest, BacktraceInfo, CapturedDbWrite, ComponentUpgradeOutcome, ComponentUpgradeReason,
-    DbConnection, DbErrorWrite, DbPool, ExecutionLog, ExecutionRequest, Locked, Unlocked, Version,
+    DbConnection, DbErrorWrite, DbPool, ExecutionLog, ExecutionRequest, Locked, SystemEvent,
+    SystemEventCode, Unlocked, Version,
 };
 use concepts::time::{ClockFn, now_tokio_instant};
 use concepts::{
@@ -503,7 +504,10 @@ enum WorkflowError {
         db_connection: Box<dyn WorkflowDbConnection>,
     },
     #[error("lock expired")]
-    LockExpired(Version),
+    LockExpired {
+        version: Version,
+        replay_progress: Option<ReplayProgress>,
+    },
     /// Executor will append `Unlocked` event
     #[error("execution yielded: {reason:?}")]
     ExecutionYielded {
@@ -776,7 +780,14 @@ impl WorkflowWorker {
                     info!(execution_deadline = %ctx.locked_event.lock_expires_at, started_at = %lock_already_expired.started_at,
                         "Lock is already expired");
                 });
-                return Err(WorkflowError::LockExpired(ctx.version));
+                let replay_progress = (!ctx.event_history.is_empty()).then_some(ReplayProgress {
+                    replayed_event_count: 0,
+                    remaining_event_count: ctx.event_history.len(),
+                });
+                return Err(WorkflowError::LockExpired {
+                    version: ctx.version,
+                    replay_progress,
+                });
             }
         };
 
@@ -870,8 +881,11 @@ impl WorkflowWorker {
                 if let Some(wf_err) = err.downcast_ref::<WorkflowFunctionError>() {
                     match wf_err {
                         WorkflowFunctionError::LockExpired => {
-                            let version = store.into_data().version().clone();
-                            return Err(WorkflowError::LockExpired(version));
+                            let workflow_ctx = store.into_data();
+                            return Err(WorkflowError::LockExpired {
+                                version: workflow_ctx.version().clone(),
+                                replay_progress: workflow_ctx.replay_progress(),
+                            });
                         }
                         WorkflowFunctionError::Interrupt(kind) => {
                             let kind = *kind;
@@ -1098,7 +1112,10 @@ impl WorkflowWorker {
             WorkerResultRefactored::DbError(err) => Err(WorkflowError::DbError(err)),
             WorkerResultRefactored::LockExpired(mut workflow_ctx) => {
                 workflow_ctx.flush().await.map_err(WorkflowError::DbError)?;
-                Err(WorkflowError::LockExpired(workflow_ctx.version().clone()))
+                Err(WorkflowError::LockExpired {
+                    version: workflow_ctx.version().clone(),
+                    replay_progress: workflow_ctx.replay_progress(),
+                })
             }
             WorkerResultRefactored::Interrupt(InterruptKind::PauseOrCancel, workflow_ctx) => {
                 Err(WorkflowError::interrupt(
@@ -1320,9 +1337,13 @@ impl WorkflowWorker {
             Err(WorkflowError::DbError(db_error_write)) => {
                 Err(ReplayInternalError::DbError(db_error_write))
             }
-            Err(WorkflowError::LockExpired(version)) => {
-                Err(ReplayInternalError::LockExpired(version))
-            }
+            Err(WorkflowError::LockExpired {
+                version,
+                replay_progress,
+            }) => Err(ReplayInternalError::LockExpired {
+                version,
+                replay_progress,
+            }),
             // Replay uses a never-firing deadline tracker, so any interrupt here is a
             // defensive `ExecutorClosing` (pause/cancel never reaches replay).
             Err(
@@ -1639,6 +1660,44 @@ enum AutoUpgradeOutcome {
 }
 
 impl WorkflowWorker {
+    async fn record_replay_lock_expired(
+        &self,
+        execution_id: &ExecutionId,
+        version: &Version,
+        replay_progress: ReplayProgress,
+        lock_expires_at: DateTime<Utc>,
+    ) {
+        let event = SystemEvent::new(
+            SystemEventCode::WorkflowReplayLockExpired,
+            Some(execution_id.clone()),
+            Some(self.deployment_id),
+            serde_json::json!({
+                "component_id": self.config.component_id.to_string(),
+                "history_version": version.0,
+                "replayed_event_count": replay_progress.replayed_event_count,
+                "remaining_event_count": replay_progress.remaining_event_count,
+                "lock_expires_at": lock_expires_at,
+                "remediation": "Increase exec.lock_expiry or pause and use execution replay/advance",
+            }),
+        )
+        .map(|event| event.with_dedupe_key(execution_id.to_string()));
+        let Ok(event) = event else {
+            warn!(%execution_id, "Cannot construct workflow replay lock expiry system event");
+            return;
+        };
+        let result = async {
+            self.db_pool
+                .admin_conn()
+                .await?
+                .append_system_event(event)
+                .await
+        }
+        .await;
+        if let Err(err) = result {
+            warn!(%execution_id, "Cannot persist workflow replay lock expiry: {err}");
+        }
+    }
+
     async fn auto_upgrade_locked(
         &self,
         ctx: WorkerContext,
@@ -1647,11 +1706,12 @@ impl WorkflowWorker {
         let execution_id = ctx.execution_id.clone();
         let version = ctx.version.clone();
         let parent = ctx.parent.clone();
+        let lock_expires_at = ctx.locked_event.lock_expires_at;
         let replay_ctx = WorkerContext {
             can_be_retried: true, // avoid a warning in log
             ..ctx
         };
-        let (mut fresh_replay, _backtraces, replay_pending_state, db_conn) = self
+        let replay_result = self
             .replay_internal(
                 replay_ctx,
                 ReplayKind::Unfinished,
@@ -1663,13 +1723,27 @@ impl WorkflowWorker {
                 parent,
                 BacktraceCapture::Disabled,
             )
-            .await
+            .await;
+        if let Err(ReplayInternalError::LockExpired {
+            version,
+            replay_progress: Some(replay_progress),
+        }) = &replay_result
+        {
+            self.record_replay_lock_expired(
+                &execution_id,
+                version,
+                *replay_progress,
+                lock_expires_at,
+            )
+            .await;
+        }
+        let (mut fresh_replay, _backtraces, replay_pending_state, db_conn) = replay_result
             .map_err(|err| match err {
                 ReplayInternalError::DbError(db_err) => WorkerError::DbError(db_err),
                 ReplayInternalError::LimitReached { reason, version } => {
                     WorkerError::LimitReached { reason, version }
                 }
-                ReplayInternalError::LockExpired(version) => WorkerError::TemporaryTimeout {
+                ReplayInternalError::LockExpired { version, .. } => WorkerError::TemporaryTimeout {
                     http_client_traces: None,
                     version,
                 },
@@ -1833,6 +1907,8 @@ impl Worker for WorkflowWorker {
             return Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher);
         }
 
+        let execution_id = ctx.execution_id.clone();
+        let lock_expires_at = ctx.locked_event.lock_expires_at;
         let db_connection = Box::new(CachingDbConnection::new(
             self.db_pool.connection().await.unwrap(),
             ctx.execution_id.clone(),
@@ -1868,6 +1944,19 @@ impl Worker for WorkflowWorker {
             local_interrupt_watcher,
         )
         .await;
+        if let Err(WorkflowError::LockExpired {
+            version,
+            replay_progress: Some(replay_progress),
+        }) = &res
+        {
+            self.record_replay_lock_expired(
+                &execution_id,
+                version,
+                *replay_progress,
+                lock_expires_at,
+            )
+            .await;
+        }
         worker_span.in_scope(|| {
             if let Err(workflow_err) = &res {
                 info!("Workflow run finished with error: {workflow_err}");
@@ -1892,7 +1981,7 @@ impl Worker for WorkflowWorker {
                 Err(WorkflowError::FatalError { err, version, .. }) => {
                     WorkerResult::Err(WorkerError::FatalError(err, version))
                 }
-                Err(WorkflowError::LockExpired(version)) => {
+                Err(WorkflowError::LockExpired { version, .. }) => {
                     WorkerResult::Err(WorkerError::TemporaryTimeout {
                         http_client_traces: None,
                         version,
@@ -1972,7 +2061,7 @@ pub(crate) mod tests {
     use concepts::storage::{
         AppendEventsToExecution, AppendResponseToExecution, ExecutionLog, HistoryEvent,
         JoinSetRequest, JoinSetResponse, Locked, LockedBy, LogEntry, LogInfoAppendRow, LogLevel,
-        PendingStateFinishedError, PersistKind,
+        PendingStateFinishedError, PersistKind, SystemEventFilter,
     };
     use concepts::storage::{
         AppendRequest, Created, DbConnection, DbConnectionTest, DbPool, ExecutionRequest,
@@ -3004,6 +3093,86 @@ pub(crate) mod tests {
                 http_client_traces: None,
             })
         );
+
+        let admin = db_pool.admin_conn().await.unwrap();
+        let events = admin
+            .list_system_events(SystemEventFilter {
+                code: Some(
+                    SystemEventCode::WorkflowReplayLockExpired
+                        .as_str()
+                        .to_owned(),
+                ),
+                deployment_id: Some(DEPLOYMENT_ID_DUMMY),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            events.is_empty(),
+            "an empty history is not replay starvation"
+        );
+
+        let replaying_execution_id = ExecutionId::generate();
+        for _ in 0..2 {
+            let ctx = WorkerContext {
+                execution_id: replaying_execution_id.clone(),
+                metadata: concepts::ExecutionMetadata::empty(),
+                component_digest: worker.config.component_id.component_digest.clone(),
+                ffqn: SLEEP1_HOST_ACTIVITY_FFQN,
+                params: Params::from_json_values_test(vec![json!({"milliseconds": SLEEP_MILLIS})]),
+                event_history: vec![(
+                    HistoryEvent::Persist {
+                        value: Some(vec![1]),
+                        value_hash: None,
+                        kind: PersistKind::ExecutionId,
+                    },
+                    Version::new(0),
+                )],
+                responses: Vec::new(),
+                parent: None,
+                version: Version::new(1),
+                can_be_retried: false,
+                worker_span: info_span!("worker-test"),
+                locked_event: Locked {
+                    component_id: worker.config.component_id.clone(),
+                    deployment_id: DEPLOYMENT_ID_DUMMY,
+                    executor_id: ExecutorId::generate(),
+                    run_id: RunId::generate(),
+                    lock_expires_at: execution_deadline,
+                    retry_config: ComponentRetryConfig::ZERO,
+                },
+                execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+            };
+            assert_matches!(
+                worker.run(ctx).await,
+                Err(WorkerError::TemporaryTimeout {
+                    version: Version(1),
+                    http_client_traces: None,
+                })
+            );
+        }
+
+        let events = admin
+            .list_system_events(SystemEventFilter {
+                code: Some(
+                    SystemEventCode::WorkflowReplayLockExpired
+                        .as_str()
+                        .to_owned(),
+                ),
+                deployment_id: Some(DEPLOYMENT_ID_DUMMY),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1, "retries are deduplicated per deployment");
+        let event = &events[0];
+        assert_eq!(event.execution_id.as_ref(), Some(&replaying_execution_id));
+        assert_eq!(event.level, concepts::storage::SystemEventLevel::Warning);
+        assert_eq!(event.details["history_version"], 1);
+        assert_eq!(event.details["replayed_event_count"], 0);
+        assert_eq!(event.details["remaining_event_count"], 1);
         db_close.close().await;
     }
 
