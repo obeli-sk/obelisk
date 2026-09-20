@@ -124,11 +124,11 @@
 
 ## Global Activity Configuration
 # [activities]
-# js_runtime = "boa_wasm"                 # JavaScript activity engine: "boa_wasm" (default) or opt-in native "v8".
+# js_runtime = "boa_wasm"                 # JavaScript activity engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.
 
 ## Global Webhook Configuration
 # [webhooks]
-# js_runtime = "boa_wasm"                 # JavaScript webhook engine: "boa_wasm" (default) or opt-in native "v8".
+# js_runtime = "boa_wasm"                 # JavaScript webhook engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.
 
 ## Global Workflow Configuration
 # [workflows]
