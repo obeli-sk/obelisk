@@ -27,14 +27,21 @@ params = [
 return_type = "result<string, string>"
 "#;
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn hmac_sign_verify() {
+async fn hmac_sign_verify(#[case] runtime: JsRuntime) {
     const KEY: &str = "super-secret-key";
     const MSG: &str = "hello world";
 
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(34),
+        JsRuntime::V8 => test_addr!(123),
+    };
     let server = TestServer::start_inline_deployment(
-        test_addr!(34),
-        "[activities]\njs_runtime = \"v8\"",
+        ip,
+        &runtime.server_toml(&["activities"]),
         DEPLOYMENT,
         &[],
     )
@@ -59,6 +66,11 @@ async fn hmac_sign_verify() {
         write!(expected, "{b:02x}").unwrap();
     }
 
-    assert_eq!(js_hex, expected, "JS HMAC-SHA256 signature must match Rust");
+    assert_eq!(
+        js_hex,
+        expected,
+        "JS HMAC-SHA256 signature must match Rust using {}",
+        runtime.name()
+    );
     server.shutdown().await;
 }

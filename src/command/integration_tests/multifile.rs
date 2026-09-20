@@ -115,7 +115,7 @@ export function renderJson(payload) {
 }
 "#;
 
-async fn start(ip: String, runtime: WorkflowJsTestRuntime) -> TestServer {
+async fn start(ip: String, server_toml: &str) -> TestServer {
     let files = [
         ("add.js", ADD_JS),
         ("multifile-activity/index.js", ACTIVITY_INDEX_JS),
@@ -128,12 +128,19 @@ async fn start(ip: String, runtime: WorkflowJsTestRuntime) -> TestServer {
         ("multifile-webhook/index.js", WEBHOOK_INDEX_JS),
         ("multifile-webhook/lib/render.js", WEBHOOK_RENDER_JS),
     ];
-    TestServer::start_inline_deployment(ip, runtime.server_toml(), DEPLOYMENT, &files).await
+    TestServer::start_inline_deployment(ip, server_toml, DEPLOYMENT, &files).await
 }
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn activity() {
-    let server = start(test_addr!(120), WorkflowJsTestRuntime::BoaWasm).await;
+async fn activity(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(120),
+        JsRuntime::V8 => test_addr!(163),
+    };
+    let server = start(ip, &runtime.server_toml(&["activities"])).await;
     let resp = server
         .submit_follow(
             "testing:integration/activity-multifile.greet",
@@ -149,11 +156,15 @@ async fn activity() {
 }
 
 #[rstest::rstest]
-#[case::boa_wasm(WorkflowJsTestRuntime::BoaWasm)]
-#[case::v8(WorkflowJsTestRuntime::V8)]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn workflow(#[case] runtime: WorkflowJsTestRuntime) {
-    let server = start(runtime.ip(test_addr!(121)), runtime).await;
+async fn workflow(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(121),
+        JsRuntime::V8 => test_addr!(173),
+    };
+    let server = start(ip, &runtime.server_toml(&["workflows"])).await;
     let execution_id = server.generate_execution_id().await;
     let resp = server
         .submit_follow_with_id(
@@ -162,11 +173,12 @@ async fn workflow(#[case] runtime: WorkflowJsTestRuntime) {
             vec![json!(2), json!(3), json!(5)],
         )
         .await;
-    assert_eq!(resp.status().as_u16(), 201, "runtime: {runtime:?}");
+    assert_eq!(resp.status().as_u16(), 201, "runtime: {}", runtime.name());
     assert_eq!(
         resp.json::<Value>().await.unwrap(),
         json!({ "ok": 10 }),
-        "runtime: {runtime:?}"
+        "runtime: {}",
+        runtime.name()
     );
 
     let events_before = server.get_events(&execution_id).await;
@@ -174,20 +186,29 @@ async fn workflow(#[case] runtime: WorkflowJsTestRuntime) {
     assert_eq!(
         replay.status().as_u16(),
         200,
-        "multifile JS replay failed using {runtime:?}: {}",
+        "multifile JS replay failed using {}: {}",
+        runtime.name(),
         replay.text().await.unwrap()
     );
     assert_eq!(
         events_before,
         server.get_events(&execution_id).await,
-        "replay using {runtime:?} must not mutate the execution history"
+        "replay using {} must not mutate the execution history",
+        runtime.name()
     );
     server.shutdown().await;
 }
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn webhook() {
-    let server = start(test_addr!(122), WorkflowJsTestRuntime::BoaWasm).await;
+async fn webhook(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(122),
+        JsRuntime::V8 => test_addr!(164),
+    };
+    let server = start(ip, &runtime.server_toml(&["webhooks"])).await;
     let resp = server
         .client
         .get(format!("{}/multifile", server.webhook_base_url))
