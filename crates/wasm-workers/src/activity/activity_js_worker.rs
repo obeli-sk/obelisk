@@ -440,6 +440,7 @@ mod tests {
         env_vars: Vec<crate::envvar::EnvVar>,
         logs_storage_config: Option<crate::component_logger::LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
+        runtime: ActivityJsRuntime,
     }
 
     impl JsWorkerBuilder {
@@ -464,6 +465,7 @@ mod tests {
                 env_vars: Vec::new(),
                 logs_storage_config: None,
                 clock_fn: SimClock::epoch().clone_box(),
+                runtime: ActivityJsRuntime::BoaWasm,
             }
         }
 
@@ -505,6 +507,11 @@ mod tests {
 
         fn with_clock_fn(mut self, clock_fn: Box<dyn ClockFn>) -> Self {
             self.clock_fn = clock_fn;
+            self
+        }
+
+        fn with_runtime(mut self, runtime: ActivityJsRuntime) -> Self {
+            self.runtime = runtime;
             self
         }
 
@@ -582,7 +589,7 @@ mod tests {
                 )
             }
             .unwrap()
-            .with_runtime(ActivityJsRuntime::V8);
+            .with_runtime(self.runtime);
 
             Arc::new(js_compiled.into_worker(
                 cancel_registry,
@@ -918,6 +925,7 @@ mod tests {
             ffqn.clone(),
         )
         .with_env("MY_VALUE", "from-config")
+        .with_runtime(ActivityJsRuntime::V8)
         .build()
         .await;
         let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
@@ -931,10 +939,12 @@ mod tests {
     async fn cpu_loop_is_interrupted_at_deadline() {
         test_utils::set_up();
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "loop");
-        let worker = new_js_activity_worker(
+        let worker = JsWorkerBuilder::new(
             "export default function loop() { while (true) {} }",
             ffqn.clone(),
         )
+        .with_runtime(ActivityJsRuntime::V8)
+        .build()
         .await;
         let (mut ctx, _close_tx) = make_worker_context(ffqn, &[]);
         ctx.locked_event.lock_expires_at =

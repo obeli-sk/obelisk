@@ -3407,6 +3407,17 @@ pub(crate) mod tests {
             SocketAddr,
             WatchGuard,
         ) {
+            start_js_webhook_server_with_runtime(source, WebhookJsRuntime::BoaWasm).await
+        }
+
+        async fn start_js_webhook_server_with_runtime(
+            source: &str,
+            runtime: WebhookJsRuntime,
+        ) -> (
+            tokio::task::JoinSet<Result<(), WebhookServerError>>,
+            SocketAddr,
+            WatchGuard,
+        ) {
             let sim_clock = SimClock::default();
             let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
             let fn_registry = TestingFnRegistry::new_from_components(vec![]);
@@ -3449,7 +3460,7 @@ pub(crate) mod tests {
                     runnable_component,
                 )
                 .unwrap()
-                .with_js_runtime(WebhookJsRuntime::V8)
+                .with_js_runtime(runtime)
                 .link(&engine, fn_registry.as_ref())
                 .unwrap();
                 let mut router = MethodAwareRouter::default();
@@ -3524,7 +3535,7 @@ pub(crate) mod tests {
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server(js_source).await;
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
             let resp = reqwest::get(format!("http://{server_addr}/"))
                 .await
                 .unwrap();
@@ -3552,7 +3563,7 @@ pub(crate) mod tests {
                 }
             "#;
             let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server(js_source).await;
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
             let resp = reqwest::get(format!("http://{server_addr}/"))
                 .await
                 .unwrap();
@@ -3661,7 +3672,6 @@ pub(crate) mod tests {
                     runnable_component,
                 )
                 .unwrap()
-                .with_js_runtime(WebhookJsRuntime::V8)
                 .link(&engine, fn_registry.as_ref())
                 .unwrap();
                 let mut router = MethodAwareRouter::default();
@@ -4059,7 +4069,6 @@ pub(crate) mod tests {
                         runnable_component,
                     )
                     .unwrap()
-                    .with_js_runtime(WebhookJsRuntime::V8)
                     .link(&engine, fn_registry.as_ref())
                     .unwrap();
                     let mut router = MethodAwareRouter::default();
