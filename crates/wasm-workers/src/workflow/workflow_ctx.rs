@@ -43,7 +43,6 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug, error, info, instrument, trace, warn};
@@ -223,14 +222,7 @@ impl WorkflowCtx {
             .map(ToString::to_string)
     }
 
-    pub(crate) fn native_interruption(
-        &self,
-    ) -> Option<
-        Result<
-            Pin<Box<dyn Future<Output = storage::ResponseSubscriptionEnd> + Send>>,
-            storage::ResponseSubscriptionEnd,
-        >,
-    > {
+    pub(crate) fn native_interruption(&self) -> Option<super::deadline_tracker::TrackResult> {
         self.event_history.deadline_tracker.native_interruption()
     }
 

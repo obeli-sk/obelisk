@@ -14,8 +14,8 @@ use concepts::{
 };
 use deno_core::{
     JsRuntime, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
-    ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, ResolutionKind,
-    RuntimeOptions, op2, resolve_import,
+    ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions,
+    ResolutionKind, RuntimeOptions, op2, resolve_import,
 };
 use deno_error::JsErrorBox;
 use serde_json::{Value, json};
@@ -100,11 +100,13 @@ impl WorkflowInvocation for NativeV8Invocation {
         let mut task = tokio::task::spawn_blocking(move || {
             let mut workflow_ctx = workflow_ctx;
             let result = execute(
-                &entry_path,
-                &files,
-                &params,
-                &return_type,
-                &resolved_imports,
+                ExecuteArgs {
+                    entry_path: &entry_path,
+                    files: &files,
+                    params: &params,
+                    return_type: &return_type,
+                    resolved_imports: &resolved_imports,
+                },
                 &mut workflow_ctx,
                 handle,
                 isolate_tx,
@@ -273,9 +275,7 @@ fn op_obelisk_host(
                         )
                     })
             })?;
-            Ok(json!(
-                datetime.seconds as i64 * 1_000 + i64::from(datetime.nanoseconds) / 1_000_000
-            ))
+            Ok(json!(datetime_to_millis(&datetime)))
         }
         "createJoinSet" => {
             let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
@@ -425,9 +425,7 @@ fn op_obelisk_host(
                         )
                     })
             })?;
-            Ok(json!(
-                datetime.seconds as f64 * 1_000.0 + f64::from(datetime.nanoseconds) / 1_000_000.0
-            ))
+            Ok(json!(datetime_to_millis(&datetime)))
         }
         "randomU64" | "randomU64Inclusive" => {
             let min = u64_arg(&args, "min")?;
@@ -519,16 +517,27 @@ fn op_obelisk_host(
 
 deno_core::extension!(obelisk_v8, ops = [op_obelisk_host]);
 
+struct ExecuteArgs<'a> {
+    entry_path: &'a str,
+    files: &'a BTreeMap<String, String>,
+    params: &'a Params,
+    return_type: &'a ReturnTypeExtendable,
+    resolved_imports: &'a HashMap<IfcFqnName, Vec<NamedFnImport>>,
+}
+
 fn execute(
-    entry_path: &str,
-    files: &BTreeMap<String, String>,
-    params: &Params,
-    return_type: &ReturnTypeExtendable,
-    resolved_imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
+    let ExecuteArgs {
+        entry_path,
+        files,
+        params,
+        return_type,
+        resolved_imports,
+    } = args;
     let loader = Rc::new(InMemoryModuleLoader::new(files, resolved_imports));
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
@@ -558,7 +567,9 @@ fn execute(
     let evaluated = futures_lite::future::block_on(async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
         let evaluation = runtime.mod_evaluate(id);
-        runtime.run_event_loop(Default::default()).await?;
+        runtime
+            .run_event_loop(PollEventLoopOptions::default())
+            .await?;
         evaluation.await
     });
     if let Err(err) = evaluated {
@@ -683,13 +694,14 @@ impl ModuleLoader for InMemoryModuleLoader {
 
 fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String {
     use boa_common::imports::{EXT_SUFFIX, SCHEDULE_SUFFIX, STUB_SUFFIX, strip_specifier_suffix};
+    use std::fmt::Write as _;
     let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
     let ext_base = strip_specifier_suffix(specifier, EXT_SUFFIX);
     let stub_base = strip_specifier_suffix(specifier, STUB_SUFFIX);
     functions
         .iter()
         .enumerate()
-        .map(|(index, function)| {
+        .fold(String::new(), |mut acc, (index, function)| {
             let (target, body) = if let Some(base) = &schedule_base {
                 let name = function
                     .wit_name
@@ -735,8 +747,9 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
                 )
             };
             let binding = format!("__obeliskImport{index}");
-            format!(
-                "const {binding}Target = {}; const {binding} = {}; export {{ {binding} as {} }};\n",
+            writeln!(
+                acc,
+                "const {binding}Target = {}; const {binding} = {}; export {{ {binding} as {} }};",
                 serde_json::to_string(&target).unwrap(),
                 body.replace("TARGET", &format!("{binding}Target")).replace(
                     "NAME",
@@ -744,8 +757,9 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
                 ),
                 function.js_name
             )
+            .unwrap();
+            acc
         })
-        .collect()
 }
 
 fn is_runtime_control_flow(err: &super::workflow_ctx::WorkflowFunctionError) -> bool {
@@ -799,7 +813,7 @@ fn outcome_envelope_with_id_and_kind(
 fn index_arg(args: &Value) -> Result<usize, JsErrorBox> {
     args.get("index")
         .and_then(Value::as_u64)
-        .map(|value| value as usize)
+        .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| JsErrorBox::type_error("join set index is missing"))
 }
 
@@ -889,6 +903,15 @@ fn schedule_arg(args: &Value, name: &str) -> Result<HistoryEventScheduleAt, JsEr
     ))
 }
 
+/// Convert a WIT `Datetime` into JavaScript epoch milliseconds. Timestamp
+/// seconds always fit in `i64`, and sub-millisecond precision is dropped since
+/// `Date` truncates to integer milliseconds anyway.
+fn datetime_to_millis(
+    datetime: &crate::workflow::host_exports::latest::obelisk::types::time::Datetime,
+) -> i64 {
+    datetime.seconds.cast_signed() * 1_000 + i64::from(datetime.nanoseconds) / 1_000_000
+}
+
 fn anyhow_to_workflow_error(err: wasmtime::Error) -> super::workflow_ctx::WorkflowFunctionError {
     err.downcast::<super::workflow_ctx::WorkflowFunctionError>()
         .unwrap_or_else(|err| {
@@ -896,7 +919,7 @@ fn anyhow_to_workflow_error(err: wasmtime::Error) -> super::workflow_ctx::Workfl
         })
 }
 
-const WORKFLOW_MODULE: &str = r#"
+const WORKFLOW_MODULE: &str = r"
 const host = (op, args = {}) => Deno.core.ops.op_obelisk_host({ op, args });
 export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.value = value; this.childId = options.childId; this.delayId = options.delayId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
 export const ChildExecutionError = ChildError;
@@ -940,9 +963,9 @@ export function unwrapHost(result) {
 globalThis.host = host;
 globalThis.unwrapHost = unwrapHost;
 globalThis.scheduleTarget = (target, args) => { const executionId = executionIdGenerate(); schedule(executionId, target, args.slice(1), args[0]); return executionId; };
-"#;
+";
 
-const DYNAMIC_MODULE: &str = r#"
+const DYNAMIC_MODULE: &str = r"
 export const call = (target, params) => unwrapHost(host('call', { target, params }));
 export const schedule = (executionId, target, params, scheduleAt) => host('schedule', { executionId, target, params, schedule: scheduleAt });
-"#;
+";

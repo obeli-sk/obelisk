@@ -5,6 +5,11 @@ use std::{pin::Pin, time::Duration};
 use tokio::sync::watch;
 use tracing::{trace, warn};
 
+/// Future that reports why a blocked wait should stop.
+pub type ResponseSubscriptionFuture = Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>;
+/// Either a future that will report the wait's end, or an immediate end reason.
+pub type TrackResult = Result<ResponseSubscriptionFuture, ResponseSubscriptionEnd>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptKind {
     /// Send an executor-closing execution yield.
@@ -23,26 +28,13 @@ pub trait DeadlineTracker: Send + Sync {
     /// Called after the workflow made progress and is now blocked waiting for a response.
     /// Returns a future that reports why the caller should stop waiting. If
     /// `max_duration` is specified, it can also end for periodic polling.
-    fn track(
-        &self,
-        max_duration: Option<Duration>,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
-        ResponseSubscriptionEnd,
-    >;
+    fn track(&self, max_duration: Option<Duration>) -> TrackResult;
 
     fn close_to_expired(&self) -> bool;
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError>;
 
-    fn native_interruption(
-        &self,
-    ) -> Option<
-        Result<
-            Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
-            ResponseSubscriptionEnd,
-        >,
-    > {
+    fn native_interruption(&self) -> Option<TrackResult> {
         None
     }
 
@@ -130,13 +122,7 @@ impl DeadlineTracker for DeadlineTrackerTokio {
         }
     }
 
-    fn track(
-        &self,
-        max_duration: Option<Duration>,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
-        ResponseSubscriptionEnd,
-    > {
+    fn track(&self, max_duration: Option<Duration>) -> TrackResult {
         let now = tokio::time::Instant::now();
         if self.deadline_minus_leeway <= now {
             Err(ResponseSubscriptionEnd::LockDeadlineReached)
@@ -183,14 +169,7 @@ impl DeadlineTracker for DeadlineTrackerTokio {
         }
     }
 
-    fn native_interruption(
-        &self,
-    ) -> Option<
-        Result<
-            Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
-            ResponseSubscriptionEnd,
-        >,
-    > {
+    fn native_interruption(&self) -> Option<TrackResult> {
         Some(self.track(None))
     }
 
@@ -306,13 +285,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
         }
     }
 
-    fn track(
-        &self,
-        max_duration: Option<Duration>,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
-        ResponseSubscriptionEnd,
-    > {
+    fn track(&self, max_duration: Option<Duration>) -> TrackResult {
         let now = self.clock.now();
         if self.deadline_minus_leeway <= now {
             return Err(ResponseSubscriptionEnd::LockDeadlineReached);
@@ -370,14 +343,7 @@ impl DeadlineTracker for DeadlineTrackerSim {
         }
     }
 
-    fn native_interruption(
-        &self,
-    ) -> Option<
-        Result<
-            Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
-            ResponseSubscriptionEnd,
-        >,
-    > {
+    fn native_interruption(&self) -> Option<TrackResult> {
         Some(self.track(None))
     }
 
@@ -466,13 +432,7 @@ impl DeadlineTracker for DeadlineTrackerFactoryForReplay {
         Ok(())
     }
 
-    fn track(
-        &self,
-        _max_duration: Option<Duration>,
-    ) -> Result<
-        Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
-        ResponseSubscriptionEnd,
-    > {
+    fn track(&self, _max_duration: Option<Duration>) -> TrackResult {
         unreachable!("`track` is not called for the interrupt strategy")
     }
 
