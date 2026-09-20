@@ -255,7 +255,7 @@ impl ActivityWorker {
             logger: component_logger.clone(),
             http_hooks: HttpHooks {
                 clock_fn: self.clock_fn.clone_box(),
-                http_client_traces: Default::default(),
+                http_client_traces: Vec::default(),
                 http_policy,
                 component_logger,
                 config_section_hint: self.config.config_section_hint,
@@ -278,22 +278,21 @@ impl ActivityWorker {
             )
         });
         let isolate = isolate_rx.await.ok();
-        enum End {
-            Complete(
-                Result<
-                    (
-                        Result<SupportedFunctionReturnValue, NativeActivityFailure>,
-                        NativeActivityState,
-                    ),
-                    tokio::task::JoinError,
-                >,
+        type NativeActivityTaskResult = Result<
+            (
+                Result<SupportedFunctionReturnValue, NativeActivityFailure>,
+                NativeActivityState,
             ),
+            tokio::task::JoinError,
+        >;
+        enum End {
+            Complete(Box<NativeActivityTaskResult>),
             Timeout,
             Cancelled,
             Closing,
         }
         let end = tokio::select! {
-            result = &mut task => End::Complete(result),
+            result = &mut task => End::Complete(Box::new(result)),
             () = self.sleep.sleep(deadline_duration) => End::Timeout,
             _ = cancellation_token => End::Cancelled,
             changed = execution_interrupt_watcher.changed() => {
@@ -302,7 +301,7 @@ impl ActivityWorker {
             }
         };
         let (result, state) = match end {
-            End::Complete(result) => result.expect("native V8 activity task panicked"),
+            End::Complete(result) => (*result).expect("native V8 activity task panicked"),
             interrupted => {
                 if let Some(isolate) = isolate {
                     isolate.terminate_execution();

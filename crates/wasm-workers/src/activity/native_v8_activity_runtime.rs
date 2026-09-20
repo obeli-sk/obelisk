@@ -204,7 +204,9 @@ fn execute_inner(
     let evaluated = futures_lite::future::block_on(async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
         let evaluation = runtime.mod_evaluate(id);
-        runtime.run_event_loop(Default::default()).await?;
+        runtime
+            .run_event_loop(deno_core::PollEventLoopOptions::default())
+            .await?;
         evaluation.await
     });
     if let Err(err) = evaluated {
@@ -321,7 +323,7 @@ impl ModuleLoader for InMemoryModuleLoader {
     }
 }
 
-const ACTIVITY_BOOTSTRAP: &str = r#"
+const ACTIVITY_BOOTSTRAP: &str = r"
 const format = value => typeof value === 'string' ? value : typeof value === 'bigint' ? `${value}n` : JSON.stringify(value);
 globalThis.console = Object.fromEntries(['trace', 'debug', 'info', 'log', 'warn', 'error'].map(level => [level, (...values) => Deno.core.ops.op_activity_log(level === 'log' ? 'info' : level, values.map(format).join(' '))]));
 globalThis.process = { env: new Proxy({}, { get: (_, name) => typeof name === 'string' ? Deno.core.ops.op_activity_env(name) : undefined }) };
@@ -376,4 +378,4 @@ globalThis.fetch = async (input, options = {}) => {
   const data = await Deno.core.ops.op_activity_fetch({ url, method: options.method || 'GET', headers, body: options.body });
   return new Response(data);
 };
-"#;
+";
