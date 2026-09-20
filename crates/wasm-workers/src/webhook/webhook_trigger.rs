@@ -243,6 +243,14 @@ pub enum WebhookServerError {
 pub struct WebhookEndpointCompiled {
     pub config: WebhookEndpointConfig,
     pub runnable_component: RunnableComponent,
+    js_runtime: WebhookJsRuntime,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WebhookJsRuntime {
+    #[default]
+    BoaWasm,
+    V8,
 }
 
 enum WebhookProxyPre<T: 'static> {
@@ -258,7 +266,14 @@ impl WebhookEndpointCompiled {
         Ok(Self {
             config,
             runnable_component,
+            js_runtime: WebhookJsRuntime::BoaWasm,
         })
+    }
+
+    #[must_use]
+    pub fn with_js_runtime(mut self, js_runtime: WebhookJsRuntime) -> Self {
+        self.js_runtime = js_runtime;
+        self
     }
 
     #[must_use]
@@ -364,7 +379,7 @@ impl WebhookEndpointCompiled {
         // there's no point doing the work per request. The webhook runtime
         // currently consumes pairs as `[js_name, wit_name]` tuples, so we
         // flatten `NamedFnImport` to that shape at the boundary.
-        let resolved_imports_json = if let Some(js_config) = &self.config.js_config {
+        let resolved_imports = if let Some(js_config) = &self.config.js_config {
             let mut resolved = std::collections::HashMap::new();
             for source in js_config.files.values() {
                 let imports = crate::js_imports::resolve_js_imports(
@@ -377,10 +392,15 @@ impl WebhookEndpointCompiled {
                     resolved.entry(specifier).or_insert(functions);
                 }
             }
-            if resolved.is_empty() {
-                None
-            } else {
-                let tupled: std::collections::HashMap<&IfcFqnName, Vec<(&str, &str)>> = resolved
+            resolved
+        } else {
+            std::collections::HashMap::new()
+        };
+        let resolved_imports_json = if resolved_imports.is_empty() {
+            None
+        } else {
+            let tupled: std::collections::HashMap<&IfcFqnName, Vec<(&str, &str)>> =
+                resolved_imports
                     .iter()
                     .map(|(ifc_fqn, funcs)| {
                         (
@@ -392,12 +412,9 @@ impl WebhookEndpointCompiled {
                         )
                     })
                     .collect();
-                let json =
-                    serde_json::to_string(&tupled).expect("resolved imports must be serializable");
-                Some(Arc::from(json))
-            }
-        } else {
-            None
+            let json =
+                serde_json::to_string(&tupled).expect("resolved imports must be serializable");
+            Some(Arc::from(json))
         };
 
         // Pre-instantiate to catch missing imports
@@ -422,6 +439,8 @@ impl WebhookEndpointCompiled {
             config: Arc::new(self.config),
             proxy_pre,
             resolved_imports_json,
+            resolved_imports,
+            js_runtime: self.js_runtime,
         })
     }
 }
@@ -434,6 +453,8 @@ pub struct WebhookEndpointInstanceLinked {
     /// Set on JS webhooks; serialized `HashMap<String, Vec<(String, String)>>` passed
     /// to the runtime via the `__OBELISK_RESOLVED_IMPORTS__` env var.
     resolved_imports_json: Option<Arc<str>>,
+    resolved_imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
+    js_runtime: WebhookJsRuntime,
 }
 impl WebhookEndpointInstanceLinked {
     #[must_use]
@@ -462,6 +483,7 @@ impl WebhookEndpointInstanceLinked {
                 }
             }),
             config: self.config.clone(),
+            js_runtime: self.js_runtime,
         }
     }
 }
@@ -476,6 +498,7 @@ pub struct WebhookEndpointInstance {
     #[debug(skip)]
     stderr: Option<StdOutputConfigWithSender>,
     logs_storage_config: Option<LogStrageConfig>,
+    js_runtime: WebhookJsRuntime,
 }
 
 pub struct MethodAwareRouter<T> {
@@ -662,7 +685,7 @@ pub struct WebhookEndpointJsConfig {
     pub files: std::collections::BTreeMap<String, String>,
 }
 
-struct WebhookEndpointCtx {
+pub(super) struct WebhookEndpointCtx {
     component_id: ComponentId,
     deployment_id: DeploymentId,
     max_persisted_value_size_bytes: u64,
@@ -673,17 +696,17 @@ struct WebhookEndpointCtx {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
-    execution_id: ExecutionIdTopLevel,
+    pub(super) execution_id: ExecutionIdTopLevel,
     next_join_set_idx: u64,
     version: Option<Version>,
     component_logger: ComponentLogger,
     subscription_interruption: Option<Duration>,
-    connection_drop_watcher: watch::Receiver<()>,
-    server_termination_watcher: watch::Receiver<()>,
-    http_hooks: HttpHooks,
+    pub(super) connection_drop_watcher: watch::Receiver<()>,
+    pub(super) server_termination_watcher: watch::Receiver<()>,
+    pub(super) http_hooks: HttpHooks,
     // Execution id of the last `call-json`, for `last-direct-call-id`.
-    last_direct_call_id: Option<ExecutionIdDerived>,
-    backtrace_persist: bool,
+    pub(super) last_direct_call_id: Option<ExecutionIdDerived>,
+    pub(super) backtrace_persist: bool,
 }
 
 impl HostJoinSet for WebhookEndpointCtx {
@@ -953,7 +976,7 @@ impl types::obelisk::webhook::webhook_dynamic_support_backtrace::Host for Webhoo
 }
 
 impl WebhookEndpointCtx {
-    async fn schedule_json_inner(
+    pub(super) async fn schedule_json_inner(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_dynamic_support::ExecutionId,
         schedule_at: types::obelisk::webhook::webhook_dynamic_support::ScheduleAt,
@@ -1121,7 +1144,7 @@ impl WebhookEndpointCtx {
         }
     }
 
-    async fn call_json_inner(
+    pub(super) async fn call_json_inner(
         &mut self,
         function: types::obelisk::webhook::webhook_dynamic_support::Function,
         params: String,
@@ -1311,7 +1334,7 @@ impl WebhookEndpointCtx {
         }
     }
 
-    async fn get_inner(
+    pub(super) async fn get_inner(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
     ) -> Result<Result<Option<String>, Option<String>>, GetErrorTrappable> {
@@ -1372,7 +1395,7 @@ impl WebhookEndpointCtx {
         }
     }
 
-    async fn try_get_inner(
+    pub(super) async fn try_get_inner(
         &mut self,
         execution_id: types::obelisk::webhook::webhook_support::ExecutionId,
     ) -> Result<Result<Option<String>, Option<String>>, TryGetErrorTrappable> {
@@ -2317,6 +2340,17 @@ impl RequestHandler {
                 run_id,
                 found_instance.logs_storage_config.clone(),
             );
+            if found_instance.js_runtime == WebhookJsRuntime::V8 {
+                let ctx = store.into_data();
+                return handle_native_v8_request(
+                    req,
+                    ctx,
+                    found_instance.config.clone(),
+                    instance_match.handler().resolved_imports.clone(),
+                    http_request_guard,
+                )
+                .await;
+            }
             match found_instance.proxy_pre.as_ref() {
                 WebhookProxyPre::P2(proxy_pre) => {
                     let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -2424,6 +2458,109 @@ impl RequestHandler {
         } else {
             Err(HandleRequestError::RouteNotFound)
         }
+    }
+}
+
+async fn handle_native_v8_request(
+    req: hyper::Request<hyper::body::Incoming>,
+    mut ctx: WebhookEndpointCtx,
+    config: Arc<WebhookEndpointConfig>,
+    imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
+    http_request_guard: Option<OwnedSemaphorePermit>,
+) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
+    use crate::webhook::native_v8_webhook_runtime::{
+        NativeRequest, NativeWebhookFailure, execute, into_hyper_response,
+    };
+    let js_config = config
+        .js_config
+        .clone()
+        .expect("native V8 is only selected for JavaScript webhooks");
+    let (parts, body) = req.into_parts();
+    let body = http_body_util::BodyExt::collect(body)
+        .await
+        .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?
+        .to_bytes();
+    let request = NativeRequest {
+        method: parts.method.to_string(),
+        url: parts.uri.to_string(),
+        headers: parts
+            .headers
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.to_string(), value.to_owned()))
+            })
+            .collect(),
+        body: String::from_utf8_lossy(&body).into_owned(),
+    };
+    let mut env = config
+        .env_vars
+        .iter()
+        .map(|value| (value.key.clone(), value.val.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
+    for name in config.exposed_secrets.iter() {
+        if let Some(value) = config.secrets.secret_lookup(name) {
+            env.insert(name.clone(), value.expose_secret().to_owned());
+        }
+    }
+    if let Some(entry_source) = js_config.files.get(&js_config.entry_path) {
+        env.insert("__OBELISK_JS_SOURCE__".into(), entry_source.clone());
+        env.insert(
+            "__OBELISK_JS_FILE_NAME__".into(),
+            js_config.entry_path.clone(),
+        );
+    }
+    let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
+    let mut server_termination_watcher = ctx.server_termination_watcher.clone();
+    let handle = tokio::runtime::Handle::current();
+    let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
+    let mut task = tokio::task::spawn_blocking(move || {
+        let _http_request_guard = http_request_guard;
+        let result = execute(
+            &js_config, &imports, request, env, &mut ctx, handle, isolate_tx,
+        );
+        (result, ctx)
+    });
+    let isolate = isolate_rx.await.ok();
+    enum End<T> {
+        Complete(T),
+        Interrupted,
+    }
+    let end = tokio::select! {
+        result = &mut task => End::Complete(result),
+        _ = connection_drop_watcher.changed() => End::Interrupted,
+        _ = server_termination_watcher.changed() => End::Interrupted,
+    };
+    let (result, ctx) = match end {
+        End::Complete(result) => result.expect("native V8 webhook task panicked"),
+        End::Interrupted => {
+            if let Some(isolate) = isolate {
+                isolate.terminate_execution();
+            }
+            task.await.expect("native V8 webhook task panicked")
+        }
+    };
+    let close_result = match &result {
+        Ok(_) => Ok(()),
+        Err(err) => Err(wasmtime::Error::msg(match err {
+            NativeWebhookFailure::CannotInstantiate(reason)
+            | NativeWebhookFailure::Execution(reason) => reason.clone(),
+        })),
+    };
+    ctx.close(close_result, config.fuel)
+        .await
+        .map_err(|err| HandleRequestError::ExecutionError(err.into()))?;
+    match result {
+        Ok(response) => into_hyper_response(response)
+            .map_err(|err| HandleRequestError::ResponseCreationError(err.into())),
+        Err(NativeWebhookFailure::CannotInstantiate(reason)) => Err(
+            HandleRequestError::InstantiationError(std::io::Error::other(reason).into()),
+        ),
+        Err(NativeWebhookFailure::Execution(reason)) => Err(HandleRequestError::ExecutionError(
+            std::io::Error::other(reason).into(),
+        )),
     }
 }
 #[derive(Debug, thiserror::Error)]
@@ -3228,7 +3365,7 @@ pub(crate) mod tests {
         use crate::testing_fn_registry::TestingFnRegistry;
         use crate::webhook::webhook_trigger::{
             self, MethodAwareRouter, WebhookEndpointCompiled, WebhookEndpointConfig,
-            WebhookEndpointJsConfig, WebhookServerError, WebhookServerState,
+            WebhookEndpointJsConfig, WebhookJsRuntime, WebhookServerError, WebhookServerState,
         };
         use concepts::component_id::ComponentDigest;
         use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
@@ -3265,6 +3402,17 @@ pub(crate) mod tests {
 
         async fn start_js_webhook_server(
             source: &str,
+        ) -> (
+            tokio::task::JoinSet<Result<(), WebhookServerError>>,
+            SocketAddr,
+            WatchGuard,
+        ) {
+            start_js_webhook_server_with_runtime(source, WebhookJsRuntime::BoaWasm).await
+        }
+
+        async fn start_js_webhook_server_with_runtime(
+            source: &str,
+            runtime: WebhookJsRuntime,
         ) -> (
             tokio::task::JoinSet<Result<(), WebhookServerError>>,
             SocketAddr,
@@ -3312,6 +3460,7 @@ pub(crate) mod tests {
                     runnable_component,
                 )
                 .unwrap()
+                .with_js_runtime(runtime)
                 .link(&engine, fn_registry.as_ref())
                 .unwrap();
                 let mut router = MethodAwareRouter::default();
@@ -3372,6 +3521,53 @@ pub(crate) mod tests {
                 .unwrap();
             assert_eq!(resp.status().as_u16(), 200);
             assert_eq!("Hello from JS!", resp.text().await.unwrap());
+        }
+
+        #[tokio::test]
+        async fn webhook_js_url_and_search_params() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default function handle() {
+                    const url = new URL("https://example.com/p?foo=bar&foo=baz");
+                    url.searchParams.set("foo", "updated");
+                    url.searchParams.append("extra", "hello world");
+                    return new Response(url.href + "|" + url.searchParams.getAll("foo").join(","));
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(
+                "https://example.com/p?foo=updated&extra=hello+world|updated",
+                resp.text().await.unwrap()
+            );
+        }
+
+        #[tokio::test]
+        async fn webhook_js_hmac_sign_and_verify() {
+            test_utils::set_up();
+            let js_source = r#"
+                export default async function handle() {
+                    const encoder = new TextEncoder();
+                    const lengths = [];
+                    for (const hash of ["SHA-256", "SHA-384", "SHA-512"]) {
+                        const key = await crypto.subtle.importKey("raw", encoder.encode("secret"), { name: "HMAC", hash }, false, ["sign", "verify"]);
+                        const data = encoder.encode("message");
+                        const signature = await crypto.subtle.sign("HMAC", key, data);
+                        if (!await crypto.subtle.verify("HMAC", key, signature, data)) throw new Error(`verification failed for ${hash}`);
+                        lengths.push(signature.byteLength);
+                    }
+                    return Response.json(lengths);
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!("[32,48,64]", resp.text().await.unwrap());
         }
 
         #[tokio::test]

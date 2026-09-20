@@ -178,6 +178,30 @@ macro_rules! test_addr {
 }
 pub(crate) use test_addr;
 
+#[derive(Clone, Copy, Debug)]
+enum JsRuntime {
+    BoaWasm,
+    V8,
+}
+
+impl JsRuntime {
+    fn name(self) -> &'static str {
+        match self {
+            Self::BoaWasm => "boa_wasm",
+            Self::V8 => "v8",
+        }
+    }
+
+    fn server_toml(self, sections: &[&str]) -> String {
+        use std::fmt::Write as _;
+
+        sections.iter().fold(String::new(), |mut toml, section| {
+            writeln!(toml, "[{section}]\njs_runtime = {:?}", self.name()).unwrap();
+            toml
+        })
+    }
+}
+
 /// Write separate server and deployment TOML configs to temp files and return their paths.
 /// The server config includes API, DB, and wasm settings.
 /// The deployment config references the JS fixtures from the workspace tree.
@@ -591,6 +615,20 @@ impl TestServer {
 
     async fn start_with_server_lines(ip: String, server_toml_lines: &str) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, server_toml_lines);
+        authorize_test_deployment(&server_path, &deployment_path).await;
+        let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+    }
+
+    async fn start_with_server_toml_tail(ip: String, server_toml_tail: &str) -> Self {
+        use std::io::Write as _;
+
+        let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
+        let mut server_file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&server_path)
+            .unwrap();
+        writeln!(server_file, "\n{server_toml_tail}").unwrap();
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
         Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
@@ -1394,6 +1432,7 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 }
 
 /// Selects which protocol to use for submit + hot-redeploy in parametrized tests.
+#[derive(Clone, Copy, Debug)]
 enum TestDeployClient {
     /// Submit and switch via gRPC.
     Grpc,
@@ -3418,9 +3457,17 @@ async fn disconnected_native_grpc_follow_does_not_delay_shutdown() {
 
 // ---- Activity: submit + result ----
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn submit_activity_and_get_result() {
-    let server = TestServer::start(test_addr!(4)).await;
+async fn submit_activity_and_get_result(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(4),
+        JsRuntime::V8 => test_addr!(166),
+    };
+    let server =
+        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["activities"])).await;
 
     let resp = server
         .submit_follow("testing:integration/activity.add", vec![json!(3), json!(5)])
@@ -4543,17 +4590,25 @@ async fn hot_redeploy_activity_impl(server: &TestServer, deploy_client: &TestDep
     assert_eq!(body, json!({"ok": "updated_value"}));
 }
 
+#[rstest::rstest]
+#[case::boa_wasm_grpc(JsRuntime::BoaWasm, TestDeployClient::Grpc)]
+#[case::v8_grpc(JsRuntime::V8, TestDeployClient::Grpc)]
+#[case::boa_wasm_webapi(JsRuntime::BoaWasm, TestDeployClient::WebApi)]
+#[case::v8_webapi(JsRuntime::V8, TestDeployClient::WebApi)]
 #[tokio::test]
-async fn hot_redeploy_activity_grpc() {
-    let server = TestServer::start(test_addr!(30)).await;
-    hot_redeploy_activity_impl(&server, &TestDeployClient::Grpc).await;
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn hot_redeploy_activity_webapi() {
-    let server = TestServer::start(test_addr!(39)).await;
-    hot_redeploy_activity_impl(&server, &TestDeployClient::WebApi).await;
+async fn hot_redeploy_activity(
+    #[case] runtime: JsRuntime,
+    #[case] deploy_client: TestDeployClient,
+) {
+    let ip = match (runtime, deploy_client) {
+        (JsRuntime::BoaWasm, TestDeployClient::Grpc) => test_addr!(30),
+        (JsRuntime::V8, TestDeployClient::Grpc) => test_addr!(167),
+        (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(39),
+        (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(168),
+    };
+    let server =
+        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["activities"])).await;
+    hot_redeploy_activity_impl(&server, &deploy_client).await;
     server.shutdown().await;
 }
 
@@ -4693,17 +4748,25 @@ async fn hot_redeploy_webhook_js_env_var_impl(
     assert_eq!(resp.text().await.unwrap(), "updated_webhook_env");
 }
 
+#[rstest::rstest]
+#[case::boa_wasm_grpc(JsRuntime::BoaWasm, TestDeployClient::Grpc)]
+#[case::v8_grpc(JsRuntime::V8, TestDeployClient::Grpc)]
+#[case::boa_wasm_webapi(JsRuntime::BoaWasm, TestDeployClient::WebApi)]
+#[case::v8_webapi(JsRuntime::V8, TestDeployClient::WebApi)]
 #[tokio::test]
-async fn hot_redeploy_webhook_js_env_var_grpc() {
-    let server = TestServer::start(test_addr!(32)).await;
-    hot_redeploy_webhook_js_env_var_impl(&server, &TestDeployClient::Grpc).await;
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn hot_redeploy_webhook_js_env_var_webapi() {
-    let server = TestServer::start(test_addr!(41)).await;
-    hot_redeploy_webhook_js_env_var_impl(&server, &TestDeployClient::WebApi).await;
+async fn hot_redeploy_webhook_js_env_var(
+    #[case] runtime: JsRuntime,
+    #[case] deploy_client: TestDeployClient,
+) {
+    let ip = match (runtime, deploy_client) {
+        (JsRuntime::BoaWasm, TestDeployClient::Grpc) => test_addr!(32),
+        (JsRuntime::V8, TestDeployClient::Grpc) => test_addr!(169),
+        (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(41),
+        (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(170),
+    };
+    let server =
+        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["webhooks"])).await;
+    hot_redeploy_webhook_js_env_var_impl(&server, &deploy_client).await;
     server.shutdown().await;
 }
 
@@ -4747,17 +4810,25 @@ async fn hot_redeploy_webhook_js_remove_endpoint_impl(
     );
 }
 
+#[rstest::rstest]
+#[case::boa_wasm_grpc(JsRuntime::BoaWasm, TestDeployClient::Grpc)]
+#[case::v8_grpc(JsRuntime::V8, TestDeployClient::Grpc)]
+#[case::boa_wasm_webapi(JsRuntime::BoaWasm, TestDeployClient::WebApi)]
+#[case::v8_webapi(JsRuntime::V8, TestDeployClient::WebApi)]
 #[tokio::test]
-async fn hot_redeploy_webhook_js_remove_endpoint_grpc() {
-    let server = TestServer::start(test_addr!(33)).await;
-    hot_redeploy_webhook_js_remove_endpoint_impl(&server, &TestDeployClient::Grpc).await;
-    server.shutdown().await;
-}
-
-#[tokio::test]
-async fn hot_redeploy_webhook_js_remove_endpoint_webapi() {
-    let server = TestServer::start(test_addr!(42)).await;
-    hot_redeploy_webhook_js_remove_endpoint_impl(&server, &TestDeployClient::WebApi).await;
+async fn hot_redeploy_webhook_js_remove_endpoint(
+    #[case] runtime: JsRuntime,
+    #[case] deploy_client: TestDeployClient,
+) {
+    let ip = match (runtime, deploy_client) {
+        (JsRuntime::BoaWasm, TestDeployClient::Grpc) => test_addr!(33),
+        (JsRuntime::V8, TestDeployClient::Grpc) => test_addr!(171),
+        (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(42),
+        (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(172),
+    };
+    let server =
+        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["webhooks"])).await;
+    hot_redeploy_webhook_js_remove_endpoint_impl(&server, &deploy_client).await;
     server.shutdown().await;
 }
 

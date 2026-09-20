@@ -3,3 +3,4 @@ pub mod activity_exec_worker;
 pub mod activity_js_worker;
 pub mod activity_worker;
 pub mod cancel_registry;
+mod native_v8_activity_runtime;

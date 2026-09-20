@@ -139,6 +139,18 @@ pub(crate) fn build_http_policy(
     policy
 }
 
+pub(crate) fn build_http_policy_native(
+    allowed_hosts: &[AllowedHostConfig],
+    global_http_config: &GlobalHttpConfig,
+    resolver: &dyn SecretResolver,
+) -> (HttpRequestPolicy, hashbrown::HashMap<String, String>) {
+    let (mut policy, placeholders) = build_http_policy_inner(allowed_hosts, resolver);
+    policy.global_allowlist = Some(build_authorization_hosts(global_http_config.entries()));
+    policy.component_policy_hash = audit_http_policy(allowed_hosts).0;
+    policy.server_policy_hash = audit_http_policy(global_http_config.entries()).0;
+    (policy, placeholders)
+}
+
 /// Build the operator global allowlist's host list. Each entry authorizes a
 /// `(secret name, replacement target)` pair but carries no placeholder or real value, so no
 /// guest env binding is produced.

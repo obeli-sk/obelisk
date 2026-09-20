@@ -15,8 +15,14 @@ params = [
 return_type = "result<string, string>"
 "#;
 
-async fn start(ip: String) -> TestServer {
-    TestServer::start_inline_deployment(ip, "", GREET_DEPLOYMENT, &[]).await
+async fn start(ip: String, runtime: JsRuntime) -> TestServer {
+    TestServer::start_inline_deployment(
+        ip,
+        &runtime.server_toml(&["activities"]),
+        GREET_DEPLOYMENT,
+        &[],
+    )
+    .await
 }
 
 async fn submit_greet(server: &TestServer, exec_id: &str) {
@@ -33,9 +39,16 @@ async fn submit_greet(server: &TestServer, exec_id: &str) {
     assert_eq!(body, json!({ "ok": "Hello, World!" }));
 }
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn events() {
-    let server = start(test_addr!(5)).await;
+async fn events(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(5),
+        JsRuntime::V8 => test_addr!(160),
+    };
+    let server = start(ip, runtime).await;
     let exec_id = server.generate_execution_id().await;
     submit_greet(&server, &exec_id).await;
 
@@ -45,9 +58,16 @@ async fn events() {
     server.shutdown().await;
 }
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn logs() {
-    let server = start(test_addr!(6)).await;
+async fn logs(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(6),
+        JsRuntime::V8 => test_addr!(161),
+    };
+    let server = start(ip, runtime).await;
     let exec_id = server.generate_execution_id().await;
     submit_greet(&server, &exec_id).await;
 
@@ -63,9 +83,16 @@ async fn logs() {
     server.shutdown().await;
 }
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn status() {
-    let server = start(test_addr!(7)).await;
+async fn status(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(7),
+        JsRuntime::V8 => test_addr!(162),
+    };
+    let server = start(ip, runtime).await;
     let exec_id = server.generate_execution_id().await;
     submit_greet(&server, &exec_id).await;
 

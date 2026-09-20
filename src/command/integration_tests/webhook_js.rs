@@ -14,8 +14,11 @@ routes = [{ methods = ["GET"], route = "/get-status" }]
 "#;
 
 /// A JS webhook's `getStatus` reports the first-class `cancelling` state.
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn get_status_cancelling() {
+async fn get_status_cancelling(#[case] runtime: JsRuntime) {
     use concepts::prefixed_ulid::DEPLOYMENT_ID_DUMMY;
     use concepts::storage::{
         AppendRequest, CreateRequest, ExecutionRequest, HistoryEvent, JoinSetRequest,
@@ -29,7 +32,17 @@ async fn get_status_cancelling() {
         FunctionFqn::new_static("testing:cancel/ifc", "parent-cancellable");
     const CHILD_FFQN: FunctionFqn = FunctionFqn::new_static("testing:cancel/ifc", "child");
 
-    let server = TestServer::start_inline_deployment(test_addr!(86), "", DEPLOYMENT, &[]).await;
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(86),
+        JsRuntime::V8 => test_addr!(165),
+    };
+    let server = TestServer::start_inline_deployment(
+        ip,
+        &runtime.server_toml(&["webhooks"]),
+        DEPLOYMENT,
+        &[],
+    )
+    .await;
 
     let parent_id = {
         let pool = SqlitePool::new(&server.sqlite_file, SqliteConfig::default())

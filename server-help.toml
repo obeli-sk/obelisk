@@ -122,6 +122,14 @@
 # parallel_compilation = true                    # Enable (default) or disable parallel AOT compilation of each WASM component.
 # debug = false                                  # Enable debugging of WASM components: Instruct wasmtime to emit DWARF debug info and disable cranelift optimizations.
 
+## Global Activity Configuration
+# [activities]
+# js_runtime = "boa_wasm"                 # JavaScript activity engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.
+
+## Global Webhook Configuration
+# [webhooks]
+# js_runtime = "boa_wasm"                 # JavaScript webhook engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.
+
 ## Global Workflow Configuration
 # [workflows]
 # js_runtime = "boa_wasm"                 # JavaScript workflow engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.

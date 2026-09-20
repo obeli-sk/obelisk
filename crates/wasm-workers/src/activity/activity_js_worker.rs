@@ -25,6 +25,13 @@ use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ActivityJsRuntime {
+    #[default]
+    BoaWasm,
+    V8,
+}
+
 /// Compiled JS activity. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct ActivityJsWorkerCompiled {
     inner: ActivityWorkerCompiled,
@@ -35,6 +42,7 @@ pub struct ActivityJsWorkerCompiled {
     user_return_type: ReturnTypeExtendable,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
     user_wasm_component: WasmComponent,
+    runtime: ActivityJsRuntime,
 }
 
 impl ActivityJsWorkerCompiled {
@@ -82,7 +90,14 @@ impl ActivityJsWorkerCompiled {
             user_params,
             user_return_type,
             user_wasm_component,
+            runtime: ActivityJsRuntime::BoaWasm,
         }
+    }
+
+    #[must_use]
+    pub fn with_runtime(mut self, runtime: ActivityJsRuntime) -> Self {
+        self.runtime = runtime;
+        self
     }
 
     #[must_use]
@@ -143,6 +158,7 @@ impl ActivityJsWorkerCompiled {
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
+            runtime: self.runtime,
         }
     }
 }
@@ -156,6 +172,7 @@ pub struct ActivityJsWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
+    runtime: ActivityJsRuntime,
 }
 
 #[async_trait]
@@ -166,6 +183,9 @@ impl Worker for ActivityJsWorker {
 
     // Return result<string, string> or a WorkerError mapped from `JsRuntimeError`
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
+        if self.runtime == ActivityJsRuntime::V8 {
+            return self.run_v8(ctx).await;
+        }
         // Serialize each user parameter individually as a JSON string.
         let json_params = ctx
             .params
@@ -356,6 +376,19 @@ impl Worker for ActivityJsWorker {
     }
 }
 
+impl ActivityJsWorker {
+    async fn run_v8(&self, ctx: WorkerContext) -> WorkerResult {
+        self.inner
+            .run_native_js(
+                ctx,
+                self.js_entry_path.clone(),
+                self.js_files.clone(),
+                self.user_return_type.clone(),
+            )
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,8 +437,10 @@ mod tests {
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
         allowed_hosts: Vec<crate::http_request_policy::AllowedHostConfig>,
+        env_vars: Vec<crate::envvar::EnvVar>,
         logs_storage_config: Option<crate::component_logger::LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
+        runtime: ActivityJsRuntime,
     }
 
     impl JsWorkerBuilder {
@@ -427,8 +462,10 @@ mod tests {
                     wit_type: StrVariant::Static("result<string, string>"),
                 },
                 allowed_hosts: Vec::new(),
+                env_vars: Vec::new(),
                 logs_storage_config: None,
                 clock_fn: SimClock::epoch().clone_box(),
+                runtime: ActivityJsRuntime::BoaWasm,
             }
         }
 
@@ -455,6 +492,14 @@ mod tests {
             self
         }
 
+        fn with_env(mut self, key: &str, value: &str) -> Self {
+            self.env_vars.push(crate::envvar::EnvVar {
+                key: key.to_owned(),
+                val: value.to_owned(),
+            });
+            self
+        }
+
         fn with_logs(mut self, config: crate::component_logger::LogStrageConfig) -> Self {
             self.logs_storage_config = Some(config);
             self
@@ -462,6 +507,11 @@ mod tests {
 
         fn with_clock_fn(mut self, clock_fn: Box<dyn ClockFn>) -> Self {
             self.clock_fn = clock_fn;
+            self
+        }
+
+        fn with_runtime(mut self, runtime: ActivityJsRuntime) -> Self {
+            self.runtime = runtime;
             self
         }
 
@@ -502,7 +552,7 @@ mod tests {
                 component_id,
                 forward_stdout: None,
                 forward_stderr: None,
-                env_vars: Arc::from([]),
+                env_vars: Arc::from(self.env_vars),
                 exposed_secrets: Arc::from([]),
                 fuel: None,
                 allowed_hosts: allowed_hosts.clone(),
@@ -538,7 +588,8 @@ mod tests {
                     self.user_return_type,
                 )
             }
-            .unwrap();
+            .unwrap()
+            .with_runtime(self.runtime);
 
             Arc::new(js_compiled.into_worker(
                 cancel_registry,
@@ -863,6 +914,45 @@ mod tests {
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "logged");
+    }
+
+    #[tokio::test]
+    async fn process_env() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "read-env");
+        let worker = JsWorkerBuilder::new(
+            "export default function readEnv() { return process.env.MY_VALUE; }",
+            ffqn.clone(),
+        )
+        .with_env("MY_VALUE", "from-config")
+        .with_runtime(ActivityJsRuntime::V8)
+        .build()
+        .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        assert_eq!(extract_string(&output.unwrap().value), "from-config");
+    }
+
+    #[tokio::test]
+    async fn cpu_loop_is_interrupted_at_deadline() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "loop");
+        let worker = JsWorkerBuilder::new(
+            "export default function loop() { while (true) {} }",
+            ffqn.clone(),
+        )
+        .with_runtime(ActivityJsRuntime::V8)
+        .build()
+        .await;
+        let (mut ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        ctx.locked_event.lock_expires_at =
+            chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(50);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), worker.run(ctx))
+            .await
+            .expect("V8 termination must stop the CPU loop");
+        assert_matches!(result, Err(WorkerError::TemporaryTimeout { .. }));
     }
 
     #[tokio::test]
