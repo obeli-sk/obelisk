@@ -75,7 +75,7 @@ fn camel_to_kebab(s: &str) -> String {
 
 /// A function imported via `import { ... } from 'ns:pkg/ifc'`, with both its
 /// JS-side camelCase name and the resolved WIT kebab-case name.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct NamedFnImport {
     pub js_name: String,
     pub wit_name: String,

@@ -161,15 +161,18 @@ params = [
 return_type = "result<string, string>"
 "#;
 
-async fn start(ip: String) -> TestServer {
-    TestServer::start_inline_deployment(ip, "", DEPLOYMENT, &[]).await
+async fn start(ip: String, runtime: WorkflowJsTestRuntime) -> TestServer {
+    TestServer::start_inline_deployment(ip, runtime.server_toml(), DEPLOYMENT, &[]).await
 }
 
 /// A caught `ChildError` re-thrown with `throw e` transparently
 /// reproduces the child's original err payload as the workflow's err.
+#[rstest::rstest]
+#[case::boa_wasm(WorkflowJsTestRuntime::BoaWasm)]
+#[case::v8(WorkflowJsTestRuntime::V8)]
 #[tokio::test]
-async fn rethrow_child_error() {
-    let server = start(test_addr!(87)).await;
+async fn rethrow_child_error(#[case] runtime: WorkflowJsTestRuntime) {
+    let server = start(runtime.ip(test_addr!(87)), runtime).await;
     let resp = server
         .submit_follow(
             "testing:integration/workflow-rethrow-child-error.rethrow-child-error",
@@ -186,11 +189,14 @@ async fn rethrow_child_error() {
 /// A child execution cancelled out-of-band surfaces to an awaiting JS parent as a
 /// `ChildError` with `.cancelled === true` and `.failureKind === "cancelled"`
 /// whose `.value` is projected onto the child's string err type.
+#[rstest::rstest]
+#[case::boa_wasm(WorkflowJsTestRuntime::BoaWasm)]
+#[case::v8(WorkflowJsTestRuntime::V8)]
 #[tokio::test]
-async fn child_cancelled() {
+async fn child_cancelled(#[case] runtime: WorkflowJsTestRuntime) {
     use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
 
-    let server = start(test_addr!(88)).await;
+    let server = start(runtime.ip(test_addr!(88)), runtime).await;
     let parent_id = server.generate_execution_id().await;
 
     // The child id is deterministic either way, but the parent's named join set makes it
@@ -223,12 +229,15 @@ async fn child_cancelled() {
 
 /// A cancelled named sleep throws a payload-less `ChildError`; re-throwing it
 /// serializes its undefined `.value` as a null workflow err payload.
+#[rstest::rstest]
+#[case::boa_wasm(WorkflowJsTestRuntime::BoaWasm)]
+#[case::v8(WorkflowJsTestRuntime::V8)]
 #[tokio::test]
-async fn cancelled_sleep_rethrows_null() {
+async fn cancelled_sleep_rethrows_null(#[case] runtime: WorkflowJsTestRuntime) {
     use concepts::prefixed_ulid::DelayId;
     use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
 
-    let server = start(test_addr!(90)).await;
+    let server = start(runtime.ip(test_addr!(90)), runtime).await;
     let execution_id = server.generate_execution_id().await;
     let execution_id = execution_id.parse::<ExecutionId>().unwrap();
     let join_set_id =
@@ -252,12 +261,15 @@ async fn cancelled_sleep_rethrows_null() {
 
 /// A cancelled join-set delay throws a `ChildError` with cancellation metadata
 /// and no business error payload.
+#[rstest::rstest]
+#[case::boa_wasm(WorkflowJsTestRuntime::BoaWasm)]
+#[case::v8(WorkflowJsTestRuntime::V8)]
 #[tokio::test]
-async fn cancelled_delay_surfaces_child_error() {
+async fn cancelled_delay_surfaces_child_error(#[case] runtime: WorkflowJsTestRuntime) {
     use concepts::prefixed_ulid::DelayId;
     use concepts::{ExecutionId, JoinSetId, JoinSetKind, StrVariant};
 
-    let server = start(test_addr!(91)).await;
+    let server = start(runtime.ip(test_addr!(91)), runtime).await;
     let execution_id = server.generate_execution_id().await;
     let execution_id = execution_id.parse::<ExecutionId>().unwrap();
     let join_set_id = JoinSetId::new(JoinSetKind::Named, StrVariant::from("cancel-delay")).unwrap();

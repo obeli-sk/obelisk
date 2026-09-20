@@ -138,6 +138,28 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
 const API_PORT: u16 = 9080;
 const WEBHOOK_PORT: u16 = 9081;
 
+#[derive(Clone, Copy, Debug)]
+enum WorkflowJsTestRuntime {
+    BoaWasm,
+    V8,
+}
+
+impl WorkflowJsTestRuntime {
+    fn server_toml(self) -> &'static str {
+        match self {
+            Self::BoaWasm => "[workflows]\njs_runtime = \"boa_wasm\"",
+            Self::V8 => "[workflows]\njs_runtime = \"v8\"",
+        }
+    }
+
+    fn ip(self, ip: String) -> String {
+        match self {
+            Self::BoaWasm => ip,
+            Self::V8 => ip.replacen("127.1.", "127.2.", 1),
+        }
+    }
+}
+
 /// Generate a unique loopback address for a test.
 ///
 /// Uses `127.1.{id/256}.{id%256}` to derive the address from the ID.

@@ -2,12 +2,13 @@ use super::deadline_tracker::DeadlineTrackerFactory;
 use super::event_history::{ApplyError, ReplayProgress};
 use super::replay_advance::merge_requested_overrides_into_fresh_prefix;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
+use super::workflow_runtime::{RuntimePrepareError, WasmtimeWorkflowRuntime, WorkflowRuntime};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::caching_db_connection::{
     CachingBuffer, CachingDbConnection, WorkflowDbConnection,
 };
-use crate::workflow::deadline_tracker::{EpochCallbackError, InterruptKind};
+use crate::workflow::deadline_tracker::InterruptKind;
 pub use crate::workflow::replay_advance::{
     AdvanceError, MeasuredReplayResponse, ReplayAdvanceable, ReplayError, ReplayMeasurements,
     ReplayResponse,
@@ -46,9 +47,8 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{Span, debug, error, info, instrument, trace, warn};
 use utils::wasm_tools::{DecodeError, ExIm};
-use wasmtime::Store;
+use wasmtime::component::ComponentExportIndex;
 use wasmtime::component::types::ComponentFunc;
-use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{Engine, component::Val};
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
@@ -173,10 +173,10 @@ pub struct WorkflowWorkerCompiled {
 
 pub struct WorkflowWorkerLinked {
     config: WorkflowConfig,
+    #[cfg(any(test, feature = "test"))]
     engine: Arc<Engine>,
     clock_fn: Box<dyn ClockFn>,
-    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    instance_pre: InstancePre<WorkflowCtx>,
+    runtime: Arc<dyn WorkflowRuntime>,
     exported_functions_noext: Vec<FunctionMetadata>,
     fn_registry: Arc<dyn FunctionRegistry>,
 }
@@ -184,12 +184,13 @@ pub struct WorkflowWorkerLinked {
 pub struct WorkflowWorker {
     deployment_id: DeploymentId,
     pub(crate) config: WorkflowConfig,
-    engine: Arc<Engine>,
     exported_functions_noext: Vec<FunctionMetadata>,
     pub(crate) db_pool: Arc<dyn DbPool>,
     clock_fn: Box<dyn ClockFn>,
-    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    instance_pre: InstancePre<WorkflowCtx>,
+    runtime: Arc<dyn WorkflowRuntime>,
+    #[cfg(any(test, feature = "test"))]
+    #[allow(dead_code)]
+    engine: Option<Arc<Engine>>,
     fn_registry: Arc<dyn FunctionRegistry>,
     pub(crate) cancel_registry: CancelRegistry,
     pub(crate) deadline_factory: Arc<dyn DeadlineTrackerFactory>,
@@ -414,10 +415,14 @@ impl WorkflowWorkerCompiled {
 
         Ok(WorkflowWorkerLinked {
             config: self.config,
-            engine: self.engine,
             clock_fn: self.clock_fn,
-            exported_ffqn_to_index: self.exported_ffqn_to_index,
-            instance_pre,
+            runtime: Arc::new(WasmtimeWorkflowRuntime::new(
+                self.engine.clone(),
+                self.exported_ffqn_to_index,
+                instance_pre,
+            )),
+            #[cfg(any(test, feature = "test"))]
+            engine: self.engine,
             exported_functions_noext: self.exported_functions_noext,
             fn_registry,
         })
@@ -440,6 +445,19 @@ impl WorkflowWorkerCompiled {
 }
 
 impl WorkflowWorkerLinked {
+    pub(crate) fn map_runtime(
+        mut self,
+        map: impl FnOnce(Arc<dyn WorkflowRuntime>) -> Arc<dyn WorkflowRuntime>,
+    ) -> Self {
+        self.runtime = map(self.runtime);
+        self
+    }
+
+    pub(crate) fn with_runtime(mut self, runtime: Arc<dyn WorkflowRuntime>) -> Self {
+        self.runtime = runtime;
+        self
+    }
+
     pub fn into_worker(
         self,
         deployment_id: DeploymentId,
@@ -448,24 +466,25 @@ impl WorkflowWorkerLinked {
         cancel_registry: CancelRegistry,
         logs_storage_config: Option<LogStrageConfig>,
     ) -> WorkflowWorker {
-        WorkflowWorker {
+        WorkflowWorker::new_with_runtime(
             deployment_id,
-            config: self.config,
-            engine: self.engine,
+            self.config,
             db_pool,
-            clock_fn: self.clock_fn,
-            exported_ffqn_to_index: self.exported_ffqn_to_index,
-            instance_pre: self.instance_pre,
-            exported_functions_noext: self.exported_functions_noext,
-            fn_registry: self.fn_registry,
+            self.clock_fn,
+            self.runtime,
+            #[cfg(any(test, feature = "test"))]
+            Some(self.engine),
+            self.exported_functions_noext,
+            self.fn_registry,
             deadline_factory,
             cancel_registry,
             logs_storage_config,
-        }
+        )
     }
 }
 
-enum RunError {
+pub(crate) enum RunError {
+    CannotInstantiate(String, Box<WorkflowCtx>),
     ResultParsingError(ResultParsingError, Box<WorkflowCtx>),
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
     WorkerPartialResult(WorkerPartialResult, Box<WorkflowCtx>),
@@ -488,7 +507,7 @@ enum WorkerResultRefactored {
     ReplayInterrupt(WorkflowCtx),
 }
 
-type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
+pub(crate) type CallFuncResult = Result<(SupportedFunctionReturnValue, WorkflowCtx), RunError>;
 
 #[derive(derive_more::Debug, thiserror::Error)]
 enum WorkflowError {
@@ -562,22 +581,13 @@ impl JoinSetCloseError {
     }
 }
 
-struct PrepareFuncFinished {
-    store: Store<WorkflowCtx>,
-    func: wasmtime::component::Func,
-    component_func: ComponentFunc,
-    params: Arc<[Val]>,
-}
-
 struct ReplayInterrupt;
 
 struct WorkflowWorkerView<'a> {
     deployment_id: DeploymentId,
     config: &'a WorkflowConfig,
-    engine: &'a Engine,
     clock_fn: Box<dyn ClockFn>,
-    exported_ffqn_to_index: &'a hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    instance_pre: &'a InstancePre<WorkflowCtx>,
+    runtime: &'a dyn WorkflowRuntime,
     fn_registry: Arc<dyn FunctionRegistry>,
     cancel_registry: CancelRegistry,
     deadline_factory: &'a dyn DeadlineTrackerFactory,
@@ -585,6 +595,36 @@ struct WorkflowWorkerView<'a> {
 }
 
 impl WorkflowWorker {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_runtime(
+        deployment_id: DeploymentId,
+        config: WorkflowConfig,
+        db_pool: Arc<dyn DbPool>,
+        clock_fn: Box<dyn ClockFn>,
+        runtime: Arc<dyn WorkflowRuntime>,
+        #[cfg(any(test, feature = "test"))] engine: Option<Arc<Engine>>,
+        exported_functions_noext: Vec<FunctionMetadata>,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        deadline_factory: Arc<dyn DeadlineTrackerFactory>,
+        cancel_registry: CancelRegistry,
+        logs_storage_config: Option<LogStrageConfig>,
+    ) -> Self {
+        Self {
+            deployment_id,
+            config,
+            exported_functions_noext,
+            db_pool,
+            clock_fn,
+            runtime,
+            #[cfg(any(test, feature = "test"))]
+            engine,
+            fn_registry,
+            cancel_registry,
+            deadline_factory,
+            logs_storage_config,
+        }
+    }
+
     pub(crate) fn collect_write_backtraces(
         writes: Vec<InternalCapturedWrite>,
         mut backtraces: Vec<BacktraceInfo>,
@@ -767,7 +807,7 @@ impl WorkflowWorker {
         view: WorkflowWorkerView<'_>,
         backtrace_capture: BacktraceCapture,
         local_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<PrepareFuncFinished, WorkflowError> {
+    ) -> Result<Box<dyn super::workflow_runtime::WorkflowInvocation>, WorkflowError> {
         assert_eq!(view.config.component_id, ctx.locked_event.component_id);
         let deadline_tracker = match view.deadline_factory.create(
             ctx.locked_event.lock_expires_at,
@@ -838,198 +878,51 @@ impl WorkflowWorker {
             response_refresh_interval,
         );
 
-        let mut store = Store::new(view.engine, workflow_ctx);
-
-        // Set fuel.
-        if let Some(fuel) = view.config.fuel {
-            store
-                .set_fuel(fuel)
-                .expect("engine must have `consume_fuel` enabled");
-        }
-
-        // Configure epoch callback before running the initialization to avoid interruption
-        store.epoch_deadline_callback(|store_ctx| {
-            let ctx = store_ctx.data();
-            match ctx.check_epoch_callback() {
-                // `UpdateDeadline::Yield` performs wasmtime's runtime-agnostic yield
-                // (wake self, return `Pending` once), which does not cooperate with
-                // tokio's cooperative task budget. `tokio::task::yield_now()` does, so
-                // the fiber yields fairly to other tokio tasks on the same worker.
-                Ok(()) => Ok(wasmtime::UpdateDeadline::YieldCustom(
-                    1,
-                    Box::pin(tokio::task::yield_now()),
-                )),
-                Err(EpochCallbackError::LockExpired) => {
-                    info!("Deadline reached in epoch callback");
-                    Err(wasmtime::Error::from(WorkflowFunctionError::LockExpired))
-                }
-                Err(EpochCallbackError::Interrupt(kind)) => {
-                    info!("Execution interrupt detected in epoch callback: {kind:?}");
-                    Err(wasmtime::Error::from(WorkflowFunctionError::Interrupt(
-                        kind,
-                    )))
-                }
-            }
-        });
-
-        let instance = match view.instance_pre.instantiate_async(&mut store).await {
-            Ok(instance) => instance,
-            Err(err) => {
-                // The epoch deadline callback can fire during instantiation (e.g. while running
-                // the component's `start` function), surfacing as an instantiation error.
-                // See `epoch_deadline_callback` above for thrown errors.
-                if let Some(wf_err) = err.downcast_ref::<WorkflowFunctionError>() {
-                    match wf_err {
-                        WorkflowFunctionError::LockExpired => {
-                            let workflow_ctx = store.into_data();
-                            return Err(WorkflowError::LockExpired {
-                                version: workflow_ctx.version().clone(),
-                                replay_progress: workflow_ctx.replay_progress(),
-                            });
-                        }
-                        WorkflowFunctionError::Interrupt(kind) => {
-                            let kind = *kind;
-                            let version = store.into_data().version().clone();
-                            return Err(WorkflowError::interrupt(version, kind));
-                        }
-                        _ => {}
+        view.runtime
+            .prepare(
+                workflow_ctx,
+                &view.config.component_id,
+                &ctx.ffqn,
+                &ctx.params,
+                view.config.fuel,
+            )
+            .await
+            .map_err(|err| match err {
+                RuntimePrepareError::LimitReached {
+                    reason,
+                    workflow_ctx,
+                } => WorkflowError::LimitReached {
+                    reason,
+                    version: workflow_ctx.version().clone(),
+                },
+                RuntimePrepareError::CannotInstantiate {
+                    reason,
+                    detail,
+                    workflow_ctx,
+                } => WorkflowError::FatalError {
+                    err: FatalError::CannotInstantiate { reason, detail },
+                    version: workflow_ctx.version().clone(),
+                    db_connection: workflow_ctx.db_connection,
+                },
+                RuntimePrepareError::ParamsParsing { err, workflow_ctx } => {
+                    WorkflowError::FatalError {
+                        err: FatalError::ParamsParsingError(err),
+                        version: workflow_ctx.version().clone(),
+                        db_connection: workflow_ctx.db_connection,
                     }
                 }
-                let reason = err.to_string();
-                let workflow_ctx = store.into_data();
-                let version = workflow_ctx.version().clone();
-                let db_connection = workflow_ctx.db_connection;
-                if reason.starts_with("maximum concurrent") {
-                    return Err(WorkflowError::LimitReached { reason, version });
+                RuntimePrepareError::LockExpired(workflow_ctx) => WorkflowError::LockExpired {
+                    version: workflow_ctx.version().clone(),
+                    replay_progress: workflow_ctx.replay_progress(),
+                },
+                RuntimePrepareError::Interrupt(kind, workflow_ctx) => {
+                    WorkflowError::interrupt(workflow_ctx.version().clone(), kind)
                 }
-                return Err(WorkflowError::FatalError {
-                    err: FatalError::CannotInstantiate {
-                        reason: format!("cannot instantiate: {err}"),
-                        detail: Some(format!("{err:?}")),
-                    },
-                    version,
-                    db_connection,
-                });
-            }
-        };
-
-        let func = {
-            let Some(fn_export_index) = view.exported_ffqn_to_index.get(&ctx.ffqn) else {
-                let workflow_ctx = store.into_data();
-                let version = workflow_ctx.version().clone();
-                let db_connection = workflow_ctx.db_connection;
-                return Err(WorkflowError::FatalError {
-                    err: FatalError::CannotInstantiate {
-                        reason: format!(
-                            "function {} not found in exports of {}",
-                            ctx.ffqn, view.config.component_id
-                        ),
-                        detail: None,
-                    },
-                    version,
-                    db_connection,
-                });
-            };
-            instance
-                .get_func(&mut store, fn_export_index)
-                .expect("exported function must be found")
-        };
-        let component_func = func.ty(&store);
-        let params = match ctx.params.as_vals(component_func.params()) {
-            Ok(params) => params,
-            Err(err) => {
-                let workflow_ctx = store.into_data();
-                let version = workflow_ctx.version().clone();
-                let db_connection = workflow_ctx.db_connection;
-                return Err(WorkflowError::FatalError {
-                    err: FatalError::ParamsParsingError(err),
-                    version,
-                    db_connection,
-                });
-            }
-        };
-        Ok(PrepareFuncFinished {
-            store,
-            func,
-            component_func,
-            params,
-        })
-    }
-
-    async fn call_func(
-        mut store: Store<WorkflowCtx>,
-        func: wasmtime::component::Func,
-        component_func: ComponentFunc,
-        params: Arc<[Val]>,
-        assigned_fuel: Option<u64>,
-    ) -> CallFuncResult {
-        let result_types = component_func.results();
-        let mut results = vec![Val::Bool(false); result_types.len()];
-        let func_call_result = func.call_async(&mut store, &params, &mut results).await;
-        let workflow_ctx = store.into_data();
-
-        match func_call_result {
-            Ok(()) => {
-                match SupportedFunctionReturnValue::new_from_iterator(
-                    results.into_iter().zip(result_types),
-                ) {
-                    Ok(result) => Ok((result, workflow_ctx)),
-                    Err(err) => Err(RunError::ResultParsingError(err, Box::new(workflow_ctx))),
-                }
-            }
-            Err(err) => {
-                // Try to unpack `WorkflowFunctionError`
-                if let Some(err) = err
-                    .source()
-                    .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
-                {
-                    let worker_partial_result = err
-                        .clone()
-                        .into_worker_partial_result(workflow_ctx.version().clone());
-                    Err(RunError::WorkerPartialResult(
-                        worker_partial_result,
-                        Box::new(workflow_ctx),
-                    ))
-                } else if let Some(trap) = err
-                    .source()
-                    .and_then(|source| source.downcast_ref::<wasmtime::Trap>())
-                {
-                    if *trap == wasmtime::Trap::OutOfFuel {
-                        Err(RunError::Trap {
-                            reason: format!(
-                                "total fuel consumed: {}",
-                                assigned_fuel
-                                    .expect("must have been set as it was the reason of trap")
-                            ),
-                            detail: None,
-                            workflow_ctx: Box::new(workflow_ctx),
-                            kind: TrapKind::OutOfFuel,
-                        })
-                    } else {
-                        Err(RunError::Trap {
-                            reason: trap.to_string(),
-                            detail: Some(format!("{err:?}")),
-                            workflow_ctx: Box::new(workflow_ctx),
-                            kind: TrapKind::Trap,
-                        })
-                    }
-                } else {
-                    Err(RunError::Trap {
-                        reason: err.to_string(),
-                        detail: Some(format!("{err:?}")),
-                        workflow_ctx: Box::new(workflow_ctx),
-                        kind: TrapKind::HostFunctionError,
-                    })
-                }
-            }
-        }
+            })
     }
 
     async fn call_func_convert_result(
-        store: Store<WorkflowCtx>,
-        func: wasmtime::component::Func,
-        component_func: ComponentFunc,
-        params: Arc<[Val]>,
+        invocation: Box<dyn super::workflow_runtime::WorkflowInvocation>,
         worker_span: &Span,
         execution_deadline: DateTime<Utc>,
         assigned_fuel: Option<u64>,
@@ -1042,7 +935,7 @@ impl WorkflowWorker {
     > {
         // call_func
         let elapsed = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        let res = Self::call_func(store, func, component_func, params, assigned_fuel).await;
+        let res = invocation.invoke(assigned_fuel).await;
         let elapsed = elapsed.elapsed();
         let worker_result_refactored =
             Self::convert_result(res, worker_span, elapsed, execution_deadline).await;
@@ -1151,6 +1044,18 @@ impl WorkflowWorker {
                     return WorkerResultRefactored::DbError(db_err);
                 }
                 WorkerResultRefactored::Ok(supported_result, workflow_ctx)
+            }
+            Err(RunError::CannotInstantiate(reason, mut workflow_ctx)) => {
+                if let Err(db_err) = workflow_ctx.flush().await {
+                    return WorkerResultRefactored::DbError(db_err);
+                }
+                WorkerResultRefactored::FatalError(
+                    FatalError::CannotInstantiate {
+                        reason,
+                        detail: None,
+                    },
+                    *workflow_ctx,
+                )
             }
             Err(RunError::Trap {
                 reason,
@@ -1282,10 +1187,8 @@ impl WorkflowWorker {
         let view = WorkflowWorkerView {
             deployment_id: self.deployment_id,
             config: &self.config,
-            engine: &self.engine,
             clock_fn: self.clock_fn.clone_box(),
-            exported_ffqn_to_index: &self.exported_ffqn_to_index,
-            instance_pre: &self.instance_pre,
+            runtime: self.runtime.as_ref(),
             fn_registry: self.fn_registry.clone(),
             cancel_registry: self.cancel_registry.clone(),
             deadline_factory: self.deadline_factory.as_ref(),
@@ -1405,7 +1308,7 @@ impl WorkflowWorker {
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.locked_event.lock_expires_at;
         let fuel = view.config.fuel;
-        let prepare_finished = Self::prepare_func(
+        let invocation = Self::prepare_func(
             ctx,
             db_connection,
             is_replay,
@@ -1414,16 +1317,7 @@ impl WorkflowWorker {
             local_interrupt_watcher,
         )
         .await?;
-        Self::call_func_convert_result(
-            prepare_finished.store,
-            prepare_finished.func,
-            prepare_finished.component_func,
-            prepare_finished.params,
-            &worker_span,
-            execution_deadline,
-            fuel,
-        )
-        .await
+        Self::call_func_convert_result(invocation, &worker_span, execution_deadline, fuel).await
     }
 
     #[instrument(skip_all, fields(%execution_id))]
@@ -1921,10 +1815,8 @@ impl Worker for WorkflowWorker {
         let view = WorkflowWorkerView {
             deployment_id: self.deployment_id,
             config: &self.config,
-            engine: &self.engine,
             clock_fn: self.clock_fn.clone_box(),
-            exported_ffqn_to_index: &self.exported_ffqn_to_index,
-            instance_pre: &self.instance_pre,
+            runtime: self.runtime.as_ref(),
             fn_registry: self.fn_registry.clone(),
             cancel_registry: self.cancel_registry.clone(),
             deadline_factory: self.deadline_factory.as_ref(),
@@ -2283,7 +2175,11 @@ pub(crate) mod tests {
             worker.deployment_id,
             worker.config.component_id.clone(),
             runnable_component,
-            worker.engine.clone(),
+            worker
+                .engine
+                .as_ref()
+                .expect("replay helper requires a Wasmtime worker")
+                .clone(),
             worker.fn_registry.clone(),
             db_pool,
             None,

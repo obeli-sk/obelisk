@@ -65,9 +65,11 @@ const ACTIVITY_UTIL_JS: &str = r"export function exclaim(message) {
 
 const WORKFLOW_INDEX_JS: &str = r"import * as activity from 'testing:integration/activity';
 import { computeTotal } from './lib/math.js';
+import { core } from './lib/reexport.js';
 
 export default function multifileWorkflow(a, b, c) {
-    return computeTotal(activity.add(a, b), c);
+    const values = core.export(null, [activity.add(a, b), c]);
+    return computeTotal(Number(values[0]), Number(values[1]));
 }
 ";
 
@@ -78,6 +80,23 @@ export function computeTotal(partial, c) {
 }
 ";
 
+// These are reduced versions of syntax found in workflow-agent's just-bash graph. In
+// particular, `export(...)` is an object method, not an ESM declaration, and the regular
+// expression contains braces that must not affect module-declaration detection.
+const WORKFLOW_CORE_JS: &str = r"export const core = {
+    export(_interp, args) {
+        return args.map(String);
+    },
+};
+
+export function containsBrace(value) {
+    return /[{}]/.test(value);
+}
+";
+
+// Keep import and export on one line. The production bundle contains this compact form.
+const WORKFLOW_REEXPORT_JS: &str = r"import { core } from './core.js'; export { core };";
+
 const WEBHOOK_INDEX_JS: &str = r"import { renderJson } from './lib/render.js';
 
 export default function multifileWebhook(_request) {
@@ -85,12 +104,18 @@ export default function multifileWebhook(_request) {
 }
 ";
 
-const WEBHOOK_RENDER_JS: &str = r"export function renderJson(payload) {
+const WEBHOOK_RENDER_JS: &str = r#"const embeddedModuleExample = `
+import mermaid from "https://example.invalid/mermaid.mjs";
+export default function renderGraph() { return "not an actual module declaration"; }
+`;
+
+export function renderJson(payload) {
+    if (!embeddedModuleExample.includes("export default")) throw new Error("template changed");
     return Response.json(payload);
 }
-";
+"#;
 
-async fn start(ip: String) -> TestServer {
+async fn start(ip: String, runtime: WorkflowJsTestRuntime) -> TestServer {
     let files = [
         ("add.js", ADD_JS),
         ("multifile-activity/index.js", ACTIVITY_INDEX_JS),
@@ -98,15 +123,17 @@ async fn start(ip: String) -> TestServer {
         ("multifile-activity/lib/util.js", ACTIVITY_UTIL_JS),
         ("multifile-workflow/index.js", WORKFLOW_INDEX_JS),
         ("multifile-workflow/lib/math.js", WORKFLOW_MATH_JS),
+        ("multifile-workflow/lib/core.js", WORKFLOW_CORE_JS),
+        ("multifile-workflow/lib/reexport.js", WORKFLOW_REEXPORT_JS),
         ("multifile-webhook/index.js", WEBHOOK_INDEX_JS),
         ("multifile-webhook/lib/render.js", WEBHOOK_RENDER_JS),
     ];
-    TestServer::start_inline_deployment(ip, "", DEPLOYMENT, &files).await
+    TestServer::start_inline_deployment(ip, runtime.server_toml(), DEPLOYMENT, &files).await
 }
 
 #[tokio::test]
 async fn activity() {
-    let server = start(test_addr!(120)).await;
+    let server = start(test_addr!(120), WorkflowJsTestRuntime::BoaWasm).await;
     let resp = server
         .submit_follow(
             "testing:integration/activity-multifile.greet",
@@ -121,23 +148,46 @@ async fn activity() {
     server.shutdown().await;
 }
 
+#[rstest::rstest]
+#[case::boa_wasm(WorkflowJsTestRuntime::BoaWasm)]
+#[case::v8(WorkflowJsTestRuntime::V8)]
 #[tokio::test]
-async fn workflow() {
-    let server = start(test_addr!(121)).await;
+async fn workflow(#[case] runtime: WorkflowJsTestRuntime) {
+    let server = start(runtime.ip(test_addr!(121)), runtime).await;
+    let execution_id = server.generate_execution_id().await;
     let resp = server
-        .submit_follow(
+        .submit_follow_with_id(
+            &execution_id,
             "testing:integration/workflow-multifile.add-three",
             vec![json!(2), json!(3), json!(5)],
         )
         .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(resp.json::<Value>().await.unwrap(), json!({ "ok": 10 }));
+    assert_eq!(resp.status().as_u16(), 201, "runtime: {runtime:?}");
+    assert_eq!(
+        resp.json::<Value>().await.unwrap(),
+        json!({ "ok": 10 }),
+        "runtime: {runtime:?}"
+    );
+
+    let events_before = server.get_events(&execution_id).await;
+    let replay = server.replay(&execution_id).await;
+    assert_eq!(
+        replay.status().as_u16(),
+        200,
+        "multifile JS replay failed using {runtime:?}: {}",
+        replay.text().await.unwrap()
+    );
+    assert_eq!(
+        events_before,
+        server.get_events(&execution_id).await,
+        "replay using {runtime:?} must not mutate the execution history"
+    );
     server.shutdown().await;
 }
 
 #[tokio::test]
 async fn webhook() {
-    let server = start(test_addr!(122)).await;
+    let server = start(test_addr!(122), WorkflowJsTestRuntime::BoaWasm).await;
     let resp = server
         .client
         .get(format!("{}/multifile", server.webhook_base_url))

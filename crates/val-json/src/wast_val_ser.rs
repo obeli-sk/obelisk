@@ -996,10 +996,10 @@ mod tests {
 
     #[test]
     fn f64_out_of_range() {
-        let input = f64::MAX.to_string();
+        let input = "1.8e308";
         let ty = TypeWrapper::F64;
         let err = WastValDeserialize(&ty)
-            .deserialize(&mut serde_json::Deserializer::from_str(&input))
+            .deserialize(&mut serde_json::Deserializer::from_str(input))
             .unwrap_err();
         assert_starts_with(&err, "number out of range");
     }

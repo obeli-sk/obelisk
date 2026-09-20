@@ -227,6 +227,8 @@ db-common = { package = "obeli-sk-db-common", path = "crates/db-common", version
 db-postgres = { package = "obeli-sk-db-postgres", path = "crates/db-postgres", version = "0.42.0-rc.3" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.42.0-rc.3" }
 db-tests = { package = "obeli-db-tests", path = "crates/testing/db-tests" }
+deno_core = "0.412.0"
+deno_error = "=0.7.1"
 embedded-assets = { package = "obeli-sk-embedded-assets", path = "crates/embedded-assets", version = "0.42.0-rc.3" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.42.0-rc.3" }
 grpc = { package = "obeli-sk-grpc", path = "crates/grpc", version = "0.42.0-rc.3" }

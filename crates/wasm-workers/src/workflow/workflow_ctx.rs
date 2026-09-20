@@ -85,6 +85,11 @@ pub(crate) enum WorkflowFunctionError {
     ReplayInterrupt,
 }
 
+pub(crate) enum NativeJoinNextTryError {
+    AllProcessed,
+    Pending,
+}
+
 #[derive(Debug)]
 pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
@@ -168,11 +173,68 @@ pub(crate) struct WorkflowCtx {
     backtrace_capture: BacktraceCapture,
     wasi_ctx: WasiCtx,
     is_replay: Option<ReplayKind>,
+    native_host_error: Option<WorkflowFunctionError>,
 }
 
 impl WorkflowCtx {
     pub(crate) fn max_persisted_value_size_bytes(&self) -> u64 {
         self.event_history.max_persisted_value_size_bytes()
+    }
+
+    pub(crate) fn set_native_host_error(&mut self, err: WorkflowFunctionError) {
+        // JavaScript can catch a host exception and run `finally` cleanup.
+        // Preserve the original failure (notably ReplayInterrupt) rather than
+        // replacing it with a secondary failure from that cleanup.
+        if self.native_host_error.is_none() {
+            self.native_host_error = Some(err);
+        }
+    }
+
+    pub(crate) fn take_native_host_error(&mut self) -> Option<WorkflowFunctionError> {
+        self.native_host_error.take()
+    }
+
+    pub(crate) fn native_log(&mut self, level: LogLevel, message: String) {
+        if try_defer_replay_application_log(self, level, &message) {
+            emit_application_log_to_tracing_only(self, level, &message);
+        } else {
+            trace_on_replay(self, level, message);
+        }
+    }
+
+    pub(crate) fn native_child_failure_kind(&self, child_id: &str) -> Option<&'static str> {
+        use self::host_exports::latest::obelisk::types::execution::ExecutionFailureKind as Kind;
+        let child_id = child_id.parse().ok()?;
+        let kind = self.get_execution_failure_kind(&child_id).ok()??;
+        Some(match kind {
+            Kind::TimedOut => "timed-out",
+            Kind::NondeterminismDetected => "nondeterminism-detected",
+            Kind::OutOfFuel => "out-of-fuel",
+            Kind::Cancelled => "cancelled",
+            Kind::ValueTooLarge => "value-too-large",
+            Kind::Uncategorized => "uncategorized",
+        })
+    }
+
+    pub(crate) fn native_last_direct_call_id(&self) -> Option<String> {
+        self.event_history
+            .last_direct_call_id()
+            .map(ToString::to_string)
+    }
+
+    pub(crate) fn native_interruption(&self) -> Option<super::deadline_tracker::TrackResult> {
+        self.event_history.deadline_tracker.native_interruption()
+    }
+
+    pub(crate) fn native_backtrace(&self) -> Option<storage::WasmBacktrace> {
+        self.should_capture_backtrace()
+            .then(|| storage::WasmBacktrace {
+                frames: vec![storage::FrameInfo {
+                    module: "native-v8".into(),
+                    func_name: "javascript".into(),
+                    symbols: Vec::new(),
+                }],
+            })
     }
 }
 
@@ -1072,6 +1134,7 @@ impl WorkflowCtx {
             backtrace_capture,
             wasi_ctx: wasi_ctx_builder.build(),
             is_replay,
+            native_host_error: None,
         }
     }
 
@@ -1135,7 +1198,7 @@ impl WorkflowCtx {
         name: String,
         kind: JoinSetKind,
         wasm_backtrace: Option<storage::WasmBacktrace>,
-    ) -> Result<Resource<JoinSetId>, JoinSetCreateError> {
+    ) -> Result<JoinSetId, JoinSetCreateError> {
         if !self.event_history.join_set_name_exists(&name, kind) {
             let join_set_id = JoinSetId::new(kind, StrVariant::from(name))
                 .map_err(JoinSetCreateError::InvalidNameError)?;
@@ -1151,11 +1214,7 @@ impl WorkflowCtx {
             )
             .await
             .map_err(JoinSetCreateError::ApplyError)?;
-            let join_set = self
-                .resource_table
-                .push(join_set_id)
-                .map_err(JoinSetCreateError::ResourceTableError)?;
-            Ok(join_set)
+            Ok(join_set_id)
         } else {
             Err(JoinSetCreateError::Conflict)
         }
@@ -2252,8 +2311,6 @@ enum JoinSetCreateError {
     InvalidNameError(InvalidNameError<JoinSetId>),
     #[error(transparent)]
     ApplyError(ApplyError),
-    #[error(transparent)]
-    ResourceTableError(ResourceTableError),
     #[error("join set name conflict")]
     Conflict,
 }
@@ -2518,7 +2575,7 @@ pub(crate) mod workflow_support {
                 )
                 .await
             {
-                Ok(resource) => Ok(Ok(resource)),
+                Ok(join_set_id) => Ok(Ok(self.resource_table.push(join_set_id)?)),
                 Err(JoinSetCreateError::InvalidNameError(err)) => {
                     Ok(Err(host_exports::latest::obelisk::workflow::workflow_support::JoinSetCreateError::InvalidName(err.to_string())))
                 }
@@ -2529,10 +2586,6 @@ pub(crate) mod workflow_support {
                     // db errors etc
                     Err(wasmtime::Error::new(WorkflowFunctionError::from(apply_err)))
                 }
-                Err(JoinSetCreateError::ResourceTableError(resource_table_error)) => {
-                    // trap
-                    Err(wasmtime::Error::new(resource_table_error))
-                }
             }
         }
 
@@ -2542,7 +2595,8 @@ pub(crate) mod workflow_support {
         ) -> wasmtime::Result<Resource<JoinSetId>> {
             let name = self.event_history.next_join_set_name_generated();
             trace!("new_join_set_generated: {name}");
-            self.persist_join_set_with_kind(name, JoinSetKind::Generated, wasm_backtrace)
+            let join_set_id = self
+                .persist_join_set_with_kind(name, JoinSetKind::Generated, wasm_backtrace)
                 .await
                 .map_err(|err| match err {
                     JoinSetCreateError::InvalidNameError(_) | JoinSetCreateError::Conflict => {
@@ -2551,10 +2605,112 @@ pub(crate) mod workflow_support {
                     JoinSetCreateError::ApplyError(apply_err) => {
                         wasmtime::Error::new(WorkflowFunctionError::from(apply_err))
                     }
-                    JoinSetCreateError::ResourceTableError(resource_table_error) => {
-                        wasmtime::Error::new(resource_table_error)
+                })?;
+            Ok(self.resource_table.push(join_set_id)?)
+        }
+
+        pub(crate) async fn native_join_set_create(
+            &mut self,
+            name: Option<String>,
+        ) -> Result<JoinSetId, WorkflowFunctionError> {
+            let (name, kind) = match name {
+                Some(name) => (name, JoinSetKind::Named),
+                None => (
+                    self.event_history.next_join_set_name_generated(),
+                    JoinSetKind::Generated,
+                ),
+            };
+            let backtrace = self.native_backtrace();
+            self.persist_join_set_with_kind(name, kind, backtrace)
+                .await
+                .map_err(|err| match err {
+                    JoinSetCreateError::ApplyError(err) => WorkflowFunctionError::from(err),
+                    JoinSetCreateError::InvalidNameError(err) => {
+                        WorkflowFunctionError::ConstraintViolation(err.to_string().into())
+                    }
+                    JoinSetCreateError::Conflict => {
+                        WorkflowFunctionError::ConstraintViolation("join set name conflict".into())
                     }
                 })
+        }
+
+        pub(crate) fn native_execution_id_current(&self) -> String {
+            self.execution_id.to_string()
+        }
+
+        pub(crate) fn native_join_set_last_id(&self, join_set_id: &JoinSetId) -> Option<String> {
+            self.event_history
+                .last_response_id(join_set_id)
+                .map(|id| match id {
+                    db_common::JoinSetResponseId::ChildExecutionId(id) => id.to_string(),
+                    db_common::JoinSetResponseId::DelayId(id) => id.to_string(),
+                })
+        }
+
+        pub(crate) async fn native_join_next_try(
+            &mut self,
+            join_set_id: JoinSetId,
+        ) -> Result<
+            Result<Result<Option<String>, Option<String>>, super::NativeJoinNextTryError>,
+            WorkflowFunctionError,
+        > {
+            let backtrace = self.native_backtrace();
+            self.join_next_try(join_set_id, backtrace)
+                .await
+                .map(|result| {
+                    result.map_err(|err| match err {
+                        WitJoinNextTryError::AllProcessed => {
+                            super::NativeJoinNextTryError::AllProcessed
+                        }
+                        WitJoinNextTryError::Pending => super::NativeJoinNextTryError::Pending,
+                    })
+                })
+        }
+
+        pub(crate) async fn native_schedule_json(
+            &mut self,
+            execution_id: ExecutionId,
+            target_ffqn: FunctionFqn,
+            params_json: String,
+            schedule_at: HistoryEventScheduleAt,
+        ) -> Result<(), WorkflowFunctionError> {
+            let backtrace = self.native_backtrace();
+            self.schedule_json(
+                execution_id,
+                target_ffqn,
+                params_json,
+                schedule_at,
+                backtrace,
+            )
+            .await
+            .map_err(|err| {
+                err.downcast::<WorkflowFunctionError>()
+                    .unwrap_or_else(|err| {
+                        WorkflowFunctionError::ConstraintViolation(err.to_string().into())
+                    })
+            })?
+            .map_err(|err| {
+                WorkflowFunctionError::ConstraintViolation(
+                    format!("schedule failed: {err:?}").into(),
+                )
+            })
+        }
+
+        pub(crate) async fn native_stub_json(
+            &mut self,
+            execution_id: String,
+            retval: String,
+        ) -> Result<(), WorkflowFunctionError> {
+            let backtrace = self.native_backtrace();
+            self.stub_json(
+                typesTypes::execution::ExecutionId { id: execution_id },
+                retval,
+                backtrace,
+            )
+            .await?
+            .map_err(|err| {
+                WorkflowFunctionError::ConstraintViolation(format!("stub failed: {err:?}").into())
+            })
         }
 
         /// Turn a processed response id + ok/err bit into the JSON value that

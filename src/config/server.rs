@@ -452,6 +452,9 @@ impl WasmGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
+    /// JavaScript workflow engine. Native V8 is experimental and may change incompatibly or be removed.
+    #[serde(default)]
+    pub(crate) js_runtime: WorkflowJsRuntimeToml,
     /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
     /// stops and returns that many writes as an advanceable prefix; advancing them and replaying
     /// again resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved
@@ -472,11 +475,20 @@ pub(crate) struct WorkflowsGlobalConfigToml {
 impl Default for WorkflowsGlobalConfigToml {
     fn default() -> Self {
         Self {
+            js_runtime: WorkflowJsRuntimeToml::default(),
             max_replay_captured_writes: default_max_replay_captured_writes(),
             max_events_per_run: default_max_events_per_run(),
             response_refresh_interval: default_response_refresh_interval(),
         }
     }
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkflowJsRuntimeToml {
+    #[default]
+    BoaWasm,
+    V8,
 }
 
 const fn default_max_replay_captured_writes() -> usize {
@@ -989,6 +1001,21 @@ pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 mod tests {
     use super::*;
     use crate::config::deployment::{MethodsInput, ReplaceIn};
+
+    #[test]
+    fn workflow_js_runtime_defaults_to_boa_wasm_and_accepts_v8() {
+        let default: ServerConfigToml = toml::from_str("").unwrap();
+        assert_eq!(
+            default.workflows_global_config.js_runtime,
+            WorkflowJsRuntimeToml::BoaWasm
+        );
+
+        let v8: ServerConfigToml = toml::from_str("[workflows]\njs_runtime = \"v8\"").unwrap();
+        assert_eq!(
+            v8.workflows_global_config.js_runtime,
+            WorkflowJsRuntimeToml::V8
+        );
+    }
 
     mod outbound_http {
         use super::*;
