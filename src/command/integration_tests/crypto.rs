@@ -39,11 +39,12 @@ async fn hmac_sign_verify(#[case] runtime: JsRuntime) {
         JsRuntime::BoaWasm => test_addr!(34),
         JsRuntime::V8 => test_addr!(123),
     };
-    let server = TestServer::start_inline_deployment(
+    let server = TestServer::start_inline_deployment_with_js_runtime(
         ip,
-        &runtime.server_toml(&["activities"]),
+        "",
         DEPLOYMENT,
         &[],
+        runtime.mode(),
     )
     .await;
     let resp = server

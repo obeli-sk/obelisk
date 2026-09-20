@@ -115,7 +115,7 @@ export function renderJson(payload) {
 }
 "#;
 
-async fn start(ip: String, server_toml: &str) -> TestServer {
+async fn start(ip: String, runtime: JsRuntime) -> TestServer {
     let files = [
         ("add.js", ADD_JS),
         ("multifile-activity/index.js", ACTIVITY_INDEX_JS),
@@ -128,7 +128,8 @@ async fn start(ip: String, server_toml: &str) -> TestServer {
         ("multifile-webhook/index.js", WEBHOOK_INDEX_JS),
         ("multifile-webhook/lib/render.js", WEBHOOK_RENDER_JS),
     ];
-    TestServer::start_inline_deployment(ip, server_toml, DEPLOYMENT, &files).await
+    TestServer::start_inline_deployment_with_js_runtime(ip, "", DEPLOYMENT, &files, runtime.mode())
+        .await
 }
 
 #[rstest::rstest]
@@ -140,7 +141,7 @@ async fn activity(#[case] runtime: JsRuntime) {
         JsRuntime::BoaWasm => test_addr!(120),
         JsRuntime::V8 => test_addr!(163),
     };
-    let server = start(ip, &runtime.server_toml(&["activities"])).await;
+    let server = start(ip, runtime).await;
     let resp = server
         .submit_follow(
             "testing:integration/activity-multifile.greet",
@@ -164,7 +165,7 @@ async fn workflow(#[case] runtime: JsRuntime) {
         JsRuntime::BoaWasm => test_addr!(121),
         JsRuntime::V8 => test_addr!(173),
     };
-    let server = start(ip, &runtime.server_toml(&["workflows"])).await;
+    let server = start(ip, runtime).await;
     let execution_id = server.generate_execution_id().await;
     let resp = server
         .submit_follow_with_id(
@@ -208,7 +209,7 @@ async fn webhook(#[case] runtime: JsRuntime) {
         JsRuntime::BoaWasm => test_addr!(122),
         JsRuntime::V8 => test_addr!(164),
     };
-    let server = start(ip, &runtime.server_toml(&["webhooks"])).await;
+    let server = start(ip, runtime).await;
     let resp = server
         .client
         .get(format!("{}/multifile", server.webhook_base_url))

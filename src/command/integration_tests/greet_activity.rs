@@ -16,11 +16,12 @@ return_type = "result<string, string>"
 "#;
 
 async fn start(ip: String, runtime: JsRuntime) -> TestServer {
-    TestServer::start_inline_deployment(
+    TestServer::start_inline_deployment_with_js_runtime(
         ip,
-        &runtime.server_toml(&["activities"]),
+        "",
         GREET_DEPLOYMENT,
         &[],
+        runtime.mode(),
     )
     .await
 }
