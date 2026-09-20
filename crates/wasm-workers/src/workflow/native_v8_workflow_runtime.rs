@@ -229,7 +229,7 @@ fn op_obelisk_host(
                     })
             })?;
             Ok(json!(
-                datetime.seconds as f64 * 1_000.0 + f64::from(datetime.nanoseconds) / 1_000_000.0
+                datetime.seconds * 1_000 + u64::from(datetime.nanoseconds) / 1_000_000
             ))
         }
         "createJoinSet" => {
@@ -404,12 +404,8 @@ fn op_obelisk_host(
         }
         "stub" => {
             let execution_id = string_arg(&args, "executionId")?.to_owned();
-            let retval = serde_json::to_string(args.get("result").unwrap_or(&Value::Null))
-                .map_err(JsErrorBox::from_err)?;
-            let handle = host.handle.clone();
-            handle
-                .block_on(host.context().native_stub_json(execution_id, retval))
-                .map_err(|err| JsErrorBox::generic(err.to_string()))?;
+            let retval = string_arg(&args, "resultJson")?.to_owned();
+            host.call(|ctx, handle| handle.block_on(ctx.native_stub_json(execution_id, retval)))?;
             Ok(Value::Null)
         }
         "close" => {
@@ -648,7 +644,7 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
                     .expect("validated stub import");
                 (
                     format!("{base}.{name}"),
-                    "(executionId, result) => host('stub', { executionId, result })".to_string(),
+                    "(executionId, result) => host('stub', { executionId, resultJson: JSON.stringify(result) })".to_string(),
                 )
             } else {
                 (
@@ -814,7 +810,7 @@ export const sleep = (schedule, name) => new nativeDate(host('sleep', { schedule
 export const randomU64 = (min, max) => host('randomU64', { min, max });
 export const randomU64Inclusive = (min, max) => host('randomU64Inclusive', { min, max });
 export const randomString = (min, max) => host('randomString', { min, max });
-export const stub = (executionId, result) => host('stub', { executionId, result });
+export const stub = (executionId, result) => host('stub', { executionId, resultJson: JSON.stringify(result) });
 export function createJoinSet(options) {
   const index = host('createJoinSet', typeof options === 'string' ? { name: options } : options ?? {});
   return {
