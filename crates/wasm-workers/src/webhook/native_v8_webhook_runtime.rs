@@ -86,7 +86,7 @@ struct HostRequest {
 #[op2(fast)]
 fn op_webhook_log(state: &mut OpState, #[string] level: String, #[string] message: String) {
     let host = state.borrow_mut::<HostState>();
-    let ctx = host.ctx() as *mut WebhookEndpointCtx;
+    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
     let future = async move {
         // SAFETY: host calls are serialized by the isolate.
         let ctx = unsafe { &mut *ctx };
@@ -119,8 +119,9 @@ fn op_webhook_fetch(
     #[serde] request: FetchRequest,
 ) -> Result<FetchResponse, JsErrorBox> {
     let host = state.borrow_mut::<HostState>();
-    let ctx = host.ctx() as *mut WebhookEndpointCtx;
+    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
     let future = async move {
+        // SAFETY: host calls are serialized by the isolate.
         let ctx = unsafe { &mut *ctx };
         let method = request
             .method
@@ -156,8 +157,9 @@ fn op_webhook_host(
     #[serde] request: HostRequest,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let host = state.borrow_mut::<HostState>();
-    let ctx = host.ctx() as *mut WebhookEndpointCtx;
+    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
     let future = async move {
+        // SAFETY: host calls are serialized by the isolate.
         let ctx = unsafe { &mut *ctx };
         dispatch_host(ctx, &request.op, &request.args).await
     };
@@ -634,8 +636,10 @@ impl ModuleLoader for InMemoryModuleLoader {
 
 fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String {
     use boa_common::imports::{SCHEDULE_SUFFIX, strip_specifier_suffix};
+    use std::fmt::Write as _;
+
     let schedule_base = strip_specifier_suffix(specifier, SCHEDULE_SUFFIX);
-    let exports = functions.iter().enumerate().map(|(index, function)| {
+    let exports = functions.iter().enumerate().fold(String::new(), |mut exports, (index, function)| {
         let (target, body) = if let Some(base) = &schedule_base {
             let name = function.wit_name.strip_suffix("-schedule").expect("validated schedule import");
             (format!("{base}.{name}"), "(schedule, ...params) => host('schedule', { target: TARGET, schedule, params })".to_owned())
@@ -643,14 +647,15 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
             (format!("{specifier}.{}", function.wit_name), "(...params) => unwrap(host('call', { target: TARGET, params }))".to_owned())
         };
         let binding = format!("__obeliskImport{index}");
-        format!("const {binding}Target = {}; const {binding} = {}; export {{ {binding} as {} }};\n", serde_json::to_string(&target).unwrap(), body.replace("TARGET", &format!("{binding}Target")), function.js_name)
-    }).collect::<String>();
+        writeln!(exports, "const {binding}Target = {}; const {binding} = {}; export {{ {binding} as {} }};", serde_json::to_string(&target).unwrap(), body.replace("TARGET", &format!("{binding}Target")), function.js_name).unwrap();
+        exports
+    });
     format!(
         "import 'obelisk:webhook@1.0.0'; const host=globalThis.__obeliskHost; const unwrap=globalThis.__obeliskUnwrap;\n{exports}"
     )
 }
 
-const WEBHOOK_MODULE: &str = r#"
+const WEBHOOK_MODULE: &str = r"
 const host = (op, args = {}) => Deno.core.ops.op_webhook_host({ op, args: { ...args, __stack: new Error().stack } });
 export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.value = value; this.childId = options.childId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
 const unwrap = result => { if ('ok' in result) return result.ok; if (result.pending) return undefined; throw new ChildError(result.throwUndefined ? undefined : result.throw, result); };
@@ -660,16 +665,16 @@ export const getStatus = executionId => host('getStatus', { executionId });
 export const get = executionId => unwrap(host('get', { executionId }));
 export const tryGet = executionId => unwrap(host('tryGet', { executionId }));
 globalThis.__obeliskHost = host; globalThis.__obeliskUnwrap = unwrap; globalThis.__obeliskChildError = ChildError;
-"#;
+";
 
-const WEBHOOK_DYNAMIC_MODULE: &str = r#"
+const WEBHOOK_DYNAMIC_MODULE: &str = r"
 import 'obelisk:webhook@1.0.0';
 const host = globalThis.__obeliskHost;
 export const call = (target, params) => globalThis.__obeliskUnwrap(host('call', { target, params }));
 export const schedule = (executionId, target, params, schedule) => host('schedule', { executionId, target, params, schedule });
-"#;
+";
 
-const WEBHOOK_BOOTSTRAP: &str = r#"
+const WEBHOOK_BOOTSTRAP: &str = r"
 const format = value => typeof value === 'string' ? value : typeof value === 'bigint' ? `${value}n` : JSON.stringify(value);
 globalThis.console = Object.fromEntries(['trace', 'debug', 'info', 'log', 'warn', 'error'].map(level => [level, (...values) => Deno.core.ops.op_webhook_log(level === 'log' ? 'info' : level, values.map(format).join(' '))]));
 globalThis.process = { env: new Proxy({}, { get: (_, name) => { if (typeof name !== 'string') return undefined; const value=Deno.core.ops.op_webhook_env(name); return value === null ? undefined : value; } }) };
@@ -699,4 +704,4 @@ class Response { constructor(body = '', options = {}) { this._body=body == null 
 globalThis.Response = Response;
 globalThis.fetch = async (input, options = {}) => { const request=input instanceof Request?input:new Request(input,options); const data=Deno.core.ops.op_webhook_fetch({url:request.url,method:request.method,headers:[...request.headers],body:request._body}); return new Response(data.body,{status:data.status,headers:data.headers}); };
 globalThis.__obeliskInvoke = async (handler, data) => { const request=new Request({__native:true,url:data.url,method:data.method,headers:data.headers,_body:data.body}); const response=await handler(request); if(!(response instanceof Response)) throw new TypeError('handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)'); return {status:response.status,headers:[...response.headers],body:await response.text()}; };
-"#;
+";

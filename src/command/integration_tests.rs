@@ -193,10 +193,12 @@ impl JsRuntime {
     }
 
     fn server_toml(self, sections: &[&str]) -> String {
-        sections
-            .iter()
-            .map(|section| format!("[{section}]\njs_runtime = {:?}\n", self.name()))
-            .collect()
+        use std::fmt::Write as _;
+
+        sections.iter().fold(String::new(), |mut toml, section| {
+            writeln!(toml, "[{section}]\njs_runtime = {:?}", self.name()).unwrap();
+            toml
+        })
     }
 }
 
