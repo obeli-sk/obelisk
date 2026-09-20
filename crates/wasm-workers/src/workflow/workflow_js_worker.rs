@@ -8,30 +8,23 @@ use super::workflow_worker::{BacktraceCapture, WorkflowWorker, WorkflowWorkerCom
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
+use crate::workflow::native_v8_workflow_runtime::NativeV8WorkflowRuntime;
 #[cfg(test)]
 use crate::workflow::replay_advance::ReplayResponse;
 use crate::workflow::replay_advance::{AdvanceError, MeasuredReplayResponse, ReplayAdvanceable};
 use crate::workflow::replay_advance::{AdvanceResponse, ReplayError};
-use crate::workflow::replay_db_proxy::InternalCapturedWrite;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
-use concepts::storage::http_client_trace::HttpClientTrace;
-use concepts::storage::{BacktraceInfo, CapturedDbWrite, DbPool, Version};
+use concepts::storage::{BacktraceInfo, DbPool};
 use concepts::{
-    ComponentType, ExecutionFailureKind, ExecutionId, FinishedExecutionFailure, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterType, Params,
-    ResultParsingError, ResultParsingErrorFromVal, ReturnTypeExtendable,
-    SupportedFunctionReturnValue,
+    ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns,
+    ParameterType, ReturnTypeExtendable,
 };
-use executor::worker::{
-    FatalError, RunFinished, Worker, WorkerContext, WorkerError, WorkerResult, WorkerResultOk,
-};
+use executor::worker::{Worker, WorkerContext, WorkerResult, WorkerResultOk};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
-use val_json::type_wrapper::{TypeKey, TypeWrapper, indexmap::IndexMap};
-use val_json::wast_val::{WastVal, WastValWithType};
 
 /// Compiled JS workflow. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct WorkflowJsWorkerCompiled {
@@ -142,26 +135,23 @@ impl WorkflowJsWorkerCompiled {
             }
         }
 
-        let linked = self.inner.link(fn_registry)?;
+        let runtime = Arc::new(NativeV8WorkflowRuntime::new(
+            self.js_entry_path.clone(),
+            self.js_files.clone(),
+            self.user_return_type.clone(),
+            resolved_imports,
+        ));
+        let linked = self.inner.link(fn_registry)?.with_runtime(runtime);
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
-            js_entry_path: self.js_entry_path,
-            js_files: self.js_files,
-            user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
-            resolved_imports,
         })
     }
 }
 
 pub struct WorkflowJsWorkerLinked {
     inner: super::workflow_worker::WorkflowWorkerLinked,
-    js_entry_path: String,
-    js_files: BTreeMap<String, String>,
-    user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: interface FQN → imported functions.
-    resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
 impl WorkflowJsWorkerLinked {
@@ -182,26 +172,17 @@ impl WorkflowJsWorkerLinked {
         );
         WorkflowJsWorker {
             inner,
-            js_entry_path: self.js_entry_path,
-            js_files: self.js_files,
-            user_return_type: self.user_return_type,
             user_exports_noext: self.user_exports_noext,
-            resolved_imports: self.resolved_imports,
         }
     }
 }
 
 pub struct WorkflowJsWorker {
     inner: WorkflowWorker,
-    js_entry_path: String,
-    js_files: BTreeMap<String, String>,
-    user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
-    /// Resolved imports: interface FQN → imported functions.
-    resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
-use crate::js_imports::{NamedFnImport, WORKFLOW_BUILTIN_MODULES, resolve_js_imports};
+use crate::js_imports::{WORKFLOW_BUILTIN_MODULES, resolve_js_imports};
 
 impl WorkflowJsWorker {
     pub async fn capture_backtraces(
@@ -222,13 +203,8 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        let (ffqn, params) = Self::boa_invocation(
-            log.params(),
-            self.js_entry_path.clone(),
-            &self.js_files,
-            &self.resolved_imports,
-            true,
-        );
+        let ffqn = log.ffqn().clone();
+        let params = log.params().clone();
         let (writes, backtraces, _fatal_error, _db_conn, _measurements) = self
             .inner
             .capture_replay_writes_from_log(
@@ -268,94 +244,6 @@ impl WorkflowJsWorker {
         )
         .await?)
     }
-
-    fn boa_invocation(
-        params: &Params,
-        js_entry_path: String,
-        js_files: &BTreeMap<String, String>,
-        resolved_imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
-        backtrace_enabled: bool,
-    ) -> (FunctionFqn, Params) {
-        let json_params = params
-            .as_json_values()
-            .expect("params come from database, not wasmtime");
-        let params_json_list: Vec<serde_json::Value> = json_params
-            .iter()
-            .map(|v| {
-                serde_json::Value::String(
-                    serde_json::to_string(v).expect("serde_json::Value must be serializable"),
-                )
-            })
-            .collect();
-
-        // Serialize resolved imports as list<resolved-interface-imports>, where
-        // each entry is a record { ifc-fqn, functions: list<named-fn-import> }.
-        let imports_json: Vec<serde_json::Value> = resolved_imports
-            .iter()
-            .map(|(ifc_fqn, funcs)| {
-                let funcs_json: Vec<serde_json::Value> = funcs
-                    .iter()
-                    .map(|NamedFnImport { js_name, wit_name }| {
-                        serde_json::json!({
-                            "js_name": js_name,
-                            "wit_name": wit_name,
-                        })
-                    })
-                    .collect();
-                serde_json::json!({
-                    "ifc_fqn": ifc_fqn.to_string(),
-                    "functions": funcs_json,
-                })
-            })
-            .collect();
-
-        let files_json = js_files
-            .iter()
-            .map(|(path, source)| {
-                serde_json::Value::Array(vec![
-                    serde_json::Value::String(path.clone()),
-                    serde_json::Value::String(source.clone()),
-                ])
-            })
-            .collect();
-
-        let ffqn =
-            FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run"));
-        let boa_params: Arc<[serde_json::Value]> = Arc::from([
-            serde_json::Value::String(js_entry_path),
-            serde_json::Value::Array(files_json),
-            serde_json::Value::Array(params_json_list),
-            serde_json::Value::Bool(backtrace_enabled),
-            serde_json::Value::Array(imports_json),
-        ]);
-        let named_fn_import_ty = TypeWrapper::Record(IndexMap::from([
-            (TypeKey::new_kebab("js-name"), TypeWrapper::String),
-            (TypeKey::new_kebab("wit-name"), TypeWrapper::String),
-        ]));
-        let resolved_interface_imports_ty = TypeWrapper::Record(IndexMap::from([
-            (TypeKey::new_kebab("ifc-fqn"), TypeWrapper::String),
-            (
-                TypeKey::new_kebab("functions"),
-                TypeWrapper::List(Box::new(named_fn_import_ty)),
-            ),
-        ]));
-        let params = Params::from_json_values(
-            boa_params,
-            [
-                &TypeWrapper::String,
-                &TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
-                    TypeWrapper::String,
-                    TypeWrapper::String,
-                ])))),
-                &TypeWrapper::List(Box::new(TypeWrapper::String)),
-                &TypeWrapper::Bool,
-                &TypeWrapper::List(Box::new(resolved_interface_imports_ty)),
-            ]
-            .into_iter(),
-        )
-        .expect("types checked at compile time");
-        (ffqn, params)
-    }
 }
 
 #[async_trait]
@@ -364,15 +252,7 @@ impl Worker for WorkflowJsWorker {
         &self.user_exports_noext
     }
 
-    async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
-        (ctx.ffqn, ctx.params) = Self::boa_invocation(
-            &ctx.params,
-            self.js_entry_path.clone(),
-            &self.js_files,
-            &self.resolved_imports,
-            false, // backtrace is disabled for regular run
-        );
-
+    async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         let inner_worker_ok = self.inner.run(ctx).await?;
         debug!("Workflow worker returned {inner_worker_ok:?}");
 
@@ -380,182 +260,9 @@ impl Worker for WorkflowJsWorker {
             WorkerResultOk::DbUpdatedByWorkerOrWatcher => {
                 Ok(WorkerResultOk::DbUpdatedByWorkerOrWatcher)
             }
-            WorkerResultOk::RunFinished(RunFinished {
-                retval,
-                version,
-                http_client_traces,
-            }) => transform_to_outer_result(
-                retval,
-                version,
-                http_client_traces,
-                &self.user_return_type,
-            )
-            .map(WorkerResultOk::RunFinished)
-            .map_err(|(err, version)| WorkerError::FatalError(err, version)),
+            finished @ WorkerResultOk::RunFinished(_) => Ok(finished),
         }
     }
-}
-
-/// Transform `result<result<string, string>, js-runtime-error>` returned by `workflow-js-runtime`
-/// to user specified `user_return_type`.
-fn transform_to_outer_result(
-    retval: SupportedFunctionReturnValue,
-    version: Version,
-    http_client_traces: Option<Vec<HttpClientTrace>>,
-    user_return_type: &ReturnTypeExtendable,
-) -> Result<RunFinished, (FatalError, Version)> {
-    match retval {
-        SupportedFunctionReturnValue::Ok(Some(WastValWithType {
-            r#type:
-                TypeWrapper::Result {
-                    ok: Some(ok_type),
-                    err: Some(err_type),
-                },
-            value: WastVal::Result(Ok(Some(ok_val))),
-        })) => {
-            assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
-            let WastVal::String(ok_val) = *ok_val else {
-                unreachable!("ok type is String, so value must be WastVal::String")
-            };
-            let Ok(ok_val) = serde_json::from_str(&ok_val) else {
-                unreachable!("workflow-js-runtime always sends JSON-encoded string")
-            };
-            let retval = crate::js_worker_utils::map_ok_variant_fatal(
-                Some(ok_val),
-                user_return_type,
-                version.clone(),
-            )?;
-            Ok(RunFinished {
-                retval,
-                version,
-                http_client_traces,
-            })
-        }
-
-        SupportedFunctionReturnValue::Ok(Some(WastValWithType {
-            r#type:
-                TypeWrapper::Result {
-                    ok: Some(ok_type),
-                    err: Some(err_type),
-                },
-            value: WastVal::Result(Err(Some(err_val))),
-        })) => {
-            assert!(*ok_type == TypeWrapper::String && *err_type == TypeWrapper::String);
-            let WastVal::String(err_val) = *err_val else {
-                unreachable!("err type is String, so value must be WastVal::String")
-            };
-            let Ok(err_val) = serde_json::from_str(&err_val) else {
-                unreachable!("workflow-js-runtime always sends JSON-encoded string")
-            };
-            let retval = crate::js_worker_utils::map_err_variant_fatal(
-                Some(err_val),
-                user_return_type,
-                version.clone(),
-            )?;
-            Ok(RunFinished {
-                retval,
-                version,
-                http_client_traces,
-            })
-        }
-
-        SupportedFunctionReturnValue::Err(Some(js_runtime_err)) => {
-            // Map JsRuntimeError variants to appropriate WorkerError
-            let WastVal::Variant(variant_name, payload) = &js_runtime_err.value else {
-                unreachable!("expected Variant for js-runtime-error")
-            };
-            let name = variant_name.as_snake_str();
-            match name {
-                "wrong_return_type" | "wrong_thrown_type" => {
-                    let reason = if let Some(payload) = payload
-                        && let WastVal::String(s) = payload.as_ref()
-                    {
-                        s.clone()
-                    } else {
-                        unreachable!("both variants have string payload")
-                    };
-
-                    Err((
-                        FatalError::ResultParsingError(
-                            ResultParsingError::ResultParsingErrorFromVal(
-                                ResultParsingErrorFromVal::TypeCheckError(reason),
-                            ),
-                        ),
-                        version,
-                    ))
-                }
-                "cannot_instantiate" | "unresolved_import" => {
-                    let reason = if let Some(payload) = payload
-                        && let WastVal::String(s) = payload.as_ref()
-                    {
-                        s.clone()
-                    } else {
-                        unreachable!("runtime error carries a string payload")
-                    };
-                    Err((
-                        FatalError::CannotInstantiate {
-                            reason,
-                            detail: None,
-                        },
-                        version,
-                    ))
-                }
-                "entry_not_found" => Err((
-                    FatalError::CannotInstantiate {
-                        reason: "JavaScript entry module was not found".to_string(),
-                        detail: None,
-                    },
-                    version,
-                )),
-                "execution_failed" => {
-                    // This variant is returned when a workflow function fails,
-                    // e.g., when joinNext returns an error from a child execution.
-                    // We propagate this as an ExecutionFailure.
-                    Ok(RunFinished {
-                        retval: SupportedFunctionReturnValue::ExecutionFailure(
-                            FinishedExecutionFailure {
-                                kind: ExecutionFailureKind::Uncategorized,
-                                reason: Some("js-runtime execution-failed".to_string()),
-                                detail: None,
-                            },
-                        ),
-                        version,
-                        http_client_traces,
-                    })
-                }
-                _ => unreachable!("unexpected js-runtime-error variant: {name}"),
-            }
-        }
-
-        retval @ SupportedFunctionReturnValue::ExecutionFailure(_) => Ok(RunFinished {
-            retval,
-            version,
-            http_client_traces,
-        }),
-
-        other => unreachable!("unexpected SupportedFunctionReturnValue: {other:?}"),
-    }
-}
-
-fn transform_to_append_finished(
-    retval: SupportedFunctionReturnValue,
-    version: &Version,
-    user_return_type: &ReturnTypeExtendable,
-) -> (SupportedFunctionReturnValue, Option<FatalError>) {
-    let (retval, version_obtained, fatal_error) =
-        match transform_to_outer_result(retval, version.clone(), None, user_return_type) {
-            Ok(RunFinished {
-                retval, version, ..
-            }) => (retval, version, None),
-            Err((fatal_error, version)) => {
-                let retval = SupportedFunctionReturnValue::ExecutionFailure(
-                    FinishedExecutionFailure::from(&fatal_error),
-                );
-                (retval, version, Some(fatal_error))
-            }
-        };
-    assert_eq!(*version, version_obtained);
-    (retval, fatal_error)
 }
 
 impl WorkflowJsWorker {
@@ -583,17 +290,11 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         let already_finished_result = log.as_finished_result();
-        let (ffqn, params) = Self::boa_invocation(
-            log.params(),
-            self.js_entry_path.clone(),
-            &self.js_files,
-            &self.resolved_imports,
-            backtrace_capture != BacktraceCapture::Disabled,
-        );
+        let ffqn = log.ffqn().clone();
+        let params = log.params().clone();
 
-        let (captured_writes, _backtraces, mut fatal_error, _db_conn, measurements) = self
+        let (captured_writes, _backtraces, fatal_error, _db_conn, measurements) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -604,40 +305,10 @@ impl WorkflowJsWorker {
                 backtrace_capture,
             )
             .await?;
-        // Drop replay-only metadata, unwrapping user retval or fatal error.
+        // Drop replay-only metadata.
         let captured_writes: Vec<_> = captured_writes
             .into_iter()
-            .map(|internal_write| {
-                let write = internal_write.write;
-                match write {
-                    CapturedDbWrite::AppendFinished {
-                        execution_id,
-                        version,
-                        current_time,
-                        retval, // workflow-js-runtime WASM result
-                        parent,
-                    } => {
-                        let (retval, fatal_error_from_wit) =
-                            transform_to_append_finished(retval, &version, &self.user_return_type);
-                        let retval = concepts::persisted_value::enforce_return_value_limit(
-                            retval,
-                            max_persisted_value_size_bytes,
-                        );
-                        if fatal_error_from_wit.is_some() {
-                            // TODO: can both fatal errors be present?
-                            fatal_error = fatal_error_from_wit;
-                        }
-                        CapturedDbWrite::AppendFinished {
-                            execution_id,
-                            version,
-                            current_time,
-                            retval,
-                            parent,
-                        }
-                    }
-                    _ => write,
-                }
-            })
+            .map(|internal_write| internal_write.write)
             .collect();
 
         WorkflowWorker::transform_replay_to_response(
@@ -670,7 +341,6 @@ impl WorkflowJsWorker {
             .get(&execution_id)
             .await
             .map_err(concepts::storage::DbErrorWrite::from)?;
-        let max_persisted_value_size_bytes = log.max_persisted_value_size_bytes();
         if requested.captured_writes.is_empty() {
             return Err(AdvanceError::NoWrites);
         }
@@ -683,19 +353,14 @@ impl WorkflowJsWorker {
         }
 
         let old_version = log.next_version.clone();
-        let (ffqn, params) = Self::boa_invocation(
-            log.params(),
-            self.js_entry_path.clone(),
-            &self.js_files,
-            &self.resolved_imports,
-            backtrace_capture != BacktraceCapture::Disabled,
-        );
+        let ffqn = log.ffqn().clone();
+        let params = log.params().clone();
         let log_forwarder_sender = self
             .inner
             .logs_storage_config
             .as_ref()
             .map(|config| &config.log_sender);
-        let (mut fresh_replay, _backtraces, _fatal_error, db_conn, _measurements) = self
+        let (fresh_replay, _backtraces, _fatal_error, db_conn, _measurements) = self
             .inner
             .capture_replay_writes_from_log(
                 execution_id,
@@ -707,21 +372,6 @@ impl WorkflowJsWorker {
             )
             .await
             .map_err(AdvanceError::from)?;
-        if let Some(InternalCapturedWrite {
-            write:
-                CapturedDbWrite::AppendFinished {
-                    retval, version, ..
-                },
-            ..
-        }) = fresh_replay.last_mut()
-        {
-            let (retval_transformed, _fatal_error_from_wit) =
-                transform_to_append_finished(retval.clone(), version, &self.user_return_type);
-            *retval = concepts::persisted_value::enforce_return_value_limit(
-                retval_transformed,
-                max_persisted_value_size_bytes,
-            );
-        }
         Ok(WorkflowWorker::advance_from_log(
             db_conn.as_ref(),
             &self.inner.cancel_registry,
@@ -769,9 +419,13 @@ mod tests {
         ComponentRetryConfig, ComponentType, ExecutionId, ExecutionMetadata, StrVariant,
         TypeWrapperTopLevel,
     };
+    use concepts::{
+        ExecutionFailureKind, FinishedExecutionFailure, Params, SupportedFunctionReturnValue,
+    };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, LockingStrategy};
-    use executor::worker::{WorkerContext, WorkerError, WorkerResultOk};
+    use executor::worker::RunFinished;
+    use executor::worker::{FatalError, WorkerContext, WorkerError, WorkerResultOk};
     use executor::{expired_timers_watcher, worker::Worker};
     use insta::assert_json_snapshot;
     use rstest::rstest;
@@ -784,7 +438,9 @@ mod tests {
     use test_utils::{ExecutionLogSanitized, redact_component_digest};
     use tokio::sync::mpsc;
     use tracing::{info, info_span};
-    use val_json::wast_val::{ValKey, WastVal};
+    use val_json::type_wrapper::{TypeKey, TypeWrapper, indexmap::IndexMap};
+    use val_json::wast_val::ValKey;
+    use val_json::wast_val::{WastVal, WastValWithType};
     use wasmtime::Engine;
 
     type ExecTaskAndClose = (ExecTask, tokio::sync::watch::Sender<bool>);

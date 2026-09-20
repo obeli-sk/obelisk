@@ -445,6 +445,11 @@ impl WorkflowWorkerCompiled {
 }
 
 impl WorkflowWorkerLinked {
+    pub(crate) fn with_runtime(mut self, runtime: Arc<dyn WorkflowRuntime>) -> Self {
+        self.runtime = runtime;
+        self
+    }
+
     pub fn into_worker(
         self,
         deployment_id: DeploymentId,
