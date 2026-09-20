@@ -35,6 +35,17 @@ pub trait DeadlineTracker: Send + Sync {
 
     fn check_epoch_callback(&self) -> Result<(), EpochCallbackError>;
 
+    fn native_interruption(
+        &self,
+    ) -> Option<
+        Result<
+            Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+            ResponseSubscriptionEnd,
+        >,
+    > {
+        None
+    }
+
     /// Called after `close_to_expired` returned `true`, Return new lock expiry date (now + duration). Internally track that time minus leeway.
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc>;
 }
@@ -151,8 +162,8 @@ impl DeadlineTracker for DeadlineTrackerTokio {
             Ok(Box::pin(async move {
                 tokio::select! {
                     () = tokio::time::sleep_until(expiry) => expiry_reason,
-                    _ = execution_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutorClosing,
-                    _ = local_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutionUpdated,
+                    Ok(_) = execution_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutorClosing,
+                    Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => ResponseSubscriptionEnd::ExecutionUpdated,
                 }
             }))
         }
@@ -170,6 +181,17 @@ impl DeadlineTracker for DeadlineTrackerTokio {
         } else {
             Ok(())
         }
+    }
+
+    fn native_interruption(
+        &self,
+    ) -> Option<
+        Result<
+            Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+            ResponseSubscriptionEnd,
+        >,
+    > {
+        Some(self.track(None))
     }
 
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {
@@ -327,8 +349,8 @@ impl DeadlineTracker for DeadlineTrackerSim {
                     res = time_watcher.changed() => if res.is_err() {
                         return ResponseSubscriptionEnd::PollIntervalElapsed;
                     },
-                    _ = execution_interrupt_watcher.wait_for(|&v| v) => return ResponseSubscriptionEnd::ExecutorClosing,
-                    _ = local_interrupt_watcher.wait_for(|&v| v) => return ResponseSubscriptionEnd::ExecutionUpdated,
+                    Ok(_) = execution_interrupt_watcher.wait_for(|&v| v) => return ResponseSubscriptionEnd::ExecutorClosing,
+                    Ok(_) = local_interrupt_watcher.wait_for(|&v| v) => return ResponseSubscriptionEnd::ExecutionUpdated,
                 }
             }
         }))
@@ -346,6 +368,17 @@ impl DeadlineTracker for DeadlineTrackerSim {
         } else {
             Ok(())
         }
+    }
+
+    fn native_interruption(
+        &self,
+    ) -> Option<
+        Result<
+            Pin<Box<dyn Future<Output = ResponseSubscriptionEnd> + Send>>,
+            ResponseSubscriptionEnd,
+        >,
+    > {
+        Some(self.track(None))
     }
 
     fn extend_by(&mut self, lock_extension: Duration) -> DateTime<Utc> {

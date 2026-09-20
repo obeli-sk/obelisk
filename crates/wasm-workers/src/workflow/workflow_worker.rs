@@ -476,6 +476,7 @@ impl WorkflowWorkerLinked {
 }
 
 pub(crate) enum RunError {
+    CannotInstantiate(String, Box<WorkflowCtx>),
     ResultParsingError(ResultParsingError, Box<WorkflowCtx>),
     /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
     WorkerPartialResult(WorkerPartialResult, Box<WorkflowCtx>),
@@ -1035,6 +1036,18 @@ impl WorkflowWorker {
                     return WorkerResultRefactored::DbError(db_err);
                 }
                 WorkerResultRefactored::Ok(supported_result, workflow_ctx)
+            }
+            Err(RunError::CannotInstantiate(reason, mut workflow_ctx)) => {
+                if let Err(db_err) = workflow_ctx.flush().await {
+                    return WorkerResultRefactored::DbError(db_err);
+                }
+                WorkerResultRefactored::FatalError(
+                    FatalError::CannotInstantiate {
+                        reason,
+                        detail: None,
+                    },
+                    *workflow_ctx,
+                )
             }
             Err(RunError::Trap {
                 reason,

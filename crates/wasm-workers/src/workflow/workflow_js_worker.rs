@@ -594,7 +594,9 @@ mod tests {
             user_return_type,
         )
         .unwrap();
-        let linked = js_compiled.link(fn_registry).unwrap();
+        let linked = js_compiled
+            .link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
+            .unwrap();
         linked.into_worker(
             deployment_id,
             db_pool,
@@ -661,7 +663,9 @@ mod tests {
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
-        let linked = js_compiled.link(fn_registry).unwrap();
+        let linked = js_compiled
+            .link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
+            .unwrap();
 
         let (guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
         let deadline_factory = Arc::new(DeadlineTrackerFactoryTokio::new(Duration::ZERO, clock_fn));
@@ -737,7 +741,7 @@ mod tests {
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
-        js_compiled.link(fn_registry)
+        js_compiled.link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
     }
 
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
@@ -1127,7 +1131,9 @@ mod tests {
         )
         .unwrap();
 
-        let linked = js_compiled.link(fn_registry).unwrap();
+        let linked = js_compiled
+            .link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
+            .unwrap();
 
         (
             linked.into_worker(

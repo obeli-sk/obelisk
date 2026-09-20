@@ -6,7 +6,8 @@ use super::workflow_worker::{CallFuncResult, RunError};
 use crate::js_imports::NamedFnImport;
 use async_trait::async_trait;
 use chrono::{TimeZone as _, Utc};
-use concepts::storage::HistoryEventScheduleAt;
+use concepts::storage::ResponseSubscriptionEnd;
+use concepts::storage::{HistoryEventScheduleAt, LogLevel};
 use concepts::{
     ComponentId, FunctionFqn, IfcFqnName, JoinSetId, Params, ResultParsingError,
     ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue, TrapKind,
@@ -93,9 +94,10 @@ impl WorkflowInvocation for NativeV8Invocation {
             return_type,
             resolved_imports,
         } = *self;
+        let interruption = workflow_ctx.native_interruption();
         let handle = tokio::runtime::Handle::current();
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::task::spawn_blocking(move || {
+        let mut task = tokio::task::spawn_blocking(move || {
             let mut workflow_ctx = workflow_ctx;
             let result = execute(
                 &entry_path,
@@ -110,7 +112,32 @@ impl WorkflowInvocation for NativeV8Invocation {
             (result, workflow_ctx)
         });
         let mut termination_guard = isolate_rx.await.ok().map(TerminationGuard::new);
-        let result = task.await;
+        let result = match interruption {
+            Some(Ok(interruption)) => tokio::select! {
+                result = &mut task => result,
+                reason = interruption => {
+                    if let Some(guard) = &termination_guard {
+                        guard.handle.terminate_execution();
+                    }
+                    let mut result = task.await;
+                    if let Ok((failure, _)) = &mut result {
+                        *failure = Err(NativeV8Failure::Host(interruption_error(reason)));
+                    }
+                    result
+                }
+            },
+            Some(Err(reason)) => {
+                if let Some(guard) = &termination_guard {
+                    guard.handle.terminate_execution();
+                }
+                let mut result = task.await;
+                if let Ok((failure, _)) = &mut result {
+                    *failure = Err(NativeV8Failure::Host(interruption_error(reason)));
+                }
+                result
+            }
+            None => task.await,
+        };
         if let Some(guard) = &mut termination_guard {
             guard.armed = false;
         }
@@ -118,12 +145,9 @@ impl WorkflowInvocation for NativeV8Invocation {
         match result {
             Ok((Ok(retval), workflow_ctx)) => Ok((retval, workflow_ctx)),
             Ok((Err(failure), workflow_ctx)) => match failure {
-                NativeV8Failure::CannotInstantiate(reason) => Err(RunError::Trap {
-                    reason,
-                    detail: None,
-                    workflow_ctx: Box::new(workflow_ctx),
-                    kind: TrapKind::HostFunctionError,
-                }),
+                NativeV8Failure::CannotInstantiate(reason) => {
+                    Err(RunError::CannotInstantiate(reason, Box::new(workflow_ctx)))
+                }
                 NativeV8Failure::ResultParsing(reason) => Err(RunError::ResultParsingError(
                     ResultParsingError::ResultParsingErrorFromVal(
                         ResultParsingErrorFromVal::TypeCheckError(reason),
@@ -143,6 +167,23 @@ impl WorkflowInvocation for NativeV8Invocation {
             },
             Err(err) => panic!("native V8 workflow task panicked: {err}"),
         }
+    }
+}
+
+fn interruption_error(
+    reason: ResponseSubscriptionEnd,
+) -> super::workflow_ctx::WorkflowFunctionError {
+    use super::deadline_tracker::InterruptKind;
+    use super::workflow_ctx::WorkflowFunctionError;
+    match reason {
+        ResponseSubscriptionEnd::LockDeadlineReached => WorkflowFunctionError::LockExpired,
+        ResponseSubscriptionEnd::ExecutorClosing => {
+            WorkflowFunctionError::Interrupt(InterruptKind::ExecutorClosing)
+        }
+        ResponseSubscriptionEnd::ExecutionUpdated => {
+            WorkflowFunctionError::Interrupt(InterruptKind::PauseOrCancel)
+        }
+        ResponseSubscriptionEnd::PollIntervalElapsed => unreachable!("unbounded interruption wait"),
     }
 }
 
@@ -189,7 +230,9 @@ impl HostState {
     ) -> Result<T, JsErrorBox> {
         let handle = self.handle.clone();
         f(self.context(), &handle).map_err(|err| {
-            self.context().set_native_host_error(err.clone());
+            if is_runtime_control_flow(&err) {
+                self.context().set_native_host_error(err.clone());
+            }
             JsErrorBox::generic(err.to_string())
         })
     }
@@ -211,16 +254,18 @@ fn op_obelisk_host(
         "executionIdCurrent" => Ok(json!(host.context().native_execution_id_current())),
         "executionIdGenerate" => {
             let id = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.execution_id_generate(None))
+                    .block_on(ctx.execution_id_generate(backtrace))
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(json!(id.to_string()))
         }
         "now" => {
             let datetime = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.sleep_named(HistoryEventScheduleAt::Now, None, None))
+                    .block_on(ctx.sleep_named(HistoryEventScheduleAt::Now, None, backtrace))
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|()| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -229,7 +274,7 @@ fn op_obelisk_host(
                     })
             })?;
             Ok(json!(
-                datetime.seconds * 1_000 + u64::from(datetime.nanoseconds) / 1_000_000
+                datetime.seconds as i64 * 1_000 + i64::from(datetime.nanoseconds) / 1_000_000
             ))
         }
         "createJoinSet" => {
@@ -254,8 +299,9 @@ fn op_obelisk_host(
             let params = serde_json::to_string(args.get("params").unwrap_or(&Value::Null))
                 .map_err(JsErrorBox::from_err)?;
             let outcome = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.call_json(target, params, None))
+                    .block_on(ctx.call_json(target, params, backtrace))
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|err| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -263,7 +309,12 @@ fn op_obelisk_host(
                         )
                     })
             })?;
-            Ok(outcome_envelope(outcome))
+            let child_id = host.context().native_last_direct_call_id();
+            Ok(outcome_envelope_with_id_and_kind(
+                outcome,
+                child_id,
+                host.context(),
+            ))
         }
         "submit" => {
             let join_set_id = join_set(host, &args)?;
@@ -273,8 +324,9 @@ fn op_obelisk_host(
             let params = serde_json::to_string(args.get("params").unwrap_or(&Value::Null))
                 .map_err(JsErrorBox::from_err)?;
             let execution_id = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.submit_json(join_set_id, target, params, None))
+                    .block_on(ctx.submit_json(join_set_id, target, params, backtrace))
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|err| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -288,25 +340,24 @@ fn op_obelisk_host(
             let join_set_id = join_set(host, &args)?;
             let schedule = schedule_arg(&args, "schedule")?;
             let delay_id = host.call(|ctx, handle| {
-                handle.block_on(ctx.submit_delay(join_set_id, schedule, None))
+                let backtrace = ctx.native_backtrace();
+                handle.block_on(ctx.submit_delay(join_set_id, schedule, backtrace))
             })?;
             Ok(json!(delay_id.id))
         }
         "joinNext" => {
             let join_set_id = join_set(host, &args)?;
             let outcome = host.call(|ctx, handle| {
-                handle
-                    .block_on(ctx.join_next(join_set_id.clone(), None))?
-                    .map_err(|err| {
-                        super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
-                            format!("join next failed: {err:?}").into(),
-                        )
-                    })
+                let backtrace = ctx.native_backtrace();
+                handle.block_on(ctx.join_next(join_set_id.clone(), backtrace))
             })?;
-            Ok(outcome_envelope_with_id(
-                outcome,
-                host.context().native_join_set_last_id(&join_set_id),
-            ))
+            Ok(match outcome {
+                Ok(outcome) => {
+                    let child_id = host.context().native_join_set_last_id(&join_set_id);
+                    outcome_envelope_with_id_and_kind(outcome, child_id, host.context())
+                }
+                Err(_) => json!({"exhausted": true}),
+            })
         }
         "joinNextFor" => {
             let join_set_id = join_set(host, &args)?;
@@ -314,21 +365,36 @@ fn op_obelisk_host(
                 .parse::<FunctionFqn>()
                 .map_err(|err| JsErrorBox::type_error(format!("invalid function name: {err}")))?;
             let handle = host.handle.clone();
+            let backtrace = host.context().native_backtrace();
             let outcome = handle
                 .block_on(
                     host.context()
-                        .join_next_for(join_set_id.clone(), target, None),
+                        .join_next_for(join_set_id.clone(), target, backtrace),
                 )
                 .map_err(|err| {
-                    host.context().set_native_host_error(err.clone());
+                    if is_runtime_control_flow(&err) {
+                        host.context().set_native_host_error(err.clone());
+                    }
                     JsErrorBox::generic(err.to_string())
                 })?;
             Ok(match outcome {
-                Ok(outcome) => outcome_envelope_with_id(
-                    outcome,
-                    host.context().native_join_set_last_id(&join_set_id),
-                ),
-                Err(err) => json!({"typedError": format!("{err:?}")}),
+                Ok(outcome) => {
+                    let child_id = host.context().native_join_set_last_id(&join_set_id);
+                    outcome_envelope_with_id_and_kind(outcome, child_id, host.context())
+                }
+                Err(crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextForError::AllProcessed) => {
+                    json!({"allProcessed": true})
+                }
+                Err(crate::workflow::host_exports::latest::obelisk::workflow::workflow_support::JoinNextForError::FunctionMismatch(mismatch)) => {
+                    let actual_target = mismatch.actual_function.map(|function| {
+                        format!("{}.{}", function.interface_name, function.function_name)
+                    });
+                    let actual_id = match mismatch.actual_id {
+                        crate::workflow::host_exports::latest::obelisk::types::execution::ResponseId::ExecutionId(id) => id.id,
+                        crate::workflow::host_exports::latest::obelisk::types::execution::ResponseId::DelayId(id) => id.id,
+                    };
+                    json!({"mismatch": {"actualTarget": actual_target, "actualId": actual_id}})
+                }
             })
         }
         "joinNextTry" => {
@@ -337,7 +403,10 @@ fn op_obelisk_host(
                 handle.block_on(ctx.native_join_next_try(join_set_id.clone()))
             })?;
             Ok(match outcome {
-                Ok(outcome) => outcome_envelope(outcome),
+                Ok(outcome) => {
+                    let child_id = host.context().native_join_set_last_id(&join_set_id);
+                    outcome_envelope_with_id_and_kind(outcome, child_id, host.context())
+                }
                 Err(NativeJoinNextTryError::Pending) => json!({"pending": true}),
                 Err(NativeJoinNextTryError::AllProcessed) => json!({"exhausted": true}),
             })
@@ -346,8 +415,9 @@ fn op_obelisk_host(
             let schedule = schedule_arg(&args, "schedule")?;
             let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
             let datetime = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.sleep_named(schedule, name, None))
+                    .block_on(ctx.sleep_named(schedule, name, backtrace))
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|()| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -364,10 +434,11 @@ fn op_obelisk_host(
             let max = u64_arg(&args, "max")?;
             let inclusive = op == "randomU64Inclusive";
             let value = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 let result = if inclusive {
-                    handle.block_on(ctx.random_u64_inclusive(min, max, None))
+                    handle.block_on(ctx.random_u64_inclusive(min, max, backtrace.clone()))
                 } else {
-                    handle.block_on(ctx.random_u64_exclusive(min, max, None))
+                    handle.block_on(ctx.random_u64_exclusive(min, max, backtrace))
                 };
                 result.map_err(anyhow_to_workflow_error)
             })?;
@@ -381,8 +452,9 @@ fn op_obelisk_host(
                 .try_into()
                 .map_err(|_| JsErrorBox::range_error("max is too large"))?;
             let value = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.random_string(min, max, None))
+                    .block_on(ctx.random_string(min, max, backtrace))
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(json!(value))
@@ -416,8 +488,9 @@ fn op_obelisk_host(
                 .and_then(Option::take)
                 .ok_or_else(|| JsErrorBox::generic("join set is closed"))?;
             host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.join_set_close(&id, None))
+                    .block_on(ctx.join_set_close(&id, backtrace))
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(Value::Null)
@@ -428,13 +501,14 @@ fn op_obelisk_host(
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            match level {
-                "trace" => tracing::trace!(target: "app", "{message}"),
-                "debug" => tracing::debug!(target: "app", "{message}"),
-                "warn" => tracing::warn!(target: "app", "{message}"),
-                "error" => tracing::error!(target: "app", "{message}"),
-                _ => tracing::info!(target: "app", "{message}"),
-            }
+            let level = match level {
+                "trace" => LogLevel::Trace,
+                "debug" => LogLevel::Debug,
+                "warn" => LogLevel::Warn,
+                "error" => LogLevel::Error,
+                _ => LogLevel::Info,
+            };
+            host.context().native_log(level, message.to_owned());
             Ok(Value::Null)
         }
         _ => Err(JsErrorBox::generic(format!(
@@ -477,7 +551,7 @@ fn execute(
     let main = ModuleSpecifier::parse("obelisk-main:run")
         .map_err(|err| NativeV8Failure::CannotInstantiate(err.to_string()))?;
     let source = format!(
-        "import workflow from {}; try {{ globalThis.__obeliskResult = {{ ok: true, value: await workflow(...{}) }}; }} catch (error) {{ globalThis.__obeliskResult = {{ ok: false, absent: error === undefined || (error instanceof Error && error.value === undefined), value: error instanceof Error && 'value' in error ? error.value : error }}; }}",
+        "import 'obelisk:workflow@1.0.0'; import workflow from {}; try {{ globalThis.__obeliskResult = {{ ok: true, value: await workflow(...{}) }}; }} catch (error) {{ globalThis.__obeliskResult = {{ ok: false, absent: error === undefined || (error instanceof Error && error.value === undefined), value: error instanceof Error && 'value' in error ? error.value : error }}; }}",
         serde_json::to_string(entry.as_str()).expect("URL must serialize"),
         serde_json::to_string(&params).expect("parameters must serialize")
     );
@@ -491,7 +565,13 @@ fn execute(
         if let Some(host_err) = workflow_ctx.take_native_host_error() {
             return Err(NativeV8Failure::Host(host_err));
         }
-        return Err(NativeV8Failure::Trap(err.to_string()));
+        let reason = err.to_string();
+        if reason.contains("does not provide an export named 'default'") {
+            return Err(NativeV8Failure::CannotInstantiate(format!(
+                "JavaScript entry module has no default export: {reason}"
+            )));
+        }
+        return Err(NativeV8Failure::Trap(reason));
     }
     if let Some(host_err) = workflow_ctx.take_native_host_error() {
         return Err(NativeV8Failure::Host(host_err));
@@ -608,7 +688,8 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
     let stub_base = strip_specifier_suffix(specifier, STUB_SUFFIX);
     functions
         .iter()
-        .map(|function| {
+        .enumerate()
+        .map(|(index, function)| {
             let (target, body) = if let Some(base) = &schedule_base {
                 let name = function
                     .wit_name
@@ -628,7 +709,7 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
                 } else if let Some(name) = function.wit_name.strip_suffix("-await-next") {
                     (
                         format!("{base}.{name}"),
-                        "(joinSet) => joinSet.__joinNextFor(TARGET)".to_string(),
+                        "(joinSet) => joinSet.__joinNextFor(TARGET, NAME)".to_string(),
                     )
                 } else {
                     (
@@ -653,15 +734,31 @@ fn import_module_source(specifier: &str, functions: &[NamedFnImport]) -> String 
                         .to_string(),
                 )
             };
+            let binding = format!("__obeliskImport{index}");
             format!(
-                "const {}Target = {}; export const {} = {};\n",
-                function.js_name,
+                "const {binding}Target = {}; const {binding} = {}; export {{ {binding} as {} }};\n",
                 serde_json::to_string(&target).unwrap(),
-                function.js_name,
-                body.replace("TARGET", &format!("{}Target", function.js_name))
+                body.replace("TARGET", &format!("{binding}Target")).replace(
+                    "NAME",
+                    &serde_json::to_string(&function.js_name).unwrap(),
+                ),
+                function.js_name
             )
         })
         .collect()
+}
+
+fn is_runtime_control_flow(err: &super::workflow_ctx::WorkflowFunctionError) -> bool {
+    use super::workflow_ctx::WorkflowFunctionError as Error;
+    matches!(
+        err,
+        Error::NondeterminismDetected(_)
+            | Error::InterruptDbUpdated
+            | Error::DbError(_)
+            | Error::LockExpired
+            | Error::Interrupt(_)
+            | Error::ReplayInterrupt
+    )
 }
 
 fn outcome_envelope(outcome: Result<Option<String>, Option<String>>) -> Value {
@@ -677,15 +774,23 @@ fn outcome_envelope(outcome: Result<Option<String>, Option<String>>) -> Value {
     }
 }
 
-fn outcome_envelope_with_id(
+fn outcome_envelope_with_id_and_kind(
     outcome: Result<Option<String>, Option<String>>,
     child_id: Option<String>,
+    workflow_ctx: &WorkflowCtx,
 ) -> Value {
     let mut envelope = outcome_envelope(outcome);
     if let Value::Object(object) = &mut envelope {
+        let failure_kind = child_id
+            .as_deref()
+            .and_then(|id| workflow_ctx.native_child_failure_kind(id));
         object.insert(
             "childId".into(),
             child_id.map_or(Value::Null, Value::String),
+        );
+        object.insert(
+            "failureKind".into(),
+            failure_kind.map_or(Value::Null, |kind| Value::String(kind.into())),
         );
     }
     envelope
@@ -798,7 +903,7 @@ export const ChildExecutionError = ChildError;
 export class JoinSetExhaustedError extends Error { constructor(message = 'JoinSetEmpty: all responses processed') { super(message); this.name = 'JoinSetExhaustedError'; this.code = 'OBELISK_JOIN_SET_EXHAUSTED'; } }
 const nativeDate = globalThis.Date;
 globalThis.Date = class Date extends nativeDate { constructor(...args) { super(...(args.length ? args : [host('now')])); } static now() { return host('now'); } };
-Math.random = () => randomU64(0, 9007199254740992) / 9007199254740992;
+Math.random = () => randomU64(0, 1000000) / 1000000;
 const format = value => typeof value === 'string' ? value : (() => { try { return JSON.stringify(value); } catch { return String(value); } })();
 globalThis.console = Object.fromEntries(['trace', 'debug', 'info', 'log', 'warn', 'error'].map(level => [level, (...values) => host('log', { level: level === 'log' ? 'info' : level, message: values.map(format).join(' ') })]));
 const scheduleValue = value => value instanceof nativeDate ? { atMillis: value.getTime() } : value;
@@ -820,15 +925,16 @@ export function createJoinSet(options) {
     submit(target, params = []) { return host('submit', { index, target, params }); },
     __submitTarget(target, params) { return host('submit', { index, target, params }); },
     submitDelay(schedule) { return host('submitDelay', { index, schedule: scheduleValue(schedule) }); },
-    joinNext() { return unwrapHost(host('joinNext', { index })); },
-    __joinNextFor(target) { const result = host('joinNextFor', { index, target }); if (result.typedError) { if (result.typedError.includes('AllProcessed')) throw new JoinSetExhaustedError(); throw new Error(result.typedError); } return unwrapHost(result); },
+    joinNext() { const result = host('joinNext', { index }); if (result.exhausted) throw new JoinSetExhaustedError(); return unwrapHost(result); },
+    __joinNextFor(target, name) { const result = host('joinNextFor', { index, target }); if (result.allProcessed) throw new JoinSetExhaustedError(); if (result.mismatch) { const actual = result.mismatch.actualTarget ? ` came from ${result.mismatch.actualTarget}` : ' was a delay'; throw new Error(`${name} failed on ${this.id()}: expected a response from ${target}, but the next response ${result.mismatch.actualId}${actual}`); } return unwrapHost(result); },
     joinNextTry() { const result = host('joinNextTry', { index }); if (result.pending) return undefined; if (result.exhausted) throw new JoinSetExhaustedError(); return unwrapHost(result); },
     close() { return host('close', { index }); },
   };
 }
 export function unwrapHost(result) {
-  if (result.throwUndefined) throw new ChildError(undefined, { childId: result.childId });
-  if (Object.hasOwn(result, 'throw')) throw new ChildError(result.throw, { childId: result.childId });
+  const options = { childId: result.childId, failureKind: result.failureKind, cancelled: result.failureKind === 'cancelled' };
+  if (result.throwUndefined) throw new ChildError(undefined, options);
+  if (Object.hasOwn(result, 'throw')) throw new ChildError(result.throw, options);
   return result.ok;
 }
 globalThis.host = host;

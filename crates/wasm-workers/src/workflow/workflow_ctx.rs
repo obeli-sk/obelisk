@@ -43,6 +43,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use std::fmt::Debug;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{Span, debug, error, info, instrument, trace, warn};
@@ -192,6 +193,56 @@ impl WorkflowCtx {
 
     pub(crate) fn take_native_host_error(&mut self) -> Option<WorkflowFunctionError> {
         self.native_host_error.take()
+    }
+
+    pub(crate) fn native_log(&mut self, level: LogLevel, message: String) {
+        if try_defer_replay_application_log(self, level, &message) {
+            emit_application_log_to_tracing_only(self, level, &message);
+        } else {
+            trace_on_replay(self, level, message);
+        }
+    }
+
+    pub(crate) fn native_child_failure_kind(&self, child_id: &str) -> Option<&'static str> {
+        use self::host_exports::latest::obelisk::types::execution::ExecutionFailureKind as Kind;
+        let child_id = child_id.parse().ok()?;
+        let kind = self.get_execution_failure_kind(&child_id).ok()??;
+        Some(match kind {
+            Kind::TimedOut => "timed-out",
+            Kind::NondeterminismDetected => "nondeterminism-detected",
+            Kind::OutOfFuel => "out-of-fuel",
+            Kind::Cancelled => "cancelled",
+            Kind::ValueTooLarge => "value-too-large",
+            Kind::Uncategorized => "uncategorized",
+        })
+    }
+
+    pub(crate) fn native_last_direct_call_id(&self) -> Option<String> {
+        self.event_history
+            .last_direct_call_id()
+            .map(ToString::to_string)
+    }
+
+    pub(crate) fn native_interruption(
+        &self,
+    ) -> Option<
+        Result<
+            Pin<Box<dyn Future<Output = storage::ResponseSubscriptionEnd> + Send>>,
+            storage::ResponseSubscriptionEnd,
+        >,
+    > {
+        self.event_history.deadline_tracker.native_interruption()
+    }
+
+    pub(crate) fn native_backtrace(&self) -> Option<storage::WasmBacktrace> {
+        self.should_capture_backtrace()
+            .then(|| storage::WasmBacktrace {
+                frames: vec![storage::FrameInfo {
+                    module: "native-v8".into(),
+                    func_name: "javascript".into(),
+                    symbols: Vec::new(),
+                }],
+            })
     }
 }
 
@@ -2577,7 +2628,8 @@ pub(crate) mod workflow_support {
                     JoinSetKind::Generated,
                 ),
             };
-            self.persist_join_set_with_kind(name, kind, None)
+            let backtrace = self.native_backtrace();
+            self.persist_join_set_with_kind(name, kind, backtrace)
                 .await
                 .map_err(|err| match err {
                     JoinSetCreateError::ApplyError(err) => WorkflowFunctionError::from(err),
@@ -2610,14 +2662,17 @@ pub(crate) mod workflow_support {
             Result<Result<Option<String>, Option<String>>, super::NativeJoinNextTryError>,
             WorkflowFunctionError,
         > {
-            self.join_next_try(join_set_id, None).await.map(|result| {
-                result.map_err(|err| match err {
-                    WitJoinNextTryError::AllProcessed => {
-                        super::NativeJoinNextTryError::AllProcessed
-                    }
-                    WitJoinNextTryError::Pending => super::NativeJoinNextTryError::Pending,
+            let backtrace = self.native_backtrace();
+            self.join_next_try(join_set_id, backtrace)
+                .await
+                .map(|result| {
+                    result.map_err(|err| match err {
+                        WitJoinNextTryError::AllProcessed => {
+                            super::NativeJoinNextTryError::AllProcessed
+                        }
+                        WitJoinNextTryError::Pending => super::NativeJoinNextTryError::Pending,
+                    })
                 })
-            })
         }
 
         pub(crate) async fn native_schedule_json(
@@ -2627,19 +2682,26 @@ pub(crate) mod workflow_support {
             params_json: String,
             schedule_at: HistoryEventScheduleAt,
         ) -> Result<(), WorkflowFunctionError> {
-            self.schedule_json(execution_id, target_ffqn, params_json, schedule_at, None)
-                .await
-                .map_err(|err| {
-                    err.downcast::<WorkflowFunctionError>()
-                        .unwrap_or_else(|err| {
-                            WorkflowFunctionError::ConstraintViolation(err.to_string().into())
-                        })
-                })?
-                .map_err(|err| {
-                    WorkflowFunctionError::ConstraintViolation(
-                        format!("schedule failed: {err:?}").into(),
-                    )
-                })
+            let backtrace = self.native_backtrace();
+            self.schedule_json(
+                execution_id,
+                target_ffqn,
+                params_json,
+                schedule_at,
+                backtrace,
+            )
+            .await
+            .map_err(|err| {
+                err.downcast::<WorkflowFunctionError>()
+                    .unwrap_or_else(|err| {
+                        WorkflowFunctionError::ConstraintViolation(err.to_string().into())
+                    })
+            })?
+            .map_err(|err| {
+                WorkflowFunctionError::ConstraintViolation(
+                    format!("schedule failed: {err:?}").into(),
+                )
+            })
         }
 
         pub(crate) async fn native_stub_json(
@@ -2647,10 +2709,11 @@ pub(crate) mod workflow_support {
             execution_id: String,
             retval: String,
         ) -> Result<(), WorkflowFunctionError> {
+            let backtrace = self.native_backtrace();
             self.stub_json(
                 typesTypes::execution::ExecutionId { id: execution_id },
                 retval,
-                None,
+                backtrace,
             )
             .await?
             .map_err(|err| {
