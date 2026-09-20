@@ -72,6 +72,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default, rename = "activities")]
     pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
+    #[serde(default, rename = "webhooks")]
+    pub(crate) webhooks_global_config: WebhooksGlobalConfigToml,
     #[serde(default)]
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
     #[serde(default)]
@@ -98,6 +100,22 @@ pub(crate) struct ActivitiesGlobalConfigToml {
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ActivityJsRuntimeToml {
+    #[default]
+    BoaWasm,
+    V8,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WebhooksGlobalConfigToml {
+    /// JavaScript engine used for webhook components.
+    #[serde(default)]
+    pub(crate) js_runtime: WebhookJsRuntimeToml,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WebhookJsRuntimeToml {
     #[default]
     BoaWasm,
     V8,
@@ -1047,6 +1065,25 @@ mod tests {
         assert_eq!(
             v8.activities_global_config.js_runtime,
             ActivityJsRuntimeToml::V8
+        );
+    }
+
+    #[test]
+    fn webhook_js_runtime_defaults_to_boa_wasm_and_accepts_v8() {
+        let default: ServerConfigToml = toml::from_str("").unwrap();
+        assert_eq!(
+            default.webhooks_global_config.js_runtime,
+            WebhookJsRuntimeToml::BoaWasm
+        );
+
+        let v8: ServerConfigToml = toml::from_str("[webhooks]\njs_runtime = \"v8\"").unwrap();
+        assert_eq!(
+            default.webhooks_global_config.js_runtime,
+            WebhookJsRuntimeToml::BoaWasm
+        );
+        assert_eq!(
+            v8.webhooks_global_config.js_runtime,
+            WebhookJsRuntimeToml::V8
         );
     }
 

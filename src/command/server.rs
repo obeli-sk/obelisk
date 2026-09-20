@@ -199,6 +199,7 @@ use wasm_workers::webhook::webhook_trigger::WebhookEndpointCompiled;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointConfig;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointInstanceLinked;
 use wasm_workers::webhook::webhook_trigger::WebhookEndpointJsConfig;
+use wasm_workers::webhook::webhook_trigger::WebhookJsRuntime;
 use wasm_workers::webhook::webhook_trigger::WebhookServerState;
 use wasm_workers::workflow::deadline_tracker::{
     DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
@@ -2311,6 +2312,7 @@ struct ServerVerifiedLaunch {
     workflows_max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
     activity_js_runtime: ActivityJsRuntime,
+    webhook_js_runtime: WebhookJsRuntime,
 }
 
 impl ServerVerified {
@@ -2361,6 +2363,10 @@ impl ServerVerified {
         let activity_js_runtime = match config.activities_global_config.js_runtime {
             crate::config::server::ActivityJsRuntimeToml::BoaWasm => ActivityJsRuntime::BoaWasm,
             crate::config::server::ActivityJsRuntimeToml::V8 => ActivityJsRuntime::V8,
+        };
+        let webhook_js_runtime = match config.webhooks_global_config.js_runtime {
+            crate::config::server::WebhookJsRuntimeToml::BoaWasm => WebhookJsRuntime::BoaWasm,
+            crate::config::server::WebhookJsRuntimeToml::V8 => WebhookJsRuntime::V8,
         };
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
         if workflows_max_events_per_run == 0 {
@@ -2436,6 +2442,7 @@ impl ServerVerified {
                 workflows_max_replay_captured_writes,
                 workflow_js_runtime,
                 activity_js_runtime,
+                webhook_js_runtime,
             },
             allowed_exec_activities: config.allowed_exec_activities,
             http_servers,
@@ -2543,6 +2550,7 @@ impl ServerCompiledLinked {
             server_verified.workflows_max_replay_captured_writes,
             server_verified.workflow_js_runtime,
             server_verified.activity_js_runtime,
+            server_verified.webhook_js_runtime,
             termination_watcher,
             suppress_linking_errors,
         )
@@ -5020,6 +5028,7 @@ async fn compile_and_link(
     workflows_max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
     activity_js_runtime: ActivityJsRuntime,
+    webhook_js_runtime: WebhookJsRuntime,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
@@ -5373,7 +5382,7 @@ async fn compile_and_link(
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
                                 webhook_js_runnable
-                            )?;
+                            )?.with_js_runtime(webhook_js_runtime);
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
                                 webhook_compiled,
