@@ -734,6 +734,7 @@ async fn generate_wit_deps(
         runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable, // Just extracting WITs, not running components
         suppress_type_checking_errors: true, // Just extracting WITs, not running components
         suppress_linking_errors: true,       // Just extracting WITs, not running components
+        js_runtime: crate::command::server::JsRuntimeMode::BoaWasm,
     };
 
     let config_holder = ConfigHolder::new(project_dirs, base_dirs, None)?;
@@ -747,7 +748,13 @@ async fn generate_wit_deps(
     let engines = create_engines(&server_config, &prepared_dirs)?;
 
     // WIT extraction resolves no secrets; the caller passes a no-secrets registry.
-    let server_verified = Box::pin(server_verify(server_config, engines, secret_registry)).await?;
+    let server_verified = Box::pin(server_verify(
+        server_config,
+        engines,
+        secret_registry,
+        crate::command::server::JsRuntimeMode::BoaWasm,
+    ))
+    .await?;
     let deployment_verified = deployment_verify_config(
         &server_verified,
         &prepared_dirs,

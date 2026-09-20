@@ -61,6 +61,7 @@ fn main() -> Result<(), anyhow::Error> {
                 config,
                 legacy_api_token,
                 secret_registry,
+                js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
                 EnvVarSecretsCleanup::Wipe,
@@ -93,6 +94,7 @@ fn main() -> Result<(), anyhow::Error> {
                     clean_sqlite_directory,
                     suppress_type_checking_errors,
                     auth,
+                    js_runtime,
                 },
                 secret_registry,
             ))
@@ -118,6 +120,7 @@ fn main() -> Result<(), anyhow::Error> {
                 config,
                 legacy_api_token: _,
                 secret_registry,
+                js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
                 EnvVarSecretsCleanup::Noop,
@@ -135,6 +138,7 @@ fn main() -> Result<(), anyhow::Error> {
                     runtime_config_availability,
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
+                    js_runtime,
                 },
                 skip_db,
                 fix,
@@ -166,6 +170,7 @@ fn main() -> Result<(), anyhow::Error> {
                 config,
                 legacy_api_token: _,
                 secret_registry,
+                js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
                 EnvVarSecretsCleanup::Noop,
@@ -183,6 +188,7 @@ fn main() -> Result<(), anyhow::Error> {
                     runtime_config_availability,
                     suppress_type_checking_errors,
                     suppress_linking_errors: false,
+                    js_runtime,
                 },
                 true, // `deployment verify` does not verify db.
                 fix,
@@ -242,6 +248,7 @@ struct ServerStartup {
     config: ServerConfigToml,
     legacy_api_token: Option<secrecy::SecretString>,
     secret_registry: Arc<SecretRegistry>,
+    js_runtime: crate::command::server::JsRuntimeMode,
 }
 
 /// Parse the complete server config once, then resolve and wipe its secret sources
@@ -267,6 +274,15 @@ fn prepare_server_startup(
     }
     let mut config = config_holder.load_config()?;
     let env_vars = StartupEnvVars::capture();
+    let js_runtime = if env_vars
+        .lookup("OBELISK_UNSTABLE_V8")
+        .and_then(|value| value.parse::<bool>().ok())
+        .unwrap_or_default()
+    {
+        crate::command::server::JsRuntimeMode::V8
+    } else {
+        crate::command::server::JsRuntimeMode::BoaWasm
+    };
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
 
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
@@ -288,6 +304,7 @@ fn prepare_server_startup(
         config,
         legacy_api_token,
         secret_registry,
+        js_runtime,
     })
 }
 

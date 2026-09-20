@@ -36,11 +36,12 @@ async fn get_status_cancelling(#[case] runtime: JsRuntime) {
         JsRuntime::BoaWasm => test_addr!(86),
         JsRuntime::V8 => test_addr!(165),
     };
-    let server = TestServer::start_inline_deployment(
+    let server = TestServer::start_inline_deployment_with_js_runtime(
         ip,
-        &runtime.server_toml(&["webhooks"]),
+        "",
         DEPLOYMENT,
         &[],
+        runtime.mode(),
     )
     .await;
 

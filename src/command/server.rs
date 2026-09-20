@@ -635,6 +635,14 @@ pub(crate) struct RunParams {
     pub(crate) clean_sqlite_directory: bool,
     pub(crate) suppress_type_checking_errors: bool,
     pub(crate) auth: ServerAuth,
+    pub(crate) js_runtime: JsRuntimeMode,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JsRuntimeMode {
+    #[default]
+    BoaWasm,
+    V8,
 }
 
 pub(crate) enum ServerAuth {
@@ -728,6 +736,7 @@ pub(crate) struct VerifyParams {
     pub(crate) runtime_config_availability: RuntimeConfigAvailability,
     pub(crate) suppress_type_checking_errors: bool,
     pub(crate) suppress_linking_errors: bool,
+    pub(crate) js_runtime: JsRuntimeMode,
 }
 
 /// Called from `server verify [-d deployment.toml]` or `deployment verify -d deployment.toml`
@@ -837,6 +846,7 @@ pub(crate) async fn verify(
                 config,
                 legacy_api_token: _,
                 secret_registry,
+                js_runtime: _,
             } = prepare_server_startup(
                 config_holder.config_source,
                 EnvVarSecretsCleanup::Noop,
@@ -863,6 +873,7 @@ pub(crate) async fn verify(
             config,
             legacy_api_token: _,
             secret_registry,
+            js_runtime: _,
         } = prepare_server_startup(
             config_holder.config_source,
             EnvVarSecretsCleanup::Noop,
@@ -925,7 +936,13 @@ pub(crate) async fn verify(
             err.into()
         }
     })?;
-    let server_verified = Box::pin(server_verify(config, engines, secret_registry)).await?;
+    let server_verified = Box::pin(server_verify(
+        config,
+        engines,
+        secret_registry,
+        verify_params.js_runtime,
+    ))
+    .await?;
     config_prepass::preflight(
         &server_verified,
         Some(&deployment),
@@ -1094,6 +1111,7 @@ pub(crate) async fn server_verify(
     config: ServerConfigToml,
     engines: Engines,
     secret_registry: Arc<SecretRegistry>,
+    js_runtime: JsRuntimeMode,
 ) -> Result<ServerVerified, anyhow::Error> {
     info!("Verifying server configuration");
     // Check obelisk-version compatibility if specified
@@ -1110,7 +1128,13 @@ pub(crate) async fn server_verify(
         info!("Obelisk version {PKG_VERSION} matches requirement {version_req_str}",);
     }
     // Verify server
-    Box::pin(ServerVerified::new(engines, config, secret_registry)).await
+    Box::pin(ServerVerified::new(
+        engines,
+        config,
+        secret_registry,
+        js_runtime,
+    ))
+    .await
 }
 
 /// Verifies configuration without database schema check.
@@ -1937,7 +1961,8 @@ pub(crate) async fn run_internal(
         .await;
         return Err(err.into());
     }
-    let server_verified = server_verify(config, engines, secret_registry).await?;
+    let server_verified =
+        server_verify(config, engines, secret_registry, params.js_runtime).await?;
     if let Err(err) = config_prepass::preflight(
         &server_verified,
         Some(&deployment_resolved),
@@ -1973,6 +1998,7 @@ pub(crate) async fn run_internal(
             runtime_config_availability: RuntimeConfigAvailability::Strict,
             suppress_type_checking_errors: params.suppress_type_checking_errors,
             suppress_linking_errors: false,
+            js_runtime: params.js_runtime,
         },
         &mut termination_watcher,
     ))
@@ -2330,6 +2356,7 @@ impl ServerVerified {
         engines: Engines,
         config: ServerConfigToml,
         secret_registry: Arc<SecretRegistry>,
+        js_runtime: JsRuntimeMode,
     ) -> Result<ServerVerified, anyhow::Error> {
         debug!("Using server toml: {config:#?}");
         let mut http_servers = config.http_servers;
@@ -2356,18 +2383,20 @@ impl ServerVerified {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_max_replay_captured_writes =
             config.workflows_global_config.max_replay_captured_writes;
-        let workflow_js_runtime = match config.workflows_global_config.js_runtime {
-            crate::config::server::WorkflowJsRuntimeToml::BoaWasm => WorkflowJsRuntime::BoaWasm,
-            crate::config::server::WorkflowJsRuntimeToml::V8 => WorkflowJsRuntime::V8,
-        };
-        let activity_js_runtime = match config.activities_global_config.js_runtime {
-            crate::config::server::ActivityJsRuntimeToml::BoaWasm => ActivityJsRuntime::BoaWasm,
-            crate::config::server::ActivityJsRuntimeToml::V8 => ActivityJsRuntime::V8,
-        };
-        let webhook_js_runtime = match config.webhooks_global_config.js_runtime {
-            crate::config::server::WebhookJsRuntimeToml::BoaWasm => WebhookJsRuntime::BoaWasm,
-            crate::config::server::WebhookJsRuntimeToml::V8 => WebhookJsRuntime::V8,
-        };
+        let (workflow_js_runtime, activity_js_runtime, webhook_js_runtime) =
+            if js_runtime == JsRuntimeMode::V8 {
+                (
+                    WorkflowJsRuntime::V8,
+                    ActivityJsRuntime::V8,
+                    WebhookJsRuntime::V8,
+                )
+            } else {
+                (
+                    WorkflowJsRuntime::BoaWasm,
+                    ActivityJsRuntime::BoaWasm,
+                    WebhookJsRuntime::BoaWasm,
+                )
+            };
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
@@ -3187,6 +3216,7 @@ async fn submit_deployment_manifest(
                     runtime_config_availability,
                     suppress_type_checking_errors: false,
                     suppress_linking_errors: false,
+                    js_runtime: JsRuntimeMode::BoaWasm,
                 },
                 termination_watcher,
             )
@@ -3553,6 +3583,7 @@ async fn prepare_switch_deployment(
         runtime_config_availability: action.runtime_config_availability(),
         suppress_type_checking_errors: false,
         suppress_linking_errors: false,
+        js_runtime: JsRuntimeMode::BoaWasm,
     };
 
     // Cold switch: validation (compile + link) always runs before enqueuing, so a
@@ -4330,7 +4361,13 @@ pub(crate) async fn generate_secret_config_digests(
     )
     .await?;
     let engines = create_engines(&config, &prepared_dirs)?;
-    let server_verified = Box::pin(server_verify(config, engines, secret_registry)).await?;
+    let server_verified = Box::pin(server_verify(
+        config,
+        engines,
+        secret_registry,
+        JsRuntimeMode::BoaWasm,
+    ))
+    .await?;
     let (_termination_sender, mut termination_watcher) = watch::channel(());
     let verified = deployment_verify_config(
         &server_verified,
@@ -4345,6 +4382,7 @@ pub(crate) async fn generate_secret_config_digests(
             runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
+            js_runtime: JsRuntimeMode::BoaWasm,
         },
         &mut termination_watcher,
     )
@@ -6610,9 +6648,9 @@ pub(crate) fn gen_trace_id() -> String {
 mod tests {
     use crate::{
         command::server::{
-            DeploymentRunnable, DeploymentVerified, PrepareDirsParams, RuntimeConfigAvailability,
-            SecretConfigDigestOutput, ServerCompiledLinked, ServerVerified, VerifyParams,
-            compile_activity_inline, compute_content_digest,
+            DeploymentRunnable, DeploymentVerified, JsRuntimeMode, PrepareDirsParams,
+            RuntimeConfigAvailability, SecretConfigDigestOutput, ServerCompiledLinked,
+            ServerVerified, VerifyParams, compile_activity_inline, compute_content_digest,
             config_prepass::{
                 collect_outbound_http_secret_replacements, collect_uncovered_outbound_http_hosts,
                 global_secret_replacements, host_allowlist_snippet,
@@ -7024,8 +7062,13 @@ mod tests {
 
         let (_termination_sender, mut termination_watcher) = watch::channel(());
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified =
-            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines,
+            config,
+            test_secret_registry(),
+            JsRuntimeMode::BoaWasm,
+        ))
+        .await?;
         let params = VerifyParams {
             dir_params: PrepareDirsParams {
                 clean_cache: false,
@@ -7034,6 +7077,7 @@ mod tests {
             runtime_config_availability: RuntimeConfigAvailability::Strict,
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
+            js_runtime: JsRuntimeMode::BoaWasm,
         };
         let webui_enabled = None;
 
@@ -7101,8 +7145,13 @@ mod tests {
         )
         .await?;
         let engines = create_engines(&config, &prepared_dirs)?;
-        let server_verified =
-            Box::pin(ServerVerified::new(engines, config, test_secret_registry())).await?;
+        let server_verified = Box::pin(ServerVerified::new(
+            engines,
+            config,
+            test_secret_registry(),
+            JsRuntimeMode::BoaWasm,
+        ))
+        .await?;
         let (_termination_sender, mut termination_watcher) = watch::channel(());
 
         let err = deployment_verify_config(
@@ -7118,6 +7167,7 @@ mod tests {
                 runtime_config_availability: RuntimeConfigAvailability::Strict,
                 suppress_type_checking_errors: false,
                 suppress_linking_errors: false,
+                js_runtime: JsRuntimeMode::BoaWasm,
             },
             &mut termination_watcher,
         )
@@ -7142,6 +7192,7 @@ mod tests {
                 runtime_config_availability: RuntimeConfigAvailability::AllowUnavailable,
                 suppress_type_checking_errors: false,
                 suppress_linking_errors: false,
+                js_runtime: JsRuntimeMode::BoaWasm,
             },
             &mut termination_watcher,
         )
@@ -7236,6 +7287,7 @@ mod tests {
             runtime_config_availability: RuntimeConfigAvailability::Strict,
             suppress_type_checking_errors: false,
             suppress_linking_errors: false,
+            js_runtime: JsRuntimeMode::BoaWasm,
         };
 
         // An allowlist missing the first digest must reject the deployment,
@@ -7258,6 +7310,7 @@ mod tests {
             engines.clone(),
             config.clone(),
             test_secret_registry(),
+            JsRuntimeMode::BoaWasm,
         ))
         .await?;
         let err = deployment_verify_config(
@@ -7301,6 +7354,7 @@ mod tests {
             engines,
             config,
             test_secret_registry_with_grants(grants),
+            JsRuntimeMode::BoaWasm,
         ))
         .await?;
         deployment_verify_config(

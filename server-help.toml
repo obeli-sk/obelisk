@@ -122,17 +122,8 @@
 # parallel_compilation = true                    # Enable (default) or disable parallel AOT compilation of each WASM component.
 # debug = false                                  # Enable debugging of WASM components: Instruct wasmtime to emit DWARF debug info and disable cranelift optimizations.
 
-## Global Activity Configuration
-# [activities]
-# js_runtime = "boa_wasm"                 # JavaScript activity engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.
-
-## Global Webhook Configuration
-# [webhooks]
-# js_runtime = "boa_wasm"                 # JavaScript webhook engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.
-
 ## Global Workflow Configuration
 # [workflows]
-# js_runtime = "boa_wasm"                 # JavaScript workflow engine: "boa_wasm" (default) or experimental native "v8", which may change incompatibly or be removed.
 # subscription_interruption.seconds = 1    # Interrupts listening for notifications periodically, needed for Postgres with a local-only subscription mechanism. Value can be "none" or a duration.
 # max_replay_captured_writes = 100         # Max captured writes a single replay pass returns; on reaching it replay stops and returns that many as an advanceable prefix (advance them, then replay again to resume). Keeps a non-terminating workflow (e.g. an unresolved `joinNextTry` poll loop) advanceable in bounded batches.
 # max_events_per_run = 100                 # Max history events a real workflow run writes before yielding and unlocking. Replay uses max_replay_captured_writes instead.

@@ -162,7 +162,8 @@ return_type = "result<string, string>"
 "#;
 
 async fn start(ip: String, runtime: WorkflowJsTestRuntime) -> TestServer {
-    TestServer::start_inline_deployment(ip, runtime.server_toml(), DEPLOYMENT, &[]).await
+    TestServer::start_inline_deployment_with_js_runtime(ip, "", DEPLOYMENT, &[], runtime.mode())
+        .await
 }
 
 /// A caught `ChildError` re-thrown with `throw e` transparently

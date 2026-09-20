@@ -70,10 +70,6 @@ pub(crate) struct ServerConfigToml {
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
     #[serde(default, rename = "workflows")]
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
-    #[serde(default, rename = "activities")]
-    pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
-    #[serde(default, rename = "webhooks")]
-    pub(crate) webhooks_global_config: WebhooksGlobalConfigToml,
     #[serde(default)]
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
     #[serde(default)]
@@ -87,38 +83,6 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
-}
-
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ActivitiesGlobalConfigToml {
-    /// JavaScript engine used for activity components.
-    #[serde(default)]
-    pub(crate) js_runtime: ActivityJsRuntimeToml,
-}
-
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ActivityJsRuntimeToml {
-    #[default]
-    BoaWasm,
-    V8,
-}
-
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WebhooksGlobalConfigToml {
-    /// JavaScript engine used for webhook components.
-    #[serde(default)]
-    pub(crate) js_runtime: WebhookJsRuntimeToml,
-}
-
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WebhookJsRuntimeToml {
-    #[default]
-    BoaWasm,
-    V8,
 }
 
 impl ServerConfigToml {
@@ -488,9 +452,6 @@ impl WasmGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    /// JavaScript workflow engine. Native V8 is experimental and may change incompatibly or be removed.
-    #[serde(default)]
-    pub(crate) js_runtime: WorkflowJsRuntimeToml,
     /// Maximum number of captured writes a single replay pass returns. On reaching it, replay
     /// stops and returns that many writes as an advanceable prefix; advancing them and replaying
     /// again resumes from the persisted tip. Keeps a non-terminating workflow (e.g. an unresolved
@@ -511,20 +472,11 @@ pub(crate) struct WorkflowsGlobalConfigToml {
 impl Default for WorkflowsGlobalConfigToml {
     fn default() -> Self {
         Self {
-            js_runtime: WorkflowJsRuntimeToml::default(),
             max_replay_captured_writes: default_max_replay_captured_writes(),
             max_events_per_run: default_max_events_per_run(),
             response_refresh_interval: default_response_refresh_interval(),
         }
     }
-}
-
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorkflowJsRuntimeToml {
-    #[default]
-    BoaWasm,
-    V8,
 }
 
 const fn default_max_replay_captured_writes() -> usize {
@@ -1037,55 +989,6 @@ pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 mod tests {
     use super::*;
     use crate::config::deployment::{MethodsInput, ReplaceIn};
-
-    #[test]
-    fn workflow_js_runtime_defaults_to_boa_wasm_and_accepts_v8() {
-        let default: ServerConfigToml = toml::from_str("").unwrap();
-        assert_eq!(
-            default.workflows_global_config.js_runtime,
-            WorkflowJsRuntimeToml::BoaWasm
-        );
-
-        let v8: ServerConfigToml = toml::from_str("[workflows]\njs_runtime = \"v8\"").unwrap();
-        assert_eq!(
-            v8.workflows_global_config.js_runtime,
-            WorkflowJsRuntimeToml::V8
-        );
-    }
-
-    #[test]
-    fn activity_js_runtime_defaults_to_boa_wasm_and_accepts_v8() {
-        let default: ServerConfigToml = toml::from_str("").unwrap();
-        assert_eq!(
-            default.activities_global_config.js_runtime,
-            ActivityJsRuntimeToml::BoaWasm
-        );
-
-        let v8: ServerConfigToml = toml::from_str("[activities]\njs_runtime = \"v8\"").unwrap();
-        assert_eq!(
-            v8.activities_global_config.js_runtime,
-            ActivityJsRuntimeToml::V8
-        );
-    }
-
-    #[test]
-    fn webhook_js_runtime_defaults_to_boa_wasm_and_accepts_v8() {
-        let default: ServerConfigToml = toml::from_str("").unwrap();
-        assert_eq!(
-            default.webhooks_global_config.js_runtime,
-            WebhookJsRuntimeToml::BoaWasm
-        );
-
-        let v8: ServerConfigToml = toml::from_str("[webhooks]\njs_runtime = \"v8\"").unwrap();
-        assert_eq!(
-            default.webhooks_global_config.js_runtime,
-            WebhookJsRuntimeToml::BoaWasm
-        );
-        assert_eq!(
-            v8.webhooks_global_config.js_runtime,
-            WebhookJsRuntimeToml::V8
-        );
-    }
 
     mod outbound_http {
         use super::*;

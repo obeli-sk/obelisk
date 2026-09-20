@@ -7,7 +7,7 @@
 //! fixed ports, allowing parallel test execution without conflicts.
 //! The `test_addr!` macro ensures unique addresses at link time.
 
-use crate::command::server::ServerAuth;
+use crate::command::server::{JsRuntimeMode, ServerAuth};
 use crate::server::web_api_server::ReplayResponseSer;
 use crate::{
     command::server::{LocalDeployment, PrepareDirsParams, RunParams, prepare_dirs, run_internal},
@@ -145,10 +145,10 @@ enum WorkflowJsTestRuntime {
 }
 
 impl WorkflowJsTestRuntime {
-    fn server_toml(self) -> &'static str {
+    fn mode(self) -> JsRuntimeMode {
         match self {
-            Self::BoaWasm => "[workflows]\njs_runtime = \"boa_wasm\"",
-            Self::V8 => "[workflows]\njs_runtime = \"v8\"",
+            Self::BoaWasm => JsRuntimeMode::BoaWasm,
+            Self::V8 => JsRuntimeMode::V8,
         }
     }
 
@@ -192,13 +192,11 @@ impl JsRuntime {
         }
     }
 
-    fn server_toml(self, sections: &[&str]) -> String {
-        use std::fmt::Write as _;
-
-        sections.iter().fold(String::new(), |mut toml, section| {
-            writeln!(toml, "[{section}]\njs_runtime = {:?}", self.name()).unwrap();
-            toml
-        })
+    fn mode(self) -> JsRuntimeMode {
+        match self {
+            Self::BoaWasm => JsRuntimeMode::BoaWasm,
+            Self::V8 => JsRuntimeMode::V8,
+        }
     }
 }
 
@@ -610,28 +608,39 @@ impl TestServer {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+        Self::launch(
+            ip,
+            tmp_dir,
+            server_path,
+            deployment,
+            true,
+            None,
+            JsRuntimeMode::BoaWasm,
+        )
+        .await
     }
 
     async fn start_with_server_lines(ip: String, server_toml_lines: &str) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, server_toml_lines);
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+        Self::launch(
+            ip,
+            tmp_dir,
+            server_path,
+            deployment,
+            true,
+            None,
+            JsRuntimeMode::BoaWasm,
+        )
+        .await
     }
 
-    async fn start_with_server_toml_tail(ip: String, server_toml_tail: &str) -> Self {
-        use std::io::Write as _;
-
+    async fn start_with_js_runtime(ip: String, js_runtime: JsRuntimeMode) -> Self {
         let (tmp_dir, server_path, deployment_path) = write_test_configs(&ip, "");
-        let mut server_file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&server_path)
-            .unwrap();
-        writeln!(server_file, "\n{server_toml_tail}").unwrap();
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None, js_runtime).await
     }
 
     /// Launch a server whose deployment is exactly `deployment_toml`, letting a self-contained
@@ -643,6 +652,23 @@ impl TestServer {
         server_toml_tail: &str,
         deployment_toml: &str,
         files: &[(&str, &str)],
+    ) -> Self {
+        Self::start_inline_deployment_with_js_runtime(
+            ip,
+            server_toml_tail,
+            deployment_toml,
+            files,
+            JsRuntimeMode::BoaWasm,
+        )
+        .await
+    }
+
+    async fn start_inline_deployment_with_js_runtime(
+        ip: String,
+        server_toml_tail: &str,
+        deployment_toml: &str,
+        files: &[(&str, &str)],
+        js_runtime: JsRuntimeMode,
     ) -> Self {
         let (tmp_dir, server_path, deployment_path) =
             util::write_server_config(&ip, "", server_toml_tail);
@@ -656,7 +682,7 @@ impl TestServer {
         std::fs::write(&deployment_path, deployment_toml).unwrap();
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+        Self::launch(ip, tmp_dir, server_path, deployment, true, None, js_runtime).await
     }
 
     async fn start_with_server_lines_and_component(
@@ -684,7 +710,16 @@ impl TestServer {
         std::fs::write(&deployment_path, deployment_doc.to_string()).unwrap();
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+        Self::launch(
+            ip,
+            tmp_dir,
+            server_path,
+            deployment,
+            true,
+            None,
+            JsRuntimeMode::BoaWasm,
+        )
+        .await
     }
 
     /// Start a server with an empty deployment (no components, no CAS blobs), so a later
@@ -698,6 +733,7 @@ impl TestServer {
             LocalDeployment::empty(),
             true,
             None,
+            JsRuntimeMode::BoaWasm,
         )
         .await
     }
@@ -718,6 +754,7 @@ impl TestServer {
             LocalDeployment::empty(),
             false,
             legacy_api_token.map(secrecy::SecretString::from),
+            JsRuntimeMode::BoaWasm,
         )
         .await
     }
@@ -729,6 +766,7 @@ impl TestServer {
         deployment: LocalDeployment,
         no_auth: bool,
         api_token: Option<secrecy::SecretString>,
+        js_runtime: JsRuntimeMode,
     ) -> Self {
         test_utils::set_up();
 
@@ -768,6 +806,7 @@ impl TestServer {
             } else {
                 ServerAuth::Auth { api_token }
             },
+            js_runtime,
         };
 
         let prepared_dirs = prepare_dirs(
@@ -890,7 +929,16 @@ impl TestServer {
         let deployment_path = tmp_dir.path().join("deployment.toml");
         authorize_test_deployment(&server_path, &deployment_path).await;
         let deployment = LocalDeployment::from_path(&deployment_path).await.unwrap();
-        Self::launch(ip, tmp_dir, server_path, deployment, true, None).await
+        Self::launch(
+            ip,
+            tmp_dir,
+            server_path,
+            deployment,
+            true,
+            None,
+            JsRuntimeMode::BoaWasm,
+        )
+        .await
     }
 
     // ---- helper methods ------------------------------------------------
@@ -3466,8 +3514,7 @@ async fn submit_activity_and_get_result(#[case] runtime: JsRuntime) {
         JsRuntime::BoaWasm => test_addr!(4),
         JsRuntime::V8 => test_addr!(166),
     };
-    let server =
-        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["activities"])).await;
+    let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
 
     let resp = server
         .submit_follow("testing:integration/activity.add", vec![json!(3), json!(5)])
@@ -4606,8 +4653,7 @@ async fn hot_redeploy_activity(
         (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(39),
         (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(168),
     };
-    let server =
-        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["activities"])).await;
+    let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
     hot_redeploy_activity_impl(&server, &deploy_client).await;
     server.shutdown().await;
 }
@@ -4764,8 +4810,7 @@ async fn hot_redeploy_webhook_js_env_var(
         (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(41),
         (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(170),
     };
-    let server =
-        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["webhooks"])).await;
+    let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
     hot_redeploy_webhook_js_env_var_impl(&server, &deploy_client).await;
     server.shutdown().await;
 }
@@ -4826,8 +4871,7 @@ async fn hot_redeploy_webhook_js_remove_endpoint(
         (JsRuntime::BoaWasm, TestDeployClient::WebApi) => test_addr!(42),
         (JsRuntime::V8, TestDeployClient::WebApi) => test_addr!(172),
     };
-    let server =
-        TestServer::start_with_server_toml_tail(ip, &runtime.server_toml(&["webhooks"])).await;
+    let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
     hot_redeploy_webhook_js_remove_endpoint_impl(&server, &deploy_client).await;
     server.shutdown().await;
 }
