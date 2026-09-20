@@ -437,6 +437,7 @@ mod tests {
         user_params: Vec<ParameterType>,
         user_return_type: ReturnTypeExtendable,
         allowed_hosts: Vec<crate::http_request_policy::AllowedHostConfig>,
+        env_vars: Vec<crate::envvar::EnvVar>,
         logs_storage_config: Option<crate::component_logger::LogStrageConfig>,
         clock_fn: Box<dyn ClockFn>,
     }
@@ -460,6 +461,7 @@ mod tests {
                     wit_type: StrVariant::Static("result<string, string>"),
                 },
                 allowed_hosts: Vec::new(),
+                env_vars: Vec::new(),
                 logs_storage_config: None,
                 clock_fn: SimClock::epoch().clone_box(),
             }
@@ -484,6 +486,14 @@ mod tests {
                 request_url_regex: None,
                 secret_names: Vec::new(),
                 replace_in: hashbrown::HashSet::new(),
+            });
+            self
+        }
+
+        fn with_env(mut self, key: &str, value: &str) -> Self {
+            self.env_vars.push(crate::envvar::EnvVar {
+                key: key.to_owned(),
+                val: value.to_owned(),
             });
             self
         }
@@ -535,7 +545,7 @@ mod tests {
                 component_id,
                 forward_stdout: None,
                 forward_stderr: None,
-                env_vars: Arc::from([]),
+                env_vars: Arc::from(self.env_vars),
                 exposed_secrets: Arc::from([]),
                 fuel: None,
                 allowed_hosts: allowed_hosts.clone(),
@@ -897,6 +907,42 @@ mod tests {
         let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
         let ok_val = output.expect("should have ok value");
         assert_eq!(extract_string(&ok_val.value), "logged");
+    }
+
+    #[tokio::test]
+    async fn process_env() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "read-env");
+        let worker = JsWorkerBuilder::new(
+            "export default function readEnv() { return process.env.MY_VALUE; }",
+            ffqn.clone(),
+        )
+        .with_env("MY_VALUE", "from-config")
+        .build()
+        .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        assert_eq!(extract_string(&output.unwrap().value), "from-config");
+    }
+
+    #[tokio::test]
+    async fn cpu_loop_is_interrupted_at_deadline() {
+        test_utils::set_up();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "loop");
+        let worker = new_js_activity_worker(
+            "export default function loop() { while (true) {} }",
+            ffqn.clone(),
+        )
+        .await;
+        let (mut ctx, _close_tx) = make_worker_context(ffqn, &[]);
+        ctx.locked_event.lock_expires_at =
+            chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(50);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), worker.run(ctx))
+            .await
+            .expect("V8 termination must stop the CPU loop");
+        assert_matches!(result, Err(WorkerError::TemporaryTimeout { .. }));
     }
 
     #[tokio::test]
