@@ -4,9 +4,12 @@
 //! This wrapper translates the user's typed interface `func(params) -> result<T, E>`
 //! into calls to the Boa component, deserializing the JSON-encoded ok string as the configured type.
 
+use super::workflow_runtime::{RuntimePrepareError, WorkflowInvocation, WorkflowRuntime};
 use super::workflow_worker::{BacktraceCapture, WorkflowWorker, WorkflowWorkerCompiled};
+use super::workflow_worker::{CallFuncResult, RunError};
 use crate::activity::cancel_registry::CancelRegistry;
 use crate::component_logger::LogStrageConfig;
+use crate::js_imports::NamedFnImport;
 use crate::workflow::deadline_tracker::DeadlineTrackerFactory;
 use crate::workflow::native_v8_workflow_runtime::NativeV8WorkflowRuntime;
 #[cfg(test)]
@@ -17,19 +20,221 @@ use async_trait::async_trait;
 use concepts::prefixed_ulid::DeploymentId;
 use concepts::storage::{BacktraceInfo, DbPool};
 use concepts::{
-    ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, FunctionRegistry, PackageIfcFns,
-    ParameterType, ReturnTypeExtendable,
+    ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, FunctionRegistry, IfcFqnName,
+    PackageIfcFns, ParameterType, Params, ResultParsingError, ResultParsingErrorFromVal,
+    ReturnTypeExtendable, SupportedFunctionReturnValue,
 };
 use executor::worker::{Worker, WorkerContext, WorkerResult, WorkerResultOk};
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
+use val_json::type_wrapper::{TypeKey, TypeWrapper, indexmap::IndexMap};
+use val_json::wast_val::{WastVal, WastValWithType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowJsRuntime {
     BoaWasm,
     V8,
+}
+
+struct BoaWasmRuntime {
+    inner: Arc<dyn WorkflowRuntime>,
+    entry_path: String,
+    files: BTreeMap<String, String>,
+    return_type: ReturnTypeExtendable,
+    resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+}
+
+struct BoaWasmInvocation {
+    inner: Box<dyn WorkflowInvocation>,
+    return_type: ReturnTypeExtendable,
+}
+
+#[async_trait]
+impl WorkflowRuntime for BoaWasmRuntime {
+    async fn prepare(
+        &self,
+        workflow_ctx: super::workflow_ctx::WorkflowCtx,
+        component_id: &concepts::ComponentId,
+        _ffqn: &FunctionFqn,
+        params: &Params,
+        fuel: Option<u64>,
+    ) -> Result<Box<dyn WorkflowInvocation>, RuntimePrepareError> {
+        let (ffqn, params) = boa_invocation(
+            params,
+            self.entry_path.clone(),
+            &self.files,
+            &self.resolved_imports,
+            workflow_ctx.native_backtrace().is_some(),
+        );
+        let inner = self
+            .inner
+            .prepare(workflow_ctx, component_id, &ffqn, &params, fuel)
+            .await?;
+        Ok(Box::new(BoaWasmInvocation {
+            inner,
+            return_type: self.return_type.clone(),
+        }))
+    }
+}
+
+#[async_trait]
+impl WorkflowInvocation for BoaWasmInvocation {
+    async fn invoke(self: Box<Self>, assigned_fuel: Option<u64>) -> CallFuncResult {
+        let (retval, workflow_ctx) = self.inner.invoke(assigned_fuel).await?;
+        let version = workflow_ctx.version().clone();
+        match map_boa_result(retval, &self.return_type, version) {
+            Ok(retval) => Ok((retval, workflow_ctx)),
+            Err(BoaResultError::Parsing(err)) => {
+                Err(RunError::ResultParsingError(err, Box::new(workflow_ctx)))
+            }
+            Err(BoaResultError::CannotInstantiate(reason)) => {
+                Err(RunError::CannotInstantiate(reason, Box::new(workflow_ctx)))
+            }
+        }
+    }
+}
+
+enum BoaResultError {
+    Parsing(ResultParsingError),
+    CannotInstantiate(String),
+}
+
+fn boa_invocation(
+    params: &Params,
+    entry_path: String,
+    files: &BTreeMap<String, String>,
+    resolved_imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    backtrace_enabled: bool,
+) -> (FunctionFqn, Params) {
+    let params_json = params.as_json_values().expect("stored params are JSON");
+    let params_json = params_json
+        .iter()
+        .map(|value| Value::String(serde_json::to_string(value).unwrap()))
+        .collect();
+    let imports_json = resolved_imports
+        .iter()
+        .map(|(ifc_fqn, functions)| {
+            serde_json::json!({
+                "ifc_fqn": ifc_fqn.to_string(),
+                "functions": functions.iter().map(|function| serde_json::json!({
+                    "js_name": function.js_name,
+                    "wit_name": function.wit_name,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let files_json = files
+        .iter()
+        .map(|(path, source)| serde_json::json!([path, source]))
+        .collect();
+    let values: Arc<[Value]> = Arc::from([
+        Value::String(entry_path),
+        Value::Array(files_json),
+        Value::Array(params_json),
+        Value::Bool(backtrace_enabled),
+        Value::Array(imports_json),
+    ]);
+    let named_import = TypeWrapper::Record(IndexMap::from([
+        (TypeKey::new_kebab("js-name"), TypeWrapper::String),
+        (TypeKey::new_kebab("wit-name"), TypeWrapper::String),
+    ]));
+    let resolved_import = TypeWrapper::Record(IndexMap::from([
+        (TypeKey::new_kebab("ifc-fqn"), TypeWrapper::String),
+        (
+            TypeKey::new_kebab("functions"),
+            TypeWrapper::List(Box::new(named_import)),
+        ),
+    ]));
+    let params = Params::from_json_values(
+        values,
+        [
+            &TypeWrapper::String,
+            &TypeWrapper::List(Box::new(TypeWrapper::Tuple(Box::new([
+                TypeWrapper::String,
+                TypeWrapper::String,
+            ])))),
+            &TypeWrapper::List(Box::new(TypeWrapper::String)),
+            &TypeWrapper::Bool,
+            &TypeWrapper::List(Box::new(resolved_import)),
+        ]
+        .into_iter(),
+    )
+    .expect("Boa invocation types are static");
+    (
+        FunctionFqn::new_static_tuple(("obelisk-workflow:workflow-js-runtime/execute", "run")),
+        params,
+    )
+}
+
+fn map_boa_result(
+    retval: SupportedFunctionReturnValue,
+    return_type: &ReturnTypeExtendable,
+    version: concepts::storage::Version,
+) -> Result<SupportedFunctionReturnValue, BoaResultError> {
+    match retval {
+        SupportedFunctionReturnValue::Ok(Some(WastValWithType {
+            value: WastVal::Result(result),
+            ..
+        })) => {
+            let (value, is_ok) = match result {
+                Ok(value) => (value, true),
+                Err(value) => (value, false),
+            };
+            let value = value.map(|value| match *value {
+                WastVal::String(json) => serde_json::from_str(&json).unwrap(),
+                _ => unreachable!("Boa returns JSON strings"),
+            });
+            let mapped = if is_ok {
+                crate::js_worker_utils::map_ok_variant_fatal(value, return_type, version)
+            } else {
+                crate::js_worker_utils::map_err_variant_fatal(value, return_type, version)
+            };
+            mapped.map_err(|(err, _)| match err {
+                executor::worker::FatalError::ResultParsingError(err) => {
+                    BoaResultError::Parsing(err)
+                }
+                executor::worker::FatalError::CannotInstantiate { reason, .. } => {
+                    BoaResultError::CannotInstantiate(reason)
+                }
+                err => unreachable!("unexpected JavaScript result mapping error: {err:?}"),
+            })
+        }
+        SupportedFunctionReturnValue::Err(Some(error)) => {
+            let WastVal::Variant(name, payload) = error.value else {
+                unreachable!("Boa runtime errors are variants")
+            };
+            let reason = payload.and_then(|payload| match *payload {
+                WastVal::String(reason) => Some(reason),
+                _ => None,
+            });
+            match name.as_snake_str() {
+                "wrong_return_type" | "wrong_thrown_type" => Err(BoaResultError::Parsing(
+                    ResultParsingError::ResultParsingErrorFromVal(
+                        ResultParsingErrorFromVal::TypeCheckError(reason.unwrap()),
+                    ),
+                )),
+                "cannot_instantiate" | "unresolved_import" => {
+                    Err(BoaResultError::CannotInstantiate(reason.unwrap()))
+                }
+                "entry_not_found" => Err(BoaResultError::CannotInstantiate(
+                    "JavaScript entry module was not found".into(),
+                )),
+                "execution_failed" => Ok(SupportedFunctionReturnValue::ExecutionFailure(
+                    concepts::FinishedExecutionFailure {
+                        kind: concepts::ExecutionFailureKind::Uncategorized,
+                        reason: Some("js-runtime execution-failed".into()),
+                        detail: None,
+                    },
+                )),
+                name => unreachable!("unexpected Boa runtime error: {name}"),
+            }
+        }
+        retval @ SupportedFunctionReturnValue::ExecutionFailure(_) => Ok(retval),
+        retval => unreachable!("unexpected Boa result: {retval:?}"),
+    }
 }
 
 /// Compiled JS workflow. Holds the compiled Boa WASM component + JS source + user FFQN.
@@ -151,7 +356,15 @@ impl WorkflowJsWorkerCompiled {
 
         let linked = self.inner.link(fn_registry)?;
         let linked = match runtime {
-            WorkflowJsRuntime::BoaWasm => linked,
+            WorkflowJsRuntime::BoaWasm => linked.map_runtime(|inner| {
+                Arc::new(BoaWasmRuntime {
+                    inner,
+                    entry_path: self.js_entry_path.clone(),
+                    files: self.js_files.clone(),
+                    return_type: self.user_return_type.clone(),
+                    resolved_imports,
+                })
+            }),
             WorkflowJsRuntime::V8 => linked.with_runtime(Arc::new(NativeV8WorkflowRuntime::new(
                 self.js_entry_path.clone(),
                 self.js_files.clone(),

@@ -445,6 +445,14 @@ impl WorkflowWorkerCompiled {
 }
 
 impl WorkflowWorkerLinked {
+    pub(crate) fn map_runtime(
+        mut self,
+        map: impl FnOnce(Arc<dyn WorkflowRuntime>) -> Arc<dyn WorkflowRuntime>,
+    ) -> Self {
+        self.runtime = map(self.runtime);
+        self
+    }
+
     pub(crate) fn with_runtime(mut self, runtime: Arc<dyn WorkflowRuntime>) -> Self {
         self.runtime = runtime;
         self
