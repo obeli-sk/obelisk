@@ -731,7 +731,7 @@
       "type": "object",
       "properties": {
         "js_runtime": {
-          "description": "JavaScript engine used for workflow components.",
+          "description": "JavaScript workflow engine. Native V8 is experimental and may change incompatibly or be removed.",
           "$ref": "#/$defs/WorkflowJsRuntimeToml"
         },
         "max_replay_captured_writes": {

@@ -452,7 +452,7 @@ impl WasmGlobalConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowsGlobalConfigToml {
-    /// JavaScript engine used for workflow components.
+    /// JavaScript workflow engine. Native V8 is experimental and may change incompatibly or be removed.
     #[serde(default)]
     pub(crate) js_runtime: WorkflowJsRuntimeToml,
     /// Maximum number of captured writes a single replay pass returns. On reaching it, replay

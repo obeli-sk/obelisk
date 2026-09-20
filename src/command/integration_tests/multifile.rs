@@ -115,7 +115,7 @@ export function renderJson(payload) {
 }
 "#;
 
-async fn start(ip: String) -> TestServer {
+async fn start(ip: String, server_toml_tail: &str) -> TestServer {
     let files = [
         ("add.js", ADD_JS),
         ("multifile-activity/index.js", ACTIVITY_INDEX_JS),
@@ -128,12 +128,12 @@ async fn start(ip: String) -> TestServer {
         ("multifile-webhook/index.js", WEBHOOK_INDEX_JS),
         ("multifile-webhook/lib/render.js", WEBHOOK_RENDER_JS),
     ];
-    TestServer::start_inline_deployment(ip, "", DEPLOYMENT, &files).await
+    TestServer::start_inline_deployment(ip, server_toml_tail, DEPLOYMENT, &files).await
 }
 
 #[tokio::test]
 async fn activity() {
-    let server = start(test_addr!(120)).await;
+    let server = start(test_addr!(120), "").await;
     let resp = server
         .submit_follow(
             "testing:integration/activity-multifile.greet",
@@ -150,37 +150,44 @@ async fn activity() {
 
 #[tokio::test]
 async fn workflow() {
-    let server = start(test_addr!(121)).await;
-    let execution_id = server.generate_execution_id().await;
-    let resp = server
-        .submit_follow_with_id(
-            &execution_id,
-            "testing:integration/workflow-multifile.add-three",
-            vec![json!(2), json!(3), json!(5)],
-        )
-        .await;
-    assert_eq!(resp.status().as_u16(), 201);
-    assert_eq!(resp.json::<Value>().await.unwrap(), json!({ "ok": 10 }));
+    for runtime in ["boa_wasm", "v8"] {
+        let server_toml = format!("[workflows]\njs_runtime = \"{runtime}\"");
+        let server = start(test_addr!(121), &server_toml).await;
+        let execution_id = server.generate_execution_id().await;
+        let resp = server
+            .submit_follow_with_id(
+                &execution_id,
+                "testing:integration/workflow-multifile.add-three",
+                vec![json!(2), json!(3), json!(5)],
+            )
+            .await;
+        assert_eq!(resp.status().as_u16(), 201, "runtime: {runtime}");
+        assert_eq!(
+            resp.json::<Value>().await.unwrap(),
+            json!({ "ok": 10 }),
+            "runtime: {runtime}"
+        );
 
-    let events_before = server.get_events(&execution_id).await;
-    let replay = server.replay(&execution_id).await;
-    assert_eq!(
-        replay.status().as_u16(),
-        200,
-        "multifile JS replay failed: {}",
-        replay.text().await.unwrap()
-    );
-    assert_eq!(
-        events_before,
-        server.get_events(&execution_id).await,
-        "replay must not mutate the execution history"
-    );
-    server.shutdown().await;
+        let events_before = server.get_events(&execution_id).await;
+        let replay = server.replay(&execution_id).await;
+        assert_eq!(
+            replay.status().as_u16(),
+            200,
+            "multifile JS replay failed using {runtime}: {}",
+            replay.text().await.unwrap()
+        );
+        assert_eq!(
+            events_before,
+            server.get_events(&execution_id).await,
+            "replay using {runtime} must not mutate the execution history"
+        );
+        server.shutdown().await;
+    }
 }
 
 #[tokio::test]
 async fn webhook() {
-    let server = start(test_addr!(122)).await;
+    let server = start(test_addr!(122), "").await;
     let resp = server
         .client
         .get(format!("{}/multifile", server.webhook_base_url))
