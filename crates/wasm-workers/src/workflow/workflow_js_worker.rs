@@ -26,6 +26,12 @@ use std::sync::Arc;
 use tracing::{debug, info};
 use utils::wasm_tools::WasmComponent;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowJsRuntime {
+    BoaWasm,
+    V8,
+}
+
 /// Compiled JS workflow. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct WorkflowJsWorkerCompiled {
     inner: WorkflowWorkerCompiled,
@@ -122,6 +128,14 @@ impl WorkflowJsWorkerCompiled {
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
+        self.link_with_runtime(fn_registry, WorkflowJsRuntime::BoaWasm)
+    }
+
+    pub fn link_with_runtime(
+        self,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        runtime: WorkflowJsRuntime,
+    ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
         // Resolve JS imports against the function registry before linking.
         // This validates named imports and resolves namespace imports (`import *`).
         // Parse errors in JS source are caught here early rather than at runtime.
@@ -135,13 +149,16 @@ impl WorkflowJsWorkerCompiled {
             }
         }
 
-        let runtime = Arc::new(NativeV8WorkflowRuntime::new(
-            self.js_entry_path.clone(),
-            self.js_files.clone(),
-            self.user_return_type.clone(),
-            resolved_imports,
-        ));
-        let linked = self.inner.link(fn_registry)?.with_runtime(runtime);
+        let linked = self.inner.link(fn_registry)?;
+        let linked = match runtime {
+            WorkflowJsRuntime::BoaWasm => linked,
+            WorkflowJsRuntime::V8 => linked.with_runtime(Arc::new(NativeV8WorkflowRuntime::new(
+                self.js_entry_path.clone(),
+                self.js_files.clone(),
+                self.user_return_type.clone(),
+                resolved_imports,
+            ))),
+        };
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),

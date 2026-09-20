@@ -204,8 +204,8 @@ use wasm_workers::workflow::deadline_tracker::{
     DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
 };
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
-use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerCompiled;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
+use wasm_workers::workflow::workflow_js_worker::{WorkflowJsRuntime, WorkflowJsWorkerCompiled};
 use wasm_workers::workflow::workflow_worker::WorkflowConfig;
 use wasm_workers::workflow::workflow_worker::WorkflowConfigMode;
 use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
@@ -2309,6 +2309,7 @@ struct ServerVerifiedLaunch {
     /// Bound on captured writes collected during a single replay pass. See
     /// `WorkflowsGlobalConfigToml::max_replay_captured_writes`.
     workflows_max_replay_captured_writes: usize,
+    workflow_js_runtime: WorkflowJsRuntime,
 }
 
 impl ServerVerified {
@@ -2352,6 +2353,10 @@ impl ServerVerified {
         let fuel: Option<u64> = config.wasm_global_config.fuel.into();
         let workflows_max_replay_captured_writes =
             config.workflows_global_config.max_replay_captured_writes;
+        let workflow_js_runtime = match config.workflows_global_config.js_runtime {
+            crate::config::server::WorkflowJsRuntimeToml::BoaWasm => WorkflowJsRuntime::BoaWasm,
+            crate::config::server::WorkflowJsRuntimeToml::V8 => WorkflowJsRuntime::V8,
+        };
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
@@ -2424,6 +2429,7 @@ impl ServerVerified {
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 workflows_max_replay_captured_writes,
+                workflow_js_runtime,
             },
             allowed_exec_activities: config.allowed_exec_activities,
             http_servers,
@@ -2529,6 +2535,7 @@ impl ServerCompiledLinked {
             global_http_config,
             server_verified.build_semaphore,
             server_verified.workflows_max_replay_captured_writes,
+            server_verified.workflow_js_runtime,
             termination_watcher,
             suppress_linking_errors,
         )
@@ -5004,6 +5011,7 @@ async fn compile_and_link(
     global_http_config: GlobalHttpConfig,
     build_semaphore: Option<u64>,
     workflows_max_replay_captured_writes: usize,
+    workflow_js_runtime: WorkflowJsRuntime,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
@@ -5258,6 +5266,7 @@ async fn compile_and_link(
                         workflow_js_runnable,
                         lock_extension_leeway,
                         workflows_max_replay_captured_writes,
+                        workflow_js_runtime,
                     )
                         .map(|(worker, component_config, frame_files)| {
                             CompiledComponent::ActivityOrWorkflow {
@@ -6052,6 +6061,7 @@ fn prespawn_workflow_js(
     runnable_component: RunnableComponent,
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
+    workflow_js_runtime: WorkflowJsRuntime,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
@@ -6124,6 +6134,7 @@ fn prespawn_workflow_js(
         wit,
         workflow_js.js_files,
         wit_origin,
+        workflow_js_runtime,
     ))
 }
 
@@ -6156,6 +6167,7 @@ struct WorkflowJsWorkerCompiledWithConfig {
     worker: WorkflowJsWorkerCompiled,
     workflows_lock_extension_leeway: Duration,
     replay_compiled: WorkflowJsWorkerCompiled,
+    runtime: WorkflowJsRuntime,
 }
 
 enum CompiledWorkerKind {
@@ -6341,6 +6353,7 @@ impl WorkerCompiled {
         wit: String,
         js_files: std::collections::BTreeMap<String, String>,
         wit_origin: WitOrigin,
+        runtime: WorkflowJsRuntime,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSource) {
         let frame_files = WorkflowJsConfigVerified::frame_sources(js_files);
         let component = ComponentConfig {
@@ -6360,6 +6373,7 @@ impl WorkerCompiled {
                         worker,
                         workflows_lock_extension_leeway,
                         replay_compiled,
+                        runtime,
                     },
                 )),
                 exec_config,
@@ -6398,12 +6412,14 @@ impl WorkerCompiled {
                 }
                 CompiledWorkerKind::WorkflowJs(workflow_js_compiled) => {
                     LinkedWorkerKind::WorkflowJs(Box::new(WorkflowJsWorkerLinkedWithConfig {
-                        worker: workflow_js_compiled.worker.link(fn_registry.clone())?,
+                        worker: workflow_js_compiled
+                            .worker
+                            .link_with_runtime(fn_registry.clone(), workflow_js_compiled.runtime)?,
                         workflows_lock_extension_leeway: workflow_js_compiled
                             .workflows_lock_extension_leeway,
                         replay_linked: workflow_js_compiled
                             .replay_compiled
-                            .link(fn_registry.clone())?,
+                            .link_with_runtime(fn_registry.clone(), workflow_js_compiled.runtime)?,
                     }))
                 }
             },
