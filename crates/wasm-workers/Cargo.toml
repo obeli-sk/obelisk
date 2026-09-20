@@ -31,6 +31,7 @@ const_format.workspace = true
 croner.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
+hmac.workspace = true
 futures-util.workspace = true
 futures-lite.workspace = true
 http-body-util.workspace = true

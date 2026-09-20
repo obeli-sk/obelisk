@@ -32,7 +32,13 @@ async fn hmac_sign_verify() {
     const KEY: &str = "super-secret-key";
     const MSG: &str = "hello world";
 
-    let server = TestServer::start_inline_deployment(test_addr!(34), "", DEPLOYMENT, &[]).await;
+    let server = TestServer::start_inline_deployment(
+        test_addr!(34),
+        "[activities]\njs_runtime = \"v8\"",
+        DEPLOYMENT,
+        &[],
+    )
+    .await;
     let resp = server
         .submit_follow(
             "testing:integration/activity-hmac.hmac-sign-verify",

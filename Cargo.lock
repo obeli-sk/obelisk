@@ -4067,6 +4067,7 @@ dependencies = [
  "futures-lite 2.6.1",
  "futures-util",
  "hashbrown 0.17.1",
+ "hmac 0.12.1",
  "http-body-util",
  "hyper",
  "hyper-util",
