@@ -60,7 +60,8 @@ skip = [
     { name = "hashbrown", version = "0.15" },
     { name = "hashbrown", version = "0.16.1" },
     { name = "foldhash", version = "0.1" },
-    # workspace and boa_engine use itertools 0.15 while prost-build and wasmtime use 0.14
+    # deno_core uses itertools 0.13; prost-build and wasmtime use 0.14; workspace and Boa use 0.15
+    { name = "itertools", version = "0.13" },
     { name = "itertools", version = "0.14" },
     # boa_interner requires phf 0.14 while tokio-postgres uses 0.13
     { name = "phf", version = "0.14" },
@@ -94,11 +95,18 @@ skip = [
     # tokio-postgres-rustls 0.13 (latest) requires x509-cert 0.2 which uses const-oid 0.9;
     # postgres-protocol uses digest 0.11 which requires const-oid 0.10
     { name = "const-oid", version = "0.9" },
+    # Deno and V8 retain older versions of dependencies used elsewhere in the workspace
+    { name = "fastrand", version = "1" },
+    { name = "futures-lite", version = "1" },
+    { name = "hmac", version = "0.12" },
+    { name = "linux-raw-sys", version = "0.4" },
+    { name = "miniz_oxide", version = "0.8" },
+    { name = "num-bigint", version = "0.4" },
+    { name = "rustix", version = "0.38" },
+    { name = "shlex", version = "1" },
     # proc-macro ecosystem is mid-migration: syn 3 is used by serde_derive, async-trait,
     # tokio-macros, thiserror-impl 2, etc., while many crates still pull syn 2
     { name = "syn", version = "2" },
-    # Boa is on 0.14, transitive yoke is on 0.13
-    { name = "synstructure", version = "0.13" },
 ]
 
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
