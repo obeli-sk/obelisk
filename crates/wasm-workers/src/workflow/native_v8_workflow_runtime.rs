@@ -790,22 +790,38 @@ fn outcome_envelope(outcome: Result<Option<String>, Option<String>>) -> Value {
 
 fn outcome_envelope_with_id_and_kind(
     outcome: Result<Option<String>, Option<String>>,
-    child_id: Option<String>,
+    response_id: Option<String>,
     workflow_ctx: &WorkflowCtx,
 ) -> Value {
     let mut envelope = outcome_envelope(outcome);
     if let Value::Object(object) = &mut envelope {
-        let failure_kind = child_id
+        let is_cancelled = object.contains_key("throwUndefined");
+        let delay_id = response_id
+            .as_deref()
+            .filter(|id| id.parse::<concepts::prefixed_ulid::DelayId>().is_ok())
+            .map(str::to_owned);
+        let failure_kind = response_id
             .as_deref()
             .and_then(|id| workflow_ctx.native_child_failure_kind(id));
-        object.insert(
-            "childId".into(),
-            child_id.map_or(Value::Null, Value::String),
-        );
+        if let Some(delay_id) = &delay_id {
+            object.insert("delayId".into(), Value::String(delay_id.clone()));
+        } else if let Some(response_id) = response_id {
+            object.insert("childId".into(), Value::String(response_id));
+        }
         object.insert(
             "failureKind".into(),
-            failure_kind.map_or(Value::Null, |kind| Value::String(kind.into())),
+            if delay_id.is_some() && is_cancelled {
+                Value::String("cancelled".into())
+            } else {
+                failure_kind.map_or(Value::Null, |kind| Value::String(kind.into()))
+            },
         );
+        if let Some(delay_id) = delay_id.filter(|_| is_cancelled) {
+            object.insert(
+                "message".into(),
+                Value::String(format!("delay {delay_id} cancelled")),
+            );
+        }
     }
     envelope
 }
@@ -921,7 +937,7 @@ fn anyhow_to_workflow_error(err: wasmtime::Error) -> super::workflow_ctx::Workfl
 
 const WORKFLOW_MODULE: &str = r"
 const host = (op, args = {}) => Deno.core.ops.op_obelisk_host({ op, args });
-export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.value = value; this.childId = options.childId; this.delayId = options.delayId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
+export class ChildError extends Error { constructor(value, options = {}) { super(options.message ?? 'child execution failed'); this.name = 'ChildError'; this.value = value; this.childId = options.childId; this.delayId = options.delayId; this.failureKind = options.failureKind; this.cancelled = options.cancelled ?? false; } }
 export const ChildExecutionError = ChildError;
 export class JoinSetExhaustedError extends Error { constructor(message = 'JoinSetEmpty: all responses processed') { super(message); this.name = 'JoinSetExhaustedError'; this.code = 'OBELISK_JOIN_SET_EXHAUSTED'; } }
 const nativeDate = globalThis.Date;
@@ -955,7 +971,7 @@ export function createJoinSet(options) {
   };
 }
 export function unwrapHost(result) {
-  const options = { childId: result.childId, failureKind: result.failureKind, cancelled: result.failureKind === 'cancelled' };
+  const options = { childId: result.childId, delayId: result.delayId, failureKind: result.failureKind, cancelled: result.failureKind === 'cancelled', message: result.message };
   if (result.throwUndefined) throw new ChildError(undefined, options);
   if (Object.hasOwn(result, 'throw')) throw new ChildError(result.throw, options);
   return result.ok;
