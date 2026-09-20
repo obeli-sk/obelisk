@@ -359,6 +359,7 @@ impl HttpHooks {
             Box::into_pin(self.send_request(request, None, Box::new(async { Ok(()) })))
                 .await
                 .map_err(|err| format!("ErrorCode::{err:?}"))?;
+        let io_task = tokio::spawn(Box::into_pin(io));
         let status = response.status().as_u16();
         let headers = response
             .headers()
@@ -377,7 +378,7 @@ impl HttpHooks {
             .map_err(|err| err.to_string())?
             .to_bytes()
             .to_vec();
-        Box::into_pin(io).await.map_err(|err| format!("{err:?}"))?;
+        io_task.abort();
         Ok((status, headers, body))
     }
 }
