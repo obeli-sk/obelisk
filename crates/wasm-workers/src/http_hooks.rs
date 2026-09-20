@@ -339,6 +339,49 @@ impl WasiHttpHooks for HttpHooks {
     }
 }
 
+impl HttpHooks {
+    pub(crate) async fn send_native_request(
+        &mut self,
+        method: hyper::Method,
+        uri: hyper::Uri,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
+        let body = http_body_util::Full::new(hyper::body::Bytes::from(body))
+            .map_err(|never| match never {})
+            .boxed_unsync();
+        let mut request = hyper::Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let request = request.body(body).map_err(|err| err.to_string())?;
+        let (response, io) =
+            Box::into_pin(self.send_request(request, None, Box::new(async { Ok(()) })))
+                .await
+                .map_err(|err| format!("ErrorCode::{err:?}"))?;
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_owned(),
+                    value.to_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .map_err(|err| err.to_string())?
+            .to_bytes()
+            .to_vec();
+        Box::into_pin(io).await.map_err(|err| format!("{err:?}"))?;
+        Ok((status, headers, body))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

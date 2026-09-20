@@ -70,6 +70,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
     #[serde(default, rename = "workflows")]
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
+    #[serde(default, rename = "activities")]
+    pub(crate) activities_global_config: ActivitiesGlobalConfigToml,
     #[serde(default)]
     pub(crate) timers_watcher: TimersWatcherTomlConfig,
     #[serde(default)]
@@ -83,6 +85,22 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivitiesGlobalConfigToml {
+    /// JavaScript engine used for activity components.
+    #[serde(default)]
+    pub(crate) js_runtime: ActivityJsRuntimeToml,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ActivityJsRuntimeToml {
+    #[default]
+    BoaWasm,
+    V8,
 }
 
 impl ServerConfigToml {
@@ -1014,6 +1032,21 @@ mod tests {
         assert_eq!(
             v8.workflows_global_config.js_runtime,
             WorkflowJsRuntimeToml::V8
+        );
+    }
+
+    #[test]
+    fn activity_js_runtime_defaults_to_boa_wasm_and_accepts_v8() {
+        let default: ServerConfigToml = toml::from_str("").unwrap();
+        assert_eq!(
+            default.activities_global_config.js_runtime,
+            ActivityJsRuntimeToml::BoaWasm
+        );
+
+        let v8: ServerConfigToml = toml::from_str("[activities]\njs_runtime = \"v8\"").unwrap();
+        assert_eq!(
+            v8.activities_global_config.js_runtime,
+            ActivityJsRuntimeToml::V8
         );
     }
 

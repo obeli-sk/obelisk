@@ -25,6 +25,13 @@ use utils::wasm_tools::WasmComponent;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ActivityJsRuntime {
+    #[default]
+    BoaWasm,
+    V8,
+}
+
 /// Compiled JS activity. Holds the compiled Boa WASM component + JS source + user FFQN.
 pub struct ActivityJsWorkerCompiled {
     inner: ActivityWorkerCompiled,
@@ -35,6 +42,7 @@ pub struct ActivityJsWorkerCompiled {
     user_return_type: ReturnTypeExtendable,
     /// User interface parsed from synthesized WIT — provides exports, extensions, and WIT text.
     user_wasm_component: WasmComponent,
+    runtime: ActivityJsRuntime,
 }
 
 impl ActivityJsWorkerCompiled {
@@ -82,7 +90,14 @@ impl ActivityJsWorkerCompiled {
             user_params,
             user_return_type,
             user_wasm_component,
+            runtime: ActivityJsRuntime::BoaWasm,
         }
+    }
+
+    #[must_use]
+    pub fn with_runtime(mut self, runtime: ActivityJsRuntime) -> Self {
+        self.runtime = runtime;
+        self
     }
 
     #[must_use]
@@ -143,6 +158,7 @@ impl ActivityJsWorkerCompiled {
             user_params: self.user_params,
             user_return_type: self.user_return_type,
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
+            runtime: self.runtime,
         }
     }
 }
@@ -156,6 +172,7 @@ pub struct ActivityJsWorker {
     user_params: Vec<ParameterType>,
     user_return_type: ReturnTypeExtendable,
     user_exports_noext: Vec<FunctionMetadata>,
+    runtime: ActivityJsRuntime,
 }
 
 #[async_trait]
@@ -166,6 +183,9 @@ impl Worker for ActivityJsWorker {
 
     // Return result<string, string> or a WorkerError mapped from `JsRuntimeError`
     async fn run(&self, mut ctx: WorkerContext) -> WorkerResult {
+        if self.runtime == ActivityJsRuntime::V8 {
+            return self.run_v8(ctx).await;
+        }
         // Serialize each user parameter individually as a JSON string.
         let json_params = ctx
             .params
@@ -356,6 +376,19 @@ impl Worker for ActivityJsWorker {
     }
 }
 
+impl ActivityJsWorker {
+    async fn run_v8(&self, ctx: WorkerContext) -> WorkerResult {
+        self.inner
+            .run_native_js(
+                ctx,
+                self.js_entry_path.clone(),
+                self.js_files.clone(),
+                self.user_return_type.clone(),
+            )
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,7 +571,8 @@ mod tests {
                     self.user_return_type,
                 )
             }
-            .unwrap();
+            .unwrap()
+            .with_runtime(ActivityJsRuntime::V8);
 
             Arc::new(js_compiled.into_worker(
                 cancel_registry,

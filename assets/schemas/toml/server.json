@@ -58,6 +58,9 @@
     "workflows": {
       "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     },
+    "activities": {
+      "$ref": "#/$defs/ActivitiesGlobalConfigToml"
+    },
     "timers_watcher": {
       "$ref": "#/$defs/TimersWatcherTomlConfig"
     },
@@ -759,6 +762,23 @@
       "additionalProperties": false
     },
     "WorkflowJsRuntimeToml": {
+      "type": "string",
+      "enum": [
+        "boa_wasm",
+        "v8"
+      ]
+    },
+    "ActivitiesGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "js_runtime": {
+          "description": "JavaScript engine used for activity components.",
+          "$ref": "#/$defs/ActivityJsRuntimeToml"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActivityJsRuntimeToml": {
       "type": "string",
       "enum": [
         "boa_wasm",

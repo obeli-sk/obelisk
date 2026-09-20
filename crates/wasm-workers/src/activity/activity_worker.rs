@@ -1,8 +1,9 @@
 use super::activity_ctx::{self, ActivityCtx};
 use crate::activity::cancel_registry::CancelRegistry;
-use crate::component_logger::{LogStrageConfig, log_activities};
+use crate::component_logger::{ComponentLogger, LogStrageConfig, log_activities};
 use crate::envvar::EnvVar;
 use crate::http_hooks::ConfigSectionHint;
+use crate::http_hooks::HttpHooks;
 use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
@@ -12,12 +13,14 @@ use concepts::storage::http_client_trace::HttpClientTrace;
 use concepts::storage::{DbPool, LogInfoAppendRow, LogStreamType, Version};
 use concepts::time::{ClockFn, Sleep, now_tokio_instant};
 use concepts::{
-    ComponentId, FunctionFqn, PackageIfcFns, Params, SupportedFunctionReturnValue, TrapKind,
+    ComponentId, FunctionFqn, PackageIfcFns, Params, ReturnTypeExtendable,
+    SupportedFunctionReturnValue, TrapKind,
 };
 use concepts::{FunctionMetadata, ResultParsingError};
 use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -198,6 +201,169 @@ impl ActivityWorker {
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
     }
+
+    pub(crate) async fn run_native_js(
+        &self,
+        ctx: WorkerContext,
+        entry_path: String,
+        files: BTreeMap<String, String>,
+        return_type: ReturnTypeExtendable,
+    ) -> WorkerResult {
+        use super::native_v8_activity_runtime::{
+            NativeActivityFailure, NativeActivityState, execute,
+        };
+        use crate::policy_builder::build_http_policy_native;
+        use secrecy::ExposeSecret as _;
+
+        let started_at = self.clock_fn.now();
+        let version = ctx.version.clone();
+        let lock_expires_at = ctx.locked_event.lock_expires_at;
+        let Ok(deadline_duration) = (lock_expires_at - started_at).to_std() else {
+            return Err(WorkerError::TemporaryTimeout {
+                http_client_traces: None,
+                version,
+            });
+        };
+        let cancellation_token = self
+            .cancel_registry
+            .activity_obtain_cancellation_token(ctx.execution_id.clone());
+        let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
+        let component_logger = ComponentLogger {
+            span: ctx.worker_span.clone(),
+            execution_id: ctx.execution_id.clone(),
+            run_id: ctx.locked_event.run_id,
+            logs_storage_config: self.logs_storage_config.clone(),
+        };
+        let mut env = self
+            .config
+            .env_vars
+            .iter()
+            .map(|value| (value.key.clone(), value.val.clone()))
+            .collect::<HashMap<_, _>>();
+        for name in self.config.exposed_secrets.iter() {
+            if let Some(value) = self.config.secrets.secret_lookup(name) {
+                env.insert(name.clone(), value.expose_secret().to_owned());
+            }
+        }
+        let (http_policy, placeholders) = build_http_policy_native(
+            &self.config.allowed_hosts,
+            &self.config.global_http_config,
+            self.config.secrets.as_ref(),
+        );
+        env.extend(placeholders);
+        let state = NativeActivityState {
+            logger: component_logger.clone(),
+            http_hooks: HttpHooks {
+                clock_fn: self.clock_fn.clone_box(),
+                http_client_traces: Default::default(),
+                http_policy,
+                component_logger,
+                config_section_hint: self.config.config_section_hint,
+                component_name: self.config.component_id.name.to_string(),
+                deployment_id: self.system_events.as_ref().map(|(id, _)| *id),
+                db_pool: self.system_events.as_ref().map(|(_, db)| db.clone()),
+            },
+            env,
+        };
+        let params = ctx.params;
+        let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
+        let mut task = tokio::task::spawn_blocking(move || {
+            execute(
+                &entry_path,
+                &files,
+                &params,
+                &return_type,
+                state,
+                isolate_tx,
+            )
+        });
+        let isolate = isolate_rx.await.ok();
+        enum End {
+            Complete(
+                Result<
+                    (
+                        Result<SupportedFunctionReturnValue, NativeActivityFailure>,
+                        NativeActivityState,
+                    ),
+                    tokio::task::JoinError,
+                >,
+            ),
+            Timeout,
+            Cancelled,
+            Closing,
+        }
+        let end = tokio::select! {
+            result = &mut task => End::Complete(result),
+            () = self.sleep.sleep(deadline_duration) => End::Timeout,
+            _ = cancellation_token => End::Cancelled,
+            changed = execution_interrupt_watcher.changed() => {
+                let _ = changed;
+                End::Closing
+            }
+        };
+        let (result, state) = match end {
+            End::Complete(result) => result.expect("native V8 activity task panicked"),
+            interrupted => {
+                if let Some(isolate) = isolate {
+                    isolate.terminate_execution();
+                }
+                let (_, state) = task.await.expect("native V8 activity task panicked");
+                let traces = collect_http_traces(state.http_hooks.http_client_traces);
+                return match interrupted {
+                    End::Timeout => Err(WorkerError::TemporaryTimeout {
+                        http_client_traces: Some(traces),
+                        version,
+                    }),
+                    End::Cancelled => Err(WorkerError::FatalError(FatalError::Cancelled, version)),
+                    End::Closing => Err(WorkerError::ExecutionYielded {
+                        version,
+                        reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
+                    }),
+                    End::Complete(_) => unreachable!(),
+                };
+            }
+        };
+        let traces = collect_http_traces(state.http_hooks.http_client_traces);
+        match result {
+            Ok(retval) => Ok(WorkerResultOk::RunFinished(RunFinished {
+                retval,
+                version,
+                http_client_traces: Some(traces),
+            })),
+            Err(NativeActivityFailure::CannotInstantiate(reason)) => Err(WorkerError::FatalError(
+                FatalError::CannotInstantiate {
+                    reason,
+                    detail: None,
+                },
+                version,
+            )),
+            Err(NativeActivityFailure::ResultParsing(reason)) => Err(WorkerError::FatalError(
+                FatalError::ResultParsingError(ResultParsingError::ResultParsingErrorFromVal(
+                    concepts::ResultParsingErrorFromVal::TypeCheckError(reason),
+                )),
+                version,
+            )),
+            Err(NativeActivityFailure::Trap(reason)) => Err(WorkerError::ActivityTrap {
+                reason,
+                detail: None,
+                trap_kind: TrapKind::Trap,
+                version,
+                http_client_traces: Some(traces),
+            }),
+        }
+    }
+}
+
+fn collect_http_traces(
+    traces: crate::http_hooks::HttpClientTracesContainer,
+) -> Vec<HttpClientTrace> {
+    traces
+        .into_iter()
+        .map(|(req, mut resp)| HttpClientTrace {
+            req,
+            resp: resp.try_recv().ok(),
+        })
+        .collect()
 }
 
 #[async_trait]

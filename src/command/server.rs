@@ -172,7 +172,7 @@ use utils::wasm_tools::WasmComponent;
 use val_json::wast_val::WastValWithType;
 use wasm_workers::RunnableComponent;
 use wasm_workers::activity::activity_exec_worker::ActivityExecWorkerCompiled;
-use wasm_workers::activity::activity_js_worker::ActivityJsWorkerCompiled;
+use wasm_workers::activity::activity_js_worker::{ActivityJsRuntime, ActivityJsWorkerCompiled};
 use wasm_workers::activity::activity_worker::ActivityWorkerCompiled;
 use wasm_workers::activity::cancel_registry::CancelRegistry;
 use wasm_workers::component_logger::LogStrageConfig;
@@ -2310,6 +2310,7 @@ struct ServerVerifiedLaunch {
     /// `WorkflowsGlobalConfigToml::max_replay_captured_writes`.
     workflows_max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
+    activity_js_runtime: ActivityJsRuntime,
 }
 
 impl ServerVerified {
@@ -2356,6 +2357,10 @@ impl ServerVerified {
         let workflow_js_runtime = match config.workflows_global_config.js_runtime {
             crate::config::server::WorkflowJsRuntimeToml::BoaWasm => WorkflowJsRuntime::BoaWasm,
             crate::config::server::WorkflowJsRuntimeToml::V8 => WorkflowJsRuntime::V8,
+        };
+        let activity_js_runtime = match config.activities_global_config.js_runtime {
+            crate::config::server::ActivityJsRuntimeToml::BoaWasm => ActivityJsRuntime::BoaWasm,
+            crate::config::server::ActivityJsRuntimeToml::V8 => ActivityJsRuntime::V8,
         };
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
         if workflows_max_events_per_run == 0 {
@@ -2430,6 +2435,7 @@ impl ServerVerified {
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 workflows_max_replay_captured_writes,
                 workflow_js_runtime,
+                activity_js_runtime,
             },
             allowed_exec_activities: config.allowed_exec_activities,
             http_servers,
@@ -2536,6 +2542,7 @@ impl ServerCompiledLinked {
             server_verified.build_semaphore,
             server_verified.workflows_max_replay_captured_writes,
             server_verified.workflow_js_runtime,
+            server_verified.activity_js_runtime,
             termination_watcher,
             suppress_linking_errors,
         )
@@ -5012,6 +5019,7 @@ async fn compile_and_link(
     build_semaphore: Option<u64>,
     workflows_max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
+    activity_js_runtime: ActivityJsRuntime,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
@@ -5137,7 +5145,7 @@ async fn compile_and_link(
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
-                    prespawn_activity_js(activity_js, &engines, activity_js_runnable).map(|(worker, component_config, frame_files)| {
+                    prespawn_activity_js(activity_js, &engines, activity_js_runnable, activity_js_runtime).map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -5670,6 +5678,7 @@ fn prespawn_activity_js(
     activity_js: ActivityJsConfigVerified,
     engines: &Engines,
     runnable_component: RunnableComponent,
+    runtime: ActivityJsRuntime,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
@@ -5707,7 +5716,8 @@ fn prespawn_activity_js(
             activity_js.return_type,
         ),
     }
-    .with_context(|| format!("cannot create JS activity worker for {component_id}"))?;
+    .with_context(|| format!("cannot create JS activity worker for {component_id}"))?
+    .with_runtime(runtime);
     let wit = worker.wit();
 
     Ok(WorkerCompiled::new_js_activity(
