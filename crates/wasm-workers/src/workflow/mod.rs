@@ -7,4 +7,5 @@ pub(crate) mod replay_db_proxy;
 pub(crate) mod wasi;
 pub(crate) mod workflow_ctx;
 pub mod workflow_js_worker;
+pub(crate) mod workflow_runtime;
 pub mod workflow_worker;
