@@ -2480,9 +2480,23 @@ async fn handle_native_v8_request(
         .await
         .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?
         .to_bytes();
+    let url = if parts.uri.scheme().is_some() {
+        parts.uri.to_string()
+    } else if let Some(authority) = parts.uri.authority().map(ToString::to_string).or_else(|| {
+        parts
+            .headers
+            .get(hyper::header::HOST)?
+            .to_str()
+            .ok()
+            .map(str::to_owned)
+    }) {
+        format!("http://{authority}{}", parts.uri)
+    } else {
+        parts.uri.to_string()
+    };
     let request = NativeRequest {
         method: parts.method.to_string(),
-        url: parts.uri.to_string(),
+        url,
         headers: parts
             .headers
             .iter()
@@ -2505,6 +2519,13 @@ async fn handle_native_v8_request(
             env.insert(name.clone(), value.expose_secret().to_owned());
         }
     }
+    let (http_policy, placeholders) = crate::policy_builder::build_http_policy_native(
+        &config.allowed_hosts,
+        &config.global_http_config,
+        config.secrets.as_ref(),
+    );
+    ctx.http_hooks.http_policy = http_policy;
+    env.extend(placeholders);
     if let Some(entry_source) = js_config.files.get(&js_config.entry_path) {
         env.insert("__OBELISK_JS_SOURCE__".into(), entry_source.clone());
         env.insert(
@@ -3592,6 +3613,23 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
+        async fn webhook_js_v8_request_url_is_absolute() {
+            test_utils::set_up();
+            let js_source = r"
+                export default function handle(request) {
+                    return new Response(new URL(request.url).pathname);
+                }
+            ";
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_runtime(js_source, WebhookJsRuntime::V8).await;
+            let resp = reqwest::get(format!("http://{server_addr}/some/path"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!("/some/path", resp.text().await.unwrap());
+        }
+
+        #[tokio::test]
         async fn webhook_js_custom_status_code() {
             test_utils::set_up();
             let js_source = r#"
@@ -3611,14 +3649,34 @@ pub(crate) mod tests {
         async fn start_js_webhook_server_with_http(
             source: &str,
             allowed_host: &str,
+            secret: Option<(&str, &str)>,
+            runtime: WebhookJsRuntime,
         ) -> (
             tokio::task::JoinSet<Result<(), WebhookServerError>>,
             SocketAddr,
             WatchGuard,
         ) {
             use crate::http_request_policy::{AllowedHostConfig, HostPattern, MethodsPattern};
+            use crate::http_request_policy::{ReplacementLocation, TestSecretResolver};
+            use secrecy::SecretString;
             let host_pattern =
                 HostPattern::parse_with_methods(allowed_host, MethodsPattern::AllMethods).unwrap();
+            let secret_names = secret
+                .map(|(name, _)| vec![name.to_owned()])
+                .unwrap_or_default();
+            let replace_in = secret
+                .map(|_| hashbrown::HashSet::from([ReplacementLocation::Headers]))
+                .unwrap_or_default();
+            let secrets = TestSecretResolver(
+                secret
+                    .map(|(name, value)| {
+                        hashbrown::HashMap::from([(
+                            name.to_owned(),
+                            SecretString::from(value.to_owned()),
+                        )])
+                    })
+                    .unwrap_or_default(),
+            );
             let sim_clock = SimClock::default();
             let (_guard, db_pool, _db_close) = db_tests::Database::Sqlite.set_up().await;
             let fn_registry = TestingFnRegistry::new_from_components(vec![]);
@@ -3648,17 +3706,17 @@ pub(crate) mod tests {
                         allowed_hosts: Arc::from(vec![AllowedHostConfig {
                             pattern: host_pattern.clone(),
                             request_url_regex: None,
-                            secret_names: Vec::new(),
-                            replace_in: hashbrown::HashSet::new(),
+                            secret_names: secret_names.clone(),
+                            replace_in: replace_in.clone(),
                         }]),
                         global_http_config: vec![AllowedHostConfig {
                             pattern: host_pattern,
                             request_url_regex: None,
-                            secret_names: Vec::new(),
-                            replace_in: hashbrown::HashSet::new(),
+                            secret_names,
+                            replace_in,
                         }]
                         .into(),
-                        secrets: Arc::new(crate::http_request_policy::NoSecrets),
+                        secrets: Arc::new(secrets),
                         js_config: Some(WebhookEndpointJsConfig {
                             entry_path: "index.js".to_string(),
                             files: std::collections::BTreeMap::from([(
@@ -3672,6 +3730,7 @@ pub(crate) mod tests {
                     runnable_component,
                 )
                 .unwrap()
+                .with_js_runtime(runtime)
                 .link(&engine, fn_registry.as_ref())
                 .unwrap();
                 let mut router = MethodAwareRouter::default();
@@ -3744,14 +3803,115 @@ pub(crate) mod tests {
             );
 
             let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_http(&js_source, &allowed).await;
+            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
+                &js_source,
+                &allowed,
+                None,
+                WebhookJsRuntime::BoaWasm,
+            )
+            .await;
             let resp = reqwest::get(format!("http://{server_addr}/"))
                 .await
                 .unwrap();
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap();
             assert_eq!((status, body.as_str()), (200, "fetch works"));
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_exposes_http_secret_placeholder() {
+            use wiremock::MockServer;
+
+            test_utils::set_up();
+            let mock_server = MockServer::start().await;
+            let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
+            let js_source = r#"
+                export default function handle() {
+                    const token = process.env["API_TOKEN"];
+                    return Response.json({ present: Boolean(token), secretLeaked: token === "real-secret" });
+                }
+            "#;
+            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
+                js_source,
+                &allowed,
+                Some(("API_TOKEN", "real-secret")),
+                WebhookJsRuntime::V8,
+            )
+            .await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(
+                resp.json::<serde_json::Value>().await.unwrap(),
+                serde_json::json!({ "present": true, "secretLeaked": false })
+            );
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_fetch_response_ok() {
+            use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+            test_utils::set_up();
+            let mock_server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+            let url = mock_server.uri();
+            let js_source = format!(
+                r#"
+                export default async function handle() {{
+                    const response = await fetch("{url}/");
+                    return Response.json({{ ok: response.ok }});
+                }}
+                "#
+            );
+            let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed, None, WebhookJsRuntime::V8)
+                    .await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(
+                resp.json::<serde_json::Value>().await.unwrap(),
+                serde_json::json!({ "ok": true })
+            );
+        }
+
+        #[tokio::test]
+        async fn webhook_js_v8_fetch_streamed_body() {
+            use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+            test_utils::set_up();
+            let mock_server = MockServer::start().await;
+            let body = "x".repeat(256 * 1024);
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(body.clone()))
+                .expect(1)
+                .mount(&mock_server)
+                .await;
+            let url = mock_server.uri();
+            let js_source = format!(
+                r#"
+                export default async function handle() {{
+                    const response = await fetch("{url}/");
+                    return new Response(String((await response.text()).length));
+                }}
+                "#
+            );
+            let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed, None, WebhookJsRuntime::V8)
+                    .await;
+            let resp = reqwest::get(format!("http://{server_addr}/"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(resp.text().await.unwrap(), body.len().to_string());
         }
 
         #[tokio::test]
@@ -3814,8 +3974,13 @@ pub(crate) mod tests {
             );
 
             let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
-            let (_server, server_addr, _termination_sender) =
-                start_js_webhook_server_with_http(&js_source, &allowed).await;
+            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
+                &js_source,
+                &allowed,
+                None,
+                WebhookJsRuntime::BoaWasm,
+            )
+            .await;
 
             let client = reqwest::Client::new();
             let resp = client
