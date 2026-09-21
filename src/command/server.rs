@@ -897,13 +897,15 @@ pub(crate) async fn verify(
         termination_notifier(termination_sender).await;
     });
     let _termination_notifier_abort = AbortOnDropHandle::new(termination_notifier.abort_handle());
-    let mut db_pool = if !skip_db {
-        verify_db_schema(
-            &config.database,
-            &config_holder.path_prefixes,
-            &secret_registry,
+    let db_pool = if !skip_db {
+        Some(
+            verify_db_schema(
+                &config.database,
+                &config_holder.path_prefixes,
+                &secret_registry,
+            )
+            .await?,
         )
-        .await?
     } else {
         None
     };
@@ -915,13 +917,11 @@ pub(crate) async fn verify(
     let (deployment, deployment_id) = if let Some(deployment) = deployment_opt {
         (deployment, DeploymentId::generate())
     } else {
-        get_deployment_resolved_from_db(
-            &config.database,
-            &config_holder.path_prefixes,
-            &mut db_pool,
-            &secret_registry,
-        )
-        .await?
+        // No deployment TOML implies `!skip_db` (checked at fn top), so the pool is set.
+        let (pool, _) = db_pool
+            .as_ref()
+            .expect("db pool is set when no deployment TOML is provided");
+        get_deployment_resolved_from_db(pool.as_ref()).await?
     };
     config_prepass::preflight_runtime_config(
         &config.outbound_http.allowed_hosts,
@@ -992,36 +992,33 @@ fn ignore_not_found(err: std::io::Error) -> Result<(), std::io::Error> {
     }
 }
 
-type DbPoolCloseableContainer = Option<(Arc<dyn DbPool>, Pin<Box<dyn Future<Output = ()> + Send>>)>;
+type VerifiedDbPool = (Arc<dyn DbPool>, Pin<Box<dyn Future<Output = ()> + Send>>);
 
 async fn verify_db_schema(
     db_config_toml: &DatabaseConfigToml,
     path_prefixes: &PathPrefixes,
     secret_registry: &SecretRegistry,
-) -> Result<DbPoolCloseableContainer, anyhow::Error> {
-    let result: DbPoolCloseableContainer = match db_config_toml {
+) -> Result<VerifiedDbPool, anyhow::Error> {
+    match db_config_toml {
         DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
             let db_dir = sqlite_config_toml
                 .get_sqlite_dir(path_prefixes, secret_registry)
                 .await?;
             let sqlite_config = sqlite_config_toml.as_sqlite_config();
             let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
-            if sqlite_file.exists() {
-                let db_pool = Arc::new(
-                    SqlitePool::new(&sqlite_file, sqlite_config)
-                        .await
-                        .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
-                );
-                info!("SQLite database schema verified");
-                let db_close = Box::pin({
-                    let db_pool = db_pool.clone();
-                    async move { db_pool.close().await }
-                });
-                Some((db_pool, db_close))
-            } else {
-                info!("SQLite database does not exist yet, skipping schema verification");
-                None
-            }
+            // Create and migrate a missing database, mirroring `server run` and Postgres
+            // `provision_policy = "auto"`; opening the pool applies the embedded migrations.
+            let db_pool = Arc::new(
+                SqlitePool::new(&sqlite_file, sqlite_config)
+                    .await
+                    .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
+            );
+            info!("SQLite database schema verified");
+            let db_close = Box::pin({
+                let db_pool = db_pool.clone();
+                async move { db_pool.close().await }
+            });
+            Ok((db_pool, db_close))
         }
         DatabaseConfigToml::Postgres(postgres_config_toml) => {
             let db_pool = Arc::new(
@@ -1037,10 +1034,9 @@ async fn verify_db_schema(
                 let db_pool = db_pool.clone();
                 async move { db_pool.close().await }
             });
-            Some((db_pool, db_close))
+            Ok((db_pool, db_close))
         }
-    };
-    Ok(result)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1427,75 +1423,19 @@ pub(crate) async fn fix_server_secret_config_digests(
 /// Look up the current deployment from the database.
 /// Prefers Enqueued over Active; errors if neither exists.
 async fn get_deployment_resolved_from_db(
-    database: &DatabaseConfigToml,
-    path_prefixes: &PathPrefixes,
-    db_pool_container: &mut DbPoolCloseableContainer,
-    secret_registry: &SecretRegistry,
+    db_pool: &dyn DbPool,
 ) -> anyhow::Result<(DeploymentResolved, DeploymentId)> {
-    let conn = if let Some((pool, _)) = db_pool_container.as_ref() {
-        pool.external_api_conn()
-            .await
-            .context("cannot get db connection for deployment lookup")?
-    } else {
-        match database {
-            DatabaseConfigToml::Sqlite(sqlite_config_toml) => {
-                let db_dir = sqlite_config_toml
-                    .get_sqlite_dir(path_prefixes, secret_registry)
-                    .await?;
-                let sqlite_config = sqlite_config_toml.as_sqlite_config();
-                let sqlite_file = db_dir.join(SQLITE_FILE_NAME);
-                let db_pool = Arc::new(
-                    SqlitePool::new(&sqlite_file, sqlite_config)
-                        .await
-                        .with_context(|| format!("cannot open sqlite file {sqlite_file:?}"))?,
-                );
-                let db_close = Box::pin({
-                    let db_pool = db_pool.clone();
-                    async move { db_pool.close().await }
-                });
-                // update the container
-                let (db_pool, _) = db_pool_container.insert((db_pool.clone(), db_close));
-                db_pool
-                    .external_api_conn()
-                    .await
-                    .context("cannot get db connection for deployment lookup")?
-            }
-            DatabaseConfigToml::Postgres(postgres_config_toml) => {
-                let db_pool = Arc::new(
-                    PostgresPool::new(
-                        postgres_config_toml.as_config(secret_registry)?,
-                        postgres_config_toml.as_provision_policy(),
-                    )
-                    .await
-                    .context("cannot initialize postgres connection pool")?,
-                );
-                let db_close = Box::pin({
-                    let db_pool = db_pool.clone();
-                    async move { db_pool.close().await }
-                });
-                // update the container
-                let (db_pool, _) = db_pool_container.insert((db_pool.clone(), db_close));
-                db_pool
-                    .external_api_conn()
-                    .await
-                    .context("cannot get db connection for deployment lookup")?
-            }
-        }
-    };
-
+    let conn = db_pool
+        .external_api_conn()
+        .await
+        .context("cannot get db connection for deployment lookup")?;
     let record = conn
         .get_current_deployment()
         .await
         .context("cannot query current deployment")?;
-
     let record = record
         .context("no Enqueued or Active deployment found in database; provide --deployment")?;
-
-    let pool = db_pool_container
-        .as_ref()
-        .map(|(pool, _)| pool.clone())
-        .expect("db pool was set above");
-    let deployment = deployment_resolved_from_manifest(pool.as_ref(), &record.deployment_toml)
+    let deployment = deployment_resolved_from_manifest(db_pool, &record.deployment_toml)
         .await
         .with_context(|| {
             format!(
