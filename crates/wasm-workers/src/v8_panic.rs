@@ -45,6 +45,10 @@ impl V8PanicState {
         self.0.borrow_mut().reason.take()
     }
 
+    pub(crate) fn is_pending(&self) -> bool {
+        self.0.borrow().reason.is_some()
+    }
+
     fn record(&self, panic: &(dyn std::any::Any + Send)) -> JsErrorBox {
         let reason = if let Some(message) = panic.downcast_ref::<&str>() {
             (*message).to_owned()

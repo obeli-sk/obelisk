@@ -2759,6 +2759,10 @@ impl EventCallCursor {
         &self.next_version
     }
 
+    pub(crate) fn restore_version(&mut self, version: Version) {
+        self.next_version = version;
+    }
+
     /// True while there are still persisted events to replay before the cursor reaches the
     /// live tip. Once exhausted, subsequent calls produce brand-new events.
     pub(crate) fn is_replaying_persisted(&self) -> bool {

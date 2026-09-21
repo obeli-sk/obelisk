@@ -1056,6 +1056,10 @@ impl WorkflowCtx {
         self.event_call_cursor.version()
     }
 
+    pub(crate) fn restore_version(&mut self, version: Version) {
+        self.event_call_cursor.restore_version(version);
+    }
+
     pub(crate) fn replay_progress(&self) -> Option<ReplayProgress> {
         self.event_call_cursor.replay_progress()
     }

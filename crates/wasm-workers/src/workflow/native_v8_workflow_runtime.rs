@@ -8,7 +8,7 @@ use crate::v8_pool::V8Pool;
 use async_trait::async_trait;
 use chrono::{TimeZone as _, Utc};
 use concepts::storage::ResponseSubscriptionEnd;
-use concepts::storage::{HistoryEventScheduleAt, LogLevel};
+use concepts::storage::{HistoryEventScheduleAt, LogLevel, Version};
 use concepts::{
     ComponentId, FunctionFqn, IfcFqnName, JoinSetId, Params, ResultParsingError,
     ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue, TrapKind,
@@ -239,6 +239,7 @@ struct HostState {
     handle: MainRuntimeHandle,
     join_sets: Vec<Option<JoinSetId>>,
     panic: crate::v8_panic::V8PanicState,
+    panic_version: Option<Version>,
 }
 
 #[derive(Clone)]
@@ -281,7 +282,15 @@ fn op_obelisk_host(
     #[serde] request: serde_json::Value,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| op_obelisk_host_inner(state, request))
+    let version = state.borrow_mut::<HostState>().context().version().clone();
+    let result = panic.catch(|| op_obelisk_host_inner(state, request));
+    if panic.is_pending() {
+        state
+            .borrow_mut::<HostState>()
+            .panic_version
+            .get_or_insert(version);
+    }
+    result
 }
 
 fn op_obelisk_host_inner(
@@ -596,6 +605,7 @@ async fn execute(
         handle: handle.clone(),
         join_sets: Vec::new(),
         panic: panic.clone(),
+        panic_version: None,
     });
 
     let params = params
@@ -621,6 +631,14 @@ async fn execute(
     }
     .await;
     if let Some(reason) = panic.take() {
+        let op_state = runtime.op_state();
+        let version = op_state
+            .borrow()
+            .borrow::<HostState>()
+            .panic_version
+            .clone()
+            .expect("host panic must capture the expected next version");
+        workflow_ctx.restore_version(version);
         return Err(NativeV8Failure::Panic(reason));
     }
     if let Err(err) = evaluated {
