@@ -68,6 +68,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) external: ExternalServerConfig,
     #[serde(default, rename = "wasm")]
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
+    #[serde(default)]
+    pub(crate) v8: V8ConfigToml,
     #[serde(default, rename = "workflows")]
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
@@ -83,6 +85,75 @@ pub(crate) struct ServerConfigToml {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct V8ConfigToml {
+    /// Maximum number of native V8 isolate threads in this process.
+    #[serde(default = "default_v8_max_threads")]
+    pub(crate) max_threads: usize,
+    /// Maximum number of resident native V8 workflows.
+    #[serde(default = "default_v8_max_workflows")]
+    pub(crate) max_workflows: usize,
+    /// Maximum number of running native V8 activities.
+    #[serde(default = "default_v8_max_activities")]
+    pub(crate) max_activities: usize,
+    /// Maximum number of running native V8 webhook requests.
+    #[serde(default = "default_v8_max_webhooks")]
+    pub(crate) max_webhooks: usize,
+    /// Stack size in bytes for each native V8 worker thread.
+    #[serde(default = "default_v8_thread_stack_size")]
+    pub(crate) thread_stack_size: u64,
+    /// Time after which an unused native V8 worker thread retires.
+    #[serde(default = "default_v8_idle_timeout")]
+    pub(crate) idle_timeout: DurationConfig,
+    /// Maximum V8-managed heap size in bytes for each isolate.
+    #[serde(default = "default_v8_max_heap_size")]
+    pub(crate) max_heap_size: u64,
+    /// Wall-clock deadline applied to both WASM and V8 webhook requests.
+    #[serde(default = "default_v8_webhook_request_timeout")]
+    pub(crate) webhook_request_timeout: DurationConfig,
+}
+
+impl Default for V8ConfigToml {
+    fn default() -> Self {
+        Self {
+            max_threads: default_v8_max_threads(),
+            max_workflows: default_v8_max_workflows(),
+            max_activities: default_v8_max_activities(),
+            max_webhooks: default_v8_max_webhooks(),
+            thread_stack_size: default_v8_thread_stack_size(),
+            idle_timeout: default_v8_idle_timeout(),
+            max_heap_size: default_v8_max_heap_size(),
+            webhook_request_timeout: default_v8_webhook_request_timeout(),
+        }
+    }
+}
+
+const fn default_v8_max_threads() -> usize {
+    128
+}
+const fn default_v8_max_workflows() -> usize {
+    100
+}
+const fn default_v8_max_activities() -> usize {
+    16
+}
+const fn default_v8_max_webhooks() -> usize {
+    16
+}
+const fn default_v8_thread_stack_size() -> u64 {
+    4 * 1024 * 1024
+}
+const fn default_v8_idle_timeout() -> DurationConfig {
+    DurationConfig::Seconds(60)
+}
+const fn default_v8_max_heap_size() -> u64 {
+    256 * 1024 * 1024
+}
+const fn default_v8_webhook_request_timeout() -> DurationConfig {
+    DurationConfig::Seconds(30)
 }
 
 impl ServerConfigToml {

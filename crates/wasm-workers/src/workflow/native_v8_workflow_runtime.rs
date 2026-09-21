@@ -103,11 +103,12 @@ impl WorkflowInvocation for NativeV8Invocation {
         } = *self;
         let interruption = workflow_ctx.native_interruption();
         let handle = tokio::runtime::Handle::current();
+        let max_heap_size = v8_pool.max_heap_size();
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
         let mut task = tokio::spawn(async move {
             let mut workflow_ctx = workflow_ctx;
             let result = v8_pool
-                .execute(move || async move {
+                .execute_for(crate::v8_pool::V8Workload::Workflow, move || async move {
                     let result = execute(
                         ExecuteArgs {
                             entry_path: &entry_path,
@@ -119,6 +120,7 @@ impl WorkflowInvocation for NativeV8Invocation {
                         &mut workflow_ctx,
                         MainRuntimeHandle(handle),
                         isolate_tx,
+                        max_heap_size,
                     )
                     .await;
                     (result, workflow_ctx)
@@ -554,6 +556,7 @@ async fn execute(
     workflow_ctx: &mut WorkflowCtx,
     handle: MainRuntimeHandle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    max_heap_size: usize,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
         entry_path,
@@ -566,6 +569,7 @@ async fn execute(
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_v8::init()],
+        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
         ..Default::default()
     });
     let _ = isolate_tx.send(runtime.v8_isolate().thread_safe_handle());

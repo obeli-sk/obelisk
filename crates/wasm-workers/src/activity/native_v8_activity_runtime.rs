@@ -153,6 +153,7 @@ pub(crate) async fn execute(
     return_type: &ReturnTypeExtendable,
     state: NativeActivityState,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    max_heap_size: usize,
 ) -> (
     Result<SupportedFunctionReturnValue, NativeActivityFailure>,
     NativeActivityState,
@@ -163,6 +164,7 @@ pub(crate) async fn execute(
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_activity_v8::init()],
+        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
         ..Default::default()
     });
     let _ = isolate_tx.send(runtime.v8_isolate().thread_safe_handle());

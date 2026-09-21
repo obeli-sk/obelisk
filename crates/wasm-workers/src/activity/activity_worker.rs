@@ -280,9 +280,10 @@ impl ActivityWorker {
         let params = ctx.params;
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
         let v8_pool = self.v8_pool.clone();
+        let max_heap_size = v8_pool.max_heap_size();
         let mut task = tokio::spawn(async move {
             v8_pool
-                .execute(move || async move {
+                .execute_for(crate::v8_pool::V8Workload::Activity, move || async move {
                     execute(
                         &entry_path,
                         &files,
@@ -290,6 +291,7 @@ impl ActivityWorker {
                         &return_type,
                         state,
                         isolate_tx,
+                        max_heap_size,
                     )
                     .await
                 })

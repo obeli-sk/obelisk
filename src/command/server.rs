@@ -2273,6 +2273,7 @@ pub(crate) struct ServerVerified {
 struct ServerVerifiedLaunch {
     engines: Engines,
     v8_pool: V8Pool,
+    webhook_request_timeout: Duration,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
     /// Bound on captured writes collected during a single replay pass. See
@@ -2301,6 +2302,31 @@ impl ServerVerified {
         js_runtime: JsRuntimeMode,
     ) -> Result<ServerVerified, anyhow::Error> {
         debug!("Using server toml: {config:#?}");
+        let v8_config = config.v8;
+        if v8_config.max_threads == 0
+            || v8_config.max_workflows == 0
+            || v8_config.max_activities == 0
+            || v8_config.max_webhooks == 0
+            || v8_config.thread_stack_size == 0
+            || v8_config.max_heap_size == 0
+        {
+            anyhow::bail!("V8 thread, workload, stack, and heap limits must be non-zero");
+        }
+        let v8_pool = V8Pool::new(wasm_workers::v8_pool::V8PoolConfig {
+            max_threads: v8_config.max_threads,
+            max_workflows: v8_config.max_workflows,
+            max_activities: v8_config.max_activities,
+            max_webhooks: v8_config.max_webhooks,
+            thread_stack_size: v8_config
+                .thread_stack_size
+                .try_into()
+                .context("v8.thread_stack_size does not fit usize")?,
+            idle_timeout: v8_config.idle_timeout.into(),
+            max_heap_size: v8_config
+                .max_heap_size
+                .try_into()
+                .context("v8.max_heap_size does not fit usize")?,
+        });
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -2408,7 +2434,8 @@ impl ServerVerified {
         Ok(Self {
             launch: ServerVerifiedLaunch {
                 engines,
-                v8_pool: V8Pool::default(),
+                v8_pool,
+                webhook_request_timeout: v8_config.webhook_request_timeout.into(),
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 workflows_max_replay_captured_writes,
@@ -2552,6 +2579,7 @@ impl ServerCompiledLinked {
                     &webhooks,
                     fn_registry.clone(),
                     server_verified.max_persisted_value_size_bytes,
+                    server_verified.webhook_request_timeout,
                 ));
                 (http_server, (webhooks, state))
             })
@@ -4099,6 +4127,7 @@ pub(crate) fn build_webhook_server_state(
     webhooks: &[WebhookInstancesAndRoutes],
     fn_registry: Arc<dyn FunctionRegistry>,
     max_persisted_value_size_bytes: u64,
+    request_timeout: Duration,
 ) -> WebhookServerState {
     let mut router = MethodAwareRouter::default();
     for (webhook_instance_linked, routes) in webhooks {
@@ -4121,6 +4150,7 @@ pub(crate) fn build_webhook_server_state(
         router: Arc::new(router),
         fn_registry,
         max_persisted_value_size_bytes,
+        request_timeout,
     }
 }
 

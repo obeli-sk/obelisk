@@ -568,6 +568,7 @@ pub struct WebhookServerState {
     pub router: Arc<MethodAwareRouter<WebhookEndpointInstanceLinked>>,
     pub fn_registry: Arc<dyn FunctionRegistry>,
     pub max_persisted_value_size_bytes: u64,
+    pub request_timeout: Duration,
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -635,6 +636,7 @@ pub async fn server(
                                         connection_drop_watcher: connection_drop_watcher.clone(),
                                         server_termination_watcher: server_termination_watcher.clone(),
                                         log_forwarder_sender: log_forwarder_sender.clone()
+                                        ,request_timeout: state.request_timeout
                                     }
                                     .handle_request(req, max_inflight_requests.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
@@ -2245,6 +2247,7 @@ struct RequestHandler {
     connection_drop_watcher: watch::Receiver<()>,
     server_termination_watcher: watch::Receiver<()>,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
+    request_timeout: Duration,
 }
 
 fn respond(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
@@ -2275,9 +2278,13 @@ impl RequestHandler {
             return Ok::<_, hyper::Error>(respond("Out of permits", StatusCode::TOO_MANY_REQUESTS));
         };
 
-        let res = self
-            .handle_request_inner(req, http_request_guard, Span::current())
-            .await;
+        let deadline = tokio::time::Instant::now() + self.request_timeout;
+        let res = tokio::time::timeout_at(
+            deadline,
+            self.handle_request_inner(req, http_request_guard, Span::current(), deadline),
+        )
+        .await
+        .unwrap_or(Err(HandleRequestError::Timeout));
         match res {
             Ok(body) => Ok(body),
             Err(err) => {
@@ -2319,6 +2326,7 @@ impl RequestHandler {
         req: hyper::Request<hyper::body::Incoming>,
         http_request_guard: Option<OwnedSemaphorePermit>,
         request_span: Span,
+        request_deadline: tokio::time::Instant,
     ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
         #[derive(Debug, thiserror::Error)]
         #[error("timeout")]
@@ -2363,6 +2371,7 @@ impl RequestHandler {
                     instance_match.handler().resolved_imports.clone(),
                     http_request_guard,
                     found_instance.v8_pool.clone(),
+                    request_deadline,
                 )
                 .await;
             }
@@ -2483,6 +2492,7 @@ async fn handle_native_v8_request(
     imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
     http_request_guard: Option<OwnedSemaphorePermit>,
     v8_pool: crate::v8_pool::V8Pool,
+    request_deadline: tokio::time::Instant,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
     use crate::webhook::native_v8_webhook_runtime::{
         NativeRequest, NativeWebhookFailure, execute, into_hyper_response,
@@ -2552,39 +2562,80 @@ async fn handle_native_v8_request(
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
     let handle = tokio::runtime::Handle::current();
+    let max_heap_size = v8_pool.max_heap_size();
     let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
     let mut task = tokio::spawn(async move {
         let _http_request_guard = http_request_guard;
         v8_pool
-            .execute(move || async move {
+            .try_execute_for(crate::v8_pool::V8Workload::Webhook, move || async move {
                 let result = execute(
-                    &js_config, &imports, request, env, &mut ctx, handle, isolate_tx,
+                    &js_config,
+                    &imports,
+                    request,
+                    env,
+                    &mut ctx,
+                    handle,
+                    isolate_tx,
+                    max_heap_size,
                 )
                 .await;
                 (result, ctx)
             })
             .await
-            .expect("native V8 webhook pool stopped")
     });
-    let isolate = isolate_rx.await.ok();
+    struct TerminateOnDrop(Option<deno_core::v8::IsolateHandle>);
+    impl Drop for TerminateOnDrop {
+        fn drop(&mut self) {
+            if let Some(isolate) = &self.0 {
+                isolate.terminate_execution();
+            }
+        }
+    }
+    let mut termination_guard = TerminateOnDrop(isolate_rx.await.ok());
     enum End<T> {
         Complete(T),
         Interrupted,
+        Timeout,
     }
     let end = tokio::select! {
         result = &mut task => End::Complete(result),
         _ = connection_drop_watcher.changed() => End::Interrupted,
         _ = server_termination_watcher.changed() => End::Interrupted,
+        () = tokio::time::sleep_until(request_deadline) => End::Timeout,
     };
     let (result, ctx) = match end {
-        End::Complete(result) => result.expect("native V8 webhook task panicked"),
+        End::Complete(result) => result
+            .expect("native V8 webhook supervisor task panicked")
+            .map_err(|err| match err {
+                crate::v8_pool::V8PoolError::Overloaded => HandleRequestError::InstanceLimitReached,
+                other => HandleRequestError::ExecutionError(Box::new(other)),
+            })?,
         End::Interrupted => {
-            if let Some(isolate) = isolate {
+            if let Some(isolate) = &termination_guard.0 {
                 isolate.terminate_execution();
             }
-            task.await.expect("native V8 webhook task panicked")
+            task.await
+                .expect("native V8 webhook supervisor task panicked")
+                .map_err(|err| HandleRequestError::ExecutionError(Box::new(err)))?
+        }
+        End::Timeout => {
+            if let Some(isolate) = &termination_guard.0 {
+                isolate.terminate_execution();
+            }
+            let (_, ctx) = task
+                .await
+                .expect("native V8 webhook supervisor task panicked")
+                .map_err(|err| HandleRequestError::ExecutionError(Box::new(err)))?;
+            ctx.close(
+                Err(wasmtime::Error::msg("webhook request deadline reached")),
+                config.fuel,
+            )
+            .await
+            .map_err(|_| HandleRequestError::Timeout)?;
+            return Err(HandleRequestError::Timeout);
         }
     };
+    termination_guard.0 = None;
     let close_result = match &result {
         Ok(_) => Ok(()),
         Err(err) => Err(wasmtime::Error::msg(match err {
@@ -2870,6 +2921,7 @@ pub(crate) mod tests {
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: MAX_PERSISTED_VALUE_SIZE_BYTES,
+                    request_timeout: std::time::Duration::from_secs(30),
                 });
                 let (wh_server_state_sender, wh_server_state_watcher) =
                     watch::channel(initial_state);
@@ -3187,6 +3239,7 @@ pub(crate) mod tests {
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
+                    request_timeout: std::time::Duration::from_secs(30),
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3366,6 +3419,7 @@ pub(crate) mod tests {
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
+                    request_timeout: std::time::Duration::from_secs(30),
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3522,6 +3576,7 @@ pub(crate) mod tests {
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
+                    request_timeout: std::time::Duration::from_secs(30),
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -3774,6 +3829,7 @@ pub(crate) mod tests {
                     router: Arc::new(router),
                     fn_registry,
                     max_persisted_value_size_bytes: u64::MAX,
+                    request_timeout: std::time::Duration::from_secs(30),
                 }));
             let mut set = tokio::task::JoinSet::new();
             set.spawn(webhook_trigger::server(
@@ -4278,6 +4334,7 @@ pub(crate) mod tests {
                         router: Arc::new(router),
                         fn_registry,
                         max_persisted_value_size_bytes: u64::MAX,
+                        request_timeout: std::time::Duration::from_secs(30),
                     }));
                 let mut server_set = tokio::task::JoinSet::new();
                 server_set.spawn(webhook_trigger::server(

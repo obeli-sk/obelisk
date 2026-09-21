@@ -14,16 +14,24 @@ enum Message {
 #[derive(Debug, Clone, Copy)]
 pub struct V8PoolConfig {
     pub max_threads: usize,
+    pub max_workflows: usize,
+    pub max_activities: usize,
+    pub max_webhooks: usize,
     pub thread_stack_size: usize,
     pub idle_timeout: Duration,
+    pub max_heap_size: usize,
 }
 
 impl Default for V8PoolConfig {
     fn default() -> Self {
         Self {
             max_threads: 64,
+            max_workflows: 48,
+            max_activities: 16,
+            max_webhooks: 16,
             thread_stack_size: 4 * 1024 * 1024,
             idle_timeout: Duration::from_secs(60),
+            max_heap_size: 256 * 1024 * 1024,
         }
     }
 }
@@ -36,6 +44,15 @@ pub enum V8PoolError {
     Spawn(#[source] std::io::Error),
     #[error("native V8 worker stopped before returning a result")]
     WorkerStopped,
+    #[error("native V8 capacity is exhausted")]
+    Overloaded,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum V8Workload {
+    Workflow,
+    Activity,
+    Webhook,
 }
 
 #[derive(Clone)]
@@ -46,6 +63,9 @@ pub struct V8Pool {
 struct PoolInner {
     config: V8PoolConfig,
     active: Arc<Semaphore>,
+    workflows: Arc<Semaphore>,
+    activities: Arc<Semaphore>,
+    webhooks: Arc<Semaphore>,
     idle: Mutex<Vec<std::sync::mpsc::Sender<Message>>>,
 }
 
@@ -74,16 +94,83 @@ impl V8Pool {
             "V8 pool must allow at least one thread"
         );
         assert!(
+            config.max_workflows > 0 && config.max_activities > 0 && config.max_webhooks > 0,
+            "V8 workload limits must be non-zero"
+        );
+        assert!(
             config.thread_stack_size > 0,
             "V8 thread stack must be non-zero"
         );
         Self {
             inner: Arc::new(PoolInner {
                 active: Arc::new(Semaphore::new(config.max_threads)),
+                workflows: Arc::new(Semaphore::new(config.max_workflows)),
+                activities: Arc::new(Semaphore::new(config.max_activities)),
+                webhooks: Arc::new(Semaphore::new(config.max_webhooks)),
                 idle: Mutex::new(Vec::new()),
                 config,
             }),
         }
+    }
+
+    #[must_use]
+    pub fn max_heap_size(&self) -> usize {
+        self.inner.config.max_heap_size
+    }
+
+    pub async fn execute_for<F, Fut, T>(
+        &self,
+        workload: V8Workload,
+        execute: F,
+    ) -> Result<T, V8PoolError>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = T> + 'static,
+        T: Send + 'static,
+    {
+        let limiter = match workload {
+            V8Workload::Workflow => &self.inner.workflows,
+            V8Workload::Activity => &self.inner.activities,
+            V8Workload::Webhook => &self.inner.webhooks,
+        };
+        let permit = limiter
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| V8PoolError::Closed)?;
+        let result = self.execute(execute).await;
+        drop(permit);
+        result
+    }
+
+    pub async fn try_execute_for<F, Fut, T>(
+        &self,
+        workload: V8Workload,
+        execute: F,
+    ) -> Result<T, V8PoolError>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = T> + 'static,
+        T: Send + 'static,
+    {
+        let limiter = match workload {
+            V8Workload::Workflow => &self.inner.workflows,
+            V8Workload::Activity => &self.inner.activities,
+            V8Workload::Webhook => &self.inner.webhooks,
+        };
+        let workload_permit = limiter
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| V8PoolError::Overloaded)?;
+        let active_permit = self
+            .inner
+            .active
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| V8PoolError::Overloaded)?;
+        let result = self.execute_with_permit(execute, active_permit).await;
+        drop(workload_permit);
+        result
     }
 
     pub async fn execute<F, Fut, T>(&self, execute: F) -> Result<T, V8PoolError>
@@ -99,6 +186,19 @@ impl V8Pool {
             .acquire_owned()
             .await
             .map_err(|_| V8PoolError::Closed)?;
+        self.execute_with_permit(execute, permit).await
+    }
+
+    async fn execute_with_permit<F, Fut, T>(
+        &self,
+        execute: F,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<T, V8PoolError>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = T> + 'static,
+        T: Send + 'static,
+    {
         let (result_tx, result_rx) = oneshot::channel();
         let job = Box::new(move |runtime: &Runtime| {
             let future = async move {
@@ -199,8 +299,12 @@ mod tests {
     fn config() -> V8PoolConfig {
         V8PoolConfig {
             max_threads: 1,
+            max_workflows: 1,
+            max_activities: 1,
+            max_webhooks: 1,
             thread_stack_size: 4 * 1024 * 1024,
             idle_timeout: Duration::from_secs(10),
+            max_heap_size: 32 * 1024 * 1024,
         }
     }
 
@@ -226,5 +330,26 @@ mod tests {
             .unwrap();
         assert_eq!(first.0, first.1);
         assert_eq!(first.0, second);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejects_webhook_when_global_capacity_is_exhausted() {
+        let pool = V8Pool::new(config());
+        let (started_tx, started_rx) = oneshot::channel();
+        let (finish_tx, finish_rx) = oneshot::channel();
+        let active_pool = pool.clone();
+        let active = tokio::spawn(async move {
+            active_pool
+                .execute_for(V8Workload::Workflow, move || async move {
+                    let _ = started_tx.send(());
+                    let _ = finish_rx.await;
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        let result = pool.try_execute_for(V8Workload::Webhook, || async {}).await;
+        assert!(matches!(result, Err(V8PoolError::Overloaded)));
+        let _ = finish_tx.send(());
+        active.await.unwrap().unwrap();
     }
 }
