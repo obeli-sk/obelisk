@@ -67,14 +67,7 @@ struct PoolInner {
     activities: Arc<Semaphore>,
     webhooks: Arc<Semaphore>,
     idle: Mutex<Vec<std::sync::mpsc::Sender<Message>>>,
-}
-
-impl Drop for PoolInner {
-    fn drop(&mut self) {
-        for sender in self.idle.get_mut().unwrap().drain(..) {
-            let _ = sender.send(Message::Shutdown);
-        }
-    }
+    workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 
 impl Drop for V8Pool {
@@ -82,6 +75,9 @@ impl Drop for V8Pool {
         if Arc::strong_count(&self.inner) == 1 {
             for sender in self.inner.idle.lock().unwrap().drain(..) {
                 let _ = sender.send(Message::Shutdown);
+            }
+            for worker in self.inner.workers.lock().unwrap().drain(..) {
+                worker.join().expect("native V8 worker must not panic");
             }
         }
     }
@@ -108,6 +104,7 @@ impl V8Pool {
                 activities: Arc::new(Semaphore::new(config.max_activities)),
                 webhooks: Arc::new(Semaphore::new(config.max_webhooks)),
                 idle: Mutex::new(Vec::new()),
+                workers: Mutex::new(Vec::new()),
                 config,
             }),
         }
@@ -242,11 +239,12 @@ impl V8Pool {
         let worker_sender = sender.clone();
         let inner = Arc::downgrade(&self.inner);
         let config = self.inner.config;
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("obelisk-v8".to_owned())
             .stack_size(config.thread_stack_size)
             .spawn(move || worker_loop(receiver, worker_sender, inner, config, first_job))
             .map_err(V8PoolError::Spawn)?;
+        self.inner.workers.lock().unwrap().push(worker);
         Ok(())
     }
 }
@@ -293,6 +291,7 @@ fn worker_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread::ThreadId;
     use tokio::runtime::RuntimeFlavor;
 
@@ -351,5 +350,31 @@ mod tests {
         assert!(matches!(result, Err(V8PoolError::Overloaded)));
         let _ = finish_tx.send(());
         active.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_last_handle_joins_idle_workers() {
+        let pool = V8Pool::new(config());
+        let worker_exited = Arc::new(AtomicBool::new(false));
+        let worker_exited_clone = worker_exited.clone();
+        pool.execute(move || async move {
+            struct RuntimeDropGuard(Arc<AtomicBool>);
+
+            impl Drop for RuntimeDropGuard {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Release);
+                }
+            }
+
+            tokio::spawn(async move {
+                let _guard = RuntimeDropGuard(worker_exited_clone);
+                std::future::pending::<()>().await;
+            });
+            tokio::task::yield_now().await;
+        })
+        .await
+        .unwrap();
+        drop(pool);
+        assert!(worker_exited.load(Ordering::Acquire));
     }
 }
