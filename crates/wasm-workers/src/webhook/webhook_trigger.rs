@@ -635,8 +635,8 @@ pub async fn server(
                                         router: state.router.clone(),
                                         connection_drop_watcher: connection_drop_watcher.clone(),
                                         server_termination_watcher: server_termination_watcher.clone(),
-                                        log_forwarder_sender: log_forwarder_sender.clone()
-                                        ,request_timeout: state.request_timeout
+                                        log_forwarder_sender: log_forwarder_sender.clone(),
+                                        request_timeout: state.request_timeout,
                                     }
                                     .handle_request(req, max_inflight_requests.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
