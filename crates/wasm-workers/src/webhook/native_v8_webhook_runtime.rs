@@ -139,50 +139,48 @@ async fn op_webhook_sleep(
         .await
 }
 
-#[op2]
+#[op2(async(deferred))]
 #[serde]
-fn op_webhook_fetch(
-    state: &mut OpState,
+async fn op_webhook_fetch(
+    state: Rc<RefCell<OpState>>,
     #[serde] request: FetchRequest,
 ) -> Result<FetchResponse, JsErrorBox> {
-    let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| op_webhook_fetch_inner(state, request))
+    let panic = state.borrow().borrow::<HostState>().panic.clone();
+    panic
+        .catch_async(op_webhook_fetch_inner(state, request))
+        .await
 }
 
-fn op_webhook_fetch_inner(
-    state: &mut OpState,
+async fn op_webhook_fetch_inner(
+    state: Rc<RefCell<OpState>>,
     request: FetchRequest,
 ) -> Result<FetchResponse, JsErrorBox> {
-    let host = state.borrow_mut::<HostState>();
-    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
-    let future = async move {
-        // SAFETY: host calls are serialized by the isolate.
-        let ctx = unsafe { &mut *ctx };
-        let method = request
-            .method
-            .parse()
-            .map_err(|err| JsErrorBox::type_error(format!("invalid HTTP method: {err}")))?;
-        let uri = request
-            .url
-            .parse()
-            .map_err(|err| JsErrorBox::type_error(format!("invalid URL: {err}")))?;
-        let (status, headers, body) = ctx
-            .http_hooks
-            .send_native_request(
-                method,
-                uri,
-                request.headers,
-                request.body.unwrap_or_default().into_bytes(),
-            )
-            .await
-            .map_err(JsErrorBox::generic)?;
-        Ok(FetchResponse {
-            status,
-            headers,
-            body: String::from_utf8_lossy(&body).into_owned(),
-        })
-    };
-    host.block_on(future)
+    let ctx = state.borrow_mut().borrow_mut::<HostState>().ctx;
+    // SAFETY: host calls are serialized by the isolate.
+    let ctx = unsafe { &mut *(ctx as *mut WebhookEndpointCtx) };
+    let method = request
+        .method
+        .parse()
+        .map_err(|err| JsErrorBox::type_error(format!("invalid HTTP method: {err}")))?;
+    let uri = request
+        .url
+        .parse()
+        .map_err(|err| JsErrorBox::type_error(format!("invalid URL: {err}")))?;
+    let (status, headers, body) = ctx
+        .http_hooks
+        .send_native_request(
+            method,
+            uri,
+            request.headers,
+            request.body.unwrap_or_default().into_bytes(),
+        )
+        .await
+        .map_err(JsErrorBox::generic)?;
+    Ok(FetchResponse {
+        status,
+        headers,
+        body: String::from_utf8_lossy(&body).into_owned(),
+    })
 }
 
 #[op2]
@@ -768,6 +766,6 @@ class Request { constructor(input, options = {}) { if (typeof input === 'object'
 globalThis.Request = Request;
 class Response { constructor(body = '', options = {}) { this._body=body == null ? '' : String(body); this.status=options.status??200; this.ok=this.status>=200&&this.status<300; this.headers=new Headers(options.headers); } async text(){return this._body;} async json(){return JSON.parse(this._body);} static json(value, options = {}) { const response=new Response(JSON.stringify(value),options); if(!response.headers.has('content-type')) response.headers.set('content-type','application/json'); return response; } }
 globalThis.Response = Response;
-globalThis.fetch = async (input, options = {}) => { const request=input instanceof Request?input:new Request(input,options); const data=Deno.core.ops.op_webhook_fetch({url:request.url,method:request.method,headers:[...request.headers],body:request._body}); return new Response(data.body,{status:data.status,headers:data.headers}); };
+globalThis.fetch = async (input, options = {}) => { const request=input instanceof Request?input:new Request(input,options); const data=await Deno.core.ops.op_webhook_fetch({url:request.url,method:request.method,headers:[...request.headers],body:request._body}); return new Response(data.body,{status:data.status,headers:data.headers}); };
 globalThis.__obeliskInvoke = async (handler, data) => { const request=new Request({__native:true,url:data.url,method:data.method,headers:data.headers,_body:data.body}); const response=await handler(request); if(!(response instanceof Response)) throw new TypeError('handler must return a Response (e.g. `new Response(...)` or `Response.json(...)`)'); return {status:response.status,headers:[...response.headers],body:await response.text()}; };
 ";
