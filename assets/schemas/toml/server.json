@@ -58,6 +58,9 @@
     "v8": {
       "$ref": "#/$defs/V8ConfigToml"
     },
+    "webhooks": {
+      "$ref": "#/$defs/WebhooksGlobalConfigToml"
+    },
     "workflows": {
       "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     },
@@ -781,9 +784,15 @@
           "format": "uint64",
           "minimum": 0,
           "default": 268435456
-        },
-        "webhook_request_timeout": {
-          "description": "Wall-clock deadline applied to both WASM and V8 webhook requests.",
+        }
+      },
+      "additionalProperties": false
+    },
+    "WebhooksGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "request_timeout": {
+          "description": "Wall-clock deadline for every webhook request, regardless of component runtime.",
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "seconds": 30

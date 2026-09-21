@@ -70,6 +70,8 @@ pub(crate) struct ServerConfigToml {
     pub(crate) wasm_global_config: WasmGlobalConfigToml,
     #[serde(default)]
     pub(crate) v8: V8ConfigToml,
+    #[serde(default)]
+    pub(crate) webhooks: WebhooksGlobalConfigToml,
     #[serde(default, rename = "workflows")]
     pub(crate) workflows_global_config: WorkflowsGlobalConfigToml,
     #[serde(default)]
@@ -111,9 +113,6 @@ pub(crate) struct V8ConfigToml {
     /// Maximum V8-managed heap size in bytes for each isolate.
     #[serde(default = "default_v8_max_heap_size")]
     pub(crate) max_heap_size: u64,
-    /// Wall-clock deadline applied to both WASM and V8 webhook requests.
-    #[serde(default = "default_v8_webhook_request_timeout")]
-    pub(crate) webhook_request_timeout: DurationConfig,
 }
 
 impl Default for V8ConfigToml {
@@ -126,7 +125,6 @@ impl Default for V8ConfigToml {
             thread_stack_size: default_v8_thread_stack_size(),
             idle_timeout: default_v8_idle_timeout(),
             max_heap_size: default_v8_max_heap_size(),
-            webhook_request_timeout: default_v8_webhook_request_timeout(),
         }
     }
 }
@@ -152,10 +150,6 @@ const fn default_v8_idle_timeout() -> DurationConfig {
 const fn default_v8_max_heap_size() -> u64 {
     256 * 1024 * 1024
 }
-const fn default_v8_webhook_request_timeout() -> DurationConfig {
-    DurationConfig::Seconds(30)
-}
-
 impl ServerConfigToml {
     pub(crate) fn resolve_env_vars(
         &mut self,
@@ -265,6 +259,26 @@ pub(crate) fn audit_exec_activities(entries: &AllowExecActivities) -> serde_json
             (name, digests.iter().map(ToString::to_string).collect::<Vec<_>>())
         }).collect::<BTreeMap<_, _>>(),
     })
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WebhooksGlobalConfigToml {
+    /// Wall-clock deadline for every webhook request, regardless of component runtime.
+    #[serde(default = "default_webhook_request_timeout")]
+    pub(crate) request_timeout: DurationConfig,
+}
+
+impl Default for WebhooksGlobalConfigToml {
+    fn default() -> Self {
+        Self {
+            request_timeout: default_webhook_request_timeout(),
+        }
+    }
+}
+
+const fn default_webhook_request_timeout() -> DurationConfig {
+    DurationConfig::Seconds(30)
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
@@ -1060,6 +1074,42 @@ pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 mod tests {
     use super::*;
     use crate::config::deployment::{MethodsInput, ReplaceIn};
+
+    mod webhooks {
+        use super::*;
+
+        #[test]
+        fn request_timeout_is_runtime_independent() {
+            let default_config: ServerConfigToml = toml::from_str("").unwrap();
+            assert!(matches!(
+                default_config.webhooks.request_timeout,
+                DurationConfig::Seconds(30)
+            ));
+
+            let config: ServerConfigToml = toml::from_str(
+                r"
+                [webhooks]
+                request_timeout.milliseconds = 250
+                ",
+            )
+            .unwrap();
+            assert!(matches!(
+                config.webhooks.request_timeout,
+                DurationConfig::Milliseconds(250)
+            ));
+        }
+
+        #[test]
+        fn request_timeout_is_not_a_v8_setting() {
+            toml::from_str::<ServerConfigToml>(
+                r"
+                [v8]
+                webhook_request_timeout.seconds = 1
+                ",
+            )
+            .unwrap_err();
+        }
+    }
 
     mod outbound_http {
         use super::*;

@@ -2303,6 +2303,7 @@ impl ServerVerified {
     ) -> Result<ServerVerified, anyhow::Error> {
         debug!("Using server toml: {config:#?}");
         let v8_config = config.v8;
+        let webhook_request_timeout = config.webhooks.request_timeout.into();
         if v8_config.max_threads == 0
             || v8_config.max_workflows == 0
             || v8_config.max_activities == 0
@@ -2435,7 +2436,7 @@ impl ServerVerified {
             launch: ServerVerifiedLaunch {
                 engines,
                 v8_pool,
-                webhook_request_timeout: v8_config.webhook_request_timeout.into(),
+                webhook_request_timeout,
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 workflows_max_replay_captured_writes,

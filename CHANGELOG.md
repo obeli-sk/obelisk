@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(activity-js, webhook-js, workflow-js)* Added experimental native V8 runtimes, enabled for all
   JavaScript components with `OBELISK_UNSTABLE_V8=true`. The default remains Boa compiled to WASM.
   These V8 runtimes may change incompatibly or be removed.
+- *(server)* Added bounded native V8 execution pools with global and per-workload concurrency,
+  per-isolate heap, worker stack, and idle-retirement settings under `[v8]`.
+- *(webhook)* Added `[webhooks].request_timeout`, a common wall-clock request deadline enforced
+  for both WASM and native V8 webhook components. The default is 30 seconds.
 
 ## [0.42.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.2...v0.42.0-rc.3)
 
