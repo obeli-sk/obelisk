@@ -1115,6 +1115,111 @@ mod tests {
         assert_eq!(extract_string(&ok_val.value), "fetch works");
     }
 
+    /// The outbound Host header must be derived from the URI authority (parity with
+    /// the wasmtime path, where wasmtime-wasi-http sets it), and ordinary headers are
+    /// forwarded, on both JS runtimes.
+    #[rstest]
+    #[tokio::test]
+    async fn fetch_sets_host_header(
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
+    ) {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{header, method, path},
+        };
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        let real_host = format!("127.0.0.1:{}", server.address().port());
+        Mock::given(method("GET"))
+            .and(path("/hello"))
+            .and(header("host", real_host.as_str()))
+            .and(header("x-custom", "kept"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("fetch works"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch(params) {{
+                const resp = await fetch("{url}/hello", {{
+                    headers: {{ "X-Custom": "kept" }},
+                }});
+                return await resp.text();
+            }}
+            "#
+        );
+
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host(&allowed)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let output = assert_matches!(retval, SupportedFunctionReturnValue::Ok(ok) => ok);
+        let ok_val = output.expect("should have ok value");
+        assert_eq!(extract_string(&ok_val.value), "fetch works");
+    }
+
+    /// A guest that sets a forbidden header on an outbound request is rejected and the
+    /// request never reaches the server (parity with wasmtime, which errors at the
+    /// `Fields` boundary), on both JS runtimes.
+    #[rstest]
+    #[tokio::test]
+    async fn fetch_rejects_forbidden_request_header(
+        #[values(ActivityJsRuntime::BoaWasm, ActivityJsRuntime::V8)] runtime: ActivityJsRuntime,
+    ) {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        test_utils::set_up();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/hello"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("fetch works"))
+            .expect(0) // forbidden header must block the request before it is sent
+            .mount(&server)
+            .await;
+
+        let url = server.uri();
+        let ffqn = FunctionFqn::new_static("test:pkg/ifc", "do-fetch");
+        let js_source = format!(
+            r#"
+            export default async function do_fetch(params) {{
+                const resp = await fetch("{url}/hello", {{
+                    headers: {{ "Connection": "keep-alive" }},
+                }});
+                return await resp.text();
+            }}
+            "#
+        );
+
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
+        let worker = JsWorkerBuilder::new(&js_source, ffqn.clone())
+            .with_allowed_host(&allowed)
+            .with_runtime(runtime)
+            .build()
+            .await;
+        let (ctx, _close_tx) = make_worker_context(ffqn, &[]);
+
+        let result = worker.run(ctx).await.expect("worker should succeed");
+        let retval = assert_matches!(result, WorkerResultOk::RunFinished(RunFinished { retval, .. }) => retval);
+        let err_val = assert_matches!(retval, SupportedFunctionReturnValue::Err(err) => err);
+        let msg =
+            extract_string(&err_val.expect("should have error value").value).to_ascii_lowercase();
+        assert!(
+            msg.contains("header") && msg.contains("connection"),
+            "expected a forbidden-header rejection, got: {msg}"
+        );
+    }
+
     #[tokio::test]
     async fn fetch_get_with_explicit_options_has_no_body() {
         use wiremock::{

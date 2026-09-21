@@ -222,10 +222,6 @@ impl WorkflowCtx {
             .map(ToString::to_string)
     }
 
-    pub(crate) fn native_interruption(&self) -> Option<super::deadline_tracker::TrackResult> {
-        self.event_history.deadline_tracker.native_interruption()
-    }
-
     pub(crate) fn native_backtrace(&self) -> Option<storage::WasmBacktrace> {
         self.should_capture_backtrace()
             .then(|| storage::WasmBacktrace {
@@ -1054,6 +1050,10 @@ pub enum BacktraceCapture {
 impl WorkflowCtx {
     pub(crate) fn version(&self) -> &Version {
         self.event_call_cursor.version()
+    }
+
+    pub(crate) fn restore_version(&mut self, version: Version) {
+        self.event_call_cursor.restore_version(version);
     }
 
     pub(crate) fn replay_progress(&self) -> Option<ReplayProgress> {

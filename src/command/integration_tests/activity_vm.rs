@@ -236,3 +236,74 @@ async fn http_loopback_connect_to() {
 async fn http_obelisk_host() {
     activity_vm_http_case(test_addr!(139), true).await;
 }
+
+/// End-to-end (VM guest curl -> proxy -> bridge -> server): the outbound Host is derived
+/// from the request authority and ordinary headers are forwarded, while a forbidden
+/// header the guest sends (curl always sends Host; here also `Connection`) is stripped
+/// rather than breaking the request. This is the activity-VM counterpart to the parity
+/// the `http_bridge` unit tests and the JS `fetch_sets_host_header` tests assert.
+async fn activity_vm_http_headers_case(ip: String) {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{header, method, path},
+    };
+
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let mock_port = listener.local_addr().unwrap().port();
+    let mock = MockServer::builder().listener(listener).start().await;
+    let authority = format!("localhost:{mock_port}");
+    Mock::given(method("GET"))
+        .and(path("/anything"))
+        .and(header("host", authority.as_str()))
+        .and(header("x-custom", "kept"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let server_toml = format!(
+        r#"[[outbound_http.allowed_host]]
+pattern = "http://{authority}"
+methods = ["GET"]
+"#
+    );
+    let deployment_toml = format!(
+        r#"[[activity_vm]]
+exec.lock_expiry.seconds = 120
+ffqn = "testing:vm/http.run"
+content = '''#!/usr/bin/env bash
+set -eu
+curl -fsS \
+  --connect-to {authority}:127.0.0.1:80 \
+  --connect-timeout 5 \
+  --max-time 10 \
+  -H "Connection: keep-alive" \
+  -H "X-Custom: kept" \
+  http://{authority}/anything
+printf '%s\n' '"ok"'
+'''
+params = []
+return_type = "result<string, string>"
+store_paths = [
+  "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
+  "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",
+]
+[[activity_vm.allowed_host]]
+pattern = "http://{authority}"
+methods = ["GET"]
+"#
+    );
+    let server = TestServer::start_inline_deployment(ip, &server_toml, &deployment_toml, &[]).await;
+    let response = server.submit_follow("testing:vm/http.run", vec![]).await;
+    assert_eq!(response.status().as_u16(), 201);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({ "ok": "ok" })
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn http_headers_host_and_forbidden() {
+    activity_vm_http_headers_case(test_addr!(174)).await;
+}

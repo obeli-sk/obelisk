@@ -77,7 +77,7 @@ impl Drop for V8Pool {
                 let _ = sender.send(Message::Shutdown);
             }
             for worker in self.inner.workers.lock().unwrap().drain(..) {
-                worker.join().expect("native V8 worker must not panic");
+                join_worker(worker);
             }
         }
     }
@@ -250,14 +250,24 @@ impl V8Pool {
         while index > 0 {
             index -= 1;
             if workers[index].is_finished() {
-                workers
-                    .swap_remove(index)
-                    .join()
-                    .expect("native V8 worker must not panic");
+                join_worker(workers.swap_remove(index));
             }
         }
         workers.push(worker);
         Ok(())
+    }
+}
+
+fn join_worker(worker: std::thread::JoinHandle<()>) {
+    if let Err(panic) = worker.join() {
+        let reason = if let Some(message) = panic.downcast_ref::<&str>() {
+            *message
+        } else if let Some(message) = panic.downcast_ref::<String>() {
+            message
+        } else {
+            "unknown panic payload"
+        };
+        tracing::error!(reason, "Native V8 worker thread panicked");
     }
 }
 
@@ -398,6 +408,20 @@ mod tests {
         pool.execute(|| async {}).await.unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
         pool.execute(|| async {}).await.unwrap();
+        assert_eq!(1, pool.inner.workers.lock().unwrap().len());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn replaces_panicked_worker() {
+        let pool = V8Pool::new(config());
+        let result: Result<(), V8PoolError> = pool
+            .execute(|| async {
+                panic!("test V8 worker panic");
+            })
+            .await;
+        assert!(matches!(result, Err(V8PoolError::WorkerStopped)));
+
+        assert_eq!(42, pool.execute(|| async { 42 }).await.unwrap());
         assert_eq!(1, pool.inner.workers.lock().unwrap().len());
     }
 }

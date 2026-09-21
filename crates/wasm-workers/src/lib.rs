@@ -20,6 +20,7 @@ pub mod registry;
 pub mod std_output_stream;
 #[cfg(any(test, feature = "test"))]
 pub mod testing_fn_registry;
+pub(crate) mod v8_panic;
 pub mod v8_pool;
 pub mod webhook;
 pub mod workflow;

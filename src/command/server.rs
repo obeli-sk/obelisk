@@ -4062,7 +4062,11 @@ impl ServerInit {
             deployment_switch_manager,
         } = self;
 
+        debug!("Shutdown: waiting for deployment operations");
+        deployment_switch_manager.close().await;
+
         let deployment_id = deployment_ctx.read().await.deployment_id;
+        debug!("Shutdown: recording shutdown request");
         crate::server::system_event_writer::record(
             db_pool.as_ref(),
             concepts::storage::SystemEventCode::ServerShutdownRequested,
@@ -4072,9 +4076,7 @@ impl ServerInit {
         )
         .await;
 
-        deployment_switch_manager.close().await;
-
-        debug!("Closing executors");
+        debug!("Shutdown: stopping executors");
         let executors = {
             let mut deployment_lock = deployment_ctx.write().await;
             deployment_lock.closed = true;
@@ -4086,7 +4088,7 @@ impl ServerInit {
                 .map(ExecutorTaskHandle::close_outer_task),
         )
         .await;
-        debug!("Waiting for workers");
+        debug!("Shutdown: waiting for workers");
         futures_util::future::join_all(
             worker_tasks_handles
                 .into_iter()
@@ -4095,6 +4097,7 @@ impl ServerInit {
         .await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.
+        debug!("Shutdown: stopping runtime services");
         drop(timers_watcher);
         drop(cancel_watcher);
         drop(cancellation_driver);
@@ -4105,6 +4108,7 @@ impl ServerInit {
         drop(webhook_registry);
         drop(log_forwarder_sender);
         drop(log_db_forarder); // Some activity messages might not be stored.
+        debug!("Shutdown: recording completion");
         crate::server::system_event_writer::record(
             db_pool.as_ref(),
             concepts::storage::SystemEventCode::ServerShutdownCompleted,
@@ -4114,8 +4118,9 @@ impl ServerInit {
         )
         .await;
         drop(db_pool);
-        debug!("Closing db");
+        debug!("Shutdown: closing database");
         db_close.await;
+        info!("Server shutdown complete");
     }
 }
 

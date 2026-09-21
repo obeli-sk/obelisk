@@ -308,10 +308,6 @@ impl ActivityWorker {
             >,
             tokio::task::JoinError,
         >;
-        type NativeActivityResult = (
-            Result<SupportedFunctionReturnValue, NativeActivityFailure>,
-            NativeActivityState,
-        );
         enum End {
             Complete(Box<NativeActivityTaskResult>),
             Timeout,
@@ -327,6 +323,10 @@ impl ActivityWorker {
                 End::Closing
             }
         };
+        type NativeActivityResult = (
+            Result<SupportedFunctionReturnValue, NativeActivityFailure>,
+            NativeActivityState,
+        );
         let (result, state) = match end {
             End::Complete(result) => (*result)
                 .expect("native V8 activity supervisor task panicked")

@@ -53,10 +53,23 @@ struct FetchResponse {
 struct HostState {
     activity: Arc<Mutex<NativeActivityState>>,
     env: HashMap<String, String>,
+    panic: crate::v8_panic::V8PanicState,
 }
 
 #[op2(fast)]
-fn op_activity_log(state: &mut OpState, #[string] level: String, #[string] message: String) {
+fn op_activity_log(
+    state: &mut OpState,
+    #[string] level: String,
+    #[string] message: String,
+) -> Result<(), JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| {
+        op_activity_log_inner(state, level, message);
+        Ok(())
+    })
+}
+
+fn op_activity_log_inner(state: &mut OpState, level: String, message: String) {
     let activity = state.borrow::<HostState>().activity.clone();
     let level = match level.as_str() {
         "trace" => LogLevel::Trace,
@@ -73,12 +86,24 @@ fn op_activity_log(state: &mut OpState, #[string] level: String, #[string] messa
 #[op2]
 #[string]
 fn op_activity_env(state: &mut OpState, #[string] name: String) -> Option<String> {
-    state.borrow::<HostState>().env.get(&name).cloned()
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic
+        .catch(|| Ok(state.borrow::<HostState>().env.get(&name).cloned()))
+        .unwrap_or_default()
 }
 
 #[op2(async(deferred), fast)]
-async fn op_activity_sleep(#[number] milliseconds: u64) {
-    tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+async fn op_activity_sleep(
+    state: Rc<RefCell<OpState>>,
+    #[number] milliseconds: u64,
+) -> Result<(), JsErrorBox> {
+    let panic = state.borrow().borrow::<HostState>().panic.clone();
+    panic
+        .catch_async(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+            Ok(())
+        })
+        .await
 }
 
 #[op2(async(deferred))]
@@ -86,6 +111,16 @@ async fn op_activity_sleep(#[number] milliseconds: u64) {
 async fn op_activity_fetch(
     state: Rc<RefCell<OpState>>,
     #[serde] request: FetchRequest,
+) -> Result<FetchResponse, JsErrorBox> {
+    let panic = state.borrow().borrow::<HostState>().panic.clone();
+    panic
+        .catch_async(op_activity_fetch_inner(state, request))
+        .await
+}
+
+async fn op_activity_fetch_inner(
+    state: Rc<RefCell<OpState>>,
+    request: FetchRequest,
 ) -> Result<FetchResponse, JsErrorBox> {
     let activity = state.borrow().borrow::<HostState>().activity.clone();
     let method = request
@@ -116,18 +151,27 @@ async fn op_activity_fetch(
 
 #[op2]
 #[serde]
-fn op_activity_random(#[smi] length: u32) -> Vec<u8> {
-    let mut bytes = vec![0; length as usize];
-    rand::rng().fill_bytes(&mut bytes);
-    bytes
+fn op_activity_random(state: &mut OpState, #[smi] length: u32) -> Result<Vec<u8>, JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| {
+        let mut bytes = vec![0; length as usize];
+        rand::rng().fill_bytes(&mut bytes);
+        Ok(bytes)
+    })
 }
 
 #[op2]
 #[serde]
 fn op_activity_hmac_sha256(
+    state: &mut OpState,
     #[serde] key: Vec<u8>,
     #[serde] message: Vec<u8>,
 ) -> Result<Vec<u8>, JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| op_activity_hmac_sha256_inner(key, message))
+}
+
+fn op_activity_hmac_sha256_inner(key: Vec<u8>, message: Vec<u8>) -> Result<Vec<u8>, JsErrorBox> {
     let mut mac = Hmac::<Sha256>::new_from_slice(&key)
         .map_err(|err| JsErrorBox::type_error(err.to_string()))?;
     mac.update(&message);
@@ -167,12 +211,18 @@ pub(crate) async fn execute(
         create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
         ..Default::default()
     });
-    let _ = isolate_tx.send(runtime.v8_isolate().thread_safe_handle());
+    let isolate = runtime.v8_isolate().thread_safe_handle();
+    let _ = isolate_tx.send(isolate.clone());
+    let panic = crate::v8_panic::V8PanicState::new(isolate);
     runtime.op_state().borrow_mut().put(HostState {
         activity: shared.clone(),
         env,
+        panic: panic.clone(),
     });
-    let result = execute_inner(&mut runtime, &loader, entry_path, params, return_type).await;
+    let mut result = execute_inner(&mut runtime, &loader, entry_path, params, return_type).await;
+    if let Some(reason) = panic.take() {
+        result = Err(NativeActivityFailure::Trap(reason));
+    }
     drop(runtime);
     let state = Arc::try_unwrap(shared)
         .unwrap_or_else(|_| panic!("native V8 activity host state is still referenced"))
