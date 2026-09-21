@@ -244,7 +244,18 @@ impl V8Pool {
             .stack_size(config.thread_stack_size)
             .spawn(move || worker_loop(receiver, worker_sender, inner, config, first_job))
             .map_err(V8PoolError::Spawn)?;
-        self.inner.workers.lock().unwrap().push(worker);
+        let mut workers = self.inner.workers.lock().unwrap();
+        let mut index = workers.len();
+        while index > 0 {
+            index -= 1;
+            if workers[index].is_finished() {
+                workers
+                    .swap_remove(index)
+                    .join()
+                    .expect("native V8 worker must not panic");
+            }
+        }
+        workers.push(worker);
         Ok(())
     }
 }
@@ -376,5 +387,16 @@ mod tests {
         .unwrap();
         drop(pool);
         assert!(worker_exited.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reaps_retired_workers_when_growing_again() {
+        let mut pool_config = config();
+        pool_config.idle_timeout = Duration::from_millis(10);
+        let pool = V8Pool::new(pool_config);
+        pool.execute(|| async {}).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        pool.execute(|| async {}).await.unwrap();
+        assert_eq!(1, pool.inner.workers.lock().unwrap().len());
     }
 }
