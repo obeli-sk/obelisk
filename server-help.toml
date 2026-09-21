@@ -135,7 +135,10 @@
 
 ## Global Webhook Configuration
 # [webhooks]
-# request_timeout.seconds = 30     # Wall-clock deadline for every WASM or native V8 webhook request, including request-body collection and response construction.
+## Wall-clock deadline for a WASM or native V8 webhook handler to accept the request and
+## return its HTTP response. It does not limit a streaming response body after the response
+## has been returned.
+# request_timeout.seconds = 30
 
 ## Global Workflow Configuration
 # [workflows]

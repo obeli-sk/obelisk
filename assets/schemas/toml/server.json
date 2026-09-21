@@ -792,7 +792,7 @@
       "type": "object",
       "properties": {
         "request_timeout": {
-          "description": "Wall-clock deadline for every webhook request, regardless of component runtime.",
+          "description": "Wall-clock deadline for a webhook handler to accept the request and return its HTTP\nresponse, regardless of component runtime. Once the response has been returned, this\ndeadline does not limit the lifetime of a streaming response body.",
           "$ref": "#/$defs/DurationConfig",
           "default": {
             "seconds": 30

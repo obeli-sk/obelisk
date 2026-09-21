@@ -264,7 +264,9 @@ pub(crate) fn audit_exec_activities(entries: &AllowExecActivities) -> serde_json
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WebhooksGlobalConfigToml {
-    /// Wall-clock deadline for every webhook request, regardless of component runtime.
+    /// Wall-clock deadline for a webhook handler to accept the request and return its HTTP
+    /// response, regardless of component runtime. Once the response has been returned, this
+    /// deadline does not limit the lifetime of a streaming response body.
     #[serde(default = "default_webhook_request_timeout")]
     pub(crate) request_timeout: DurationConfig,
 }
