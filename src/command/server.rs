@@ -192,6 +192,7 @@ use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::ReplayWorker;
 use wasm_workers::registry::ReplayWorkerRegistry;
 use wasm_workers::registry::WitOrigin;
+use wasm_workers::v8_pool::V8Pool;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -2271,6 +2272,7 @@ pub(crate) struct ServerVerified {
 #[derive(Clone)]
 struct ServerVerifiedLaunch {
     engines: Engines,
+    v8_pool: V8Pool,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
     /// Bound on captured writes collected during a single replay pass. See
@@ -2406,6 +2408,7 @@ impl ServerVerified {
         Ok(Self {
             launch: ServerVerifiedLaunch {
                 engines,
+                v8_pool: V8Pool::default(),
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
                 workflows_max_replay_captured_writes,
@@ -2520,6 +2523,7 @@ impl ServerCompiledLinked {
             server_verified.workflow_js_runtime,
             server_verified.activity_js_runtime,
             server_verified.webhook_js_runtime,
+            server_verified.v8_pool,
             termination_watcher,
             suppress_linking_errors,
         )
@@ -5007,6 +5011,7 @@ async fn compile_and_link(
     workflow_js_runtime: WorkflowJsRuntime,
     activity_js_runtime: ActivityJsRuntime,
     webhook_js_runtime: WebhookJsRuntime,
+    v8_pool: V8Pool,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
@@ -5128,11 +5133,12 @@ async fn compile_and_link(
             // No build_semaphore as the WASM was already compiled.
             let engines = engines.clone();
             let parent_span = parent_span.clone();
+            let v8_pool = v8_pool.clone();
             let activity_js_runnable = activity_js_runnable.clone().expect("must have been filled above");
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
-                    prespawn_activity_js(activity_js, &engines, activity_js_runnable, activity_js_runtime).map(|(worker, component_config, frame_files)| {
+                    prespawn_activity_js(activity_js, &engines, activity_js_runnable, activity_js_runtime, v8_pool).map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -5666,6 +5672,7 @@ fn prespawn_activity_js(
     engines: &Engines,
     runnable_component: RunnableComponent,
     runtime: ActivityJsRuntime,
+    v8_pool: V8Pool,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
@@ -5677,7 +5684,8 @@ fn prespawn_activity_js(
         Now.clone_box(),
         Arc::new(TokioSleep),
     )
-    .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?;
+    .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?
+    .with_v8_pool(v8_pool);
 
     let wit_origin = if activity_js.user_wasm_component.is_some() {
         WitOrigin::Authored
