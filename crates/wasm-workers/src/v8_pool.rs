@@ -3,16 +3,29 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::{Semaphore, oneshot};
-use tokio::task::LocalSet;
 
 type Complete = Box<dyn FnOnce() + Send + 'static>;
 type Job = Box<dyn FnOnce(&Runtime) -> Complete + Send + 'static>;
+enum Message {
+    Execute(Job),
+    Shutdown,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct V8PoolConfig {
     pub max_threads: usize,
     pub thread_stack_size: usize,
     pub idle_timeout: Duration,
+}
+
+impl Default for V8PoolConfig {
+    fn default() -> Self {
+        Self {
+            max_threads: 64,
+            thread_stack_size: 4 * 1024 * 1024,
+            idle_timeout: Duration::from_secs(60),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -33,7 +46,25 @@ pub struct V8Pool {
 struct PoolInner {
     config: V8PoolConfig,
     active: Arc<Semaphore>,
-    idle: Mutex<Vec<std::sync::mpsc::Sender<Job>>>,
+    idle: Mutex<Vec<std::sync::mpsc::Sender<Message>>>,
+}
+
+impl Drop for PoolInner {
+    fn drop(&mut self) {
+        for sender in self.idle.get_mut().unwrap().drain(..) {
+            let _ = sender.send(Message::Shutdown);
+        }
+    }
+}
+
+impl Drop for V8Pool {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) == 1 {
+            for sender in self.inner.idle.lock().unwrap().drain(..) {
+                let _ = sender.send(Message::Shutdown);
+            }
+        }
+    }
 }
 
 impl V8Pool {
@@ -70,9 +101,17 @@ impl V8Pool {
             .map_err(|_| V8PoolError::Closed)?;
         let (result_tx, result_rx) = oneshot::channel();
         let job = Box::new(move |runtime: &Runtime| {
-            let local = LocalSet::new();
-            let result = local.block_on(runtime, execute());
-            drop(local);
+            let future = async move {
+                deno_core::unsync::spawn(execute())
+                    .await
+                    .expect("native V8 local task must not be cancelled")
+            };
+            // SAFETY: this bootstrap task runs only on the worker's current-thread runtime.
+            let future = unsafe { deno_core::unsync::MaskFutureAsSend::new(future) };
+            let result = runtime
+                .block_on(runtime.spawn(future))
+                .expect("native V8 root task must not be cancelled")
+                .into_inner();
             Box::new(move || {
                 let _ = result_tx.send(result);
                 drop(permit);
@@ -88,15 +127,18 @@ impl V8Pool {
             let Some(sender) = idle else {
                 return self.spawn_worker(job);
             };
-            match sender.send(job) {
+            match sender.send(Message::Execute(job)) {
                 Ok(()) => return Ok(()),
-                Err(err) => job = err.0,
+                Err(err) => match err.0 {
+                    Message::Execute(returned) => job = returned,
+                    Message::Shutdown => unreachable!(),
+                },
             }
         }
     }
 
     fn spawn_worker(&self, first_job: Job) -> Result<(), V8PoolError> {
-        let (sender, receiver) = std::sync::mpsc::channel::<Job>();
+        let (sender, receiver) = std::sync::mpsc::channel::<Message>();
         let worker_sender = sender.clone();
         let inner = Arc::downgrade(&self.inner);
         let config = self.inner.config;
@@ -109,9 +151,15 @@ impl V8Pool {
     }
 }
 
+impl Default for V8Pool {
+    fn default() -> Self {
+        Self::new(V8PoolConfig::default())
+    }
+}
+
 fn worker_loop(
-    receiver: std::sync::mpsc::Receiver<Job>,
-    sender: std::sync::mpsc::Sender<Job>,
+    receiver: std::sync::mpsc::Receiver<Message>,
+    sender: std::sync::mpsc::Sender<Message>,
     inner: Weak<PoolInner>,
     config: V8PoolConfig,
     first_job: Job,
@@ -130,8 +178,9 @@ fn worker_loop(
         drop(inner);
         current();
         match receiver.recv_timeout(config.idle_timeout) {
-            Ok(job) => complete = Some(job(&runtime)),
-            Err(
+            Ok(Message::Execute(job)) => complete = Some(job(&runtime)),
+            Ok(Message::Shutdown)
+            | Err(
                 std::sync::mpsc::RecvTimeoutError::Timeout
                 | std::sync::mpsc::RecvTimeoutError::Disconnected,
             ) => {
