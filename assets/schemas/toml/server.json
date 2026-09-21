@@ -55,6 +55,12 @@
     "wasm": {
       "$ref": "#/$defs/WasmGlobalConfigToml"
     },
+    "v8": {
+      "$ref": "#/$defs/V8ConfigToml"
+    },
+    "webhooks": {
+      "$ref": "#/$defs/WebhooksGlobalConfigToml"
+    },
     "workflows": {
       "$ref": "#/$defs/WorkflowsGlobalConfigToml"
     },
@@ -723,6 +729,74 @@
           "format": "uint",
           "minimum": 0,
           "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "V8ConfigToml": {
+      "type": "object",
+      "properties": {
+        "max_threads": {
+          "description": "Maximum number of native V8 isolate threads in this process.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 128
+        },
+        "max_workflows": {
+          "description": "Maximum number of resident native V8 workflows.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 100
+        },
+        "max_activities": {
+          "description": "Maximum number of running native V8 activities.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 16
+        },
+        "max_webhooks": {
+          "description": "Maximum number of running native V8 webhook requests.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 16
+        },
+        "thread_stack_size": {
+          "description": "Stack size in bytes for each native V8 worker thread.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 4194304
+        },
+        "idle_timeout": {
+          "description": "Time after which an unused native V8 worker thread retires.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 60
+          }
+        },
+        "max_heap_size": {
+          "description": "Maximum V8-managed heap size in bytes for each isolate.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 268435456
+        }
+      },
+      "additionalProperties": false
+    },
+    "WebhooksGlobalConfigToml": {
+      "type": "object",
+      "properties": {
+        "request_timeout": {
+          "description": "Wall-clock deadline for a webhook handler to accept the request and return its HTTP\nresponse, regardless of component runtime. Once the response has been returned, this\ndeadline does not limit the lifetime of a streaming response body.",
+          "$ref": "#/$defs/DurationConfig",
+          "default": {
+            "seconds": 30
+          }
         }
       },
       "additionalProperties": false

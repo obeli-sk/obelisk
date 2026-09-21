@@ -341,6 +341,15 @@ impl WorkflowJsWorkerCompiled {
         fn_registry: Arc<dyn FunctionRegistry>,
         runtime: WorkflowJsRuntime,
     ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
+        self.link_with_runtime_and_pool(fn_registry, runtime, crate::v8_pool::V8Pool::default())
+    }
+
+    pub fn link_with_runtime_and_pool(
+        self,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        runtime: WorkflowJsRuntime,
+        v8_pool: crate::v8_pool::V8Pool,
+    ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
         // Resolve JS imports against the function registry before linking.
         // This validates named imports and resolves namespace imports (`import *`).
         // Parse errors in JS source are caught here early rather than at runtime.
@@ -370,6 +379,7 @@ impl WorkflowJsWorkerCompiled {
                 self.js_files.clone(),
                 self.user_return_type.clone(),
                 resolved_imports,
+                v8_pool,
             ))),
         };
         Ok(WorkflowJsWorkerLinked {

@@ -5,6 +5,7 @@ use crate::envvar::EnvVar;
 use crate::http_hooks::ConfigSectionHint;
 use crate::http_hooks::HttpHooks;
 use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
+use crate::v8_pool::V8Pool;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -60,6 +61,8 @@ pub struct ActivityWorkerCompiled {
     sleep: Arc<dyn Sleep>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
+    #[debug(skip)]
+    v8_pool: V8Pool,
 }
 impl ActivityWorkerCompiled {
     pub fn new_with_config(
@@ -102,8 +105,15 @@ impl ActivityWorkerCompiled {
             sleep,
             exported_ffqn_to_index,
             config,
+            v8_pool: V8Pool::default(),
             instance_pre,
         })
+    }
+
+    #[must_use]
+    pub fn with_v8_pool(mut self, v8_pool: V8Pool) -> Self {
+        self.v8_pool = v8_pool;
+        self
     }
 
     #[must_use]
@@ -162,6 +172,7 @@ impl ActivityWorkerCompiled {
             sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             config: self.config,
+            v8_pool: self.v8_pool,
             cancel_registry,
             stdout,
             stderr,
@@ -179,6 +190,7 @@ pub struct ActivityWorker {
     sleep: Arc<dyn Sleep>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
+    v8_pool: V8Pool,
     cancel_registry: CancelRegistry,
     stdout: Option<StdOutputConfigWithSender>,
     stderr: Option<StdOutputConfigWithSender>,
@@ -267,24 +279,39 @@ impl ActivityWorker {
         };
         let params = ctx.params;
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
-        let mut task = tokio::task::spawn_blocking(move || {
-            execute(
-                &entry_path,
-                &files,
-                &params,
-                &return_type,
-                state,
-                isolate_tx,
-            )
+        let v8_pool = self.v8_pool.clone();
+        let max_heap_size = v8_pool.max_heap_size();
+        let mut task = tokio::spawn(async move {
+            v8_pool
+                .execute_for(crate::v8_pool::V8Workload::Activity, move || async move {
+                    execute(
+                        &entry_path,
+                        &files,
+                        &params,
+                        &return_type,
+                        state,
+                        isolate_tx,
+                        max_heap_size,
+                    )
+                    .await
+                })
+                .await
         });
         let isolate = isolate_rx.await.ok();
         type NativeActivityTaskResult = Result<
-            (
-                Result<SupportedFunctionReturnValue, NativeActivityFailure>,
-                NativeActivityState,
-            ),
+            Result<
+                (
+                    Result<SupportedFunctionReturnValue, NativeActivityFailure>,
+                    NativeActivityState,
+                ),
+                crate::v8_pool::V8PoolError,
+            >,
             tokio::task::JoinError,
         >;
+        type NativeActivityResult = (
+            Result<SupportedFunctionReturnValue, NativeActivityFailure>,
+            NativeActivityState,
+        );
         enum End {
             Complete(Box<NativeActivityTaskResult>),
             Timeout,
@@ -301,12 +328,17 @@ impl ActivityWorker {
             }
         };
         let (result, state) = match end {
-            End::Complete(result) => (*result).expect("native V8 activity task panicked"),
+            End::Complete(result) => (*result)
+                .expect("native V8 activity supervisor task panicked")
+                .expect("native V8 activity task failed"),
             interrupted => {
                 if let Some(isolate) = isolate {
                     isolate.terminate_execution();
                 }
-                let (_, state) = task.await.expect("native V8 activity task panicked");
+                let (_, state): NativeActivityResult = task
+                    .await
+                    .expect("native V8 activity supervisor task panicked")
+                    .expect("native V8 activity task failed");
                 let traces = collect_http_traces(state.http_hooks.http_client_traces);
                 return match interrupted {
                     End::Timeout => Err(WorkerError::TemporaryTimeout {

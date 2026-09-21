@@ -146,23 +146,25 @@ deno_core::extension!(
     ]
 );
 
-pub(crate) fn execute(
+pub(crate) async fn execute(
     entry_path: &str,
     files: &BTreeMap<String, String>,
     params: &Params,
     return_type: &ReturnTypeExtendable,
     state: NativeActivityState,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    max_heap_size: usize,
 ) -> (
     Result<SupportedFunctionReturnValue, NativeActivityFailure>,
     NativeActivityState,
 ) {
     let loader = Rc::new(InMemoryModuleLoader::new(files));
     let shared = Arc::new(Mutex::new(state));
-    let env = futures_lite::future::block_on(async { shared.lock().await.env.clone() });
+    let env = shared.lock().await.env.clone();
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_activity_v8::init()],
+        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
         ..Default::default()
     });
     let _ = isolate_tx.send(runtime.v8_isolate().thread_safe_handle());
@@ -170,7 +172,7 @@ pub(crate) fn execute(
         activity: shared.clone(),
         env,
     });
-    let result = execute_inner(&mut runtime, &loader, entry_path, params, return_type);
+    let result = execute_inner(&mut runtime, &loader, entry_path, params, return_type).await;
     drop(runtime);
     let state = Arc::try_unwrap(shared)
         .unwrap_or_else(|_| panic!("native V8 activity host state is still referenced"))
@@ -178,7 +180,7 @@ pub(crate) fn execute(
     (result, state)
 }
 
-fn execute_inner(
+async fn execute_inner(
     runtime: &mut JsRuntime,
     loader: &InMemoryModuleLoader,
     entry_path: &str,
@@ -201,14 +203,15 @@ fn execute_inner(
         serde_json::to_string(entry.as_str()).expect("URL must serialize"),
         serde_json::to_string(&params).expect("parameters must serialize")
     );
-    let evaluated = futures_lite::future::block_on(async {
+    let evaluated = async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
         let evaluation = runtime.mod_evaluate(id);
         runtime
             .run_event_loop(deno_core::PollEventLoopOptions::default())
             .await?;
         evaluation.await
-    });
+    }
+    .await;
     if let Err(err) = evaluated {
         let reason = err.to_string();
         if reason.contains("does not provide an export named 'default'") {

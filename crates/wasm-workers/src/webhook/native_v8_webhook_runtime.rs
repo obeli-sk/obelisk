@@ -55,7 +55,8 @@ impl HostState {
     }
 
     fn block_on<T>(&mut self, future: impl Future<Output = T>) -> T {
-        self.handle.block_on(future)
+        let _guard = self.handle.enter();
+        futures_lite::future::block_on(future)
     }
 }
 
@@ -212,7 +213,8 @@ deno_core::extension!(
     ]
 );
 
-pub(super) fn execute(
+#[expect(clippy::too_many_arguments)]
+pub(super) async fn execute(
     config: &WebhookEndpointJsConfig,
     imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
     request: NativeRequest,
@@ -220,11 +222,13 @@ pub(super) fn execute(
     ctx: &mut WebhookEndpointCtx,
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    max_heap_size: usize,
 ) -> Result<NativeResponse, NativeWebhookFailure> {
     let loader = Rc::new(InMemoryModuleLoader::new(&config.files, imports));
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_webhook_v8::init()],
+        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
         ..Default::default()
     });
     let _ = isolate_tx.send(runtime.v8_isolate().thread_safe_handle());
@@ -248,14 +252,15 @@ pub(super) fn execute(
         serde_json::to_string(entry.as_str()).expect("URL must serialize"),
         serde_json::to_string(&request_to_json(request)).expect("request must serialize")
     );
-    let evaluated = futures_lite::future::block_on(async {
+    let evaluated = async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
         let evaluation = runtime.mod_evaluate(id);
         runtime
             .run_event_loop(deno_core::PollEventLoopOptions::default())
             .await?;
         evaluation.await
-    });
+    }
+    .await;
     if let Err(err) = evaluated {
         let reason = err.to_string();
         if reason.contains("does not provide an export named 'default'") {
