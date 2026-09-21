@@ -213,6 +213,7 @@ deno_core::extension!(
     ]
 );
 
+#[expect(clippy::too_many_arguments)]
 pub(super) async fn execute(
     config: &WebhookEndpointJsConfig,
     imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,

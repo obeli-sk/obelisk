@@ -107,7 +107,8 @@ impl WorkflowInvocation for NativeV8Invocation {
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
         let mut task = tokio::spawn(async move {
             let mut workflow_ctx = workflow_ctx;
-            let result = v8_pool
+
+            v8_pool
                 .execute_for(crate::v8_pool::V8Workload::Workflow, move || async move {
                     let result = execute(
                         ExecuteArgs {
@@ -126,8 +127,7 @@ impl WorkflowInvocation for NativeV8Invocation {
                     (result, workflow_ctx)
                 })
                 .await
-                .expect("native V8 workflow pool stopped");
-            result
+                .expect("native V8 workflow pool stopped")
         });
         let mut termination_guard = isolate_rx.await.ok().map(TerminationGuard::new);
         let result = match interruption {

@@ -84,6 +84,7 @@ impl Drop for V8Pool {
 }
 
 impl V8Pool {
+    #[must_use]
     pub fn new(config: V8PoolConfig) -> Self {
         assert!(
             config.max_threads > 0,
@@ -242,7 +243,7 @@ impl V8Pool {
         let worker = std::thread::Builder::new()
             .name("obelisk-v8".to_owned())
             .stack_size(config.thread_stack_size)
-            .spawn(move || worker_loop(receiver, worker_sender, inner, config, first_job))
+            .spawn(move || worker_loop(&receiver, &worker_sender, &inner, config, first_job))
             .map_err(V8PoolError::Spawn)?;
         let mut workers = self.inner.workers.lock().unwrap();
         let mut index = workers.len();
@@ -267,9 +268,9 @@ impl Default for V8Pool {
 }
 
 fn worker_loop(
-    receiver: std::sync::mpsc::Receiver<Message>,
-    sender: std::sync::mpsc::Sender<Message>,
-    inner: Weak<PoolInner>,
+    receiver: &std::sync::mpsc::Receiver<Message>,
+    sender: &std::sync::mpsc::Sender<Message>,
+    inner: &Weak<PoolInner>,
     config: V8PoolConfig,
     first_job: Job,
 ) {
