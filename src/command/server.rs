@@ -5339,6 +5339,7 @@ async fn compile_and_link(
                     let build_semaphore = build_semaphore.clone();
                     let parent_span = parent_span.clone();
                     let global_http_config = global_http_config.clone();
+                    let v8_pool = v8_pool.clone();
                     let webhook_js_runnable = webhook_js_runnable.clone().expect("must have been filled above");
                     tokio::task::spawn_blocking(move || {
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
@@ -5368,7 +5369,9 @@ async fn compile_and_link(
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
                                 config,
                                 webhook_js_runnable
-                            )?.with_js_runtime(webhook_js_runtime);
+                            )?
+                            .with_js_runtime(webhook_js_runtime)
+                            .with_v8_pool(v8_pool);
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
                                 webhook_compiled,

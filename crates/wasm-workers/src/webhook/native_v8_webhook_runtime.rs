@@ -55,7 +55,8 @@ impl HostState {
     }
 
     fn block_on<T>(&mut self, future: impl Future<Output = T>) -> T {
-        self.handle.block_on(future)
+        let _guard = self.handle.enter();
+        futures_lite::future::block_on(future)
     }
 }
 
@@ -212,7 +213,7 @@ deno_core::extension!(
     ]
 );
 
-pub(super) fn execute(
+pub(super) async fn execute(
     config: &WebhookEndpointJsConfig,
     imports: &HashMap<IfcFqnName, Vec<NamedFnImport>>,
     request: NativeRequest,
@@ -248,14 +249,15 @@ pub(super) fn execute(
         serde_json::to_string(entry.as_str()).expect("URL must serialize"),
         serde_json::to_string(&request_to_json(request)).expect("request must serialize")
     );
-    let evaluated = futures_lite::future::block_on(async {
+    let evaluated = async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
         let evaluation = runtime.mod_evaluate(id);
         runtime
             .run_event_loop(deno_core::PollEventLoopOptions::default())
             .await?;
         evaluation.await
-    });
+    }
+    .await;
     if let Err(err) = evaluated {
         let reason = err.to_string();
         if reason.contains("does not provide an export named 'default'") {

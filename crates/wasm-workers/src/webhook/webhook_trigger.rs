@@ -244,6 +244,7 @@ pub struct WebhookEndpointCompiled {
     pub config: WebhookEndpointConfig,
     pub runnable_component: RunnableComponent,
     js_runtime: WebhookJsRuntime,
+    v8_pool: crate::v8_pool::V8Pool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -267,12 +268,19 @@ impl WebhookEndpointCompiled {
             config,
             runnable_component,
             js_runtime: WebhookJsRuntime::BoaWasm,
+            v8_pool: crate::v8_pool::V8Pool::default(),
         })
     }
 
     #[must_use]
     pub fn with_js_runtime(mut self, js_runtime: WebhookJsRuntime) -> Self {
         self.js_runtime = js_runtime;
+        self
+    }
+
+    #[must_use]
+    pub fn with_v8_pool(mut self, v8_pool: crate::v8_pool::V8Pool) -> Self {
+        self.v8_pool = v8_pool;
         self
     }
 
@@ -441,6 +449,7 @@ impl WebhookEndpointCompiled {
             resolved_imports_json,
             resolved_imports,
             js_runtime: self.js_runtime,
+            v8_pool: self.v8_pool,
         })
     }
 }
@@ -455,6 +464,8 @@ pub struct WebhookEndpointInstanceLinked {
     resolved_imports_json: Option<Arc<str>>,
     resolved_imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
     js_runtime: WebhookJsRuntime,
+    #[debug(skip)]
+    v8_pool: crate::v8_pool::V8Pool,
 }
 impl WebhookEndpointInstanceLinked {
     #[must_use]
@@ -484,6 +495,7 @@ impl WebhookEndpointInstanceLinked {
             }),
             config: self.config.clone(),
             js_runtime: self.js_runtime,
+            v8_pool: self.v8_pool.clone(),
         }
     }
 }
@@ -499,6 +511,8 @@ pub struct WebhookEndpointInstance {
     stderr: Option<StdOutputConfigWithSender>,
     logs_storage_config: Option<LogStrageConfig>,
     js_runtime: WebhookJsRuntime,
+    #[debug(skip)]
+    v8_pool: crate::v8_pool::V8Pool,
 }
 
 pub struct MethodAwareRouter<T> {
@@ -2348,6 +2362,7 @@ impl RequestHandler {
                     found_instance.config.clone(),
                     instance_match.handler().resolved_imports.clone(),
                     http_request_guard,
+                    found_instance.v8_pool.clone(),
                 )
                 .await;
             }
@@ -2467,6 +2482,7 @@ async fn handle_native_v8_request(
     config: Arc<WebhookEndpointConfig>,
     imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
     http_request_guard: Option<OwnedSemaphorePermit>,
+    v8_pool: crate::v8_pool::V8Pool,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
     use crate::webhook::native_v8_webhook_runtime::{
         NativeRequest, NativeWebhookFailure, execute, into_hyper_response,
@@ -2537,12 +2553,18 @@ async fn handle_native_v8_request(
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
     let handle = tokio::runtime::Handle::current();
     let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
-    let mut task = tokio::task::spawn_blocking(move || {
+    let mut task = tokio::spawn(async move {
         let _http_request_guard = http_request_guard;
-        let result = execute(
-            &js_config, &imports, request, env, &mut ctx, handle, isolate_tx,
-        );
-        (result, ctx)
+        v8_pool
+            .execute(move || async move {
+                let result = execute(
+                    &js_config, &imports, request, env, &mut ctx, handle, isolate_tx,
+                )
+                .await;
+                (result, ctx)
+            })
+            .await
+            .expect("native V8 webhook pool stopped")
     });
     let isolate = isolate_rx.await.ok();
     enum End<T> {
