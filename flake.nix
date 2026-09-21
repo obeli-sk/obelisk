@@ -243,8 +243,10 @@
                 nixd
                 nixpkgs-fmt
                 pkg-config
+                postgresql
                 protobuf
                 git-cliff
+                sqlite
                 wasm-tools
               ];
           };
