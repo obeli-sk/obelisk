@@ -13,6 +13,7 @@ use concepts::{
     ComponentId, FunctionFqn, IfcFqnName, JoinSetId, Params, ResultParsingError,
     ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue, TrapKind,
 };
+use deno_core::futures::FutureExt;
 use deno_core::{
     JsRuntime, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions,
@@ -21,6 +22,7 @@ use deno_core::{
 use deno_error::JsErrorBox;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
+use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -87,6 +89,7 @@ enum NativeV8Failure {
     ResultParsing(String),
     Trap(String),
     Host(super::workflow_ctx::WorkflowFunctionError),
+    Panic(String),
 }
 
 #[async_trait]
@@ -110,7 +113,7 @@ impl WorkflowInvocation for NativeV8Invocation {
 
             v8_pool
                 .execute_for(crate::v8_pool::V8Workload::Workflow, move || async move {
-                    let result = execute(
+                    let result = AssertUnwindSafe(execute(
                         ExecuteArgs {
                             entry_path: &entry_path,
                             files: &files,
@@ -122,8 +125,10 @@ impl WorkflowInvocation for NativeV8Invocation {
                         MainRuntimeHandle(handle),
                         isolate_tx,
                         max_heap_size,
-                    )
-                    .await;
+                    ))
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|panic| Err(NativeV8Failure::Panic(panic_payload(panic))));
                     (result, workflow_ctx)
                 })
                 .await
@@ -138,7 +143,9 @@ impl WorkflowInvocation for NativeV8Invocation {
                         guard.handle.terminate_execution();
                     }
                     let mut result = task.await;
-                    if let Ok((failure, _)) = &mut result {
+                    if let Ok((failure, _)) = &mut result
+                        && !matches!(failure, Err(NativeV8Failure::Host(_)))
+                    {
                         *failure = Err(NativeV8Failure::Host(interruption_error(reason)));
                     }
                     result
@@ -149,7 +156,9 @@ impl WorkflowInvocation for NativeV8Invocation {
                     guard.handle.terminate_execution();
                 }
                 let mut result = task.await;
-                if let Ok((failure, _)) = &mut result {
+                if let Ok((failure, _)) = &mut result
+                    && !matches!(failure, Err(NativeV8Failure::Host(_)))
+                {
                     *failure = Err(NativeV8Failure::Host(interruption_error(reason)));
                 }
                 result
@@ -172,12 +181,14 @@ impl WorkflowInvocation for NativeV8Invocation {
                     ),
                     Box::new(workflow_ctx),
                 )),
-                NativeV8Failure::Trap(reason) => Err(RunError::Trap {
-                    reason,
-                    detail: None,
-                    workflow_ctx: Box::new(workflow_ctx),
-                    kind: TrapKind::Trap,
-                }),
+                NativeV8Failure::Trap(reason) | NativeV8Failure::Panic(reason) => {
+                    Err(RunError::Trap {
+                        reason,
+                        detail: None,
+                        workflow_ctx: Box::new(workflow_ctx),
+                        kind: TrapKind::Trap,
+                    })
+                }
                 NativeV8Failure::Host(err) => Err(RunError::WorkerPartialResult(
                     err.into_worker_partial_result(workflow_ctx.version().clone()),
                     Box::new(workflow_ctx),
@@ -185,6 +196,16 @@ impl WorkflowInvocation for NativeV8Invocation {
             },
             Err(err) => panic!("native V8 workflow task panicked: {err}"),
         }
+    }
+}
+
+fn panic_payload(panic: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "native V8 workflow panicked".to_owned()
     }
 }
 
