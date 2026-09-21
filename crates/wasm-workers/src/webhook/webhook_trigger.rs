@@ -2523,9 +2523,12 @@ async fn handle_native_v8_request(
     let request = NativeRequest {
         method: parts.method.to_string(),
         url,
+        // Strip forbidden headers before the guest sees them, mirroring wasmtime's
+        // inbound handling so a guest that forwards `request.headers` stays valid.
         headers: parts
             .headers
             .iter()
+            .filter(|(name, _)| !crate::http_hooks::is_forbidden_header(name.as_str()))
             .filter_map(|(name, value)| {
                 value
                     .to_str()
@@ -4026,8 +4029,14 @@ pub(crate) mod tests {
             assert_eq!(headers, vec!["value1", "value2"]);
         }
 
+        // Forwarding the incoming `request.headers` (which include the forbidden `host`)
+        // to an outbound fetch must succeed on both runtimes: inbound forbidden headers
+        // are stripped before the guest sees them, matching wasmtime.
+        #[rstest::rstest]
         #[tokio::test]
-        async fn webhook_js_fetch_proxy_headers() {
+        async fn webhook_js_fetch_proxy_headers(
+            #[values(WebhookJsRuntime::BoaWasm, WebhookJsRuntime::V8)] runtime: WebhookJsRuntime,
+        ) {
             use wiremock::{
                 Mock, MockServer, ResponseTemplate,
                 matchers::{header, method},
@@ -4052,13 +4061,8 @@ pub(crate) mod tests {
             );
 
             let allowed = format!("http://127.0.0.1:{}", mock_server.address().port());
-            let (_server, server_addr, _termination_sender) = start_js_webhook_server_with_http(
-                &js_source,
-                &allowed,
-                None,
-                WebhookJsRuntime::BoaWasm,
-            )
-            .await;
+            let (_server, server_addr, _termination_sender) =
+                start_js_webhook_server_with_http(&js_source, &allowed, None, runtime).await;
 
             let client = reqwest::Client::new();
             let resp = client

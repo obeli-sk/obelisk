@@ -4265,6 +4265,7 @@ dependencies = [
  "wasmtime-wasi",
  "wat",
  "webpki-roots",
+ "wiremock",
 ]
 
 [[package]]

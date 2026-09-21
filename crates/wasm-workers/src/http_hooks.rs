@@ -339,6 +339,16 @@ impl WasiHttpHooks for HttpHooks {
     }
 }
 
+/// Whether a header is one the runtime owns, matching wasmtime's forbidden-header set
+/// so every outgoing-HTTP path (wasmtime, native V8, activity VM) behaves identically.
+/// A guest may not set these on an outbound request; they are stripped from inbound
+/// headers (webhook request, fetch response).
+#[must_use]
+pub fn is_forbidden_header(name: &str) -> bool {
+    name.parse::<hyper::header::HeaderName>()
+        .is_ok_and(|name| wasmtime_wasi_http::DEFAULT_FORBIDDEN_HEADERS.contains(&name))
+}
+
 impl HttpHooks {
     pub(crate) async fn send_native_request(
         &mut self,
@@ -350,8 +360,20 @@ impl HttpHooks {
         let body = http_body_util::Full::new(hyper::body::Bytes::from(body))
             .map_err(|never| match never {})
             .boxed_unsync();
+        // Unlike the WASI path (where wasmtime-wasi-http populates Host), hyper's
+        // low-level client does not add Host, so derive it from the URI authority.
+        let host_header = uri.authority().map(|authority| match authority.port_u16() {
+            Some(port) => format!("{}:{}", authority.host(), port),
+            None => authority.host().to_owned(),
+        });
         let mut request = hyper::Request::builder().method(method).uri(uri);
+        if let Some(host) = host_header {
+            request = request.header(hyper::header::HOST, host);
+        }
         for (name, value) in headers {
+            if is_forbidden_header(&name) {
+                return Err(format!("forbidden header `{name}`"));
+            }
             request = request.header(name, value);
         }
         let request = request.body(body).map_err(|err| err.to_string())?;
@@ -364,6 +386,7 @@ impl HttpHooks {
         let headers = response
             .headers()
             .iter()
+            .filter(|(name, _)| !is_forbidden_header(name.as_str()))
             .map(|(name, value)| {
                 (
                     name.as_str().to_owned(),

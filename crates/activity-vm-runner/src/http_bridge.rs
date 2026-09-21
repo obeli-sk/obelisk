@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use wasm_workers::http_hooks::is_forbidden_header;
 use wasm_workers::http_request_policy::HttpRequestPolicy;
 
 const MAX_REQUEST: usize = 1024 * 1024;
@@ -112,8 +113,11 @@ async fn execute(
     let mut builder = hyper::Request::builder()
         .method(request.method.as_str())
         .uri(&request.url);
+    // The VM guest is a real HTTP client (curl) behind a forwarding proxy, so it always
+    // emits Host and may emit hop-by-hop headers. Strip forbidden headers rather than
+    // rejecting (reqwest re-derives Host from the URL); the wire result matches wasmtime.
     for (name, value) in request.headers {
-        if !filtered_header(&name) {
+        if !is_forbidden_header(&name) {
             builder = builder.header(name, value);
         }
     }
@@ -143,7 +147,7 @@ async fn execute(
     let headers = response
         .headers()
         .iter()
-        .filter(|(name, _)| !filtered_header(name.as_str()))
+        .filter(|(name, _)| !is_forbidden_header(name.as_str()))
         .filter_map(|(name, value)| {
             value
                 .to_str()
@@ -218,16 +222,91 @@ async fn publish<T: Serialize>(temporary: &Path, path: &Path, value: &T) -> anyh
     Ok(())
 }
 
-fn filtered_header(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "host"
-            | "connection"
-            | "proxy-connection"
-            | "keep-alive"
-            | "transfer-encoding"
-            | "te"
-            | "trailer"
-            | "upgrade"
-    )
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+    use wasm_workers::http_request_policy::{AllowedHostPolicy, HostPattern, MethodsPattern};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{header, method, path as path_matcher},
+    };
+
+    fn policy_allowing(host: &str) -> HttpRequestPolicy {
+        HttpRequestPolicy {
+            hosts: vec![AllowedHostPolicy {
+                pattern: HostPattern::parse_with_methods(host, MethodsPattern::AllMethods).unwrap(),
+                request_url_regex: None,
+                secrets: Vec::new(),
+            }],
+            global_allowlist: None,
+            component_policy_hash: String::new(),
+            server_policy_hash: String::new(),
+        }
+    }
+
+    /// Drive `process` with a `.working` request file and return the parsed response.
+    async fn run_bridge(url: &str, headers: Value, policy: &HttpRequestPolicy) -> Value {
+        let dir = tempfile::tempdir().unwrap();
+        let request_path = dir.path().join("req.working");
+        let request = json!({ "method": "GET", "url": url, "headers": headers, "body": [] });
+        tokio::fs::write(&request_path, serde_json::to_vec(&request).unwrap())
+            .await
+            .unwrap();
+        let traces = Mutex::new(Vec::new());
+        process(&request_path, policy, &traces).await.unwrap();
+        let bytes = tokio::fs::read(request_path.with_extension("response"))
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn sets_host_header_from_authority() {
+        let server = MockServer::start().await;
+        let real_host = format!("127.0.0.1:{}", server.address().port());
+        Mock::given(method("GET"))
+            .and(path_matcher("/hello"))
+            .and(header("host", real_host.as_str()))
+            .and(header("x-custom", "kept"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
+        let response = run_bridge(
+            &format!("{}/hello", server.uri()),
+            json!([["x-custom", "kept"]]),
+            &policy_allowing(&allowed),
+        )
+        .await;
+        assert_eq!(response["status"], 200, "unexpected response: {response}");
+    }
+
+    /// The VM guest (curl) always sends Host and may send hop-by-hop headers, so the
+    /// bridge strips forbidden headers instead of rejecting: the request still succeeds
+    /// and the forbidden header never reaches the server.
+    #[tokio::test]
+    async fn strips_forbidden_request_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_matcher("/hello"))
+            .and(wiremock::matchers::header_exists("x-custom"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // No mock accepts a forwarded `connection` header, so if it were not stripped the
+        // request would 400/hang rather than match the mock above.
+
+        let allowed = format!("http://127.0.0.1:{}", server.address().port());
+        let response = run_bridge(
+            &format!("{}/hello", server.uri()),
+            json!([["connection", "keep-alive"], ["x-custom", "kept"]]),
+            &policy_allowing(&allowed),
+        )
+        .await;
+        assert_eq!(response["status"], 200, "unexpected response: {response}");
+    }
 }
