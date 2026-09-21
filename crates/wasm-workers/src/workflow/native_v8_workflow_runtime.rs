@@ -104,9 +104,10 @@ impl V8InterruptTicker {
                     while !shutdown.load(Ordering::Relaxed) {
                         std::thread::sleep(period);
                         for entry in registry.lock().unwrap().values() {
-                            entry
-                                .handle
-                                .request_interrupt(v8_interrupt_callback, entry.data.0 as *mut c_void);
+                            entry.handle.request_interrupt(
+                                v8_interrupt_callback,
+                                entry.data.0 as *mut c_void,
+                            );
                         }
                     }
                 })
@@ -119,7 +120,11 @@ impl V8InterruptTicker {
         })
     }
 
-    fn register(&self, handle: deno_core::v8::IsolateHandle, data: *const V8InterruptData) -> InterruptGuard {
+    fn register(
+        &self,
+        handle: deno_core::v8::IsolateHandle,
+        data: *const V8InterruptData,
+    ) -> InterruptGuard {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.registry.lock().unwrap().insert(
             id,
