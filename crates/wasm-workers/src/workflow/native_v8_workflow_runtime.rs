@@ -4,6 +4,7 @@ use super::workflow_ctx::{NativeJoinNextTryError, WorkflowCtx};
 use super::workflow_runtime::{RuntimePrepareError, WorkflowInvocation, WorkflowRuntime};
 use super::workflow_worker::{CallFuncResult, RunError};
 use crate::js_imports::NamedFnImport;
+use crate::v8_pool::V8Pool;
 use async_trait::async_trait;
 use chrono::{TimeZone as _, Utc};
 use concepts::storage::ResponseSubscriptionEnd;
@@ -28,6 +29,7 @@ pub(crate) struct NativeV8WorkflowRuntime {
     files: BTreeMap<String, String>,
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    v8_pool: V8Pool,
 }
 
 impl NativeV8WorkflowRuntime {
@@ -36,12 +38,14 @@ impl NativeV8WorkflowRuntime {
         files: BTreeMap<String, String>,
         return_type: ReturnTypeExtendable,
         resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+        v8_pool: V8Pool,
     ) -> Self {
         Self {
             entry_path,
             files,
             return_type,
             resolved_imports,
+            v8_pool,
         }
     }
 }
@@ -53,6 +57,7 @@ struct NativeV8Invocation {
     params: Params,
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
+    v8_pool: V8Pool,
 }
 
 #[async_trait]
@@ -72,6 +77,7 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
             params: params.clone(),
             return_type: self.return_type.clone(),
             resolved_imports: self.resolved_imports.clone(),
+            v8_pool: self.v8_pool.clone(),
         }))
     }
 }
@@ -93,25 +99,33 @@ impl WorkflowInvocation for NativeV8Invocation {
             params,
             return_type,
             resolved_imports,
+            v8_pool,
         } = *self;
         let interruption = workflow_ctx.native_interruption();
         let handle = tokio::runtime::Handle::current();
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
-        let mut task = tokio::task::spawn_blocking(move || {
+        let mut task = tokio::spawn(async move {
             let mut workflow_ctx = workflow_ctx;
-            let result = execute(
-                ExecuteArgs {
-                    entry_path: &entry_path,
-                    files: &files,
-                    params: &params,
-                    return_type: &return_type,
-                    resolved_imports: &resolved_imports,
-                },
-                &mut workflow_ctx,
-                handle,
-                isolate_tx,
-            );
-            (result, workflow_ctx)
+            let result = v8_pool
+                .execute(move || async move {
+                    let result = execute(
+                        ExecuteArgs {
+                            entry_path: &entry_path,
+                            files: &files,
+                            params: &params,
+                            return_type: &return_type,
+                            resolved_imports: &resolved_imports,
+                        },
+                        &mut workflow_ctx,
+                        MainRuntimeHandle(handle),
+                        isolate_tx,
+                    )
+                    .await;
+                    (result, workflow_ctx)
+                })
+                .await
+                .expect("native V8 workflow pool stopped");
+            result
         });
         let mut termination_guard = isolate_rx.await.ok().map(TerminationGuard::new);
         let result = match interruption {
@@ -213,8 +227,18 @@ impl Drop for TerminationGuard {
 
 struct HostState {
     workflow_ctx: usize,
-    handle: tokio::runtime::Handle,
+    handle: MainRuntimeHandle,
     join_sets: Vec<Option<JoinSetId>>,
+}
+
+#[derive(Clone)]
+struct MainRuntimeHandle(tokio::runtime::Handle);
+
+impl MainRuntimeHandle {
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        let _guard = self.0.enter();
+        futures_lite::future::block_on(future)
+    }
 }
 
 impl HostState {
@@ -227,7 +251,7 @@ impl HostState {
         &mut self,
         f: impl FnOnce(
             &mut WorkflowCtx,
-            &tokio::runtime::Handle,
+            &MainRuntimeHandle,
         ) -> Result<T, super::workflow_ctx::WorkflowFunctionError>,
     ) -> Result<T, JsErrorBox> {
         let handle = self.handle.clone();
@@ -525,10 +549,10 @@ struct ExecuteArgs<'a> {
     resolved_imports: &'a HashMap<IfcFqnName, Vec<NamedFnImport>>,
 }
 
-fn execute(
+async fn execute(
     args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
-    handle: tokio::runtime::Handle,
+    handle: MainRuntimeHandle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
@@ -564,14 +588,15 @@ fn execute(
         serde_json::to_string(entry.as_str()).expect("URL must serialize"),
         serde_json::to_string(&params).expect("parameters must serialize")
     );
-    let evaluated = futures_lite::future::block_on(async {
+    let evaluated = async {
         let id = runtime.load_main_es_module_from_code(&main, source).await?;
         let evaluation = runtime.mod_evaluate(id);
         runtime
             .run_event_loop(PollEventLoopOptions::default())
             .await?;
         evaluation.await
-    });
+    }
+    .await;
     if let Err(err) = evaluated {
         if let Some(host_err) = workflow_ctx.take_native_host_error() {
             return Err(NativeV8Failure::Host(host_err));

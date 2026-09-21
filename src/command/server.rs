@@ -5256,6 +5256,7 @@ async fn compile_and_link(
             // No build_semaphore as the WASM was already compiled.
             let engines = engines.clone();
             let parent_span = parent_span.clone();
+            let v8_pool = v8_pool.clone();
             let workflow_js_runnable = workflow_js_runnable.clone().expect("must have been filled above");
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
@@ -5268,6 +5269,7 @@ async fn compile_and_link(
                         lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                         workflow_js_runtime,
+                        v8_pool,
                     )
                         .map(|(worker, component_config, frame_files)| {
                             CompiledComponent::ActivityOrWorkflow {
@@ -6067,6 +6069,7 @@ fn prespawn_workflow_js(
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
+    v8_pool: V8Pool,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
@@ -6140,6 +6143,7 @@ fn prespawn_workflow_js(
         workflow_js.js_files,
         wit_origin,
         workflow_js_runtime,
+        v8_pool,
     ))
 }
 
@@ -6173,6 +6177,7 @@ struct WorkflowJsWorkerCompiledWithConfig {
     workflows_lock_extension_leeway: Duration,
     replay_compiled: WorkflowJsWorkerCompiled,
     runtime: WorkflowJsRuntime,
+    v8_pool: V8Pool,
 }
 
 enum CompiledWorkerKind {
@@ -6359,6 +6364,7 @@ impl WorkerCompiled {
         js_files: std::collections::BTreeMap<String, String>,
         wit_origin: WitOrigin,
         runtime: WorkflowJsRuntime,
+        v8_pool: V8Pool,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSource) {
         let frame_files = WorkflowJsConfigVerified::frame_sources(js_files);
         let component = ComponentConfig {
@@ -6379,6 +6385,7 @@ impl WorkerCompiled {
                         workflows_lock_extension_leeway,
                         replay_compiled,
                         runtime,
+                        v8_pool,
                     },
                 )),
                 exec_config,
@@ -6417,14 +6424,20 @@ impl WorkerCompiled {
                 }
                 CompiledWorkerKind::WorkflowJs(workflow_js_compiled) => {
                     LinkedWorkerKind::WorkflowJs(Box::new(WorkflowJsWorkerLinkedWithConfig {
-                        worker: workflow_js_compiled
-                            .worker
-                            .link_with_runtime(fn_registry.clone(), workflow_js_compiled.runtime)?,
+                        worker: workflow_js_compiled.worker.link_with_runtime_and_pool(
+                            fn_registry.clone(),
+                            workflow_js_compiled.runtime,
+                            workflow_js_compiled.v8_pool.clone(),
+                        )?,
                         workflows_lock_extension_leeway: workflow_js_compiled
                             .workflows_lock_extension_leeway,
                         replay_linked: workflow_js_compiled
                             .replay_compiled
-                            .link_with_runtime(fn_registry.clone(), workflow_js_compiled.runtime)?,
+                            .link_with_runtime_and_pool(
+                                fn_registry.clone(),
+                                workflow_js_compiled.runtime,
+                                workflow_js_compiled.v8_pool,
+                            )?,
                     }))
                 }
             },
