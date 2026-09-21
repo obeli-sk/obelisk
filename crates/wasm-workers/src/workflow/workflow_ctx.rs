@@ -222,10 +222,6 @@ impl WorkflowCtx {
             .map(ToString::to_string)
     }
 
-    pub(crate) fn native_interruption(&self) -> Option<super::deadline_tracker::TrackResult> {
-        self.event_history.deadline_tracker.native_interruption()
-    }
-
     pub(crate) fn native_backtrace(&self) -> Option<storage::WasmBacktrace> {
         self.should_capture_backtrace()
             .then(|| storage::WasmBacktrace {

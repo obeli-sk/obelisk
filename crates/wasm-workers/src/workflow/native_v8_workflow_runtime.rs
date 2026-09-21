@@ -7,7 +7,6 @@ use crate::js_imports::NamedFnImport;
 use crate::v8_pool::V8Pool;
 use async_trait::async_trait;
 use chrono::{TimeZone as _, Utc};
-use concepts::storage::ResponseSubscriptionEnd;
 use concepts::storage::{HistoryEventScheduleAt, LogLevel, Version};
 use concepts::{
     ComponentId, FunctionFqn, IfcFqnName, JoinSetId, Params, ResultParsingError,
@@ -21,8 +20,16 @@ use deno_core::{
 use deno_error::JsErrorBox;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::c_void;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// How often the V8 interrupt ticker pokes each active isolate to run
+/// [`check_epoch_callback`](WorkflowCtx::check_epoch_callback). Mirrors the
+/// wasmtime engine epoch cadence.
+const V8_EPOCH: Duration = Duration::from_millis(10);
 
 pub(crate) struct NativeV8WorkflowRuntime {
     entry_path: String,
@@ -30,6 +37,7 @@ pub(crate) struct NativeV8WorkflowRuntime {
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
     v8_pool: V8Pool,
+    interrupt_ticker: Arc<V8InterruptTicker>,
 }
 
 impl NativeV8WorkflowRuntime {
@@ -46,8 +54,129 @@ impl NativeV8WorkflowRuntime {
             return_type,
             resolved_imports,
             v8_pool,
+            interrupt_ticker: V8InterruptTicker::spawn(V8_EPOCH),
         }
     }
+}
+
+/// Data passed to [`v8_interrupt_callback`] via [`deno_core::v8::IsolateHandle::request_interrupt`].
+/// The callback runs on the isolate's own thread at a JS safe point, so the pointers
+/// are only ever dereferenced there, never concurrently with a host op.
+struct V8InterruptData {
+    /// `*mut WorkflowCtx`, matching `HostState::workflow_ctx`.
+    workflow_ctx: usize,
+    handle: deno_core::v8::IsolateHandle,
+}
+
+/// Raw pointer to a [`V8InterruptData`] kept alive by `execute`'s stack for the whole
+/// isolate lifetime; only read on the isolate thread while JS is running.
+#[derive(Clone, Copy)]
+struct InterruptDataPtr(*const V8InterruptData);
+// SAFETY: the pointee outlives every registration (see `execute`), and is dereferenced
+// only on the isolate thread from `v8_interrupt_callback`.
+unsafe impl Send for InterruptDataPtr {}
+
+struct InterruptEntry {
+    handle: deno_core::v8::IsolateHandle,
+    data: InterruptDataPtr,
+}
+
+/// The V8 analog of [`crate::epoch_ticker::EpochTicker`]: a single background thread
+/// that periodically asks each active isolate to run its epoch callback. wasmtime bumps
+/// an engine epoch; V8 has no epoch, so we drive `IsolateHandle::request_interrupt`,
+/// whose callback fires on the isolate thread and can trap a CPU-bound workflow.
+struct V8InterruptTicker {
+    registry: Arc<Mutex<HashMap<u64, InterruptEntry>>>,
+    next_id: AtomicU64,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl V8InterruptTicker {
+    fn spawn(period: Duration) -> Arc<Self> {
+        let registry: Arc<Mutex<HashMap<u64, InterruptEntry>>> = Arc::default();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        {
+            let registry = registry.clone();
+            let shutdown = shutdown.clone();
+            std::thread::Builder::new()
+                .name("obelisk-v8-epoch".to_owned())
+                .spawn(move || {
+                    while !shutdown.load(Ordering::Relaxed) {
+                        std::thread::sleep(period);
+                        for entry in registry.lock().unwrap().values() {
+                            entry
+                                .handle
+                                .request_interrupt(v8_interrupt_callback, entry.data.0 as *mut c_void);
+                        }
+                    }
+                })
+                .expect("spawning the V8 epoch ticker must succeed");
+        }
+        Arc::new(Self {
+            registry,
+            next_id: AtomicU64::new(0),
+            shutdown,
+        })
+    }
+
+    fn register(&self, handle: deno_core::v8::IsolateHandle, data: *const V8InterruptData) -> InterruptGuard {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.registry.lock().unwrap().insert(
+            id,
+            InterruptEntry {
+                handle,
+                data: InterruptDataPtr(data),
+            },
+        );
+        InterruptGuard {
+            registry: self.registry.clone(),
+            id,
+        }
+    }
+}
+
+impl Drop for V8InterruptTicker {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Removes the isolate from the ticker registry on drop. Held on `execute`'s stack across
+/// all JS execution, so no interrupt can fire after it is dropped.
+struct InterruptGuard {
+    registry: Arc<Mutex<HashMap<u64, InterruptEntry>>>,
+    id: u64,
+}
+
+impl Drop for InterruptGuard {
+    fn drop(&mut self) {
+        self.registry.lock().unwrap().remove(&self.id);
+    }
+}
+
+/// Runs on the isolate thread at a JS safe point. Reuses the deadline tracker's
+/// `check_epoch_callback` (same source of truth as the wasmtime epoch callback) and, on
+/// lock expiry or interrupt, records the failure and terminates the running script.
+unsafe extern "C" fn v8_interrupt_callback(
+    _isolate: deno_core::v8::UnsafeRawIsolatePtr,
+    data: *mut c_void,
+) {
+    use super::deadline_tracker::EpochCallbackError;
+    use super::workflow_ctx::WorkflowFunctionError;
+
+    // SAFETY: `data` points to the `V8InterruptData` box kept alive by `execute` for the
+    // whole isolate lifetime; the ticker only passes it while the isolate is registered.
+    let data = unsafe { &*(data as *const V8InterruptData) };
+    // SAFETY: this callback runs on the isolate thread at a JS safe point, never during a
+    // host op, so no `&mut WorkflowCtx` borrow taken by a host op is live here.
+    let ctx = unsafe { &mut *(data.workflow_ctx as *mut WorkflowCtx) };
+    let err = match ctx.check_epoch_callback() {
+        Ok(()) => return,
+        Err(EpochCallbackError::LockExpired) => WorkflowFunctionError::LockExpired,
+        Err(EpochCallbackError::Interrupt(kind)) => WorkflowFunctionError::Interrupt(kind),
+    };
+    ctx.set_native_host_error(err);
+    data.handle.terminate_execution();
 }
 
 struct NativeV8Invocation {
@@ -58,6 +187,7 @@ struct NativeV8Invocation {
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
     v8_pool: V8Pool,
+    interrupt_ticker: Arc<V8InterruptTicker>,
 }
 
 #[async_trait]
@@ -78,6 +208,7 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
             return_type: self.return_type.clone(),
             resolved_imports: self.resolved_imports.clone(),
             v8_pool: self.v8_pool.clone(),
+            interrupt_ticker: self.interrupt_ticker.clone(),
         }))
     }
 }
@@ -101,73 +232,39 @@ impl WorkflowInvocation for NativeV8Invocation {
             return_type,
             resolved_imports,
             v8_pool,
+            interrupt_ticker,
         } = *self;
-        let interruption = workflow_ctx.native_interruption();
         let handle = tokio::runtime::Handle::current();
         let max_heap_size = v8_pool.max_heap_size();
-        let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
-        let mut task = tokio::spawn(async move {
-            let mut workflow_ctx = workflow_ctx;
-
-            v8_pool
-                .execute_for(crate::v8_pool::V8Workload::Workflow, move || async move {
-                    let result = execute(
-                        ExecuteArgs {
-                            entry_path: &entry_path,
-                            files: &files,
-                            params: &params,
-                            return_type: &return_type,
-                            resolved_imports: &resolved_imports,
-                        },
-                        &mut workflow_ctx,
-                        MainRuntimeHandle(handle),
-                        isolate_tx,
-                        max_heap_size,
-                    )
-                    .await;
-                    (result, workflow_ctx)
-                })
-                .await
-                .expect("native V8 workflow pool stopped")
-        });
-        let mut termination_guard = isolate_rx.await.ok().map(TerminationGuard::new);
-        let result = match interruption {
-            Some(Ok(interruption)) => tokio::select! {
-                result = &mut task => result,
-                reason = interruption => {
-                    if let Some(guard) = &termination_guard {
-                        guard.handle.terminate_execution();
-                    }
-                    let mut result = task.await;
-                    if let Ok((failure, _)) = &mut result
-                        && !matches!(failure, Err(NativeV8Failure::Host(_)))
-                    {
-                        *failure = Err(NativeV8Failure::Host(interruption_error(reason)));
-                    }
-                    result
-                }
-            },
-            Some(Err(reason)) => {
-                if let Some(guard) = &termination_guard {
-                    guard.handle.terminate_execution();
-                }
-                let mut result = task.await;
-                if let Ok((failure, _)) = &mut result
-                    && !matches!(failure, Err(NativeV8Failure::Host(_)))
-                {
-                    *failure = Err(NativeV8Failure::Host(interruption_error(reason)));
-                }
-                result
-            }
-            None => task.await,
-        };
-        if let Some(guard) = &mut termination_guard {
-            guard.armed = false;
-        }
+        // No outer `select!`/cancellation: the interrupt is delivered from within, exactly as
+        // in the wasmtime runtime. A CPU-bound workflow is trapped by `v8_interrupt_callback`
+        // via the epoch ticker; a workflow blocked in a host function observes the interrupt
+        // through the deadline tracker (`check_preempt` / the `Await` join-next loop).
+        let (result, workflow_ctx) = v8_pool
+            .execute_for(crate::v8_pool::V8Workload::Workflow, move || async move {
+                let mut workflow_ctx = workflow_ctx;
+                let result = execute(
+                    ExecuteArgs {
+                        entry_path: &entry_path,
+                        files: &files,
+                        params: &params,
+                        return_type: &return_type,
+                        resolved_imports: &resolved_imports,
+                    },
+                    &mut workflow_ctx,
+                    MainRuntimeHandle(handle),
+                    &interrupt_ticker,
+                    max_heap_size,
+                )
+                .await;
+                (result, workflow_ctx)
+            })
+            .await
+            .expect("native V8 workflow pool stopped");
 
         match result {
-            Ok((Ok(retval), workflow_ctx)) => Ok((retval, workflow_ctx)),
-            Ok((Err(failure), workflow_ctx)) => match failure {
+            Ok(retval) => Ok((retval, workflow_ctx)),
+            Err(failure) => match failure {
                 NativeV8Failure::CannotInstantiate(reason) => {
                     Err(RunError::CannotInstantiate(reason, Box::new(workflow_ctx)))
                 }
@@ -190,46 +287,6 @@ impl WorkflowInvocation for NativeV8Invocation {
                     Box::new(workflow_ctx),
                 )),
             },
-            Err(err) => panic!("native V8 workflow task panicked: {err}"),
-        }
-    }
-}
-
-fn interruption_error(
-    reason: ResponseSubscriptionEnd,
-) -> super::workflow_ctx::WorkflowFunctionError {
-    use super::deadline_tracker::InterruptKind;
-    use super::workflow_ctx::WorkflowFunctionError;
-    match reason {
-        ResponseSubscriptionEnd::LockDeadlineReached => WorkflowFunctionError::LockExpired,
-        ResponseSubscriptionEnd::ExecutorClosing => {
-            WorkflowFunctionError::Interrupt(InterruptKind::ExecutorClosing)
-        }
-        ResponseSubscriptionEnd::ExecutionUpdated => {
-            WorkflowFunctionError::Interrupt(InterruptKind::PauseOrCancel)
-        }
-        ResponseSubscriptionEnd::PollIntervalElapsed => unreachable!("unbounded interruption wait"),
-    }
-}
-
-struct TerminationGuard {
-    handle: deno_core::v8::IsolateHandle,
-    armed: bool,
-}
-
-impl TerminationGuard {
-    fn new(handle: deno_core::v8::IsolateHandle) -> Self {
-        Self {
-            handle,
-            armed: true,
-        }
-    }
-}
-
-impl Drop for TerminationGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            self.handle.terminate_execution();
         }
     }
 }
@@ -571,7 +628,7 @@ async fn execute(
     args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
     handle: MainRuntimeHandle,
-    isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
+    interrupt_ticker: &V8InterruptTicker,
     max_heap_size: usize,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
@@ -589,8 +646,7 @@ async fn execute(
         ..Default::default()
     });
     let isolate = runtime.v8_isolate().thread_safe_handle();
-    let _ = isolate_tx.send(isolate.clone());
-    let panic = crate::v8_panic::V8PanicState::new(isolate);
+    let panic = crate::v8_panic::V8PanicState::new(isolate.clone());
     runtime.op_state().borrow_mut().put(HostState {
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: handle.clone(),
@@ -598,6 +654,15 @@ async fn execute(
         panic: panic.clone(),
         panic_version: None,
     });
+    // Register with the interrupt ticker for the duration of JS execution. `interrupt_data`
+    // is declared before the guard so it outlives it; combined with the fact that the guard
+    // spans all JS execution, no `v8_interrupt_callback` can run after either is dropped.
+    let interrupt_data = Box::new(V8InterruptData {
+        workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
+        handle: isolate.clone(),
+    });
+    let interrupt_guard =
+        interrupt_ticker.register(isolate, std::ptr::from_ref(interrupt_data.as_ref()));
 
     let params = params
         .as_json_values()
@@ -621,6 +686,10 @@ async fn execute(
         evaluation.await
     }
     .await;
+    // JS has stopped; stop the ticker from poking this isolate before result extraction
+    // (which re-enters JS) so a late interrupt cannot trap it. `interrupt_data` stays alive
+    // until this function returns, after the isolate is dropped.
+    drop(interrupt_guard);
     if let Some(reason) = panic.take() {
         let op_state = runtime.op_state();
         let version = op_state
