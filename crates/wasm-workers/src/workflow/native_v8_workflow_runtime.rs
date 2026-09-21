@@ -415,19 +415,10 @@ fn op_obelisk_host_inner(
             let target = string_arg(&args, "target")?
                 .parse::<FunctionFqn>()
                 .map_err(|err| JsErrorBox::type_error(format!("invalid function name: {err}")))?;
-            let handle = host.handle.clone();
-            let backtrace = host.context().native_backtrace();
-            let outcome = handle
-                .block_on(
-                    host.context()
-                        .join_next_for(join_set_id.clone(), target, backtrace),
-                )
-                .map_err(|err| {
-                    if is_runtime_control_flow(&err) {
-                        host.context().set_native_host_error(err.clone());
-                    }
-                    JsErrorBox::generic(err.to_string())
-                })?;
+            let outcome = host.call(|ctx, handle| {
+                let backtrace = ctx.native_backtrace();
+                handle.block_on(ctx.join_next_for(join_set_id.clone(), target, backtrace))
+            })?;
             Ok(match outcome {
                 Ok(outcome) => {
                     let child_id = host.context().native_join_set_last_id(&join_set_id);
