@@ -18,12 +18,10 @@ use concepts::{
     SupportedFunctionReturnValue, TrapKind,
 };
 use concepts::{FunctionMetadata, ResultParsingError};
-use deno_core::futures::FutureExt;
 use executor::worker::{FatalError, RunFinished, WorkerContext, WorkerResult, WorkerResultOk};
 use executor::worker::{Worker, WorkerError};
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -283,18 +281,10 @@ impl ActivityWorker {
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
         let v8_pool = self.v8_pool.clone();
         let max_heap_size = v8_pool.max_heap_size();
-        type NativeActivityResult = (
-            Result<SupportedFunctionReturnValue, NativeActivityFailure>,
-            NativeActivityState,
-        );
-        enum NativeActivityOutcome {
-            Complete(Box<NativeActivityResult>),
-            Panicked(String),
-        }
         let mut task = tokio::spawn(async move {
             v8_pool
                 .execute_for(crate::v8_pool::V8Workload::Activity, move || async move {
-                    match AssertUnwindSafe(execute(
+                    execute(
                         &entry_path,
                         &files,
                         &params,
@@ -302,19 +292,20 @@ impl ActivityWorker {
                         state,
                         isolate_tx,
                         max_heap_size,
-                    ))
-                    .catch_unwind()
+                    )
                     .await
-                    {
-                        Ok(result) => NativeActivityOutcome::Complete(Box::new(result)),
-                        Err(panic) => NativeActivityOutcome::Panicked(panic_payload(&*panic)),
-                    }
                 })
                 .await
         });
         let isolate = isolate_rx.await.ok();
         type NativeActivityTaskResult = Result<
-            Result<NativeActivityOutcome, crate::v8_pool::V8PoolError>,
+            Result<
+                (
+                    Result<SupportedFunctionReturnValue, NativeActivityFailure>,
+                    NativeActivityState,
+                ),
+                crate::v8_pool::V8PoolError,
+            >,
             tokio::task::JoinError,
         >;
         enum End {
@@ -332,7 +323,11 @@ impl ActivityWorker {
                 End::Closing
             }
         };
-        let outcome = match end {
+        type NativeActivityResult = (
+            Result<SupportedFunctionReturnValue, NativeActivityFailure>,
+            NativeActivityState,
+        );
+        let (result, state) = match end {
             End::Complete(result) => (*result)
                 .expect("native V8 activity supervisor task panicked")
                 .expect("native V8 activity task failed"),
@@ -340,20 +335,14 @@ impl ActivityWorker {
                 if let Some(isolate) = isolate {
                     isolate.terminate_execution();
                 }
-                let outcome = task
+                let (_, state): NativeActivityResult = task
                     .await
                     .expect("native V8 activity supervisor task panicked")
                     .expect("native V8 activity task failed");
-                let traces = match outcome {
-                    NativeActivityOutcome::Complete(result) => {
-                        let (_, state) = *result;
-                        Some(collect_http_traces(state.http_hooks.http_client_traces))
-                    }
-                    NativeActivityOutcome::Panicked(_) => None,
-                };
+                let traces = collect_http_traces(state.http_hooks.http_client_traces);
                 return match interrupted {
                     End::Timeout => Err(WorkerError::TemporaryTimeout {
-                        http_client_traces: traces,
+                        http_client_traces: Some(traces),
                         version,
                     }),
                     End::Cancelled => Err(WorkerError::FatalError(FatalError::Cancelled, version)),
@@ -363,18 +352,6 @@ impl ActivityWorker {
                     }),
                     End::Complete(_) => unreachable!(),
                 };
-            }
-        };
-        let (result, state) = match outcome {
-            NativeActivityOutcome::Complete(result) => *result,
-            NativeActivityOutcome::Panicked(reason) => {
-                return Err(WorkerError::ActivityTrap {
-                    reason,
-                    detail: None,
-                    trap_kind: TrapKind::Trap,
-                    version,
-                    http_client_traces: None,
-                });
             }
         };
         let traces = collect_http_traces(state.http_hooks.http_client_traces);
@@ -405,16 +382,6 @@ impl ActivityWorker {
                 http_client_traces: Some(traces),
             }),
         }
-    }
-}
-
-fn panic_payload(panic: &(dyn std::any::Any + Send)) -> String {
-    if let Some(message) = panic.downcast_ref::<&str>() {
-        (*message).to_owned()
-    } else if let Some(message) = panic.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "native V8 activity panicked".to_owned()
     }
 }
 

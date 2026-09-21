@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Sha256, Sha384, Sha512};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     rc::Rc,
 };
@@ -46,6 +47,7 @@ struct HostState {
     ctx: usize,
     handle: tokio::runtime::Handle,
     env: HashMap<String, String>,
+    panic: crate::v8_panic::V8PanicState,
 }
 
 impl HostState {
@@ -85,7 +87,19 @@ struct HostRequest {
 }
 
 #[op2(fast)]
-fn op_webhook_log(state: &mut OpState, #[string] level: String, #[string] message: String) {
+fn op_webhook_log(
+    state: &mut OpState,
+    #[string] level: String,
+    #[string] message: String,
+) -> Result<(), JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| {
+        op_webhook_log_inner(state, level, message);
+        Ok(())
+    })
+}
+
+fn op_webhook_log_inner(state: &mut OpState, level: String, message: String) {
     let host = state.borrow_mut::<HostState>();
     let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
     let future = async move {
@@ -105,12 +119,24 @@ fn op_webhook_log(state: &mut OpState, #[string] level: String, #[string] messag
 #[op2]
 #[string]
 fn op_webhook_env(state: &mut OpState, #[string] name: String) -> Option<String> {
-    state.borrow::<HostState>().env.get(&name).cloned()
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic
+        .catch(|| Ok(state.borrow::<HostState>().env.get(&name).cloned()))
+        .unwrap_or_default()
 }
 
 #[op2(async(deferred), fast)]
-async fn op_webhook_sleep(#[number] milliseconds: u64) {
-    tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+async fn op_webhook_sleep(
+    state: Rc<RefCell<OpState>>,
+    #[number] milliseconds: u64,
+) -> Result<(), JsErrorBox> {
+    let panic = state.borrow().borrow::<HostState>().panic.clone();
+    panic
+        .catch_async(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+            Ok(())
+        })
+        .await
 }
 
 #[op2]
@@ -118,6 +144,14 @@ async fn op_webhook_sleep(#[number] milliseconds: u64) {
 fn op_webhook_fetch(
     state: &mut OpState,
     #[serde] request: FetchRequest,
+) -> Result<FetchResponse, JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| op_webhook_fetch_inner(state, request))
+}
+
+fn op_webhook_fetch_inner(
+    state: &mut OpState,
+    request: FetchRequest,
 ) -> Result<FetchResponse, JsErrorBox> {
     let host = state.borrow_mut::<HostState>();
     let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
@@ -157,6 +191,14 @@ fn op_webhook_host(
     state: &mut OpState,
     #[serde] request: HostRequest,
 ) -> Result<serde_json::Value, JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| op_webhook_host_inner(state, request))
+}
+
+fn op_webhook_host_inner(
+    state: &mut OpState,
+    request: HostRequest,
+) -> Result<serde_json::Value, JsErrorBox> {
     let host = state.borrow_mut::<HostState>();
     let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
     let future = async move {
@@ -169,18 +211,31 @@ fn op_webhook_host(
 
 #[op2]
 #[serde]
-fn op_webhook_random(#[smi] length: u32) -> Vec<u8> {
-    let mut bytes = vec![0; length as usize];
-    rand::rng().fill_bytes(&mut bytes);
-    bytes
+fn op_webhook_random(state: &mut OpState, #[smi] length: u32) -> Result<Vec<u8>, JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| {
+        let mut bytes = vec![0; length as usize];
+        rand::rng().fill_bytes(&mut bytes);
+        Ok(bytes)
+    })
 }
 
 #[op2]
 #[serde]
 fn op_webhook_hmac(
+    state: &mut OpState,
     #[string] hash: String,
     #[serde] key: Vec<u8>,
     #[serde] message: Vec<u8>,
+) -> Result<Vec<u8>, JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| op_webhook_hmac_inner(hash, key, message))
+}
+
+fn op_webhook_hmac_inner(
+    hash: String,
+    key: Vec<u8>,
+    message: Vec<u8>,
 ) -> Result<Vec<u8>, JsErrorBox> {
     macro_rules! sign {
         ($digest:ty) => {{
@@ -231,11 +286,14 @@ pub(super) async fn execute(
         create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
         ..Default::default()
     });
-    let _ = isolate_tx.send(runtime.v8_isolate().thread_safe_handle());
+    let isolate = runtime.v8_isolate().thread_safe_handle();
+    let _ = isolate_tx.send(isolate.clone());
+    let panic = crate::v8_panic::V8PanicState::new(isolate);
     runtime.op_state().borrow_mut().put(HostState {
         ctx: std::ptr::from_mut(ctx) as usize,
         handle,
         env,
+        panic: panic.clone(),
     });
     runtime
         .execute_script("obelisk:webhook-bootstrap", WEBHOOK_BOOTSTRAP)
@@ -261,6 +319,9 @@ pub(super) async fn execute(
         evaluation.await
     }
     .await;
+    if let Some(reason) = panic.take() {
+        return Err(NativeWebhookFailure::Execution(reason));
+    }
     if let Err(err) = evaluated {
         let reason = err.to_string();
         if reason.contains("does not provide an export named 'default'") {

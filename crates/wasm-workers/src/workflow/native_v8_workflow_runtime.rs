@@ -13,7 +13,6 @@ use concepts::{
     ComponentId, FunctionFqn, IfcFqnName, JoinSetId, Params, ResultParsingError,
     ResultParsingErrorFromVal, ReturnTypeExtendable, SupportedFunctionReturnValue, TrapKind,
 };
-use deno_core::futures::FutureExt;
 use deno_core::{
     JsRuntime, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions,
@@ -22,7 +21,6 @@ use deno_core::{
 use deno_error::JsErrorBox;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
-use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -113,7 +111,7 @@ impl WorkflowInvocation for NativeV8Invocation {
 
             v8_pool
                 .execute_for(crate::v8_pool::V8Workload::Workflow, move || async move {
-                    let result = AssertUnwindSafe(execute(
+                    let result = execute(
                         ExecuteArgs {
                             entry_path: &entry_path,
                             files: &files,
@@ -125,10 +123,8 @@ impl WorkflowInvocation for NativeV8Invocation {
                         MainRuntimeHandle(handle),
                         isolate_tx,
                         max_heap_size,
-                    ))
-                    .catch_unwind()
-                    .await
-                    .unwrap_or_else(|panic| Err(NativeV8Failure::Panic(panic_payload(panic))));
+                    )
+                    .await;
                     (result, workflow_ctx)
                 })
                 .await
@@ -199,16 +195,6 @@ impl WorkflowInvocation for NativeV8Invocation {
     }
 }
 
-fn panic_payload(panic: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(message) = panic.downcast_ref::<&str>() {
-        (*message).to_owned()
-    } else if let Some(message) = panic.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "native V8 workflow panicked".to_owned()
-    }
-}
-
 fn interruption_error(
     reason: ResponseSubscriptionEnd,
 ) -> super::workflow_ctx::WorkflowFunctionError {
@@ -252,6 +238,7 @@ struct HostState {
     workflow_ctx: usize,
     handle: MainRuntimeHandle,
     join_sets: Vec<Option<JoinSetId>>,
+    panic: crate::v8_panic::V8PanicState,
 }
 
 #[derive(Clone)]
@@ -292,6 +279,14 @@ impl HostState {
 fn op_obelisk_host(
     state: &mut OpState,
     #[serde] request: serde_json::Value,
+) -> Result<serde_json::Value, JsErrorBox> {
+    let panic = state.borrow::<HostState>().panic.clone();
+    panic.catch(|| op_obelisk_host_inner(state, request))
+}
+
+fn op_obelisk_host_inner(
+    state: &mut OpState,
+    request: serde_json::Value,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let op = request
         .get("op")
@@ -593,11 +588,14 @@ async fn execute(
         create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
         ..Default::default()
     });
-    let _ = isolate_tx.send(runtime.v8_isolate().thread_safe_handle());
+    let isolate = runtime.v8_isolate().thread_safe_handle();
+    let _ = isolate_tx.send(isolate.clone());
+    let panic = crate::v8_panic::V8PanicState::new(isolate);
     runtime.op_state().borrow_mut().put(HostState {
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: handle.clone(),
         join_sets: Vec::new(),
+        panic: panic.clone(),
     });
 
     let params = params
@@ -622,6 +620,9 @@ async fn execute(
         evaluation.await
     }
     .await;
+    if let Some(reason) = panic.take() {
+        return Err(NativeV8Failure::Panic(reason));
+    }
     if let Err(err) = evaluated {
         if let Some(host_err) = workflow_ctx.take_native_host_error() {
             return Err(NativeV8Failure::Host(host_err));
