@@ -238,6 +238,8 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
+                gh # scripts/sync-branch-protection.sh
+                git-cliff
                 jq
                 litecli
                 nixd
@@ -245,9 +247,9 @@
                 pkg-config
                 postgresql
                 protobuf
-                git-cliff
                 sqlite
                 wasm-tools
+                yq-go # scripts/sync-branch-protection.sh
               ];
           };
           # Builds the native WASIp3 fixtures published by push-test-components.
