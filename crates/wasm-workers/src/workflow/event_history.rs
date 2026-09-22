@@ -538,10 +538,13 @@ impl EventHistory {
         self.written_events_this_run += written_events;
         self.written_events_since_lock_extension += written_events;
         if written_events > 0
-            && self
-                .max_events_per_run
-                .is_some_and(|max| self.written_events_this_run >= max)
+            && let Some(max_events_per_run) = self.max_events_per_run
+            && self.written_events_this_run >= max_events_per_run
         {
+            debug!(
+                written_events_this_run = self.written_events_this_run,
+                max_events_per_run, "Interrupting execution with WorkflowEventLimitReached"
+            );
             return Err(ApplyError::Interrupt(
                 InterruptKind::WorkflowEventLimitReached,
             ));
