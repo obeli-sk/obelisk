@@ -6397,4 +6397,48 @@ mod tests {
         );
         db_close.close().await;
     }
+
+    /// A host op panic must trap the guest like a wasmtime trap: the guest must not be able
+    /// to catch it and issue further host calls that get persisted.
+    #[tokio::test]
+    async fn workflow_js_v8_host_op_panic_must_not_be_catchable() {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let js_source = r"
+        export default function session(_params) {
+            try {
+                host('testPanic');
+            } catch (e) {
+                obelisk.createJoinSet({ name: 'caught' }); // must never be persisted
+            }
+            return 'done';
+        }";
+        let harness =
+            JsWorkflowTestHarness::with_no_activities(db_pool, js_source, "session").await;
+        harness.tick().await;
+
+        let log = harness
+            .db_connection
+            .get(&harness.execution_id)
+            .await
+            .unwrap();
+        assert!(
+            !log.events.iter().any(|event| matches!(
+                &event.event,
+                ExecutionRequest::HistoryEvent {
+                    event: HistoryEvent::JoinSetCreate { .. }
+                }
+            )),
+            "the guest caught the host panic and persisted an event"
+        );
+        assert_matches!(
+            log.pending_state,
+            PendingState::Finished(PendingStateFinished {
+                result_kind: PendingStateFinishedResultKind::Err(_),
+                ..
+            })
+        );
+        drop(harness);
+        db_close.close().await;
+    }
 }

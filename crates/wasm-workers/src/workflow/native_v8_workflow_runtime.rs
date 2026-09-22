@@ -685,6 +685,8 @@ fn op_obelisk_host_inner(
             host.context().native_log(level, message.to_owned());
             Ok(Value::Null)
         }
+        #[cfg(test)]
+        "testPanic" => panic!("test host op panic"),
         _ => Err(JsErrorBox::generic(format!(
             "unsupported workflow host operation: {op}"
         ))),
