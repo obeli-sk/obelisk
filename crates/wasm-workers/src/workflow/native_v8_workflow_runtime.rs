@@ -22,14 +22,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-/// How often the V8 interrupt ticker pokes each active isolate to run
-/// [`check_epoch_callback`](WorkflowCtx::check_epoch_callback). Mirrors the
-/// wasmtime engine epoch cadence.
-const V8_EPOCH: Duration = Duration::from_millis(10);
 
 pub(crate) struct NativeV8WorkflowRuntime {
     entry_path: String,
@@ -37,7 +30,6 @@ pub(crate) struct NativeV8WorkflowRuntime {
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
     v8_pool: V8Pool,
-    interrupt_ticker: Arc<V8InterruptTicker>,
 }
 
 impl NativeV8WorkflowRuntime {
@@ -54,7 +46,6 @@ impl NativeV8WorkflowRuntime {
             return_type,
             resolved_imports,
             v8_pool,
-            interrupt_ticker: V8InterruptTicker::spawn(V8_EPOCH),
         }
     }
 }
@@ -66,97 +57,6 @@ struct V8InterruptData {
     /// `*mut WorkflowCtx`, matching `HostState::workflow_ctx`.
     workflow_ctx: usize,
     handle: deno_core::v8::IsolateHandle,
-}
-
-/// Raw pointer to a [`V8InterruptData`] kept alive by `execute`'s stack for the whole
-/// isolate lifetime; only read on the isolate thread while JS is running.
-#[derive(Clone, Copy)]
-struct InterruptDataPtr(*const V8InterruptData);
-// SAFETY: the pointee outlives every registration (see `execute`), and is dereferenced
-// only on the isolate thread from `v8_interrupt_callback`.
-unsafe impl Send for InterruptDataPtr {}
-
-struct InterruptEntry {
-    handle: deno_core::v8::IsolateHandle,
-    data: InterruptDataPtr,
-}
-
-/// The V8 analog of [`crate::epoch_ticker::EpochTicker`]: a single background thread
-/// that periodically asks each active isolate to run its epoch callback. wasmtime bumps
-/// an engine epoch; V8 has no epoch, so we drive `IsolateHandle::request_interrupt`,
-/// whose callback fires on the isolate thread and can trap a CPU-bound workflow.
-struct V8InterruptTicker {
-    registry: Arc<Mutex<HashMap<u64, InterruptEntry>>>,
-    next_id: AtomicU64,
-    shutdown: Arc<AtomicBool>,
-}
-
-impl V8InterruptTicker {
-    fn spawn(period: Duration) -> Arc<Self> {
-        let registry: Arc<Mutex<HashMap<u64, InterruptEntry>>> = Arc::default();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        {
-            let registry = registry.clone();
-            let shutdown = shutdown.clone();
-            std::thread::Builder::new()
-                .name("obelisk-v8-epoch".to_owned())
-                .spawn(move || {
-                    while !shutdown.load(Ordering::Relaxed) {
-                        std::thread::sleep(period);
-                        for entry in registry.lock().unwrap().values() {
-                            entry.handle.request_interrupt(
-                                v8_interrupt_callback,
-                                entry.data.0 as *mut c_void,
-                            );
-                        }
-                    }
-                })
-                .expect("spawning the V8 epoch ticker must succeed");
-        }
-        Arc::new(Self {
-            registry,
-            next_id: AtomicU64::new(0),
-            shutdown,
-        })
-    }
-
-    fn register(
-        &self,
-        handle: deno_core::v8::IsolateHandle,
-        data: *const V8InterruptData,
-    ) -> InterruptGuard {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.registry.lock().unwrap().insert(
-            id,
-            InterruptEntry {
-                handle,
-                data: InterruptDataPtr(data),
-            },
-        );
-        InterruptGuard {
-            registry: self.registry.clone(),
-            id,
-        }
-    }
-}
-
-impl Drop for V8InterruptTicker {
-    fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-    }
-}
-
-/// Removes the isolate from the ticker registry on drop. Held on `execute`'s stack across
-/// all JS execution, so no interrupt can fire after it is dropped.
-struct InterruptGuard {
-    registry: Arc<Mutex<HashMap<u64, InterruptEntry>>>,
-    id: u64,
-}
-
-impl Drop for InterruptGuard {
-    fn drop(&mut self) {
-        self.registry.lock().unwrap().remove(&self.id);
-    }
 }
 
 /// Runs on the isolate thread at a JS safe point. Reuses the deadline tracker's
@@ -192,7 +92,6 @@ struct NativeV8Invocation {
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
     v8_pool: V8Pool,
-    interrupt_ticker: Arc<V8InterruptTicker>,
 }
 
 #[async_trait]
@@ -213,7 +112,6 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
             return_type: self.return_type.clone(),
             resolved_imports: self.resolved_imports.clone(),
             v8_pool: self.v8_pool.clone(),
-            interrupt_ticker: self.interrupt_ticker.clone(),
         }))
     }
 }
@@ -237,7 +135,6 @@ impl WorkflowInvocation for NativeV8Invocation {
             return_type,
             resolved_imports,
             v8_pool,
-            interrupt_ticker,
         } = *self;
         let handle = tokio::runtime::Handle::current();
         let max_heap_size = v8_pool.max_heap_size();
@@ -258,7 +155,6 @@ impl WorkflowInvocation for NativeV8Invocation {
                     },
                     &mut workflow_ctx,
                     MainRuntimeHandle(handle),
-                    &interrupt_ticker,
                     max_heap_size,
                 )
                 .await;
@@ -299,6 +195,8 @@ impl WorkflowInvocation for NativeV8Invocation {
 struct HostState {
     workflow_ctx: usize,
     handle: MainRuntimeHandle,
+    isolate: deno_core::v8::IsolateHandle,
+    terminating: bool,
     join_sets: Vec<Option<JoinSetId>>,
     panic: crate::v8_panic::V8PanicState,
     panic_version: Option<Version>,
@@ -308,9 +206,46 @@ struct HostState {
 struct MainRuntimeHandle(tokio::runtime::Handle);
 
 impl MainRuntimeHandle {
-    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        let _guard = self.0.enter();
-        futures_lite::future::block_on(future)
+    fn block_on<F: Future + Send + 'static>(&self, future: F) -> F::Output
+    where
+        F::Output: Send + 'static,
+    {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        // Drive the host op on the real multi-thread runtime (real wakers, no futures_lite
+        // parker that can drop the sqlite-writer ack). We deliberately do not keep/abort the
+        // JoinHandle: like the wasmtime path we never force-cancel an in-flight host op (a DB
+        // commit is not cancel-safe). Cancellation is cooperative and observed elsewhere - the
+        // V8 epoch ticker for CPU-bound guest code, and the `DeadlineTracker` inside a blocking
+        // `join_next`, which makes even that op return `ExecutorClosing` on its own.
+        self.0.spawn(async move {
+            let _ = tx.send(future.await);
+        });
+        // Block the V8 thread on a std primitive (no foreign executor polling tokio wakers).
+        rx.recv()
+            .expect("workflow host-op task panicked or was dropped")
+    }
+
+    /// Runs a [`WorkflowCtx`] async method to completion on the main runtime while blocking the
+    /// current (V8-pool) thread. `build` receives the ctx reborrowed as `'static`; the future
+    /// it returns is driven by the real multi-thread scheduler, so tokio wakers (e.g. the
+    /// sqlite-writer commit ack) fire normally instead of being dropped by a foreign parker.
+    ///
+    /// SAFETY: the calling thread parks inside [`block_on`](Self::block_on) until the future
+    /// resolves and does not touch `ctx` meanwhile, and `ctx` (owned by `execute` for the whole
+    /// JS run) outlives the call, so the `'static` reborrow neither dangles nor races a
+    /// concurrent access.
+    fn block_on_ctx<T, Fut>(
+        &self,
+        ctx: &mut WorkflowCtx,
+        build: impl FnOnce(&'static mut WorkflowCtx) -> Fut,
+    ) -> T
+    where
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        // SAFETY: see the doc comment above.
+        let ctx: &'static mut WorkflowCtx = unsafe { &mut *std::ptr::from_mut(ctx) };
+        self.block_on(build(ctx))
     }
 }
 
@@ -330,7 +265,11 @@ impl HostState {
         let handle = self.handle.clone();
         f(self.context(), &handle).map_err(|err| {
             if is_runtime_control_flow(&err) {
+                // Like a wasmtime trap: the guest must not be able to catch it and keep
+                // issuing host calls, so terminate the isolate (skips JS `catch`/`finally`).
                 self.context().set_native_host_error(err.clone());
+                self.isolate.terminate_execution();
+                self.terminating = true;
             }
             JsErrorBox::generic(err.to_string())
         })
@@ -346,11 +285,15 @@ fn op_obelisk_host(
     let panic = state.borrow::<HostState>().panic.clone();
     let version = state.borrow_mut::<HostState>().context().version().clone();
     let result = panic.catch(|| op_obelisk_host_inner(state, request));
-    if panic.is_pending() {
-        state
-            .borrow_mut::<HostState>()
-            .panic_version
-            .get_or_insert(version);
+    let host = state.borrow_mut::<HostState>();
+    if panic.is_trap_pending() {
+        host.panic_version.get_or_insert(version);
+    }
+    if host.terminating || panic.is_trap_pending() {
+        // Returning `Err` would build the JS error object by calling into JS under a
+        // `TryCatch`, which consumes the pending termination and hands the guest a
+        // catchable exception. Return a value instead; V8 terminates at the next safe point.
+        return Ok(Value::Null);
     }
     result
 }
@@ -371,7 +314,7 @@ fn op_obelisk_host_inner(
             let id = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.execution_id_generate(backtrace))
+                    .block_on_ctx(ctx, move |ctx| ctx.execution_id_generate(backtrace))
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(json!(id.to_string()))
@@ -380,7 +323,9 @@ fn op_obelisk_host_inner(
             let datetime = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.sleep_named(HistoryEventScheduleAt::Now, None, backtrace))
+                    .block_on_ctx(ctx, move |ctx| {
+                        ctx.sleep_named(HistoryEventScheduleAt::Now, None, backtrace)
+                    })
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|()| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -392,7 +337,9 @@ fn op_obelisk_host_inner(
         }
         "createJoinSet" => {
             let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
-            let id = host.call(|ctx, handle| handle.block_on(ctx.native_join_set_create(name)))?;
+            let id = host.call(|ctx, handle| {
+                handle.block_on_ctx(ctx, move |ctx| ctx.native_join_set_create(name))
+            })?;
             let index = host.join_sets.len();
             host.join_sets.push(Some(id));
             Ok(json!(index))
@@ -414,7 +361,7 @@ fn op_obelisk_host_inner(
             let outcome = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.call_json(target, params, backtrace))
+                    .block_on_ctx(ctx, move |ctx| ctx.call_json(target, params, backtrace))
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|err| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -439,7 +386,9 @@ fn op_obelisk_host_inner(
             let execution_id = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.submit_json(join_set_id, target, params, backtrace))
+                    .block_on_ctx(ctx, move |ctx| {
+                        ctx.submit_json(join_set_id, target, params, backtrace)
+                    })
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|err| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -454,7 +403,9 @@ fn op_obelisk_host_inner(
             let schedule = schedule_arg(&args, "schedule")?;
             let delay_id = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
-                handle.block_on(ctx.submit_delay(join_set_id, schedule, backtrace))
+                handle.block_on_ctx(ctx, move |ctx| {
+                    ctx.submit_delay(join_set_id, schedule, backtrace)
+                })
             })?;
             Ok(json!(delay_id.id))
         }
@@ -462,7 +413,8 @@ fn op_obelisk_host_inner(
             let join_set_id = join_set(host, &args)?;
             let outcome = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
-                handle.block_on(ctx.join_next(join_set_id.clone(), backtrace))
+                let join_set_id = join_set_id.clone();
+                handle.block_on_ctx(ctx, move |ctx| ctx.join_next(join_set_id, backtrace))
             })?;
             Ok(match outcome {
                 Ok(outcome) => {
@@ -479,7 +431,10 @@ fn op_obelisk_host_inner(
                 .map_err(|err| JsErrorBox::type_error(format!("invalid function name: {err}")))?;
             let outcome = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
-                handle.block_on(ctx.join_next_for(join_set_id.clone(), target, backtrace))
+                let join_set_id = join_set_id.clone();
+                handle.block_on_ctx(ctx, move |ctx| {
+                    ctx.join_next_for(join_set_id, target, backtrace)
+                })
             })?;
             Ok(match outcome {
                 Ok(outcome) => {
@@ -504,7 +459,8 @@ fn op_obelisk_host_inner(
         "joinNextTry" => {
             let join_set_id = join_set(host, &args)?;
             let outcome = host.call(|ctx, handle| {
-                handle.block_on(ctx.native_join_next_try(join_set_id.clone()))
+                let join_set_id = join_set_id.clone();
+                handle.block_on_ctx(ctx, move |ctx| ctx.native_join_next_try(join_set_id))
             })?;
             Ok(match outcome {
                 Ok(outcome) => {
@@ -521,7 +477,7 @@ fn op_obelisk_host_inner(
             let datetime = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.sleep_named(schedule, name, backtrace))
+                    .block_on_ctx(ctx, move |ctx| ctx.sleep_named(schedule, name, backtrace))
                     .map_err(anyhow_to_workflow_error)?
                     .map_err(|()| {
                         super::workflow_ctx::WorkflowFunctionError::ConstraintViolation(
@@ -538,9 +494,13 @@ fn op_obelisk_host_inner(
             let value = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
                 let result = if inclusive {
-                    handle.block_on(ctx.random_u64_inclusive(min, max, backtrace.clone()))
+                    handle.block_on_ctx(ctx, move |ctx| {
+                        ctx.random_u64_inclusive(min, max, backtrace)
+                    })
                 } else {
-                    handle.block_on(ctx.random_u64_exclusive(min, max, backtrace))
+                    handle.block_on_ctx(ctx, move |ctx| {
+                        ctx.random_u64_exclusive(min, max, backtrace)
+                    })
                 };
                 result.map_err(anyhow_to_workflow_error)
             })?;
@@ -556,7 +516,7 @@ fn op_obelisk_host_inner(
             let value = host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
                 handle
-                    .block_on(ctx.random_string(min, max, backtrace))
+                    .block_on_ctx(ctx, move |ctx| ctx.random_string(min, max, backtrace))
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(json!(value))
@@ -572,14 +532,18 @@ fn op_obelisk_host_inner(
                 .map_err(JsErrorBox::from_err)?;
             let schedule = schedule_arg(&args, "schedule")?;
             host.call(|ctx, handle| {
-                handle.block_on(ctx.native_schedule_json(execution_id, target, params, schedule))
+                handle.block_on_ctx(ctx, move |ctx| {
+                    ctx.native_schedule_json(execution_id, target, params, schedule)
+                })
             })?;
             Ok(Value::Null)
         }
         "stub" => {
             let execution_id = string_arg(&args, "executionId")?.to_owned();
             let retval = string_arg(&args, "resultJson")?.to_owned();
-            host.call(|ctx, handle| handle.block_on(ctx.native_stub_json(execution_id, retval)))?;
+            host.call(|ctx, handle| {
+                handle.block_on_ctx(ctx, move |ctx| ctx.native_stub_json(execution_id, retval))
+            })?;
             Ok(Value::Null)
         }
         "close" => {
@@ -591,8 +555,12 @@ fn op_obelisk_host_inner(
                 .ok_or_else(|| JsErrorBox::generic("join set is closed"))?;
             host.call(|ctx, handle| {
                 let backtrace = ctx.native_backtrace();
+                // `join_set_close` borrows the id, so own it inside the future (it is dropped
+                // after this call anyway).
                 handle
-                    .block_on(ctx.join_set_close(&id, backtrace))
+                    .block_on_ctx(ctx, move |ctx| async move {
+                        ctx.join_set_close(&id, backtrace).await
+                    })
                     .map_err(anyhow_to_workflow_error)
             })?;
             Ok(Value::Null)
@@ -613,6 +581,8 @@ fn op_obelisk_host_inner(
             host.context().native_log(level, message.to_owned());
             Ok(Value::Null)
         }
+        #[cfg(test)]
+        "testPanic" => panic!("test host op panic"),
         _ => Err(JsErrorBox::generic(format!(
             "unsupported workflow host operation: {op}"
         ))),
@@ -633,7 +603,6 @@ async fn execute(
     args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
     handle: MainRuntimeHandle,
-    interrupt_ticker: &V8InterruptTicker,
     max_heap_size: usize,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
@@ -655,6 +624,8 @@ async fn execute(
     runtime.op_state().borrow_mut().put(HostState {
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: handle.clone(),
+        isolate: isolate.clone(),
+        terminating: false,
         join_sets: Vec::new(),
         panic: panic.clone(),
         panic_version: None,
@@ -666,8 +637,11 @@ async fn execute(
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: isolate.clone(),
     });
-    let interrupt_guard =
-        interrupt_ticker.register(isolate, std::ptr::from_ref(interrupt_data.as_ref()));
+    let interrupt_guard = crate::v8_interrupt_ticker::register(
+        isolate,
+        v8_interrupt_callback,
+        std::ptr::from_ref(interrupt_data.as_ref()).cast(),
+    );
 
     let params = params
         .as_json_values()
@@ -695,7 +669,7 @@ async fn execute(
     // (which re-enters JS) so a late interrupt cannot trap it. `interrupt_data` stays alive
     // until this function returns, after the isolate is dropped.
     drop(interrupt_guard);
-    if let Some(reason) = panic.take() {
+    if let Some(reason) = panic.take_trap() {
         let op_state = runtime.op_state();
         let version = op_state
             .borrow()

@@ -220,7 +220,7 @@ pub(crate) async fn execute(
         panic: panic.clone(),
     });
     let mut result = execute_inner(&mut runtime, &loader, entry_path, params, return_type).await;
-    if let Some(reason) = panic.take() {
+    if let Some(reason) = panic.take_trap() {
         result = Err(NativeActivityFailure::Trap(reason));
     }
     drop(runtime);

@@ -41,11 +41,11 @@ impl V8PanicState {
         }
     }
 
-    pub(crate) fn take(&self) -> Option<String> {
+    pub(crate) fn take_trap(&self) -> Option<String> {
         self.0.borrow_mut().reason.take()
     }
 
-    pub(crate) fn is_pending(&self) -> bool {
+    pub(crate) fn is_trap_pending(&self) -> bool {
         self.0.borrow().reason.is_some()
     }
 

@@ -2,7 +2,6 @@ pub(crate) mod activity_vm_nix;
 mod activity_vm_runtime;
 mod config_prepass;
 mod maintenance_gc;
-pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
 
 use crate::ServerStartup;
 use crate::args::shadow;
@@ -121,6 +120,7 @@ use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentSta
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
+pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
 use db_postgres::postgres_dao::PostgresPool;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::BaseDirs;
@@ -192,6 +192,7 @@ use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::ReplayWorker;
 use wasm_workers::registry::ReplayWorkerRegistry;
 use wasm_workers::registry::WitOrigin;
+use wasm_workers::v8_interrupt_ticker::V8InterruptTicker;
 use wasm_workers::v8_pool::V8Pool;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
@@ -206,6 +207,7 @@ use wasm_workers::workflow::deadline_tracker::{
     DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
 };
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
+use wasm_workers::workflow::workflow_js_worker::WorkflowJsRuntimeExt;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
 use wasm_workers::workflow::workflow_js_worker::{WorkflowJsRuntime, WorkflowJsWorkerCompiled};
 use wasm_workers::workflow::workflow_worker::WorkflowConfig;
@@ -3877,6 +3879,13 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
+    // Start tasks that do not require database
+    let epoch_ticker = EpochTicker::spawn_new(
+        server_compiled_linked.engines.weak_refs(),
+        Duration::from_millis(EPOCH_MILLIS),
+    );
+    let v8_interrupt_ticker = V8InterruptTicker::spawn_new(Duration::from_millis(EPOCH_MILLIS));
+    // Record startup event
     let server_configuration_event_id = record_server_configuration_audit(
         db_pool.as_ref(),
         &server_verified,
@@ -3907,10 +3916,6 @@ async fn spawn_tasks_and_threads(
     .await;
 
     // Start components requiring a database
-    let epoch_ticker = EpochTicker::spawn_new(
-        server_compiled_linked.engines.weak_refs(),
-        Duration::from_millis(EPOCH_MILLIS),
-    );
 
     let timers_watcher = if timers_watcher.enabled {
         Some(expired_timers_watcher::spawn_new(
@@ -4011,6 +4016,7 @@ async fn spawn_tasks_and_threads(
         maintenance_gc,
         http_servers_handles,
         epoch_ticker,
+        v8_interrupt_ticker,
         log_db_forarder,
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
@@ -4033,6 +4039,7 @@ struct ServerInit {
     maintenance_gc: Option<AbortOnDropHandle>,
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
+    v8_interrupt_ticker: V8InterruptTicker,
     log_db_forarder: AbortOnDropHandle,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
@@ -4055,6 +4062,7 @@ impl ServerInit {
             maintenance_gc,
             http_servers_handles,
             epoch_ticker,
+            v8_interrupt_ticker,
             log_db_forarder,
             log_forwarder_sender,
             webhook_registry,
@@ -4104,6 +4112,7 @@ impl ServerInit {
         drop(maintenance_gc);
         drop(http_servers_handles);
         drop(epoch_ticker);
+        drop(v8_interrupt_ticker);
         drop(engines);
         drop(webhook_registry);
         drop(log_forwarder_sender);
@@ -6462,21 +6471,21 @@ impl WorkerCompiled {
                     }))
                 }
                 CompiledWorkerKind::WorkflowJs(workflow_js_compiled) => {
+                    let runtime = match workflow_js_compiled.runtime {
+                        WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                        WorkflowJsRuntime::V8 => {
+                            WorkflowJsRuntimeExt::V8(workflow_js_compiled.v8_pool)
+                        }
+                    };
                     LinkedWorkerKind::WorkflowJs(Box::new(WorkflowJsWorkerLinkedWithConfig {
-                        worker: workflow_js_compiled.worker.link_with_runtime_and_pool(
-                            fn_registry.clone(),
-                            workflow_js_compiled.runtime,
-                            workflow_js_compiled.v8_pool.clone(),
-                        )?,
+                        worker: workflow_js_compiled
+                            .worker
+                            .link_with_runtime_and_pool(fn_registry.clone(), runtime.clone())?,
                         workflows_lock_extension_leeway: workflow_js_compiled
                             .workflows_lock_extension_leeway,
                         replay_linked: workflow_js_compiled
                             .replay_compiled
-                            .link_with_runtime_and_pool(
-                                fn_registry.clone(),
-                                workflow_js_compiled.runtime,
-                                workflow_js_compiled.v8_pool,
-                            )?,
+                            .link_with_runtime_and_pool(fn_registry.clone(), runtime)?,
                     }))
                 }
             },

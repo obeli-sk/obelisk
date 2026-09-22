@@ -84,9 +84,12 @@ pub enum WorkflowConfigMode {
     /// Normal execution: writes are persisted to the database.
     Real {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        // Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
+        /// Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
         lock_extension: Option<Duration>,
+        ///  Send `InterruptKind::WorkflowEventLimitReached` when attempting to exceed this limit.
         max_events_per_run: usize,
+        /// Flush the non-blocking events cache on every N-th non-blocking event and poll the responses.
+        /// Only applicable if `join_next_blocking_strategy` is `JoinNextBlockingStrategy::Await`.
         response_refresh_interval: usize,
     },
     /// Replay/advance: writes are captured in memory instead of persisted, and the workflow always

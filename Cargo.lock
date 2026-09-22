@@ -4064,7 +4064,6 @@ dependencies = [
  "deno_core",
  "deno_error",
  "derive_more",
- "futures-lite 2.6.1",
  "futures-util",
  "hashbrown 0.17.1",
  "hmac 0.12.1",

@@ -56,9 +56,20 @@ impl HostState {
         unsafe { &mut *(self.ctx as *mut WebhookEndpointCtx) }
     }
 
-    fn block_on<T>(&mut self, future: impl Future<Output = T>) -> T {
-        let _guard = self.handle.enter();
-        futures_lite::future::block_on(future)
+    fn block_on<F>(&mut self, future: F) -> F::Output
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        // Drive the host op on the real multi-thread runtime (real wakers) and block the V8
+        // thread on a std primitive. Avoids a foreign `block_on` parker that can drop a tokio
+        // wakeup (see the workflow runtime for the sqlite-writer lost-wakeup this prevents).
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        self.handle.spawn(async move {
+            let _ = tx.send(future.await);
+        });
+        rx.recv()
+            .expect("webhook host-op task panicked or was dropped")
     }
 }
 
@@ -101,10 +112,12 @@ fn op_webhook_log(
 
 fn op_webhook_log_inner(state: &mut OpState, level: String, message: String) {
     let host = state.borrow_mut::<HostState>();
-    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
+    // Capture the ctx as a `usize` so the spawned future is `Send`.
+    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx()) as usize;
     let future = async move {
-        // SAFETY: host calls are serialized by the isolate.
-        let ctx = unsafe { &mut *ctx };
+        // SAFETY: host calls are serialized by the isolate, and the ctx outlives this blocking
+        // call (`execute` owns it until after the V8 runtime is dropped).
+        let ctx = unsafe { &mut *(ctx as *mut WebhookEndpointCtx) };
         match level.as_str() {
             "trace" => ctx.trace(message).await,
             "debug" => ctx.debug(message).await,
@@ -198,10 +211,12 @@ fn op_webhook_host_inner(
     request: HostRequest,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let host = state.borrow_mut::<HostState>();
-    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx());
+    // Capture the ctx as a `usize` so the spawned future is `Send`.
+    let ctx = std::ptr::from_mut::<WebhookEndpointCtx>(host.ctx()) as usize;
     let future = async move {
-        // SAFETY: host calls are serialized by the isolate.
-        let ctx = unsafe { &mut *ctx };
+        // SAFETY: host calls are serialized by the isolate, and the ctx outlives this blocking
+        // call (`execute` owns it until after the V8 runtime is dropped).
+        let ctx = unsafe { &mut *(ctx as *mut WebhookEndpointCtx) };
         dispatch_host(ctx, &request.op, &request.args).await
     };
     host.block_on(future)
@@ -317,7 +332,7 @@ pub(super) async fn execute(
         evaluation.await
     }
     .await;
-    if let Some(reason) = panic.take() {
+    if let Some(reason) = panic.take_trap() {
         return Err(NativeWebhookFailure::Execution(reason));
     }
     if let Err(err) = evaluated {
