@@ -1276,6 +1276,7 @@ mod tests {
             db_pool,
             clock_fn,
             fn_registry,
+            WorkflowJsRuntimeExt::V8(V8Pool::default()),
             workflow_engine,
             deployment_id,
             join_next_blocking_strategy,
@@ -1295,6 +1296,7 @@ mod tests {
         db_pool: Arc<dyn DbPool>,
         clock_fn: &dyn ClockFn,
         fn_registry: Arc<dyn FunctionRegistry>,
+        runtime: WorkflowJsRuntimeExt,
         workflow_engine: Arc<Engine>,
         deployment_id: DeploymentId,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -1349,7 +1351,7 @@ mod tests {
         .unwrap();
 
         let linked = js_compiled
-            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
+            .link_with_runtime_and_pool(fn_registry, runtime)
             .unwrap();
 
         (
@@ -2620,6 +2622,7 @@ mod tests {
                 db_pool.clone(),
                 &sim_clock,
                 fn_registry.clone(),
+                WorkflowJsRuntimeExt::V8(V8Pool::default()),
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
@@ -2814,6 +2817,7 @@ mod tests {
                 db_pool.clone(),
                 &sim_clock,
                 fn_registry.clone(),
+                WorkflowJsRuntimeExt::V8(V8Pool::default()),
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
@@ -3465,6 +3469,7 @@ mod tests {
             db_pool.clone(),
             &sim_clock,
             fn_registry,
+            WorkflowJsRuntimeExt::V8(V8Pool::default()),
             workflow_engine.clone(),
             DEPLOYMENT_ID_DUMMY,
             JoinNextBlockingStrategy::Interrupt,
@@ -4217,6 +4222,7 @@ mod tests {
                 db_pool.clone(),
                 sim_clock.clone_box().as_ref(),
                 fn_registry,
+                WorkflowJsRuntimeExt::V8(V8Pool::default()),
                 workflow_engine,
                 upgrade_deployment_id,
                 JoinNextBlockingStrategy::Interrupt,
@@ -6070,5 +6076,193 @@ mod tests {
             panic!("scheduled execution log must start with Created");
         };
         assert_eq!(scheduled_at, expected_scheduled_at);
+    }
+
+    #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn workflow_js_agent_loop_direct_call_hang(
+        #[values(WorkflowJsRuntime::BoaWasm, WorkflowJsRuntime::V8)] runtime: WorkflowJsRuntime,
+    ) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let sim_clock = SimClock::epoch();
+
+        let clock_fn: Box<dyn ClockFn> = sim_clock.clone_box();
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "session");
+
+        // Minimal skeleton of the agent-template hang, fully self-driving: the per-turn user
+        // prompt offer is fulfilled by the workflow itself (`obelisk.stub` before
+        // `users.joinNext()`), so no driver has to inject stub responses. Each `Date.now()` is
+        // a `host('now')` = already-due `sleep_named(Now)` cached under `Await`. The direct
+        // `fibo(1)` then persists the child: it first flushes the cached `Date.now()` delay
+        // responses, then creates the child - the point where the V8 host-op `block_on` misses
+        // the sqlite-writer wakeup and hangs.
+        let js_source = r"
+        import { fibo } from 'testing:fibo/fibo';
+        export default function session(_params) {
+            const events = obelisk.createJoinSet({ name: 'session-events' });
+            let turn = 0;
+            let users = obelisk.createJoinSet({ name: 'user-' + turn });
+            let offer = users.submit('testing:stub-activity/activity.foo', ['offer']);
+            while (turn < 4) {
+                obelisk.stub(offer, { ok: 'prompt ' + turn }); // self-fulfilled user prompt
+                users.joinNext();
+                const ev = events.submit('testing:stub-activity/activity.foo', ['evt']);
+                obelisk.stub(ev, { ok: 'evt' }); // self-fulfilled: flushes the cache
+                events.joinNext();
+                Date.now();       // one already-due cached sleep (the minimum that hangs)
+                fibo(1);          // direct tool call: flush the cached sleep + create child
+                users.close();
+                turn += 1;
+                users = obelisk.createJoinSet({ name: 'user-' + turn });
+                offer = users.submit('testing:stub-activity/activity.foo', ['offer']);
+            }
+            return 'done';
+        }";
+
+        use crate::activity::activity_worker::test::compile_activity_stub;
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![
+            compile_activity_stub(test_programs_stub_activity_builder::TEST_PROGRAMS_STUB_ACTIVITY)
+                .await,
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+        ]);
+
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let (worker, component_id, _) = compile_js_workflow_worker_with_deployment_id_and_signature(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            clock_fn.as_ref(),
+            fn_registry,
+            match runtime {
+                WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Pool::default()),
+            },
+            workflow_engine,
+            DEPLOYMENT_ID_DUMMY,
+            // Idle waits persist and resume between turns, matching the app (a fresh run
+            // replays, then makes the direct call).
+            JoinNextBlockingStrategy::Await {
+                non_blocking_event_batching: 0,
+                subscription_interruption: None,
+            },
+            Arc::new(DeadlineTrackerFactoryTokio::new(
+                Duration::ZERO,
+                clock_fn.clone_box(),
+            )),
+            &single_list_of_strings_params(),
+            default_return_type(),
+            usize::MAX, // max_events_per_run
+            usize::MAX, // response_refresh_interval
+            None,
+        );
+
+        let (workflow_exec, _wf_close) = ExecTask::new_all_ffqns_test(
+            Arc::new(worker),
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(10),
+                tick_sleep: Duration::from_millis(1),
+                component_id: component_id.clone(),
+                task_limiter_global: None,
+                task_limiter_local: None,
+                executor_id: ExecutorId::from_parts(0, 0),
+                retry_config: ComponentRetryConfig::WORKFLOW,
+                locking_strategy: LockingStrategy::ByComponentDigest,
+            },
+            clock_fn.clone_box(),
+            db_pool.clone(),
+        );
+        let (activity_exec, _act_close) = new_activity_fibo(
+            db_pool.clone(),
+            clock_fn.clone_box(),
+            TokioSleep,
+            LockingStrategy::ByComponentDigest,
+        )
+        .await;
+
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::from_parts(0, 0);
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
+            })
+            .await
+            .unwrap();
+
+        // The workflow drives itself; the two executors only have to keep ticking (mirroring
+        // the running server) until it finishes. Under V8 the direct `fibo` persist hangs and
+        // the execution stays frozen mid-turn, so the timeout fires instead.
+        const FINISH_TIMEOUT: Duration = Duration::from_secs(15);
+        let now = sim_clock.now();
+        let finished = tokio::time::timeout(FINISH_TIMEOUT, async {
+            let drive_workflow = async {
+                loop {
+                    workflow_exec
+                        .tick_test_await(now, RunId::from_parts(0, 0))
+                        .await;
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            };
+            let drive_activity = async {
+                loop {
+                    activity_exec
+                        .tick_test_await(now, RunId::from_parts(0, 0))
+                        .await;
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            };
+            let wait_finished = async {
+                loop {
+                    let state = db_connection
+                        .get_pending_state(&execution_id)
+                        .await
+                        .unwrap()
+                        .pending_state;
+                    if let PendingState::Finished(finished) = state {
+                        break finished;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            };
+            tokio::select! {
+                finished = wait_finished => finished,
+                () = drive_workflow => unreachable!("executor loops never return"),
+                () = drive_activity => unreachable!("executor loops never return"),
+            }
+        })
+        .await;
+        let Ok(finished) = finished else {
+            let version = db_connection.get(&execution_id).await.unwrap().next_version;
+            // The V8 host-op thread is wedged in `block_on`, so a normal panic would deadlock
+            // unwinding: `V8Pool::drop` joins that thread and never returns, leaving nextest
+            // to kill us at its 80s slow-timeout. Report and force-exit the (per-test) process
+            // instead so the failure surfaces immediately.
+            eprintln!(
+                "HANG REPRODUCED (runtime {runtime:?}): the direct tool call after cached \
+                 Date.now() delays never persisted; workflow frozen at {version:?} \
+                 (V8 host op block_on <-> sqlite writer missed wakeup)"
+            );
+            panic!();
+        };
+        assert_matches!(
+            finished.result_kind,
+            PendingStateFinishedResultKind::Ok,
+            "workflow must finish ok"
+        );
+        db_close.close().await;
     }
 }
