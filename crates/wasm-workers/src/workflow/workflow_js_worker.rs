@@ -6265,4 +6265,136 @@ mod tests {
         );
         db_close.close().await;
     }
+
+    /// `WorkflowEventLimitReached` must not be catchable by the guest.
+    #[rstest]
+    #[tokio::test]
+    async fn workflow_js_event_limit_interrupt_must_not_be_catchable(
+        #[values(WorkflowJsRuntime::BoaWasm, WorkflowJsRuntime::V8)] runtime: WorkflowJsRuntime,
+    ) {
+        test_utils::set_up();
+        let js_source = r"
+        export default function session(_params) {
+            let caught = false;
+            try {
+                obelisk.createJoinSet({ name: 'first' }); // the 1-event limit is hit here
+            } catch (e) {
+                caught = true;
+            }
+            if (caught) {
+                obelisk.createJoinSet({ name: 'caught' }); // persisted only when the interrupt was swallowed
+            }
+            obelisk.createJoinSet({ name: 'second' });
+            return 'done';
+        }";
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let sim_clock = SimClock::epoch();
+        let clock_fn: Box<dyn ClockFn> = sim_clock.clone_box();
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "session");
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+        let js_source_versioned = version_obelisk_test_imports(js_source);
+        let params = single_list_of_strings_params();
+        let return_type = default_return_type();
+        let component_id = concepts::ComponentId::new(
+            ComponentType::Workflow,
+            StrVariant::Static("test_js_workflow"),
+            workflow_js_component_digest(&js_source_versioned, &user_ffqn, &params, &return_type),
+        )
+        .unwrap();
+        let runnable_component = RunnableComponent::new(
+            workflow_js_runtime_builder::WORKFLOW_JS_RUNTIME,
+            &workflow_engine,
+            component_id.component_type,
+        )
+        .unwrap();
+        let config = WorkflowConfig {
+            component_id: component_id.clone(),
+            stub_wasi: false,
+            fuel: None,
+            mode: WorkflowConfigMode::Real {
+                join_next_blocking_strategy: JoinNextBlockingStrategy::Interrupt,
+                lock_extension: None,
+                max_events_per_run: 1,
+                response_refresh_interval: usize::MAX,
+            },
+        };
+        let compiled = WorkflowWorkerCompiled::new_with_config(
+            runnable_component,
+            config,
+            workflow_engine,
+            clock_fn.clone_box(),
+        )
+        .unwrap();
+        let worker = WorkflowJsWorkerCompiled::new(
+            compiled,
+            js_source_versioned,
+            "index.js".to_string(),
+            &user_ffqn,
+            &params,
+            return_type,
+        )
+        .unwrap()
+        .link_with_runtime_and_pool(
+            fn_registry,
+            match runtime {
+                WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Pool::default()),
+            },
+        )
+        .unwrap()
+        .into_worker(
+            DEPLOYMENT_ID_DUMMY,
+            db_pool.clone(),
+            Arc::new(DeadlineTrackerFactoryTokio::new(
+                Duration::ZERO,
+                clock_fn.clone_box(),
+            )),
+            CancelRegistry::new(),
+            None,
+        );
+        let (workflow_exec, _wf_close) =
+            new_js_workflow_exec_task(worker, clock_fn.clone_box(), db_pool.clone());
+
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::generate();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn,
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id,
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
+            })
+            .await
+            .unwrap();
+
+        let finished = loop {
+            workflow_exec
+                .tick_test_await(sim_clock.now(), RunId::generate())
+                .await;
+            if let PendingState::Finished(finished) = db_connection
+                .get_pending_state(&execution_id)
+                .await
+                .unwrap()
+                .pending_state
+            {
+                break finished;
+            }
+        };
+        assert_matches!(
+            finished.result_kind,
+            PendingStateFinishedResultKind::Ok,
+            "workflow must finish ok"
+        );
+        db_close.close().await;
+    }
 }
