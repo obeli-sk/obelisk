@@ -247,6 +247,12 @@ pub struct WorkflowJsWorkerCompiled {
     user_wasm_component: WasmComponent,
 }
 
+#[derive(Clone)]
+pub enum WorkflowJsRuntimeExt {
+    BoaWasm,
+    V8(crate::v8_pool::V8Pool),
+}
+
 impl WorkflowJsWorkerCompiled {
     pub fn new(
         inner: WorkflowWorkerCompiled,
@@ -329,26 +335,10 @@ impl WorkflowJsWorkerCompiled {
         self.user_wasm_component.wit()
     }
 
-    pub fn link(
-        self,
-        fn_registry: Arc<dyn FunctionRegistry>,
-    ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
-        self.link_with_runtime(fn_registry, WorkflowJsRuntime::BoaWasm)
-    }
-
-    pub fn link_with_runtime(
-        self,
-        fn_registry: Arc<dyn FunctionRegistry>,
-        runtime: WorkflowJsRuntime,
-    ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
-        self.link_with_runtime_and_pool(fn_registry, runtime, crate::v8_pool::V8Pool::default())
-    }
-
     pub fn link_with_runtime_and_pool(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
-        runtime: WorkflowJsRuntime,
-        v8_pool: crate::v8_pool::V8Pool,
+        runtime: WorkflowJsRuntimeExt,
     ) -> Result<WorkflowJsWorkerLinked, crate::WasmFileError> {
         // Resolve JS imports against the function registry before linking.
         // This validates named imports and resolves namespace imports (`import *`).
@@ -365,7 +355,7 @@ impl WorkflowJsWorkerCompiled {
 
         let linked = self.inner.link(fn_registry)?;
         let linked = match runtime {
-            WorkflowJsRuntime::BoaWasm => linked.map_runtime(|inner| {
+            WorkflowJsRuntimeExt::BoaWasm => linked.map_runtime(|inner| {
                 Arc::new(BoaWasmRuntime {
                     inner,
                     entry_path: self.js_entry_path.clone(),
@@ -374,13 +364,15 @@ impl WorkflowJsWorkerCompiled {
                     resolved_imports,
                 })
             }),
-            WorkflowJsRuntime::V8 => linked.with_runtime(Arc::new(NativeV8WorkflowRuntime::new(
-                self.js_entry_path.clone(),
-                self.js_files.clone(),
-                self.user_return_type.clone(),
-                resolved_imports,
-                v8_pool,
-            ))),
+            WorkflowJsRuntimeExt::V8(v8_pool) => {
+                linked.with_runtime(Arc::new(NativeV8WorkflowRuntime::new(
+                    self.js_entry_path.clone(),
+                    self.js_files.clone(),
+                    self.user_return_type.clone(),
+                    resolved_imports,
+                    v8_pool,
+                )))
+            }
         };
         Ok(WorkflowJsWorkerLinked {
             inner: linked,
@@ -633,6 +625,7 @@ mod tests {
     use crate::cancellation_driver;
     use crate::engines::{EngineConfig, Engines};
     use crate::testing_fn_registry::TestingFnRegistry;
+    use crate::v8_pool::V8Pool;
     use crate::workflow::deadline_tracker::{
         DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
     };
@@ -818,7 +811,7 @@ mod tests {
         )
         .unwrap();
         let linked = js_compiled
-            .link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
+            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
             .unwrap();
         linked.into_worker(
             deployment_id,
@@ -887,7 +880,7 @@ mod tests {
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
         let linked = js_compiled
-            .link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
+            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
             .unwrap();
 
         let (guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
@@ -964,7 +957,8 @@ mod tests {
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
-        js_compiled.link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
+        js_compiled
+            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
     }
 
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
@@ -1355,7 +1349,7 @@ mod tests {
         .unwrap();
 
         let linked = js_compiled
-            .link_with_runtime(fn_registry, WorkflowJsRuntime::V8)
+            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
             .unwrap();
 
         (

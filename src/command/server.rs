@@ -206,6 +206,7 @@ use wasm_workers::workflow::deadline_tracker::{
     DeadlineTrackerFactoryForReplay, DeadlineTrackerFactoryTokio,
 };
 use wasm_workers::workflow::host_exports::history_event_schedule_at_from_wast_val;
+use wasm_workers::workflow::workflow_js_worker::WorkflowJsRuntimeExt;
 use wasm_workers::workflow::workflow_js_worker::WorkflowJsWorkerLinked;
 use wasm_workers::workflow::workflow_js_worker::{WorkflowJsRuntime, WorkflowJsWorkerCompiled};
 use wasm_workers::workflow::workflow_worker::WorkflowConfig;
@@ -6462,21 +6463,21 @@ impl WorkerCompiled {
                     }))
                 }
                 CompiledWorkerKind::WorkflowJs(workflow_js_compiled) => {
+                    let runtime = match workflow_js_compiled.runtime {
+                        WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
+                        WorkflowJsRuntime::V8 => {
+                            WorkflowJsRuntimeExt::V8(workflow_js_compiled.v8_pool)
+                        }
+                    };
                     LinkedWorkerKind::WorkflowJs(Box::new(WorkflowJsWorkerLinkedWithConfig {
-                        worker: workflow_js_compiled.worker.link_with_runtime_and_pool(
-                            fn_registry.clone(),
-                            workflow_js_compiled.runtime,
-                            workflow_js_compiled.v8_pool.clone(),
-                        )?,
+                        worker: workflow_js_compiled
+                            .worker
+                            .link_with_runtime_and_pool(fn_registry.clone(), runtime.clone())?,
                         workflows_lock_extension_leeway: workflow_js_compiled
                             .workflows_lock_extension_leeway,
                         replay_linked: workflow_js_compiled
                             .replay_compiled
-                            .link_with_runtime_and_pool(
-                                fn_registry.clone(),
-                                workflow_js_compiled.runtime,
-                                workflow_js_compiled.v8_pool,
-                            )?,
+                            .link_with_runtime_and_pool(fn_registry.clone(), runtime)?,
                     }))
                 }
             },
