@@ -33,7 +33,6 @@ derive_more.workspace = true
 hashbrown.workspace = true
 hmac.workspace = true
 futures-util.workspace = true
-futures-lite.workspace = true
 http-body-util.workspace = true
 hyper-util.workspace = true
 hyper.workspace = true
