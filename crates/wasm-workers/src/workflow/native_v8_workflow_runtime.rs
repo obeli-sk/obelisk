@@ -393,7 +393,7 @@ fn op_obelisk_host(
     if panic.is_trap_pending() {
         host.panic_version.get_or_insert(version);
     }
-    if host.terminating {
+    if host.terminating || panic.is_trap_pending() {
         // Returning `Err` would build the JS error object by calling into JS under a
         // `TryCatch`, which consumes the pending termination and hands the guest a
         // catchable exception. Return a value instead; V8 terminates at the next safe point.
