@@ -4990,7 +4990,6 @@ mod tests {
     async fn workflow_js_hot_run_refreshes_responses(database: Database) {
         use crate::activity::activity_worker::test::compile_activity_stub;
 
-        const MAX_EVENTS_PER_RUN: usize = 10_000;
         const RESPONSE_REFRESH_INTERVAL: usize = 4;
 
         test_utils::set_up();
@@ -5028,7 +5027,7 @@ mod tests {
                 },
                 deadline_tracker_factory_test(&sim_clock),
                 default_return_type(),
-                MAX_EVENTS_PER_RUN,
+                usize::MAX, // max_events_per_run
                 RESPONSE_REFRESH_INTERVAL,
             );
         let (workflow_exec, _close_tx) =
