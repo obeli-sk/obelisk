@@ -3350,6 +3350,7 @@ impl SqlitePool {
     // Must be called after write transaction for a correct happens-before relationship.
     #[instrument(level = Level::TRACE, skip_all)]
     fn notify_all(&self, notifiers: Vec<AppendNotifier>, current_time: DateTime<Utc>) {
+        trace!("notify_all");
         let (pending_ats, finished_execs, responses) = {
             let (mut pending_ats, mut finished_execs, mut responses) =
                 (Vec::new(), Vec::new(), Vec::new());
@@ -3369,14 +3370,17 @@ impl SqlitePool {
 
         // Notify pending_at subscribers.
         if !pending_ats.is_empty() {
+            trace!("Locking pending_subscribers");
             let guard = self.0.pending_subscribers.lock().unwrap();
             for pending_at in pending_ats {
                 Self::notify_pending_locked(&pending_at, current_time, &guard);
             }
+            trace!("Unlocking pending_subscribers");
         }
         // Notify execution finished subscribers.
         // Every NotifierExecutionFinished value belongs to a different execution, since only `append(Finished)` can produce `NotifierExecutionFinished`.
         if !finished_execs.is_empty() {
+            trace!("Locking execution_finished_subscribers");
             let mut guard = self.0.execution_finished_subscribers.lock().unwrap();
             for finished in finished_execs {
                 if let Some(listeners_of_exe_id) = guard.remove(&finished.execution_id) {
@@ -3387,15 +3391,18 @@ impl SqlitePool {
                     }
                 }
             }
+            trace!("Unlocking execution_finished_subscribers");
         }
         // Notify response subscribers.
         if !responses.is_empty() {
+            trace!("Locking response_subscribers");
             let mut guard = self.0.response_subscribers.lock().unwrap();
             for (execution_id, _response) in responses {
                 if let Some((sender, _)) = guard.remove(&execution_id) {
                     let _ = sender.send(());
                 }
             }
+            trace!("Unlocking response_subscribers");
         }
     }
 
