@@ -428,7 +428,7 @@ impl EventHistory {
 
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
-    #[instrument(skip_all, fields(?event_call))]
+    #[instrument(skip_all)]
     async fn apply_inner(
         &mut self,
         event_call: EventCall,
@@ -742,11 +742,9 @@ impl EventHistory {
                 {
                     Ok(next_responses) => {
                         debug!(
-                            "Original {orig_len} responses are extended by {len} after old last rep {last_response}, next first: {first:?}, last: {last:?}",
+                            "Original {orig_len} responses are extended by {len}",
                             orig_len = self.responses.len(),
                             len = next_responses.len(),
-                            first = next_responses.first(),
-                            last = next_responses.last(),
                         );
                         self.extend_responses(next_responses);
                         if let FindMatchingResponse::Found {
@@ -3051,10 +3049,10 @@ pub(crate) struct StubParams {
 }
 
 // Current database and fn registry depentent intent
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StubIntent {
     Err(StubIntentErr),
-    StubTypeChecked(SupportedFunctionReturnValue), // can result in `Ok(())` or `StubError::Conflict`
+    StubTypeChecked(#[debug(skip)] SupportedFunctionReturnValue), // can result in `Ok(())` or `StubError::Conflict`
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3074,20 +3072,22 @@ impl From<StubIntentErr> for StubError {
 }
 
 /// Intent for `schedule-json` function. Captures `fn_registry` lookup result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ScheduleIntent {
     Ok {
         fn_component_id: ComponentId,
+        #[debug(skip)]
         params: Params,
     },
     Err(ScheduleRequestError),
 }
 
 /// Intent for `submit-json` function. Captures `fn_registry` lookup result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SubmitChildIntent {
     Ok {
         fn_component_id: ComponentId,
+        #[debug(skip)]
         params: Params,
     },
     Err(ChildExecutionRequestError),
