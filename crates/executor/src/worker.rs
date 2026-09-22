@@ -129,7 +129,6 @@ pub enum FatalError {
         reason: StrVariant,
         detail: Option<String>,
     },
-    /// Workflow trap if `retry_on_trap` is disabled.
     #[error("workflow {trap_kind}: {reason}")]
     WorkflowTrap {
         reason: String,

@@ -2,7 +2,6 @@ pub(crate) mod activity_vm_nix;
 mod activity_vm_runtime;
 mod config_prepass;
 mod maintenance_gc;
-pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
 
 use crate::ServerStartup;
 use crate::args::shadow;
@@ -121,6 +120,7 @@ use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentSta
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
+pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
 use db_postgres::postgres_dao::PostgresPool;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::BaseDirs;
