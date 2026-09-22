@@ -22,14 +22,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::c_void;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-/// How often the V8 interrupt ticker pokes each active isolate to run
-/// [`check_epoch_callback`](WorkflowCtx::check_epoch_callback). Mirrors the
-/// wasmtime engine epoch cadence.
-const V8_EPOCH: Duration = Duration::from_millis(10);
 
 pub(crate) struct NativeV8WorkflowRuntime {
     entry_path: String,
@@ -37,7 +30,6 @@ pub(crate) struct NativeV8WorkflowRuntime {
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
     v8_pool: V8Pool,
-    interrupt_ticker: Arc<V8InterruptTicker>,
 }
 
 impl NativeV8WorkflowRuntime {
@@ -54,7 +46,6 @@ impl NativeV8WorkflowRuntime {
             return_type,
             resolved_imports,
             v8_pool,
-            interrupt_ticker: V8InterruptTicker::spawn(V8_EPOCH),
         }
     }
 }
@@ -66,97 +57,6 @@ struct V8InterruptData {
     /// `*mut WorkflowCtx`, matching `HostState::workflow_ctx`.
     workflow_ctx: usize,
     handle: deno_core::v8::IsolateHandle,
-}
-
-/// Raw pointer to a [`V8InterruptData`] kept alive by `execute`'s stack for the whole
-/// isolate lifetime; only read on the isolate thread while JS is running.
-#[derive(Clone, Copy)]
-struct InterruptDataPtr(*const V8InterruptData);
-// SAFETY: the pointee outlives every registration (see `execute`), and is dereferenced
-// only on the isolate thread from `v8_interrupt_callback`.
-unsafe impl Send for InterruptDataPtr {}
-
-struct InterruptEntry {
-    handle: deno_core::v8::IsolateHandle,
-    data: InterruptDataPtr,
-}
-
-/// The V8 analog of [`crate::epoch_ticker::EpochTicker`]: a single background thread
-/// that periodically asks each active isolate to run its epoch callback. wasmtime bumps
-/// an engine epoch; V8 has no epoch, so we drive `IsolateHandle::request_interrupt`,
-/// whose callback fires on the isolate thread and can trap a CPU-bound workflow.
-struct V8InterruptTicker {
-    registry: Arc<Mutex<HashMap<u64, InterruptEntry>>>,
-    next_id: AtomicU64,
-    shutdown: Arc<AtomicBool>,
-}
-
-impl V8InterruptTicker {
-    fn spawn(period: Duration) -> Arc<Self> {
-        let registry: Arc<Mutex<HashMap<u64, InterruptEntry>>> = Arc::default();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        {
-            let registry = registry.clone();
-            let shutdown = shutdown.clone();
-            std::thread::Builder::new()
-                .name("obelisk-v8-epoch".to_owned())
-                .spawn(move || {
-                    while !shutdown.load(Ordering::Relaxed) {
-                        std::thread::sleep(period);
-                        for entry in registry.lock().unwrap().values() {
-                            entry.handle.request_interrupt(
-                                v8_interrupt_callback,
-                                entry.data.0 as *mut c_void,
-                            );
-                        }
-                    }
-                })
-                .expect("spawning the V8 epoch ticker must succeed");
-        }
-        Arc::new(Self {
-            registry,
-            next_id: AtomicU64::new(0),
-            shutdown,
-        })
-    }
-
-    fn register(
-        &self,
-        handle: deno_core::v8::IsolateHandle,
-        data: *const V8InterruptData,
-    ) -> InterruptGuard {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.registry.lock().unwrap().insert(
-            id,
-            InterruptEntry {
-                handle,
-                data: InterruptDataPtr(data),
-            },
-        );
-        InterruptGuard {
-            registry: self.registry.clone(),
-            id,
-        }
-    }
-}
-
-impl Drop for V8InterruptTicker {
-    fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-    }
-}
-
-/// Removes the isolate from the ticker registry on drop. Held on `execute`'s stack across
-/// all JS execution, so no interrupt can fire after it is dropped.
-struct InterruptGuard {
-    registry: Arc<Mutex<HashMap<u64, InterruptEntry>>>,
-    id: u64,
-}
-
-impl Drop for InterruptGuard {
-    fn drop(&mut self) {
-        self.registry.lock().unwrap().remove(&self.id);
-    }
 }
 
 /// Runs on the isolate thread at a JS safe point. Reuses the deadline tracker's
@@ -192,7 +92,6 @@ struct NativeV8Invocation {
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
     v8_pool: V8Pool,
-    interrupt_ticker: Arc<V8InterruptTicker>,
 }
 
 #[async_trait]
@@ -213,7 +112,6 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
             return_type: self.return_type.clone(),
             resolved_imports: self.resolved_imports.clone(),
             v8_pool: self.v8_pool.clone(),
-            interrupt_ticker: self.interrupt_ticker.clone(),
         }))
     }
 }
@@ -237,7 +135,6 @@ impl WorkflowInvocation for NativeV8Invocation {
             return_type,
             resolved_imports,
             v8_pool,
-            interrupt_ticker,
         } = *self;
         let handle = tokio::runtime::Handle::current();
         let max_heap_size = v8_pool.max_heap_size();
@@ -258,7 +155,6 @@ impl WorkflowInvocation for NativeV8Invocation {
                     },
                     &mut workflow_ctx,
                     MainRuntimeHandle(handle),
-                    &interrupt_ticker,
                     max_heap_size,
                 )
                 .await;
@@ -707,7 +603,6 @@ async fn execute(
     args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
     handle: MainRuntimeHandle,
-    interrupt_ticker: &V8InterruptTicker,
     max_heap_size: usize,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
@@ -742,8 +637,11 @@ async fn execute(
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: isolate.clone(),
     });
-    let interrupt_guard =
-        interrupt_ticker.register(isolate, std::ptr::from_ref(interrupt_data.as_ref()));
+    let interrupt_guard = crate::v8_interrupt_ticker::register(
+        isolate,
+        v8_interrupt_callback,
+        std::ptr::from_ref(interrupt_data.as_ref()).cast(),
+    );
 
     let params = params
         .as_json_values()

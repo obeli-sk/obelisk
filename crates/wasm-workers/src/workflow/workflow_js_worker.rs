@@ -3454,6 +3454,9 @@ mod tests {
         ";
         let ffqn = FunctionFqn::new_static("test:pkg/ifc", "busy");
 
+        // The V8 runtime delivers the interrupt only while a ticker is running, see `server.rs`.
+        let _v8_interrupt_ticker =
+            crate::v8_interrupt_ticker::V8InterruptTicker::spawn_new(Duration::from_millis(10));
         // Never-set close watcher: the interrupt can only come from `signal_workflow_interrupt`.
         let (_close_sender, close_receiver) = tokio::sync::watch::channel(false);
 

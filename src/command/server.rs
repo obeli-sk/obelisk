@@ -192,6 +192,7 @@ use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::ReplayWorker;
 use wasm_workers::registry::ReplayWorkerRegistry;
 use wasm_workers::registry::WitOrigin;
+use wasm_workers::v8_interrupt_ticker::V8InterruptTicker;
 use wasm_workers::v8_pool::V8Pool;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
@@ -3878,6 +3879,13 @@ async fn spawn_tasks_and_threads(
     server_compiled_linked
         .runtime_config_availability
         .assert_strict();
+    // Start tasks that do not require database
+    let epoch_ticker = EpochTicker::spawn_new(
+        server_compiled_linked.engines.weak_refs(),
+        Duration::from_millis(EPOCH_MILLIS),
+    );
+    let v8_interrupt_ticker = V8InterruptTicker::spawn_new(Duration::from_millis(EPOCH_MILLIS));
+    // Record startup event
     let server_configuration_event_id = record_server_configuration_audit(
         db_pool.as_ref(),
         &server_verified,
@@ -3908,10 +3916,6 @@ async fn spawn_tasks_and_threads(
     .await;
 
     // Start components requiring a database
-    let epoch_ticker = EpochTicker::spawn_new(
-        server_compiled_linked.engines.weak_refs(),
-        Duration::from_millis(EPOCH_MILLIS),
-    );
 
     let timers_watcher = if timers_watcher.enabled {
         Some(expired_timers_watcher::spawn_new(
@@ -4012,6 +4016,7 @@ async fn spawn_tasks_and_threads(
         maintenance_gc,
         http_servers_handles,
         epoch_ticker,
+        v8_interrupt_ticker,
         log_db_forarder,
         engines: server_compiled_linked.engines,
         log_forwarder_sender,
@@ -4034,6 +4039,7 @@ struct ServerInit {
     maintenance_gc: Option<AbortOnDropHandle>,
     http_servers_handles: Vec<AbortOnDropHandle>,
     epoch_ticker: EpochTicker,
+    v8_interrupt_ticker: V8InterruptTicker,
     log_db_forarder: AbortOnDropHandle,
     log_forwarder_sender: mpsc::Sender<LogInfoAppendRow>,
     webhook_registry: Arc<WebhookRegistry>,
@@ -4056,6 +4062,7 @@ impl ServerInit {
             maintenance_gc,
             http_servers_handles,
             epoch_ticker,
+            v8_interrupt_ticker,
             log_db_forarder,
             log_forwarder_sender,
             webhook_registry,
@@ -4105,6 +4112,7 @@ impl ServerInit {
         drop(maintenance_gc);
         drop(http_servers_handles);
         drop(epoch_ticker);
+        drop(v8_interrupt_ticker);
         drop(engines);
         drop(webhook_registry);
         drop(log_forwarder_sender);
