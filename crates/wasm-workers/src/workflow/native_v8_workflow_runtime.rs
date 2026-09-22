@@ -299,6 +299,8 @@ impl WorkflowInvocation for NativeV8Invocation {
 struct HostState {
     workflow_ctx: usize,
     handle: MainRuntimeHandle,
+    isolate: deno_core::v8::IsolateHandle,
+    terminating: bool,
     join_sets: Vec<Option<JoinSetId>>,
     panic: crate::v8_panic::V8PanicState,
     panic_version: Option<Version>,
@@ -367,7 +369,11 @@ impl HostState {
         let handle = self.handle.clone();
         f(self.context(), &handle).map_err(|err| {
             if is_runtime_control_flow(&err) {
+                // Like a wasmtime trap: the guest must not be able to catch it and keep
+                // issuing host calls, so terminate the isolate (skips JS `catch`/`finally`).
                 self.context().set_native_host_error(err.clone());
+                self.isolate.terminate_execution();
+                self.terminating = true;
             }
             JsErrorBox::generic(err.to_string())
         })
@@ -383,11 +389,15 @@ fn op_obelisk_host(
     let panic = state.borrow::<HostState>().panic.clone();
     let version = state.borrow_mut::<HostState>().context().version().clone();
     let result = panic.catch(|| op_obelisk_host_inner(state, request));
+    let host = state.borrow_mut::<HostState>();
     if panic.is_trap_pending() {
-        state
-            .borrow_mut::<HostState>()
-            .panic_version
-            .get_or_insert(version);
+        host.panic_version.get_or_insert(version);
+    }
+    if host.terminating {
+        // Returning `Err` would build the JS error object by calling into JS under a
+        // `TryCatch`, which consumes the pending termination and hands the guest a
+        // catchable exception. Return a value instead; V8 terminates at the next safe point.
+        return Ok(Value::Null);
     }
     result
 }
@@ -717,6 +727,8 @@ async fn execute(
     runtime.op_state().borrow_mut().put(HostState {
         workflow_ctx: std::ptr::from_mut(workflow_ctx) as usize,
         handle: handle.clone(),
+        isolate: isolate.clone(),
+        terminating: false,
         join_sets: Vec::new(),
         panic: panic.clone(),
         panic_version: None,

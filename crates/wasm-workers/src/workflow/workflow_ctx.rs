@@ -182,9 +182,8 @@ impl WorkflowCtx {
     }
 
     pub(crate) fn set_native_host_error(&mut self, err: WorkflowFunctionError) {
-        // JavaScript can catch a host exception and run `finally` cleanup.
-        // Preserve the original failure (notably ReplayInterrupt) rather than
-        // replacing it with a secondary failure from that cleanup.
+        // Keep the first failure: V8 terminates at the next safe point, so a host op may
+        // still fail in between (or the epoch callback may fire) before JS actually stops.
         if self.native_host_error.is_none() {
             self.native_host_error = Some(err);
         }
