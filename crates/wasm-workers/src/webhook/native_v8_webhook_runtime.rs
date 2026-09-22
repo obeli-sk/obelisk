@@ -317,7 +317,7 @@ pub(super) async fn execute(
         evaluation.await
     }
     .await;
-    if let Some(reason) = panic.take() {
+    if let Some(reason) = panic.take_trap() {
         return Err(NativeWebhookFailure::Execution(reason));
     }
     if let Err(err) = evaluated {

@@ -346,7 +346,7 @@ fn op_obelisk_host(
     let panic = state.borrow::<HostState>().panic.clone();
     let version = state.borrow_mut::<HostState>().context().version().clone();
     let result = panic.catch(|| op_obelisk_host_inner(state, request));
-    if panic.is_pending() {
+    if panic.is_trap_pending() {
         state
             .borrow_mut::<HostState>()
             .panic_version
@@ -695,7 +695,7 @@ async fn execute(
     // (which re-enters JS) so a late interrupt cannot trap it. `interrupt_data` stays alive
     // until this function returns, after the isolate is dropped.
     drop(interrupt_guard);
-    if let Some(reason) = panic.take() {
+    if let Some(reason) = panic.take_trap() {
         let op_state = runtime.op_state();
         let version = op_state
             .borrow()
