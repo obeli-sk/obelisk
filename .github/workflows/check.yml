@@ -139,9 +139,8 @@ jobs:
         with:
           cache-on-failure: true
 
-      # rust-cache keeps only build/.fingerprint/deps under target/, so it drops the gn_out/librusty_v8.a that v8's cached build-script output links against.
-      - name: Force the V8 build script to re-run
-        run: nix develop --command cargo clean --package v8
+      - name: Prepare V8
+        run: nix develop --command scripts/ci-prepare-v8.sh
 
       - name: cargo clippy
         run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
