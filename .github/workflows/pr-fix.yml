@@ -125,6 +125,11 @@ jobs:
           cache-on-failure: true
           key: pr-fix-${{ matrix.part }}
 
+      # rust-cache keeps only build/.fingerprint/deps under target/, so it drops the gn_out/librusty_v8.a that v8's cached build-script output links against.
+      - name: Force the V8 build script to re-run
+        if: matrix.needs_rust_cache == 'true'
+        run: nix develop --command cargo clean --package v8
+
       - name: Run fixer
         env:
           CI: true
