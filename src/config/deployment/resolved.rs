@@ -9,9 +9,9 @@ use super::{
     AllowedHostToml, AuthoredFunctionInterfaceToml, BlockingStrategyConfigToml,
     ComponentBacktraceConfig, ComponentCommon, ComponentLocationToml, ComponentStdOutputToml,
     ConfigName, CronComponentConfigToml, DeploymentTomlValidated, DurationConfig, ExecConfigToml,
-    FunctionInterfaceToml, InflightSemaphore, InlineFunctionInterfaceToml, JsParamToml,
-    LockingStrategy, LogLevelToml, MethodsInput, NixCacheToml, ReplaceIn, ScriptLocationPathOrOci,
-    WebhookRoute, WebhookRouteDetail, sanitize_deployment_relative_path,
+    FunctionInterfaceToml, InlineFunctionInterfaceToml, JsParamToml, LockingStrategy, LogLevelToml,
+    MethodsInput, NixCacheToml, ReplaceIn, ScriptLocationPathOrOci, WebhookRoute,
+    WebhookRouteDetail, sanitize_deployment_relative_path,
 };
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
@@ -23,6 +23,7 @@ use crate::config::file_provider::{
 use crate::config::secret_registry::{
     PublicEnvViolation, RestrictedSecretRegistry, SecretRegistry,
 };
+use crate::config::server::ConcurrencyCell;
 use crate::config::{content_digest_to_exec_file, wasm_cache_metadata_dir};
 use crate::oci;
 use anyhow::{Context, anyhow, bail, ensure};
@@ -466,7 +467,7 @@ pub(crate) trait ActivityWasmComponentConfigTomlExt {
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error>;
 }
@@ -480,7 +481,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let expected_content_digest = self.content_digest;
@@ -527,6 +528,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             global_http_config,
             secrets,
             config_section_hint: ConfigSectionHint::ActivityWasm,
+            memory: cell.memory(),
         };
         let retry_config = ComponentRetryConfig {
             max_retries: Some(self.max_retries),
@@ -537,7 +539,7 @@ impl ActivityWasmComponentConfigTomlExt for ActivityWasmComponentConfigToml {
             activity_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
-                global_executor_instance_limiter,
+                cell.task_limiter(),
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
@@ -694,7 +696,7 @@ pub(crate) trait ActivityExecComponentConfigResolvedExt {
         resolved_program: ResolvedExecProgram,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error>;
 }
 
@@ -757,7 +759,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
         resolved_program: ResolvedExecProgram,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
     ) -> Result<ActivityExecConfigVerified, anyhow::Error> {
         let secret_exposure_digest =
             exec_secret_exposure_digest(&resolved_program.content_digest, &self.exposed_secrets)?;
@@ -825,7 +827,7 @@ impl ActivityExecComponentConfigResolvedExt for ActivityExecComponentConfigResol
             component_id: component_id.clone(),
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
-                global_executor_instance_limiter,
+                cell.task_limiter(),
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
@@ -867,7 +869,7 @@ pub(crate) trait ActivityVmComponentConfigResolvedExt {
         global_http_config: &GlobalHttpConfig,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
     ) -> Result<ActivityVmConfigVerified, anyhow::Error>;
 }
 
@@ -879,7 +881,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
         global_http_config: &GlobalHttpConfig,
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
     ) -> Result<ActivityVmConfigVerified, anyhow::Error> {
         let ActivityVmComponentConfigResolved {
             name,
@@ -1045,6 +1047,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             hasher.update(serde_json::to_vec(host)?);
         }
         let digest = ContentDigest(Digest(hasher.finalize().into()));
+        let cell_memory = cell.memory();
         let mut verified = exec_config.fetch_and_verify(
             ResolvedExecProgram {
                 program: source.program,
@@ -1052,7 +1055,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             },
             ignore_missing_env_vars,
             secret_registry,
-            global_executor_instance_limiter,
+            cell,
         )?;
         verified.secret_exposure_digest = secret_exposure_digest;
         Ok(ActivityVmConfigVerified {
@@ -1064,6 +1067,7 @@ impl ActivityVmComponentConfigResolvedExt for ActivityVmComponentConfigResolved 
             policy_spec,
             allowed_hosts: allowed_host_configs,
             exposed_secrets,
+            memory: cell_memory,
             activity: verified,
         })
     }
@@ -1079,6 +1083,8 @@ pub(crate) struct ActivityVmConfigVerified {
     pub(crate) policy_spec: ProcessHttpPolicySpec,
     pub(crate) allowed_hosts: Arc<[AllowedHostConfig]>,
     pub(crate) exposed_secrets: Vec<String>,
+    /// `limits.activities.vm_bochs.memory`, applied to the emulator's store.
+    pub(crate) memory: Option<u64>,
     pub(crate) activity: ActivityExecConfigVerified,
 }
 
@@ -1252,7 +1258,7 @@ pub(crate) trait ActivityJsComponentConfigResolvedExt {
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error>;
 }
@@ -1266,7 +1272,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
         ignore_missing_env_vars: bool,
         secret_registry: &Arc<SecretRegistry>,
         global_http_config: GlobalHttpConfig,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
     ) -> Result<ActivityJsConfigVerified, anyhow::Error> {
         let verified = verify_function_interface(
@@ -1331,6 +1337,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             global_http_config,
             secrets,
             config_section_hint: ConfigSectionHint::ActivityJs,
+            memory: cell.memory(),
         };
         let retry_config = ComponentRetryConfig {
             max_retries: Some(self.max_retries),
@@ -1347,7 +1354,7 @@ impl ActivityJsComponentConfigResolvedExt for ActivityJsComponentConfigResolved 
             activity_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
-                global_executor_instance_limiter,
+                cell.task_limiter(),
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
@@ -1362,7 +1369,7 @@ pub(crate) trait WorkflowWasmComponentConfigResolvedExt {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
@@ -1376,7 +1383,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
@@ -1414,6 +1421,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             component_id: component_id.clone(),
             stub_wasi: self.stub_wasi,
             fuel,
+            memory: cell.memory(),
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy: self
                     .blocking_strategy
@@ -1438,7 +1446,7 @@ impl WorkflowWasmComponentConfigResolvedExt for WorkflowWasmComponentConfigResol
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
-                global_executor_instance_limiter,
+                cell.task_limiter(),
                 retry_config,
             )?,
             frame_files_to_sources,
@@ -1454,7 +1462,7 @@ pub(crate) trait WorkflowJsComponentConfigResolvedExt {
         self,
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
@@ -1468,7 +1476,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
         self,
         wasm_path: Arc<Path>,
         wasm_cache_dir: Arc<Path>,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        cell: ConcurrencyCell,
         fuel: Option<u64>,
         subscription_interruption: Option<Duration>,
         max_events_per_run: usize,
@@ -1514,6 +1522,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             component_id: component_id.clone(),
             stub_wasi: false,
             fuel,
+            memory: cell.memory(),
             mode: WorkflowConfigMode::Real {
                 join_next_blocking_strategy: self
                     .blocking_strategy
@@ -1538,7 +1547,7 @@ impl WorkflowJsComponentConfigResolvedExt for WorkflowJsComponentConfigResolved 
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(
                 component_id,
-                global_executor_instance_limiter,
+                cell.task_limiter(),
                 retry_config,
             )?,
             logs_store_min_level: self.logs_store_min_level.into_log_level(),
@@ -2481,7 +2490,7 @@ pub(crate) trait ExecConfigTomlExt {
     fn into_exec_exec_config(
         self,
         component_id: ComponentId,
-        task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
+        task_limiter_cell: Option<Arc<tokio::sync::Semaphore>>,
         retry_config: ComponentRetryConfig,
     ) -> Result<executor::executor::ExecConfig, anyhow::Error>;
 }
@@ -2490,7 +2499,7 @@ impl ExecConfigTomlExt for ExecConfigToml {
     fn into_exec_exec_config(
         self,
         component_id: ComponentId,
-        task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
+        task_limiter_cell: Option<Arc<tokio::sync::Semaphore>>,
         retry_config: ComponentRetryConfig,
     ) -> Result<executor::executor::ExecConfig, anyhow::Error> {
         Ok(executor::executor::ExecConfig {
@@ -2499,8 +2508,7 @@ impl ExecConfigTomlExt for ExecConfigToml {
             batch_size: self.batch_size,
             locking_strategy: locking_strategy(self.locking_strategy, component_id.component_type)?,
             component_id,
-            task_limiter_global,
-            task_limiter_local: self.instance_limiter.as_semaphore(),
+            task_limiter_cell,
             executor_id: ExecutorId::generate(),
             retry_config,
         })
@@ -2598,20 +2606,6 @@ impl ComponentStdOutputTomlExt for ComponentStdOutputToml {
             ComponentStdOutputToml::Stdout => Some(StdOutputConfig::Stdout),
             ComponentStdOutputToml::Stderr => Some(StdOutputConfig::Stderr),
             ComponentStdOutputToml::Db => Some(StdOutputConfig::Db),
-        }
-    }
-}
-
-pub(crate) trait InflightSemaphoreExt {
-    fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>>;
-}
-impl InflightSemaphoreExt for InflightSemaphore {
-    fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>> {
-        match self {
-            InflightSemaphore::Unlimited(_) => None,
-            InflightSemaphore::Some(permits) => Some(Arc::new(tokio::sync::Semaphore::new(
-                usize::try_from(*permits).expect("usize >= u32"),
-            ))),
         }
     }
 }

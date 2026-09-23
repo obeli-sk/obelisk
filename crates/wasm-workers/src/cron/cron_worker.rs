@@ -255,6 +255,7 @@ mod tests {
             worker_span: tracing::info_span!("schedule_test"),
             locked_event,
             execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+            instance_permit: None,
         }
     }
 

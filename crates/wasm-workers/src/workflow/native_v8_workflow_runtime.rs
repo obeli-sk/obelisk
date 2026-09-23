@@ -92,6 +92,7 @@ struct NativeV8Invocation {
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
     v8_executor: V8Executor,
+    instance_permit: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
 }
 
 #[async_trait]
@@ -103,6 +104,7 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
         _ffqn: &FunctionFqn,
         params: &Params,
         _fuel: Option<u64>,
+        instance_permit: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
     ) -> Result<Box<dyn WorkflowInvocation>, RuntimePrepareError> {
         Ok(Box::new(NativeV8Invocation {
             workflow_ctx,
@@ -112,6 +114,7 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
             return_type: self.return_type.clone(),
             resolved_imports: self.resolved_imports.clone(),
             v8_executor: self.v8_executor.clone(),
+            instance_permit,
         }))
     }
 }
@@ -135,24 +138,32 @@ impl WorkflowInvocation for NativeV8Invocation {
             return_type,
             resolved_imports,
             v8_executor,
+            instance_permit,
         } = *self;
         let handle = tokio::runtime::Handle::current();
-        let max_heap_size = v8_executor.max_heap_size();
-        // Admitted before the context is moved onto the isolate thread: admission only fails once
-        // the executor is closing, and then the run must be yielded with its context intact.
-        let admission = match v8_executor
-            .admit(crate::v8_executor::V8Workload::Workflow)
-            .await
-        {
-            Ok(admission) => admission,
-            Err(_closed) => {
-                let err = super::workflow_ctx::WorkflowFunctionError::Interrupt(
-                    super::deadline_tracker::InterruptKind::ExecutorClosing,
-                );
-                return Err(RunError::WorkerPartialResult(
-                    err.into_worker_partial_result(workflow_ctx.version().clone()),
-                    Box::new(workflow_ctx),
-                ));
+        let max_heap_size = v8_executor.max_heap_size(crate::v8_executor::V8Workload::Workflow);
+        // The executor reserved this slot before locking; a second one from the same cell would
+        // deadlock it at half its size. Replay and direct calls have none and admit for themselves.
+        let admission = if let Some(reservation) = instance_permit {
+            v8_executor.admit_reserved(reservation)
+        } else {
+            // Admitted before the context is moved onto the isolate thread: admission only fails
+            // once the executor is closing, and then the run must be yielded with its context
+            // intact.
+            match v8_executor
+                .admit(crate::v8_executor::V8Workload::Workflow)
+                .await
+            {
+                Ok(admission) => admission,
+                Err(_closed) => {
+                    let err = super::workflow_ctx::WorkflowFunctionError::Interrupt(
+                        super::deadline_tracker::InterruptKind::ExecutorClosing,
+                    );
+                    return Err(RunError::WorkerPartialResult(
+                        err.into_worker_partial_result(workflow_ctx.version().clone()),
+                        Box::new(workflow_ctx),
+                    ));
+                }
             }
         };
         // No outer `select!`/cancellation: the interrupt is delivered from within, exactly as
@@ -620,7 +631,7 @@ async fn execute(
     args: ExecuteArgs<'_>,
     workflow_ctx: &mut WorkflowCtx,
     handle: MainRuntimeHandle,
-    max_heap_size: usize,
+    max_heap_size: Option<usize>,
 ) -> Result<SupportedFunctionReturnValue, NativeV8Failure> {
     let ExecuteArgs {
         entry_path,
@@ -633,7 +644,11 @@ async fn execute(
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_v8::init()],
-        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
+        create_params: Some(
+            max_heap_size.map_or_else(deno_core::v8::CreateParams::default, |max| {
+                deno_core::v8::CreateParams::default().heap_limits(0, max)
+            }),
+        ),
         startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
         ..Default::default()
     });

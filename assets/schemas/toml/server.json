@@ -240,6 +240,18 @@
           "format": "uint64",
           "minimum": 0,
           "default": 536870912
+        },
+        "activities": {
+          "description": "Concurrency and per-slot memory of the activity runtimes.",
+          "$ref": "#/$defs/ActivityCellsToml"
+        },
+        "workflows": {
+          "description": "Concurrency and per-slot memory of the workflow runtimes.",
+          "$ref": "#/$defs/WorkflowCellsToml"
+        },
+        "webhooks": {
+          "description": "Concurrency and per-slot memory of the webhook runtimes.",
+          "$ref": "#/$defs/WebhookCellsToml"
         }
       },
       "additionalProperties": false
@@ -249,6 +261,192 @@
       "type": "integer",
       "format": "uint32",
       "minimum": 0
+    },
+    "ActivityCellsToml": {
+      "description": "The activity runtimes are four different resources: a wasmtime instance, a V8 isolate with its\nown heap and thread, an external process, and an emulated machine. A VM storm must not crowd\nout plain exec activities, so each gets its own reservation. A VM cell is keyed by backend\nbecause the backend decides what a slot costs.",
+      "type": "object",
+      "properties": {
+        "wasm": {
+          "description": "Activities running as WASM components, including Boa JavaScript activities.",
+          "$ref": "#/$defs/CellToml"
+        },
+        "v8": {
+          "description": "Activities running on native V8.",
+          "$ref": "#/$defs/CellToml"
+        },
+        "process": {
+          "description": "`activity_exec` activities, each slot an operating system process.",
+          "$ref": "#/$defs/ProcessCellToml"
+        },
+        "vm_bochs": {
+          "description": "`activity_vm` activities on the Bochs backend.",
+          "$ref": "#/$defs/CellToml"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CellToml": {
+      "description": "One `(workload, runtime)` cell: how many execution slots it grants and how large one slot may\nget. Both keys accept `\"unlimited\"`; an omitted key takes the cell's default.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InflightSemaphore"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "memory": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValueOrUnlimited"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "InflightSemaphore": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Unlimited"
+        },
+        {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      ]
+    },
+    "Unlimited": {
+      "type": "string",
+      "enum": [
+        "unlimited"
+      ]
+    },
+    "ValueOrUnlimited": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Unlimited"
+        },
+        {
+          "$ref": "#/$defs/ByteSizeConfig"
+        }
+      ]
+    },
+    "ByteSizeConfig": {
+      "description": "A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary and a\nbare integer is not accepted, so a configuration cannot silently mean something 1024x off.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "bytes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "mib"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "gib": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "gib"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ProcessCellToml": {
+      "description": "A cell whose slot is an operating system process, so its memory is not wasmtime's business.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InflightSemaphore"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowCellsToml": {
+      "type": "object",
+      "properties": {
+        "wasm": {
+          "description": "Workflows running as WASM components, including Boa JavaScript workflows.",
+          "$ref": "#/$defs/CellToml"
+        },
+        "v8": {
+          "description": "Workflows running on native V8.",
+          "$ref": "#/$defs/CellToml"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WebhookCellsToml": {
+      "type": "object",
+      "properties": {
+        "wasm": {
+          "description": "Webhook endpoints running as WASM components, including Boa JavaScript endpoints.",
+          "$ref": "#/$defs/CellToml"
+        },
+        "v8": {
+          "description": "Webhook endpoints running on native V8.",
+          "$ref": "#/$defs/CellToml"
+        }
+      },
+      "additionalProperties": false
     },
     "ApiConfig": {
       "type": "object",
@@ -556,19 +754,11 @@
         "allocator_config": {
           "$ref": "#/$defs/WasmtimeAllocatorConfig"
         },
-        "global_executor_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore",
-          "default": "unlimited"
-        },
-        "global_webhook_instance_limiter": {
-          "$ref": "#/$defs/InflightSemaphore",
-          "default": "unlimited"
-        },
         "fuel": {
-          "$ref": "#/$defs/ValueOrUnlimited"
+          "$ref": "#/$defs/ValueOrUnlimited2"
         },
         "build_semaphore": {
-          "$ref": "#/$defs/ValueOrUnlimited"
+          "$ref": "#/$defs/ValueOrUnlimited2"
         },
         "parallel_compilation": {
           "type": "boolean",
@@ -609,25 +799,7 @@
         "pooling"
       ]
     },
-    "InflightSemaphore": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Unlimited"
-        },
-        {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      ]
-    },
-    "Unlimited": {
-      "type": "string",
-      "enum": [
-        "unlimited"
-      ]
-    },
-    "ValueOrUnlimited": {
+    "ValueOrUnlimited2": {
       "anyOf": [
         {
           "$ref": "#/$defs/Unlimited"
@@ -736,40 +908,12 @@
     "V8ConfigToml": {
       "type": "object",
       "properties": {
-        "max_workflows": {
-          "description": "Maximum number of resident native V8 workflows. Each workload limit is an independent\nreservation; their sum bounds the isolates in this process.",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0,
-          "default": 100
-        },
-        "max_activities": {
-          "description": "Maximum number of running native V8 activities.",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0,
-          "default": 16
-        },
-        "max_webhooks": {
-          "description": "Maximum number of running native V8 webhook requests.",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0,
-          "default": 16
-        },
         "thread_stack_size": {
-          "description": "Stack size in bytes for each native V8 isolate thread.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "default": 4194304
-        },
-        "max_heap_size": {
-          "description": "Maximum V8-managed heap size in bytes for each isolate.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "default": 268435456
+          "description": "Stack size for each native V8 isolate thread. How many isolates there may be and how large\none isolate's heap may get are the `v8` cells of `[limits]`.",
+          "$ref": "#/$defs/ByteSizeConfig",
+          "default": {
+            "mib": 4
+          }
         }
       },
       "additionalProperties": false

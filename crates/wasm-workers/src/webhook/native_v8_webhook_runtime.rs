@@ -290,13 +290,17 @@ pub(super) async fn execute(
     ctx: &mut WebhookEndpointCtx,
     handle: tokio::runtime::Handle,
     isolate_tx: tokio::sync::oneshot::Sender<deno_core::v8::IsolateHandle>,
-    max_heap_size: usize,
+    max_heap_size: Option<usize>,
 ) -> Result<NativeResponse, NativeWebhookFailure> {
     let loader = Rc::new(InMemoryModuleLoader::new(&config.files, imports));
     let mut runtime = JsRuntime::new(RuntimeOptions {
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_webhook_v8::init()],
-        create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
+        create_params: Some(
+            max_heap_size.map_or_else(deno_core::v8::CreateParams::default, |max| {
+                deno_core::v8::CreateParams::default().heap_limits(0, max)
+            }),
+        ),
         startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
         ..Default::default()
     });

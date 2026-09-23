@@ -549,6 +549,7 @@ mod tests {
             let allowed_hosts: Arc<[crate::http_request_policy::AllowedHostConfig]> =
                 Arc::from(self.allowed_hosts);
             let config = super::super::activity_worker::ActivityConfig {
+                memory: None,
                 component_id,
                 forward_stdout: None,
                 forward_stderr: None,
@@ -649,6 +650,7 @@ mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher,
+            instance_permit: None,
         };
         (ctx, close_tx)
     }
@@ -685,6 +687,7 @@ mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher,
+            instance_permit: None,
         };
         (ctx, close_tx)
     }

@@ -115,23 +115,15 @@
 ## By default "${CACHE_DIR}/wasm" or "./cache/wasm" if no valid home directory path could be retrieved from the operating system.
 # cache_directory = "${CACHE_DIR}/wasm"
 # allocator_config = "auto"                      # One of "auto"|"on_demand"|"pooling"
-# global_executor_instance_limiter = "unlimited" # If set to an integer, limits the number of concurrent workflow and activity executions.
-# global_webhook_instance_limiter = "unlimited"  # If set to an integer, limits the number of concurrent webhook requests.
 # fuel = "unlimited"                             # If set to an integer, WASM instances consume fuel, details: https://docs.wasmtime.dev/api/wasmtime/struct.Store.html#method.set_fuel
 # build_semaphore = "unlimited"                  # If set to an integer, limit the number of AOT compilations that can run in parallel
 # parallel_compilation = true                    # Enable (default) or disable parallel AOT compilation of each WASM component.
 # debug = false                                  # Enable debugging of WASM components: Instruct wasmtime to emit DWARF debug info and disable cranelift optimizations.
 
-## Global native V8 configuration. These limits apply when native V8 is enabled with
-## `OBELISK_UNSTABLE_V8=true`; Boa components compiled to WASM use the WASM limits above.
+## Global native V8 configuration. How many isolates there may be and how large one isolate's
+## heap may get are the `v8` cells of `[limits]` below.
 # [v8]
-## Each limit below is an independent reservation, so resident workflows can never occupy the
-## capacity reserved for activities or webhooks. Their sum bounds the isolates in this process.
-# max_workflows = 100              # Maximum number of resident native V8 workflows.
-# max_activities = 16              # Maximum number of running native V8 activities.
-# max_webhooks = 16                # Maximum number of running native V8 webhook requests.
-# thread_stack_size = 4194304      # Stack size in bytes for each native V8 isolate thread.
-# max_heap_size = 268435456        # Maximum V8-managed heap size in bytes per isolate.
+# thread_stack_size.mib = 4        # Stack size for each native V8 isolate thread.
 
 ## Global Webhook Configuration
 # [webhooks]
@@ -165,7 +157,6 @@
 # [[http_server]]
 # name = "my_server"
 # listening_addr = "0.0.0.0:9000"
-# max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
 
 
 ### Send spans via gRPC to an OTLP collector.
@@ -236,3 +227,36 @@ max_persisted_value_size_bytes = 1048576
 # Maximum size of a single API transport message: the gRPC encoded message size and
 # the equivalent REST request body limit. Must be positive. Defaults to 512 MiB.
 # max_transport_message_size_bytes = 536870912
+
+# Every execution slot in the process is charged to exactly one (workload, runtime) cell below.
+# `count` is how many slots the cell grants, `memory` how much linear memory (for a native V8
+# cell, how much isolate heap) one slot may hold. Both accept "unlimited". The cells are
+# independent reservations, so no workload or runtime can starve another and there is no
+# process-wide total: the sum of the cells is the process bound.
+# The wasm defaults are half of the wasmtime pooling allocator's own per-engine limit of 1000
+# instances, because exceeding that fails an execution permanently instead of leaving it pending.
+# The `v8` cells apply only when native V8 is enabled with `OBELISK_UNSTABLE_V8=true`; a Boa
+# component is a WASM component and is charged to the `wasm` cell whatever its source language.
+# [limits.activities.wasm]       # Includes Boa JavaScript activities.
+# count = 500
+# memory.gib = 1
+# [limits.activities.v8]
+# count = 16
+# memory.mib = 256
+# [limits.activities.process]    # `activity_exec`, each slot an operating system process, so
+# count = 32                     # it has no `memory`: that is the operating system's business.
+# [limits.activities.vm_bochs]   # `activity_vm`, one cell per VM backend.
+# count = 8
+# memory.gib = 1
+# [limits.workflows.wasm]        # Includes Boa JavaScript workflows.
+# count = 500
+# memory.mib = 512
+# [limits.workflows.v8]
+# count = 100
+# memory.mib = 256
+# [limits.webhooks.wasm]         # Includes Boa JavaScript webhook endpoints.
+# count = 500
+# memory.mib = 512
+# [limits.webhooks.v8]
+# count = 16
+# memory.mib = 256

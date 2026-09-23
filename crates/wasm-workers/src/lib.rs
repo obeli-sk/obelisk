@@ -18,6 +18,7 @@ pub mod log_db_forwarder;
 pub mod policy_builder;
 pub mod registry;
 pub mod std_output_stream;
+pub mod store_limits;
 #[cfg(any(test, feature = "test"))]
 pub mod testing_fn_registry;
 pub mod v8_executor;

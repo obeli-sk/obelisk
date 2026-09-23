@@ -43,7 +43,7 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::select;
-use tokio::sync::{OwnedSemaphorePermit, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tracing::{
     Instrument, Span, debug, debug_span, error, info, info_span, instrument, trace, warn,
 };
@@ -581,7 +581,7 @@ pub async fn server(
     db_pool: Arc<dyn DbPool>,
     clock_fn: Box<dyn ClockFn>,
     sleep: Arc<dyn Sleep>,
-    max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
+    webhooks_wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     mut server_termination_watcher: watch::Receiver<()>,
 ) -> Result<(), WebhookServerError> {
     loop {
@@ -609,7 +609,7 @@ pub async fn server(
                 let db_pool = db_pool.clone();
                 let http_server = http_server.clone();
                 let connection_span = info_span!("connection", %http_server);
-                let max_inflight_requests = max_inflight_requests.clone();
+                let webhooks_wasm_cell = webhooks_wasm_cell.clone();
                 let server_termination_watcher = server_termination_watcher.clone();
                 let mut connection_termination_watcher = server_termination_watcher.clone();
                 let log_forwarder_sender = log_forwarder_sender.clone();
@@ -638,7 +638,7 @@ pub async fn server(
                                         log_forwarder_sender: log_forwarder_sender.clone(),
                                         request_timeout: state.request_timeout,
                                     }
-                                    .handle_request(req, max_inflight_requests.clone())
+                                    .handle_request(req, webhooks_wasm_cell.clone())
                                 }.instrument(info_span!(parent: &connection_span, "request", %deployment_id))
                             })
                         );
@@ -693,6 +693,8 @@ pub struct WebhookEndpointConfig {
     pub js_config: Option<WebhookEndpointJsConfig>,
     /// The TOML config section type for error messages
     pub config_section_hint: crate::http_hooks::ConfigSectionHint,
+    /// Total linear memory one instance may hold, from the cell's `memory`.
+    pub memory: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -702,6 +704,7 @@ pub struct WebhookEndpointJsConfig {
 }
 
 pub(super) struct WebhookEndpointCtx {
+    memory_limiter: crate::store_limits::StoreMemoryLimiter,
     component_id: ComponentId,
     deployment_id: DeploymentId,
     max_persisted_value_size_bytes: u64,
@@ -2049,6 +2052,7 @@ impl WebhookEndpointCtx {
         };
         // All child executions are part of the same join set.
         let ctx = WebhookEndpointCtx {
+            memory_limiter: crate::store_limits::StoreMemoryLimiter::new(config.memory),
             clock_fn: clock_fn.clone_box(),
             sleep,
             db_pool: db_pool.clone(),
@@ -2080,6 +2084,7 @@ impl WebhookEndpointCtx {
             backtrace_persist: config.backtrace_persist,
         };
         let mut store = Store::new(engine, ctx);
+        store.limiter(|ctx| &mut ctx.memory_limiter);
 
         // Set fuel.
         if let Some(fuel) = config.fuel {
@@ -2266,22 +2271,12 @@ impl RequestHandler {
     async fn handle_request(
         self,
         req: hyper::Request<hyper::body::Incoming>,
-        max_inflight_requests: Option<Arc<tokio::sync::Semaphore>>,
+        wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
-        let http_request_guard = if let Some(http_request_semaphore) = &max_inflight_requests {
-            http_request_semaphore.clone().try_acquire_owned().map(Some)
-        } else {
-            Ok(None)
-        };
-        let Ok(http_request_guard) = http_request_guard else {
-            debug!(method = %req.method(), uri = %req.uri(), "Too many requests");
-            return Ok::<_, hyper::Error>(respond("Out of permits", StatusCode::TOO_MANY_REQUESTS));
-        };
-
         let deadline = tokio::time::Instant::now() + self.request_timeout;
         let res = tokio::time::timeout_at(
             deadline,
-            self.handle_request_inner(req, http_request_guard, Span::current(), deadline),
+            self.handle_request_inner(req, wasm_cell, Span::current(), deadline),
         )
         .await
         .unwrap_or(Err(HandleRequestError::Timeout));
@@ -2324,7 +2319,7 @@ impl RequestHandler {
     async fn handle_request_inner(
         self,
         req: hyper::Request<hyper::body::Incoming>,
-        http_request_guard: Option<OwnedSemaphorePermit>,
+        wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
         request_span: Span,
         request_deadline: tokio::time::Instant,
     ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
@@ -2334,6 +2329,23 @@ impl RequestHandler {
 
         if let Some(instance_match) = self.router.find(req.method(), req.uri()) {
             let found_instance = instance_match.handler();
+            // One permit for the matched endpoint's runtime, before the body is read. An
+            // unroutable request takes none, so a flood of 404s cannot shed real traffic.
+            let (v8_admission, wasm_guard) = if found_instance.js_runtime == WebhookJsRuntime::V8 {
+                let admission = found_instance
+                    .v8_executor
+                    .try_admit(crate::v8_executor::V8Workload::Webhook)
+                    .map_err(|_| HandleRequestError::InstanceLimitReached)?;
+                (Some(admission), None)
+            } else if let Some(cell) = &wasm_cell {
+                let permit = cell
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| HandleRequestError::InstanceLimitReached)?;
+                (None, Some(permit))
+            } else {
+                (None, None)
+            };
             let found_instance = found_instance.build(&self.log_forwarder_sender);
             let run_id = RunId::generate();
             let stdout = found_instance.stdout.as_ref().map(|stdoutput| {
@@ -2369,7 +2381,7 @@ impl RequestHandler {
                     ctx,
                     found_instance.config.clone(),
                     instance_match.handler().resolved_imports.clone(),
-                    http_request_guard,
+                    v8_admission.expect("admitted above for a native V8 endpoint"),
                     found_instance.v8_executor.clone(),
                     request_deadline,
                 )
@@ -2395,7 +2407,7 @@ impl RequestHandler {
                     let task = utils::spawn::spawn_named("webhook_request", {
                         let assigned_fuel = found_instance.config.fuel;
                         async move {
-                            let _http_request_guard = http_request_guard;
+                            let _wasm_guard = wasm_guard;
                             let result = proxy
                                 .wasi_http_incoming_handler()
                                 .call_handle(&mut store, req, out)
@@ -2490,7 +2502,7 @@ async fn handle_native_v8_request(
     mut ctx: WebhookEndpointCtx,
     config: Arc<WebhookEndpointConfig>,
     imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
-    http_request_guard: Option<OwnedSemaphorePermit>,
+    admission: crate::v8_executor::V8Admission,
     v8_executor: crate::v8_executor::V8Executor,
     request_deadline: tokio::time::Instant,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
@@ -2501,10 +2513,6 @@ async fn handle_native_v8_request(
         .js_config
         .clone()
         .expect("native V8 is only selected for JavaScript webhooks");
-    // Shed the load before collecting the request body, let alone spawning a thread.
-    let admission = v8_executor
-        .try_admit(crate::v8_executor::V8Workload::Webhook)
-        .map_err(|_| HandleRequestError::InstanceLimitReached)?;
     let (parts, body) = req.into_parts();
     let body = http_body_util::BodyExt::collect(body)
         .await
@@ -2569,10 +2577,9 @@ async fn handle_native_v8_request(
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
     let handle = tokio::runtime::Handle::current();
-    let max_heap_size = v8_executor.max_heap_size();
+    let max_heap_size = v8_executor.max_heap_size(crate::v8_executor::V8Workload::Webhook);
     let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
     let mut task = tokio::spawn(async move {
-        let _http_request_guard = http_request_guard;
         admission
             .run(move || async move {
                 let result = execute(
@@ -2731,6 +2738,7 @@ pub(crate) mod tests {
         .unwrap();
         let linked = WebhookEndpointCompiled::new(
             WebhookEndpointConfig {
+                memory: None,
                 component_id,
                 forward_stdout: None,
                 forward_stderr: None,
@@ -2843,6 +2851,14 @@ pub(crate) mod tests {
                 db: db_tests::Database,
                 locking_strategy: LockingStrategy,
             ) -> SetUpFiboWebhook {
+                Self::new_with_wasm_cell(db, locking_strategy, None).await
+            }
+
+            async fn new_with_wasm_cell(
+                db: db_tests::Database,
+                locking_strategy: LockingStrategy,
+                wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
+            ) -> SetUpFiboWebhook {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
                 let (guard, db_pool, db_close) = db.set_up().await;
@@ -2886,6 +2902,7 @@ pub(crate) mod tests {
                             .unwrap();
                     let instance = WebhookEndpointCompiled::new(
                         WebhookEndpointConfig {
+                            memory: None,
                             component_id: ComponentId::new(
                                 ComponentType::WebhookEndpoint,
                                 StrVariant::empty(),
@@ -2939,7 +2956,7 @@ pub(crate) mod tests {
                     db_pool.clone(),
                     sim_clock.clone_box(),
                     Arc::new(TokioSleep),
-                    None,
+                    wasm_cell,
                     server_termination_watcher,
                 ));
                 SetUpFiboWebhook {
@@ -3078,6 +3095,36 @@ pub(crate) mod tests {
             );
         }
 
+        /// The permit is taken after the route match, so a flood of unroutable requests cannot
+        /// shed legitimate traffic, and a request that does match is answered by its own
+        /// runtime's cell: `503`, not the pre-routing `429` of the old global limiter.
+        #[tokio::test]
+        async fn an_unroutable_request_must_not_consume_a_permit() {
+            test_utils::set_up();
+            let cell = Arc::new(tokio::sync::Semaphore::new(1));
+            let occupied = cell.clone().try_acquire_owned().unwrap();
+            let harness = SetUpFiboWebhook::new_with_wasm_cell(
+                Database::Sqlite,
+                LockingStrategy::ByFfqns,
+                Some(cell),
+            )
+            .await;
+
+            let unroutable = reqwest::get(format!("http://{}/unknown", harness.server_addr))
+                .await
+                .unwrap();
+            assert_eq!(404, unroutable.status().as_u16());
+            assert_eq!("Route not found", unroutable.text().await.unwrap());
+
+            let routed = reqwest::get(format!("http://{}/fibo/1/1", harness.server_addr))
+                .await
+                .unwrap();
+            assert_eq!(503, routed.status().as_u16());
+
+            drop(occupied);
+            harness.close().await;
+        }
+
         #[rstest]
         #[tokio::test]
         async fn test_routing_error_handling(
@@ -3179,6 +3226,7 @@ pub(crate) mod tests {
                         .unwrap();
                 let instance = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
+                        memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
@@ -3378,6 +3426,7 @@ pub(crate) mod tests {
                         .unwrap();
                 let instance = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
+                        memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
@@ -3531,6 +3580,7 @@ pub(crate) mod tests {
                         .unwrap();
                 let instance = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
+                        memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
@@ -3770,6 +3820,7 @@ pub(crate) mod tests {
                         .unwrap();
                 let instance = WebhookEndpointCompiled::new(
                     WebhookEndpointConfig {
+                        memory: None,
                         component_id: ComponentId::new(
                             ComponentType::WebhookEndpoint,
                             StrVariant::empty(),
@@ -4286,6 +4337,7 @@ pub(crate) mod tests {
                             .unwrap();
                     let instance = WebhookEndpointCompiled::new(
                         WebhookEndpointConfig {
+                            memory: None,
                             component_id: ComponentId::new(
                                 ComponentType::WebhookEndpoint,
                                 StrVariant::empty(),
