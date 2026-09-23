@@ -662,8 +662,9 @@ pub(crate) async fn run(
     params: RunParams,
     secret_registry: Arc<SecretRegistry>,
 ) -> anyhow::Result<()> {
-    let _node_run_id = concepts::storage::initialize_node_run_id();
+    let node_run_id = concepts::storage::initialize_node_run_id();
     let _guard: Guard = init::init(&config)?;
+    info!(%node_run_id, "Starting Obelisk {PKG_VERSION}");
     let deployment = if let Some(deployment_path) = deployment {
         Some(LocalDeployment::from_path(&deployment_path).await?)
     } else if deployment_empty {

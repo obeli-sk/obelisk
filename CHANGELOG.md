@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(webhook)* Added `[webhooks].request_timeout`, a common wall-clock deadline for WASM and
   native V8 webhook handlers to accept a request and return an HTTP response. It does not limit
   an already-returned streaming response body. The default is 30 seconds.
+- *(server)* The server now logs its node run ID as soon as logging is configured, so console
+  output can be matched with the system events of that particular start.
 
 ### Changed
 
