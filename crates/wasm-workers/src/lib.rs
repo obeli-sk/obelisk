@@ -21,6 +21,7 @@ pub mod std_output_stream;
 pub mod store_limits;
 #[cfg(any(test, feature = "test"))]
 pub mod testing_fn_registry;
+pub(crate) mod v8_backtrace;
 pub mod v8_executor;
 pub mod v8_interrupt_ticker;
 pub(crate) mod v8_panic;

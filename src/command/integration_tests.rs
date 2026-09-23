@@ -4878,9 +4878,16 @@ async fn hot_redeploy_webhook_js_remove_endpoint(
 
 // ---- Backtrace API ----
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn backtrace_workflow_calling_activity() {
-    let server = TestServer::start(test_addr!(35)).await;
+async fn backtrace_workflow_calling_activity(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(35),
+        JsRuntime::V8 => test_addr!(175),
+    };
+    let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
     let exec_id = server.generate_execution_id().await;
 
     // Run a workflow that calls a child activity.
@@ -4941,9 +4948,18 @@ async fn backtrace_workflow_calling_activity() {
         3,
         "a direct call backtrace must cover its three history events"
     );
-    assert!(
-        body["wasm_backtrace"]["frames"].is_array(),
-        "wasm_backtrace.frames must be an array"
+    // The debugger resolves a source by the frame's file and highlights its line, so both
+    // runtimes must point at the `dynamic.call` call site in `call_activity.js`.
+    let symbol = body["wasm_backtrace"]["frames"][0]["symbols"][0].clone();
+    assert_eq!(
+        symbol["file"],
+        json!("call_activity.js"),
+        "top frame must name the JS source file: {body}"
+    );
+    assert_eq!(
+        symbol["line"],
+        json!(5),
+        "top frame must point at the `dynamic.call` line: {body}"
     );
 
     // ?version=first should also succeed and return a consistent structure.
@@ -4988,9 +5004,16 @@ async fn backtrace_workflow_calling_activity() {
     server.shutdown().await;
 }
 
+#[rstest::rstest]
+#[case::boa_wasm(JsRuntime::BoaWasm)]
+#[case::v8(JsRuntime::V8)]
 #[tokio::test]
-async fn backtrace_source_workflow_calling_activity() {
-    let server = TestServer::start(test_addr!(36)).await;
+async fn backtrace_source_workflow_calling_activity(#[case] runtime: JsRuntime) {
+    let ip = match runtime {
+        JsRuntime::BoaWasm => test_addr!(36),
+        JsRuntime::V8 => test_addr!(176),
+    };
+    let server = TestServer::start_with_js_runtime(ip, runtime.mode()).await;
     let exec_id = server.generate_execution_id().await;
 
     // Run and replay the workflow to populate lazy backtraces.
@@ -5004,6 +5027,19 @@ async fn backtrace_source_workflow_calling_activity() {
     assert_eq!(resp.status().as_u16(), 201);
     let _: Value = resp.json().await.unwrap();
     assert!(server.persist_backtraces(&exec_id).await > 0);
+
+    // The frames must name the very source the endpoint below serves.
+    let backtrace: Value = server
+        .get_backtrace(&exec_id, None)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        backtrace["wasm_backtrace"]["frames"][0]["symbols"][0]["file"],
+        json!("add_via_activity.js"),
+        "top frame must name the JS source file: {backtrace}"
+    );
 
     // The deployment config registers "add_via_activity.js" as an exact-key source for this
     // workflow component.  The endpoint resolves source by component digest (from the backtrace)

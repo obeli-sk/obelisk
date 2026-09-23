@@ -68,7 +68,7 @@ impl WorkflowRuntime for BoaWasmRuntime {
             self.entry_path.clone(),
             &self.files,
             &self.resolved_imports,
-            workflow_ctx.native_backtrace().is_some(),
+            workflow_ctx.native_backtrace_enabled(),
         );
         let inner = self
             .inner
@@ -5343,6 +5343,122 @@ mod tests {
         assert_eq!(
             persisted, 0,
             "future backtraces must be trimmed, not persisted"
+        );
+
+        drop(db_connection);
+        db_close.close().await;
+    }
+
+    /// A captured frame must name the JS file, function and line of the call site: the debugger
+    /// resolves the source by the frame's `file` and highlights its `line`.
+    #[expand_enum_database]
+    #[rstest]
+    #[tokio::test]
+    async fn capture_backtraces_reports_js_call_site(database: Database) {
+        test_utils::set_up();
+        let (_guard, db_pool, db_close) = database.set_up().await;
+
+        let js_source = "
+export default function outer() {
+    return inner();
+}
+function inner() {
+    obelisk.createJoinSet();
+    return 'done';
+}";
+        // `version_obelisk_test_imports` prepends the import line, so derive the expected
+        // line numbers from the source the runtime actually sees.
+        let versioned_source = version_obelisk_test_imports(js_source);
+        let line_of = |needle: &str| {
+            u32::try_from(
+                versioned_source
+                    .lines()
+                    .position(|line| line.contains(needle))
+                    .expect("marker must be present")
+                    + 1,
+            )
+            .unwrap()
+        };
+        let expected_inner_line = line_of("obelisk.createJoinSet()");
+        let expected_outer_line = line_of("return inner()");
+
+        let user_ffqn = FunctionFqn::new_static("test:pkg/ifc", "outer");
+        let sim_clock = SimClock::epoch();
+        let fn_registry: Arc<dyn FunctionRegistry> = TestingFnRegistry::new_from_components(vec![]);
+        let workflow_engine =
+            Engines::get_workflow_engine_test(EngineConfig::on_demand_testing()).unwrap();
+
+        let (_worker, component_id, runnable_component) = compile_js_workflow_worker(
+            js_source,
+            &user_ffqn,
+            db_pool.clone(),
+            sim_clock.clone_box(),
+            fn_registry.clone(),
+            workflow_engine.clone(),
+        );
+
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::from_parts(0, 0);
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: execution_id.clone(),
+                ffqn: user_ffqn.clone(),
+                params: Params::from_json_values_test(vec![json!(Vec::<String>::new())]),
+                parent: None,
+                metadata: ExecutionMetadata::empty(),
+                scheduled_at: sim_clock.now(),
+                component_id: component_id.clone(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: true,
+                max_persisted_value_size_bytes: u64::MAX,
+            })
+            .await
+            .unwrap();
+
+        let replay_worker = build_js_replay_worker_with_signature(
+            DeploymentId::from_parts(0, 0),
+            component_id,
+            &runnable_component,
+            workflow_engine,
+            fn_registry,
+            db_pool.clone(),
+            None, // logs_storage_config
+            sim_clock.clone_box(),
+            versioned_source.clone(),
+            &user_ffqn,
+            &single_list_of_strings_params(),
+            default_return_type(),
+            None, // max_replay_captured_writes
+        );
+
+        let captured = replay_worker
+            .capture_backtraces(execution_id)
+            .await
+            .unwrap();
+        let frames = &captured
+            .first()
+            .expect("the join set creation must be captured")
+            .wasm_backtrace
+            .frames;
+        let located: Vec<_> = frames
+            .iter()
+            .map(|frame| {
+                let symbol = frame.symbols.first().expect("frame must carry a symbol");
+                (
+                    frame.func_name.as_str(),
+                    symbol.file.as_deref(),
+                    symbol.line,
+                )
+            })
+            .collect();
+        assert_eq!(
+            located,
+            vec![
+                ("inner", Some("index.js"), Some(expected_inner_line)),
+                ("outer", Some("index.js"), Some(expected_outer_line)),
+            ],
         );
 
         drop(db_connection);
