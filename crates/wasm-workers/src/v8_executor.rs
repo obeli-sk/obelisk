@@ -10,26 +10,52 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// differently for a different value, see [`V8Executor::drain`].
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
-/// The workload limits are independent reservations, not shares of a global budget: a resident
-/// workflow can never occupy capacity an activity or a webhook is entitled to. Their sum is the
-/// process-wide isolate bound.
-#[derive(Debug, Clone, Copy)]
+/// One `(workload, native V8)` cell: the slots it grants and how large one isolate's heap may get.
+/// The semaphore is the one the cell's executor admits from, so an isolate and the worker slot
+/// running it are one reservation, not two.
+#[derive(Debug, Clone)]
+pub struct V8Cell {
+    semaphore: Arc<Semaphore>,
+    count: usize,
+    /// `None` leaves V8's own default heap limit in place.
+    max_heap_size: Option<usize>,
+}
+
+impl V8Cell {
+    #[must_use]
+    pub fn new(semaphore: Arc<Semaphore>, count: usize, max_heap_size: Option<usize>) -> Self {
+        Self {
+            semaphore,
+            count,
+            max_heap_size,
+        }
+    }
+
+    /// A cell no executor shares, for direct callers and tests.
+    #[must_use]
+    pub fn standalone(count: usize, max_heap_size: usize) -> Self {
+        Self::new(Arc::new(Semaphore::new(count)), count, Some(max_heap_size))
+    }
+}
+
+/// The cells are independent reservations, not shares of a global budget: a resident workflow can
+/// never occupy capacity an activity or a webhook is entitled to. Their sum is the process-wide
+/// isolate bound.
+#[derive(Debug, Clone)]
 pub struct V8ExecutorConfig {
-    pub max_workflows: usize,
-    pub max_activities: usize,
-    pub max_webhooks: usize,
+    pub workflows: V8Cell,
+    pub activities: V8Cell,
+    pub webhooks: V8Cell,
     pub thread_stack_size: usize,
-    pub max_heap_size: usize,
 }
 
 impl Default for V8ExecutorConfig {
     fn default() -> Self {
         Self {
-            max_workflows: 32,
-            max_activities: 16,
-            max_webhooks: 16,
+            workflows: V8Cell::standalone(32, 256 * 1024 * 1024),
+            activities: V8Cell::standalone(16, 256 * 1024 * 1024),
+            webhooks: V8Cell::standalone(16, 256 * 1024 * 1024),
             thread_stack_size: 4 * 1024 * 1024,
-            max_heap_size: 256 * 1024 * 1024,
         }
     }
 }
@@ -62,9 +88,6 @@ pub struct V8Executor {
 
 struct ExecutorInner {
     config: V8ExecutorConfig,
-    workflows: Arc<Semaphore>,
-    activities: Arc<Semaphore>,
-    webhooks: Arc<Semaphore>,
 }
 
 impl Default for V8Executor {
@@ -77,79 +100,78 @@ impl V8Executor {
     #[must_use]
     pub fn new(config: V8ExecutorConfig) -> Self {
         assert!(
-            config.max_workflows > 0 && config.max_activities > 0 && config.max_webhooks > 0,
-            "V8 workload limits must be non-zero"
-        );
-        assert!(
             config.thread_stack_size > 0,
             "V8 thread stack must be non-zero"
         );
         Self {
-            inner: Arc::new(ExecutorInner {
-                workflows: Arc::new(Semaphore::new(config.max_workflows)),
-                activities: Arc::new(Semaphore::new(config.max_activities)),
-                webhooks: Arc::new(Semaphore::new(config.max_webhooks)),
-                config,
-            }),
+            inner: Arc::new(ExecutorInner { config }),
         }
     }
 
     #[must_use]
-    pub fn max_heap_size(&self) -> usize {
-        self.inner.config.max_heap_size
+    pub fn max_heap_size(&self, workload: V8Workload) -> Option<usize> {
+        self.cell(workload).max_heap_size
     }
 
-    fn category(&self, workload: V8Workload) -> &Arc<Semaphore> {
+    fn cell(&self, workload: V8Workload) -> &V8Cell {
         match workload {
-            V8Workload::Workflow => &self.inner.workflows,
-            V8Workload::Activity => &self.inner.activities,
-            V8Workload::Webhook => &self.inner.webhooks,
+            V8Workload::Workflow => &self.inner.config.workflows,
+            V8Workload::Activity => &self.inner.config.activities,
+            V8Workload::Webhook => &self.inner.config.webhooks,
         }
     }
 
-    /// Every category, paired with the limit it was configured with.
-    fn categories(&self) -> [(&Arc<Semaphore>, usize); 3] {
+    fn cells(&self) -> [&V8Cell; 3] {
         [
-            (&self.inner.workflows, self.inner.config.max_workflows),
-            (&self.inner.activities, self.inner.config.max_activities),
-            (&self.inner.webhooks, self.inner.config.max_webhooks),
+            &self.inner.config.workflows,
+            &self.inner.config.activities,
+            &self.inner.config.webhooks,
         ]
     }
 
-    /// Waits for capacity in `workload`'s category. Admission is separate from
+    /// Waits for capacity in `workload`'s cell. Admission is separate from
     /// [`V8Admission::run`] so a caller that cannot be admitted keeps the state it would otherwise
     /// have moved onto the isolate thread, and can report the refusal against its own execution.
     pub async fn admit(&self, workload: V8Workload) -> Result<V8Admission, V8ExecutorError> {
-        let category = self
-            .category(workload)
+        let permit = self
+            .cell(workload)
+            .semaphore
             .clone()
             .acquire_owned()
             .await
             .map_err(|_| V8ExecutorError::Closed)?;
-        Ok(self.admission(category))
+        Ok(self.admission(Arc::new(permit)))
     }
 
     /// Like [`Self::admit`], but sheds the load instead of waiting for capacity.
     pub fn try_admit(&self, workload: V8Workload) -> Result<V8Admission, V8ExecutorError> {
-        let category = self
-            .category(workload)
+        let permit = self
+            .cell(workload)
+            .semaphore
             .clone()
             .try_acquire_owned()
             .map_err(|_| V8ExecutorError::Overloaded)?;
-        Ok(self.admission(category))
+        Ok(self.admission(Arc::new(permit)))
     }
 
-    fn admission(&self, category: OwnedSemaphorePermit) -> V8Admission {
+    /// Admits on a slot the caller already holds, typically `WorkerContext::instance_permit`.
+    /// Acquiring again would charge one isolate twice and deadlock the cell at half its size.
+    #[must_use]
+    pub fn admit_reserved(&self, reservation: Arc<OwnedSemaphorePermit>) -> V8Admission {
+        self.admission(reservation)
+    }
+
+    fn admission(&self, reservation: Arc<OwnedSemaphorePermit>) -> V8Admission {
         V8Admission {
-            category,
+            reservation,
             thread_stack_size: self.inner.config.thread_stack_size,
         }
     }
 
     /// Refuses all further admission: pending and future acquisitions fail instead of queueing.
     pub fn close(&self) {
-        for (semaphore, _) in self.categories() {
-            semaphore.close();
+        for cell in self.cells() {
+            cell.semaphore.close();
         }
     }
 
@@ -167,9 +189,12 @@ impl V8Executor {
         let deadline = tokio::time::Instant::now() + grace;
         loop {
             let outstanding: usize = self
-                .categories()
+                .cells()
                 .into_iter()
-                .map(|(semaphore, limit)| limit - semaphore.available_permits())
+                .map(|cell| {
+                    cell.count
+                        .saturating_sub(cell.semaphore.available_permits())
+                })
                 .sum();
             if outstanding == 0 {
                 return;
@@ -189,9 +214,10 @@ impl V8Executor {
     }
 }
 
-/// Capacity for exactly one isolate, held until that isolate has been dropped.
+/// Capacity for exactly one isolate, held until that isolate has been dropped. A reservation
+/// shared with a worker is released once both are finished, keeping a wedged isolate charged.
 pub struct V8Admission {
-    category: OwnedSemaphorePermit,
+    reservation: Arc<OwnedSemaphorePermit>,
     thread_stack_size: usize,
 }
 
@@ -205,7 +231,7 @@ impl V8Admission {
         T: Send + 'static,
     {
         let Self {
-            category,
+            reservation,
             thread_stack_size,
         } = self;
         let (result_tx, result_rx) = oneshot::channel();
@@ -214,15 +240,18 @@ impl V8Admission {
         std::thread::Builder::new()
             .name("obelisk-v8".to_owned())
             .stack_size(thread_stack_size)
-            .spawn(move || run_isolate(execute, result_tx, category))
+            .spawn(move || run_isolate(execute, result_tx, reservation))
             .map_err(V8ExecutorError::Spawn)?;
         // A panic on the isolate thread drops the sender.
         result_rx.await.map_err(|_| V8ExecutorError::IsolateStopped)
     }
 }
 
-fn run_isolate<F, Fut, T>(execute: F, result_tx: oneshot::Sender<T>, category: OwnedSemaphorePermit)
-where
+fn run_isolate<F, Fut, T>(
+    execute: F,
+    result_tx: oneshot::Sender<T>,
+    reservation: Arc<OwnedSemaphorePermit>,
+) where
     F: FnOnce() -> Fut + 'static,
     Fut: Future<Output = T> + 'static,
     T: Send + 'static,
@@ -249,7 +278,7 @@ where
     let _ = result_tx.send(result);
     // The isolate and its host state are gone by now, so admitted capacity always reflects
     // memory actually held. The Tokio runtime outlives the permit and is dropped last.
-    drop(category);
+    drop(reservation);
     drop(tokio_runtime);
 }
 
@@ -261,11 +290,10 @@ mod tests {
 
     fn config() -> V8ExecutorConfig {
         V8ExecutorConfig {
-            max_workflows: 1,
-            max_activities: 1,
-            max_webhooks: 1,
+            workflows: V8Cell::standalone(1, 32 * 1024 * 1024),
+            activities: V8Cell::standalone(1, 32 * 1024 * 1024),
+            webhooks: V8Cell::standalone(1, 32 * 1024 * 1024),
             thread_stack_size: 4 * 1024 * 1024,
-            max_heap_size: 32 * 1024 * 1024,
         }
     }
 
@@ -327,8 +355,8 @@ mod tests {
         assert!(task_dropped.load(Ordering::Acquire));
     }
 
-    /// Holds one resident workflow, the shape that starves other categories if they share a
-    /// budget with it, and hands back the channel that ends it.
+    /// Holds one resident workflow, the shape that starves other cells if they share a budget
+    /// with it, and hands back the channel that ends it.
     async fn resident_workflow(
         executor: &V8Executor,
     ) -> (oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
@@ -351,16 +379,16 @@ mod tests {
         (finish_tx, resident)
     }
 
-    /// Every category limit is a reservation, so a workflow that stays resident for hours cannot
-    /// take capacity an activity or a webhook is entitled to.
+    /// Every cell is a reservation, so a workflow that stays resident for hours cannot take
+    /// capacity an activity or a webhook is entitled to.
     #[tokio::test(flavor = "multi_thread")]
-    async fn resident_workflow_must_not_consume_other_categories() {
+    async fn resident_workflow_must_not_consume_other_cells() {
         let executor = V8Executor::new(config());
         let (finish_tx, resident) = resident_workflow(&executor).await;
         for workload in [V8Workload::Activity, V8Workload::Webhook] {
             executor
                 .try_admit(workload)
-                .expect("a resident workflow must not occupy other categories")
+                .expect("a resident workflow must not occupy other cells")
                 .run(|| async {})
                 .await
                 .unwrap();
@@ -392,6 +420,39 @@ mod tests {
         inflight.await.unwrap().unwrap();
     }
 
+    /// A worker that already holds its cell's permit runs its isolate under that reservation.
+    /// Acquiring a second one from the same cell would charge one isolate twice: here that would
+    /// block forever, and in a full cell it would deadlock at half the configured size.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_reserved_slot_must_not_be_charged_twice() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let executor = V8Executor::new(V8ExecutorConfig {
+            activities: V8Cell::new(semaphore.clone(), 1, Some(32 * 1024 * 1024)),
+            ..config()
+        });
+        let reservation = Arc::new(semaphore.clone().try_acquire_owned().unwrap());
+        assert_eq!(
+            42,
+            executor
+                .admit_reserved(reservation.clone())
+                .run(|| async { 42 })
+                .await
+                .unwrap()
+        );
+        assert!(
+            matches!(
+                executor.try_admit(V8Workload::Activity),
+                Err(V8ExecutorError::Overloaded)
+            ),
+            "the reservation is the only charge, and it is still held"
+        );
+        drop(reservation);
+        executor
+            .admit(V8Workload::Activity)
+            .await
+            .expect("the slot returns once the worker and the isolate are both gone");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn panicking_isolate_must_not_break_the_executor() {
         let executor = V8Executor::new(config());
@@ -421,8 +482,8 @@ mod tests {
         let executor = V8Executor::new(config());
         let (finish_tx, resident) = resident_workflow(&executor).await;
         executor.close();
-        // Closing refuses admission while the resident isolate is still running, in every
-        // category and whether or not that category still has a free permit.
+        // Closing refuses admission while the resident isolate is still running, in every cell
+        // and whether or not that cell still has a free permit.
         assert!(matches!(
             executor.admit(V8Workload::Activity).await,
             Err(V8ExecutorError::Closed)

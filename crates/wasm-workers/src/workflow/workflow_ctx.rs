@@ -162,6 +162,9 @@ impl From<ApplyError> for WorkflowFunctionError {
 }
 
 pub(crate) struct WorkflowCtx {
+    /// Set by the wasmtime runtime's `prepare` from the cell's `memory`; unused by native V8,
+    /// whose per-slot bound is the isolate heap cap.
+    pub(crate) memory_limiter: crate::store_limits::StoreMemoryLimiter,
     pub(crate) execution_id: ExecutionId,
     event_call_cursor: EventCallCursor,
     event_history: EventHistory,
@@ -1100,6 +1103,7 @@ impl WorkflowCtx {
         let execution_id = db_connection.execution_id().clone();
         let event_call_cursor = EventCallCursor::new(version, &event_history);
         Self {
+            memory_limiter: crate::store_limits::StoreMemoryLimiter::default(),
             execution_id: execution_id.clone(),
             event_call_cursor,
             db_connection,
@@ -4027,6 +4031,7 @@ pub(crate) mod tests {
                             retry_config: ComponentRetryConfig::ZERO,
                         },
                         execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+                        instance_permit: None,
                     })
                     .await;
                 if let WorkerResult::Ok(WorkerResultOk::RunFinished(RunFinished {
@@ -4293,6 +4298,7 @@ pub(crate) mod tests {
                         retry_config: ComponentRetryConfig::ZERO,
                     },
                     execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+                    instance_permit: None,
                 })
                 .await;
             let cancel_registry = CancelRegistry::new();
@@ -4350,6 +4356,7 @@ pub(crate) mod tests {
                             retry_config: ComponentRetryConfig::ZERO,
                         },
                         execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+                        instance_permit: None,
                     })
                     .await;
             }
@@ -4409,6 +4416,7 @@ pub(crate) mod tests {
                     retry_config: ComponentRetryConfig::ZERO,
                 },
                 execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+                instance_permit: None,
             })
             .await;
         assert_matches!(worker_result, WorkerResult::Ok(..), "should be finished");
@@ -4537,7 +4545,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::from_parts(
                     u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),

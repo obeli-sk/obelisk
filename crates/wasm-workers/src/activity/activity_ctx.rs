@@ -14,6 +14,7 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 use wasmtime_wasi_io::IoView;
 
 pub struct ActivityCtx {
+    pub(crate) memory_limiter: crate::store_limits::StoreMemoryLimiter,
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
@@ -112,6 +113,7 @@ pub(crate) fn store(
         logs_storage_config,
     };
     let ctx = ActivityCtx {
+        memory_limiter: crate::store_limits::StoreMemoryLimiter::new(config.memory),
         table: ResourceTable::new(),
         wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
@@ -129,7 +131,9 @@ pub(crate) fn store(
         },
         component_logger,
     };
-    Store::new(engine, ctx)
+    let mut store = Store::new(engine, ctx);
+    store.limiter(|ctx| &mut ctx.memory_limiter);
+    store
 }
 
 impl log_activities::obelisk::log::log::Host for ActivityCtx {

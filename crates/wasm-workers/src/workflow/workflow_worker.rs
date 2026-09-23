@@ -74,6 +74,8 @@ pub struct WorkflowConfig {
     pub component_id: ComponentId,
     pub stub_wasi: bool,
     pub fuel: Option<u64>,
+    /// Total linear memory one instance may hold, from the cell's `memory`.
+    pub memory: Option<u64>,
     /// Fields that differ between a normal run and a replay pass. `stub_wasi` and `fuel` are
     /// shared (a replay-purposed config inherits them from the real config).
     pub mode: WorkflowConfigMode,
@@ -416,6 +418,7 @@ impl WorkflowWorkerCompiled {
             .instantiate_pre(&self.wasmtime_component)
             .map_err(|err| WasmFileError::linking_error("preinstantiation error", err))?;
 
+        let memory = self.config.memory;
         Ok(WorkflowWorkerLinked {
             config: self.config,
             clock_fn: self.clock_fn,
@@ -423,6 +426,7 @@ impl WorkflowWorkerCompiled {
                 self.engine.clone(),
                 self.exported_ffqn_to_index,
                 instance_pre,
+                memory,
             )),
             #[cfg(any(test, feature = "test"))]
             engine: self.engine,
@@ -708,6 +712,7 @@ impl WorkflowWorker {
                 retry_config: concepts::ComponentRetryConfig::WORKFLOW,
             },
             execution_interrupt_watcher,
+            instance_permit: None,
         };
 
         let result = self
@@ -888,6 +893,7 @@ impl WorkflowWorker {
                 &ctx.ffqn,
                 &ctx.params,
                 view.config.fuel,
+                ctx.instance_permit,
             )
             .await
             .map_err(|err| match err {
@@ -2101,6 +2107,7 @@ pub(crate) mod tests {
                 WorkflowWorkerCompiled::new_with_config(
                     runnable_component.clone(),
                     WorkflowConfig {
+                        memory: None,
                         component_id,
                         stub_wasi: false,
                         fuel: None,
@@ -2143,6 +2150,7 @@ pub(crate) mod tests {
         clock_fn: Box<dyn ClockFn>,
     ) -> WorkflowWorker {
         let config = WorkflowConfig {
+            memory: None,
             component_id,
             stub_wasi: true,
             fuel: None,
@@ -2216,7 +2224,7 @@ pub(crate) mod tests {
             lock_expiry: LOCK_EXPIRY_WORKFLOW,
             tick_sleep: TICK_SLEEP,
             component_id: worker.config.component_id.clone(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::WORKFLOW,
@@ -2983,6 +2991,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+            instance_permit: None,
         };
         let worker_result = worker.run(ctx).await;
         assert_matches!(
@@ -3042,6 +3051,7 @@ pub(crate) mod tests {
                     retry_config: ComponentRetryConfig::ZERO,
                 },
                 execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+                instance_permit: None,
             };
             assert_matches!(
                 worker.run(ctx).await,
@@ -3132,7 +3142,7 @@ pub(crate) mod tests {
                 lock_expiry: LOCK_DURATION,
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
                 component_id: worker.config.component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
@@ -3262,7 +3272,7 @@ pub(crate) mod tests {
                 lock_expiry: LOCK_DURATION,
                 tick_sleep: Duration::ZERO, // irrelevant here as we call tick manually
                 component_id: worker.config.component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
@@ -3749,7 +3759,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: worker.config.component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
@@ -3966,7 +3976,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: worker.config.component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
@@ -4183,7 +4193,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: worker.config.component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::from_parts(0, 0),
                 retry_config: ComponentRetryConfig::WORKFLOW,
@@ -4470,7 +4480,7 @@ pub(crate) mod tests {
                     lock_expiry: Duration::from_secs(1),
                     tick_sleep: TICK_SLEEP,
                     component_id: direct_worker.config.component_id.clone(),
-                    task_limiter_global: None,
+                    task_limiter_cell: None,
                     task_limiter_local: None,
                     executor_id: ExecutorId::from_parts(0, 1),
                     retry_config: ComponentRetryConfig::WORKFLOW,
@@ -4644,7 +4654,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: worker.config.component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
@@ -4811,7 +4821,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 component_id: workflow_worker.config.component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
@@ -4868,7 +4878,7 @@ pub(crate) mod tests {
                     lock_expiry: Duration::from_secs(1),
                     tick_sleep: TICK_SLEEP,
                     component_id: activity_component_id,
-                    task_limiter_global: None,
+                    task_limiter_cell: None,
                     task_limiter_local: None,
                     executor_id: ExecutorId::generate(),
                     retry_config: ComponentRetryConfig::ZERO,

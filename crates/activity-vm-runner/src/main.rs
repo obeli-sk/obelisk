@@ -67,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         256 * 1024 * 1024,
         256 * 1024 * 1024,
+        None,
     )
     .await?;
     use std::io::Write as _;

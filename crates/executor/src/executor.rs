@@ -37,7 +37,7 @@ pub struct ExecConfig {
     pub tick_sleep: Duration,
     pub batch_size: u32,
     pub component_id: ComponentId,
-    pub task_limiter_global: Option<Arc<tokio::sync::Semaphore>>,
+    pub task_limiter_cell: Option<Arc<tokio::sync::Semaphore>>,
     pub task_limiter_local: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
     pub retry_config: ComponentRetryConfig,
@@ -197,10 +197,14 @@ enum LockingStrategyHolder {
     Auto { ffqns: Arc<[FunctionFqn]> },
 }
 
+/// One slot in this executor's (workload, runtime) cell, plus the component's own
+/// `exec.instance_limiter`, which narrows the component within that cell.
 #[derive(Default)]
-#[expect(dead_code)] // Stored permits limit semaphores until dropped.
 struct TaskLimiterPermit {
-    global: Option<tokio::sync::OwnedSemaphorePermit>,
+    /// Shared with the worker as `WorkerContext::instance_permit`, so a native V8 isolate runs
+    /// under this one slot instead of taking a second.
+    cell: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
+    #[expect(dead_code)] // Stored permits limit semaphores until dropped.
     local: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
@@ -376,25 +380,25 @@ impl ExecTask {
         );
         for _ in 0..self.config.batch_size {
             match (
-                &self.config.task_limiter_global,
+                &self.config.task_limiter_cell,
                 &self.config.task_limiter_local,
             ) {
-                (Some(global), Some(local)) => {
-                    if let Ok(global) = global.clone().try_acquire_owned()
+                (Some(cell), Some(local)) => {
+                    if let Ok(cell) = cell.clone().try_acquire_owned()
                         && let Ok(local) = local.clone().try_acquire_owned()
                     {
                         locks.push(TaskLimiterPermit {
-                            global: Some(global),
+                            cell: Some(Arc::new(cell)),
                             local: Some(local),
                         });
                     } else {
                         break;
                     }
                 }
-                (Some(global), None) => {
-                    if let Ok(global) = global.clone().try_acquire_owned() {
+                (Some(cell), None) => {
+                    if let Ok(cell) = cell.clone().try_acquire_owned() {
                         locks.push(TaskLimiterPermit {
-                            global: Some(global),
+                            cell: Some(Arc::new(cell)),
                             local: None,
                         });
                     } else {
@@ -404,7 +408,7 @@ impl ExecTask {
                 (None, Some(local)) => {
                     if let Ok(local) = local.clone().try_acquire_owned() {
                         locks.push(TaskLimiterPermit {
-                            global: None,
+                            cell: None,
                             local: Some(local),
                         });
                     } else {
@@ -542,6 +546,7 @@ impl ExecTask {
                     let worker_span2 = worker_span.clone();
                     let retry_config = self.config.retry_config;
                     async move {
+                        let instance_permit = permit.cell.clone();
                         let _permit = permit;
                         let res = Self::run_worker(
                             component_type,
@@ -551,7 +556,8 @@ impl ExecTask {
                             locked_execution,
                             retry_config,
                             worker_span2,
-                            execution_interrupt_watcher
+                            execution_interrupt_watcher,
+                            instance_permit,
                         )
                         .await;
                         debug!("run_worker finished with {res:?}");
@@ -578,6 +584,7 @@ impl ExecTask {
         retry_config: ComponentRetryConfig,
         worker_span: Span,
         execution_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
+        instance_permit: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
     ) -> Result<(), DbErrorWrite> {
         debug!("Worker::run starting");
         trace!(
@@ -617,6 +624,7 @@ impl ExecTask {
             locked_event: locked_execution.locked_event,
             worker_span,
             execution_interrupt_watcher,
+            instance_permit,
         };
         let worker_result = Self::enforce_worker_result_limit(
             worker.run(ctx).await,
@@ -1432,7 +1440,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -1488,7 +1496,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -1530,6 +1538,77 @@ mod tests {
                 version: Version(2),
             }
         );
+        db_close.close().await;
+    }
+
+    /// The cell is acquired before the lock query, so an executor at capacity locks nothing and
+    /// the work stays pending. Locking first and then waiting for capacity would burn the lease
+    /// on an execution that never starts.
+    #[tokio::test]
+    async fn saturated_cell_must_leave_executions_pending() {
+        set_up();
+        let created_at = DateTime::UNIX_EPOCH;
+        let (_guard, db_pool, db_close) = Database::Sqlite.set_up().await;
+        let db_connection = db_pool.connection_test().await.unwrap();
+        let execution_id = ExecutionId::generate();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id: execution_id.clone(),
+                ffqn: FFQN_SOME,
+                params: Params::empty(),
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DEPLOYMENT_ID_DUMMY,
+                scheduled_by: None,
+                paused: false,
+                max_persisted_value_size_bytes: u64::MAX,
+            })
+            .await
+            .unwrap();
+
+        let cell = Arc::new(tokio::sync::Semaphore::new(1));
+        let _occupied = cell.clone().try_acquire_owned().unwrap();
+        let exec_config = ExecConfig {
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            component_id: ComponentId::dummy_activity(),
+            task_limiter_cell: Some(cell),
+            task_limiter_local: None,
+            executor_id: ExecutorId::generate(),
+            retry_config: ComponentRetryConfig::ZERO,
+            locking_strategy: LockingStrategy::ByFfqns,
+        };
+        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
+            WorkerResultOk::RunFinished(RunFinished {
+                retval: SUPPORTED_RETURN_VALUE_OK_EMPTY,
+                version: Version::new(2),
+                http_client_traces: None,
+            }),
+        )));
+        tick_fn(
+            exec_config,
+            Box::new(ConstClock(created_at)),
+            db_pool.clone(),
+            worker,
+            created_at,
+        )
+        .await;
+
+        let execution_log = db_connection.get(&execution_id).await.unwrap();
+        assert_eq!(
+            1,
+            execution_log.events.len(),
+            "a saturated cell must not lock: {execution_log:?}"
+        );
+        assert_matches!(
+            execution_log.pending_state,
+            concepts::storage::PendingState::PendingAt(_)
+        );
+        drop(db_connection);
         db_close.close().await;
     }
 
@@ -1624,7 +1703,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,
@@ -1761,7 +1840,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -1904,7 +1983,7 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: parent_executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
@@ -1997,7 +2076,7 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
@@ -2124,7 +2203,7 @@ mod tests {
             lock_expiry,
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,

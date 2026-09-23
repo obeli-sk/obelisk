@@ -208,6 +208,7 @@
           "default": null
         },
         "instance_limiter": {
+          "description": "Caps concurrent executions of this one component, inside the `(workload, runtime)` cell\nfrom `[limits]` that caps every component of that kind together. It can only narrow.",
           "$ref": "#/$defs/InflightSemaphore",
           "default": "unlimited"
         }

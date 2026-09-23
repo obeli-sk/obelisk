@@ -44,7 +44,6 @@ use crate::config::deployment::CronConfigVerified;
 use crate::config::deployment::DeploymentManifest;
 use crate::config::deployment::DeploymentManifestFile;
 use crate::config::deployment::DeploymentResolved;
-use crate::config::deployment::InflightSemaphoreExt as _;
 use crate::config::deployment::LogLevelToml;
 use crate::config::deployment::WebhookJsComponentConfigResolvedExt as _;
 use crate::config::deployment::WebhookJsConfigVerified;
@@ -66,6 +65,7 @@ use crate::config::secret_registry::EnvVarSecretsCleanup;
 use crate::config::secret_registry::SecretRegistry;
 use crate::config::server::AllowExecActivities;
 use crate::config::server::CancelWatcherTomlConfig;
+use crate::config::server::ComponentCells;
 use crate::config::server::DatabaseConfigToml;
 use crate::config::server::GarbageCollectionTomlConfig;
 use crate::config::server::HttpServer;
@@ -1211,7 +1211,7 @@ pub(crate) async fn deployment_verify_config(
         prepared_dirs.wasm_cache_dir.clone(),
         prepared_dirs.metadata_dir.clone(),
         params.runtime_config_availability,
-        server_verified.global_executor_instance_limiter.clone(),
+        server_verified.component_cells.clone(),
         server_verified.fuel,
         termination_watcher,
         server_verified.database_subscription_interruption,
@@ -1732,10 +1732,6 @@ pub(crate) async fn run_internal(
     // `config` is moved into `server_verify` below; keep the API auth config.
     let api_config = config.api.clone();
 
-    let global_webhook_instance_limiter = config
-        .wasm_global_config
-        .global_webhook_instance_limiter
-        .as_semaphore();
     let timers_watcher = config.timers_watcher;
     let cancel_watcher = config.cancel_watcher;
     let maintenance_gc_config = config.maintenance.gc;
@@ -1992,6 +1988,7 @@ pub(crate) async fn run_internal(
 
     let cancel_registry = CancelRegistry::new();
     let subscription_interruption = database.get_subscription_interruption();
+    let webhooks_wasm_cell = server_verified.component_cells.webhooks_wasm.task_limiter();
 
     let server_init = spawn_tasks_and_threads(
         server_verified,
@@ -1999,7 +1996,7 @@ pub(crate) async fn run_internal(
         db_pool,
         db_close,
         compiled_and_linked,
-        global_webhook_instance_limiter,
+        webhooks_wasm_cell,
         timers_watcher,
         cancel_watcher,
         maintenance_gc_config,
@@ -2246,7 +2243,7 @@ pub(crate) struct ServerVerified {
     allowed_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
     fuel: Option<u64>,
-    global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    component_cells: ComponentCells,
     database_subscription_interruption: Option<Duration>,
     workflows_max_events_per_run: usize,
     workflows_response_refresh_interval: usize,
@@ -2275,6 +2272,8 @@ pub(crate) struct ServerVerified {
 struct ServerVerifiedLaunch {
     engines: Engines,
     v8_executor: V8Executor,
+    /// `limits.webhooks.wasm.memory`, applied to every WASM webhook store.
+    webhooks_wasm_memory: Option<u64>,
     webhook_request_timeout: Duration,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
@@ -2306,27 +2305,14 @@ impl ServerVerified {
         debug!("Using server toml: {config:#?}");
         let v8_config = config.v8;
         let webhook_request_timeout = config.webhooks.request_timeout.into();
-        if v8_config.max_workflows == 0
-            || v8_config.max_activities == 0
-            || v8_config.max_webhooks == 0
-            || v8_config.thread_stack_size == 0
-            || v8_config.max_heap_size == 0
-        {
-            anyhow::bail!("V8 workload, stack, and heap limits must be non-zero");
-        }
-        let v8_executor = V8Executor::new(wasm_workers::v8_executor::V8ExecutorConfig {
-            max_workflows: v8_config.max_workflows,
-            max_activities: v8_config.max_activities,
-            max_webhooks: v8_config.max_webhooks,
-            thread_stack_size: v8_config
-                .thread_stack_size
-                .try_into()
-                .context("v8.thread_stack_size does not fit usize")?,
-            max_heap_size: v8_config
-                .max_heap_size
-                .try_into()
-                .context("v8.max_heap_size does not fit usize")?,
-        });
+        let concurrency_cells = config.limits.resolve_cells()?;
+        let thread_stack_size = usize::try_from(u64::from(v8_config.thread_stack_size))
+            .context("v8.thread_stack_size does not fit usize")?;
+        anyhow::ensure!(
+            thread_stack_size > 0,
+            "`v8.thread_stack_size` must be greater than zero"
+        );
+        let v8_executor = V8Executor::new(concurrency_cells.v8_executor_config(thread_stack_size)?);
         let mut http_servers = config.http_servers;
         if config.webui.enabled {
             let webui_listening_addr = config.webui.listening_addr;
@@ -2365,6 +2351,7 @@ impl ServerVerified {
                     WebhookJsRuntime::BoaWasm,
                 )
             };
+        let component_cells = concurrency_cells.for_js_runtime(js_runtime == JsRuntimeMode::V8);
         let workflows_max_events_per_run = config.workflows_global_config.max_events_per_run;
         if workflows_max_events_per_run == 0 {
             bail!("`workflows.max_events_per_run` must be greater than zero");
@@ -2388,10 +2375,6 @@ impl ServerVerified {
             );
         }
         let build_semaphore = config.wasm_global_config.build_semaphore.into();
-        let global_executor_instance_limiter = config
-            .wasm_global_config
-            .global_executor_instance_limiter
-            .as_semaphore();
         let database_subscription_interruption = config.database.get_subscription_interruption();
         // Unregistered secret names in these entries are reported by `config_prepass::preflight`
         // (which runs before this) using `server_outbound_allowed_hosts`; here they resolve to
@@ -2435,6 +2418,7 @@ impl ServerVerified {
             launch: ServerVerifiedLaunch {
                 engines,
                 v8_executor,
+                webhooks_wasm_memory: component_cells.webhooks_wasm.memory(),
                 webhook_request_timeout,
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
@@ -2446,7 +2430,7 @@ impl ServerVerified {
             allowed_exec_activities: config.allowed_exec_activities,
             http_servers,
             fuel,
-            global_executor_instance_limiter,
+            component_cells,
             database_subscription_interruption,
             workflows_max_events_per_run,
             workflows_response_refresh_interval,
@@ -2544,6 +2528,7 @@ impl ServerCompiledLinked {
             webhooks_js_by_names,
             crons,
             fuel,
+            server_verified.webhooks_wasm_memory,
             global_http_config,
             server_verified.build_semaphore,
             server_verified.workflows_max_replay_captured_writes,
@@ -3864,7 +3849,7 @@ async fn spawn_tasks_and_threads(
     db_pool: Arc<dyn DbPool>,
     db_close: Pin<Box<dyn Future<Output = ()> + Send>>,
     server_compiled_linked: ServerCompiledLinked,
-    global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    webhooks_wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     timers_watcher: TimersWatcherTomlConfig,
     cancel_watcher: CancelWatcherTomlConfig,
     maintenance_gc_config: GarbageCollectionTomlConfig,
@@ -3965,7 +3950,7 @@ async fn spawn_tasks_and_threads(
         &webhook_registry,
         &server_compiled_linked.engines,
         db_pool.clone(),
-        global_webhook_instance_limiter.clone(),
+        webhooks_wasm_cell.clone(),
         termination_watcher,
         &log_forwarder_sender,
     )
@@ -4183,7 +4168,7 @@ async fn start_http_servers(
     webhook_registry: &WebhookRegistry,
     engines: &Engines,
     db_pool: Arc<dyn DbPool>,
-    global_webhook_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    webhooks_wasm_cell: Option<Arc<tokio::sync::Semaphore>>,
     termination_watcher: &watch::Receiver<()>,
     log_forwarder_sender: &mpsc::Sender<LogInfoAppendRow>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
@@ -4218,7 +4203,7 @@ async fn start_http_servers(
                     db_pool.clone(),
                     Now.clone_box(),
                     Arc::new(TokioSleep),
-                    global_webhook_instance_limiter.clone(),
+                    webhooks_wasm_cell.clone(),
                     termination_watcher.clone(),
                 ),
             )
@@ -4604,7 +4589,7 @@ impl DeploymentVerified {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
         runtime_config_availability: RuntimeConfigAvailability,
-        global_executor_instance_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        component_cells: ComponentCells,
         fuel: Option<u64>,
         termination_watcher: &mut watch::Receiver<()>,
         subscription_interruption: Option<Duration>,
@@ -4725,7 +4710,7 @@ impl DeploymentVerified {
             .map(|activity_wasm| {
                 let wasm_cache_dir = wasm_cache_dir.clone();
                 let metadata_dir = metadata_dir.clone();
-                let global_executor_instance_limiter = global_executor_instance_limiter.clone();
+                let cell = component_cells.activities_wasm.clone();
                 let secret_registry = secret_registry.clone();
                 let global_http_config = global_http_config.clone();
                 tokio::spawn(
@@ -4737,7 +4722,7 @@ impl DeploymentVerified {
                                 ignore_missing_env_vars,
                                 &secret_registry,
                                 global_http_config,
-                                global_executor_instance_limiter,
+                                cell,
                                 fuel,
                             )
                             .await
@@ -4779,7 +4764,7 @@ impl DeploymentVerified {
                         .fetch_and_verify(
                             wasm_cache_dir.clone(),
                             metadata_dir.clone(),
-                            global_executor_instance_limiter.clone(),
+                            component_cells.workflows_wasm.clone(),
                             fuel,
                             subscription_interruption,
                             max_events_per_run,
@@ -4903,7 +4888,7 @@ impl DeploymentVerified {
                                 ignore_missing_env_vars,
                                 &secret_registry,
                                 global_http_config.clone(),
-                                global_executor_instance_limiter.clone(),
+                                component_cells.activities_js.clone(),
                                 fuel,
                             ).await?
                         );
@@ -4923,7 +4908,7 @@ impl DeploymentVerified {
                             workflow_js.fetch_and_verify(
                                 workflow_js_wasm_path.clone(),
                                 wasm_cache_dir.clone(),
-                                global_executor_instance_limiter.clone(),
+                                component_cells.workflows_js.clone(),
                                 fuel,
                                 subscription_interruption,
                                 max_events_per_run,
@@ -4960,7 +4945,7 @@ impl DeploymentVerified {
                             resolved_program,
                             ignore_missing_env_vars,
                             &secret_registry,
-                            global_executor_instance_limiter.clone(),
+                            component_cells.activities_process.clone(),
                         )?
                     );
                 }
@@ -4975,7 +4960,7 @@ impl DeploymentVerified {
                                 &global_http_config,
                                 ignore_missing_env_vars,
                                 &secret_registry,
-                                global_executor_instance_limiter.clone(),
+                                component_cells.activities_vm.clone(),
                             ).await?
                         );
                     }
@@ -5059,6 +5044,7 @@ async fn compile_and_link(
     webhooks_js_by_names: IndexMap<ConfigName, WebhookJsConfigVerified>,
     crons: Vec<CronConfigVerified>,
     fuel: Option<u64>,
+    webhooks_wasm_memory: Option<u64>,
     global_http_config: GlobalHttpConfig,
     build_semaphore: Option<u64>,
     workflows_max_replay_captured_writes: usize,
@@ -5369,6 +5355,7 @@ async fn compile_and_link(
                                 secrets: webhook.secrets,
                                 js_config: None,
                                 config_section_hint: webhook.config_section_hint,
+                                memory: webhooks_wasm_memory,
                             };
                              let runnable_component =
                                 RunnableComponent::new(webhook.wasm_path, &engines.webhook_engine, ComponentType::WebhookEndpoint)?;
@@ -5418,6 +5405,7 @@ async fn compile_and_link(
                                     files: webhook_js.js_files,
                                 }),
                                 config_section_hint: webhook_js.config_section_hint,
+                                memory: webhooks_wasm_memory,
                             };
 
                             let webhook_compiled = webhook_trigger::WebhookEndpointCompiled::new(
@@ -5847,6 +5835,7 @@ fn prespawn_activity_vm(
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     let component_id = activity_vm.component_id().clone();
     let path = activity_vm.path;
+    let activity_vm_memory = activity_vm.memory;
     let activity = activity_vm.activity;
     let mut env = activity
         .env_vars
@@ -5909,6 +5898,7 @@ fn prespawn_activity_vm(
         activity.forward_stdout,
         activity.forward_stderr,
         activity.user_wasm_component,
+        activity_vm_memory,
     )
     .with_context(|| format!("cannot create VM activity worker for {component_id}"))?;
     let wit = worker.wit();
@@ -6215,6 +6205,7 @@ fn replay_workflow_config(
         component_id: real_config.component_id.clone(),
         stub_wasi: real_config.stub_wasi,
         fuel: real_config.fuel,
+        memory: real_config.memory,
         mode: WorkflowConfigMode::Replay {
             max_replay_captured_writes,
         },
@@ -7109,7 +7100,7 @@ mod tests {
             prepared_dirs.wasm_cache_dir.clone(),
             prepared_dirs.metadata_dir.clone(),
             params.runtime_config_availability,
-            server_verified.global_executor_instance_limiter,
+            server_verified.component_cells,
             server_verified.fuel,
             &mut termination_watcher,
             server_verified.database_subscription_interruption,

@@ -68,6 +68,9 @@ pub struct WorkerContext {
     pub worker_span: Span,
     pub locked_event: Locked,
     pub execution_interrupt_watcher: tokio::sync::watch::Receiver<bool>,
+    /// The executor's own slot, shared so a native V8 isolate runs under it rather than taking a
+    /// second permit. `None` without an executor (replay, direct calls, tests), which admit.
+    pub instance_permit: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
 }
 
 #[derive(Debug, thiserror::Error)]

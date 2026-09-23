@@ -51,6 +51,7 @@ mod bench {
 
     fn activity_config(component_id: ComponentId) -> ActivityConfig {
         ActivityConfig {
+            memory: None,
             component_id,
             forward_stdout: None,
             forward_stderr: None,
@@ -106,7 +107,7 @@ mod bench {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
             component_id,
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -195,6 +196,7 @@ mod bench {
                 RunnableComponent::new(wasm_path, &workflow_engine, component_id.component_type)
                     .unwrap(),
                 WorkflowConfig {
+                    memory: None,
                     component_id: component_id.clone(),
                     stub_wasi: false,
                     fuel: None,
@@ -227,7 +229,7 @@ mod bench {
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             component_id,
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,

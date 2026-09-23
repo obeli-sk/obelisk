@@ -11,12 +11,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(activity-js, webhook-js, workflow-js)* Added experimental native V8 runtimes, enabled for all
   JavaScript components with `OBELISK_UNSTABLE_V8=true`. The default remains Boa compiled to WASM.
   These V8 runtimes may change incompatibly or be removed.
-- *(server)* Added bounded native V8 execution under `[v8]`: a per-workload concurrency reservation
-  for workflows, activities and webhooks, plus per-isolate heap and isolate thread stack settings.
-  Every isolate runs on its own OS thread and is created from a build-time V8 startup snapshot.
+- *(server)* Added bounded native V8 execution: the `v8` cells of `[limits]` reserve concurrency
+  and isolate heap for workflows, activities and webhooks, and `[v8].thread_stack_size` sizes the
+  isolate thread. Every isolate runs on its own OS thread and is created from a build-time V8
+  startup snapshot.
 - *(webhook)* Added `[webhooks].request_timeout`, a common wall-clock deadline for WASM and
   native V8 webhook handlers to accept a request and return an HTTP response. It does not limit
   an already-returned streaming response body. The default is 30 seconds.
+
+### Changed
+
+- *(server)* **Breaking:** `[wasm].global_executor_instance_limiter` and
+  `[wasm].global_webhook_instance_limiter` are replaced by a table of per-workload, per-runtime
+  cells under `[limits]`: `[limits.activities.{wasm,v8,process,vm_bochs}]`,
+  `[limits.workflows.{wasm,v8}]` and `[limits.webhooks.{wasm,v8}]`. Each cell has a `count` of
+  concurrent slots and, except for `process`, a `memory` bound on one slot. Both keys accept
+  `"unlimited"`. A configuration still carrying the old keys fails to load rather than silently
+  losing its limits.
+
+  Two things change beyond the key names. First, **the defaults now bind**: a deployment that ran
+  unbounded concurrency by default is capped at 500 wasm activities, workflows and webhook
+  requests, 32 `activity_exec` processes and 8 `activity_vm` machines, with a per-slot memory
+  bound of 1 GiB for activities and 512 MiB for workflows and webhooks. Second, a deployment that
+  set the old global limiter must now decide a value per cell; there is no process-wide total,
+  because the sum of the cells is the process bound. A component's own `exec.instance_limiter` is
+  unchanged and applies inside its cell.
+
+  The cell's permit is now taken before the database lease rather than after, so a saturated
+  executor leaves work pending instead of locking it and waiting with the lease running.
+
+- *(webhook)* **Breaking:** a webhook shed because its runtime is at capacity is answered with
+  `503 Service Unavailable`. Previously the pre-routing global limiter answered `429 Too Many
+  Requests`. The permit is now taken after the route match, so an unroutable request consumes no
+  capacity and a flood of 404s can no longer shed legitimate traffic.
+
+- *(server)* **Breaking:** byte sizes introduced or moved by the cells name their unit as part of
+  the key (`memory.mib = 512`, `memory.gib = 1`, `memory.bytes = 1048576`), following
+  `DurationConfig`. A bare integer is not accepted. `[v8].thread_stack_size` becomes
+  `thread_stack_size.mib = 4`, and `[v8].max_heap_size` moves into each `v8` cell's `memory`.
 
 ## [0.42.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.2...v0.42.0-rc.3)
 

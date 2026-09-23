@@ -61,6 +61,7 @@ impl WorkflowRuntime for BoaWasmRuntime {
         _ffqn: &FunctionFqn,
         params: &Params,
         fuel: Option<u64>,
+        instance_permit: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
     ) -> Result<Box<dyn WorkflowInvocation>, RuntimePrepareError> {
         let (ffqn, params) = boa_invocation(
             params,
@@ -71,7 +72,14 @@ impl WorkflowRuntime for BoaWasmRuntime {
         );
         let inner = self
             .inner
-            .prepare(workflow_ctx, component_id, &ffqn, &params, fuel)
+            .prepare(
+                workflow_ctx,
+                component_id,
+                &ffqn,
+                &params,
+                fuel,
+                instance_permit,
+            )
             .await?;
         Ok(Box::new(BoaWasmInvocation {
             inner,
@@ -786,6 +794,7 @@ mod tests {
     ) -> WorkflowJsWorker {
         use crate::workflow::deadline_tracker::DeadlineTrackerFactoryForReplay;
         let config = WorkflowConfig {
+            memory: None,
             component_id,
             stub_wasi: true,
             fuel: None,
@@ -851,6 +860,7 @@ mod tests {
             RunnableComponent::new(wasm_path, &engine, component_id.component_type).unwrap();
 
         let config = WorkflowConfig {
+            memory: None,
             component_id: component_id.clone(),
             stub_wasi: false,
             fuel: None,
@@ -936,6 +946,7 @@ mod tests {
             RunnableComponent::new(wasm_path, &engine, component_id.component_type).unwrap();
 
         let config = WorkflowConfig {
+            memory: None,
             component_id,
             stub_wasi: false,
             fuel: None,
@@ -1000,6 +1011,7 @@ mod tests {
                 retry_config: ComponentRetryConfig::WORKFLOW,
             },
             execution_interrupt_watcher: tokio::sync::watch::channel(false).1,
+            instance_permit: None,
         }
     }
 
@@ -1329,6 +1341,7 @@ mod tests {
                 .unwrap();
 
         let config = WorkflowConfig {
+            memory: None,
             component_id: component_id.clone(),
             stub_wasi: false,
             fuel: None,
@@ -1415,7 +1428,7 @@ mod tests {
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             component_id: worker.inner.config.component_id.clone(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id,
             retry_config: ComponentRetryConfig::WORKFLOW,
@@ -1435,7 +1448,7 @@ mod tests {
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             component_id: worker.inner.config.component_id.clone(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::WORKFLOW,
@@ -2675,7 +2688,7 @@ mod tests {
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             component_id: producer_component_id,
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::WORKFLOW,
@@ -2870,7 +2883,7 @@ mod tests {
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             component_id: producer_component_id,
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::WORKFLOW,
@@ -6177,7 +6190,7 @@ mod tests {
                 lock_expiry: Duration::from_secs(10),
                 tick_sleep: Duration::from_millis(1),
                 component_id: component_id.clone(),
-                task_limiter_global: None,
+                task_limiter_cell: None,
                 task_limiter_local: None,
                 executor_id: ExecutorId::from_parts(0, 0),
                 retry_config: ComponentRetryConfig::WORKFLOW,
@@ -6318,6 +6331,7 @@ mod tests {
         )
         .unwrap();
         let config = WorkflowConfig {
+            memory: None,
             component_id: component_id.clone(),
             stub_wasi: false,
             fuel: None,

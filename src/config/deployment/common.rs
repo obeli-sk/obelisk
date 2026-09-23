@@ -130,6 +130,8 @@ pub struct ExecConfigToml {
     pub tick_sleep: DurationConfig,
     #[serde(default)]
     pub locking_strategy: Option<LockingStrategy>,
+    /// Caps concurrent executions of this one component, inside the `(workload, runtime)` cell
+    /// from `[limits]` that caps every component of that kind together. It can only narrow.
     #[serde(default)]
     pub instance_limiter: InflightSemaphore,
 }
@@ -180,6 +182,27 @@ impl From<DurationConfig> for Duration {
             DurationConfig::Seconds(secs) => Duration::from_secs(secs),
             DurationConfig::Minutes(mins) => Duration::from_secs(mins * 60),
             DurationConfig::Hours(hrs) => Duration::from_secs(hrs * 60 * 60),
+        }
+    }
+}
+
+/// A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary and a
+/// bare integer is not accepted, so a configuration cannot silently mean something 1024x off.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ByteSizeConfig {
+    Bytes(u64),
+    Kib(u64),
+    Mib(u64),
+    Gib(u64),
+}
+impl From<ByteSizeConfig> for u64 {
+    fn from(value: ByteSizeConfig) -> Self {
+        match value {
+            ByteSizeConfig::Bytes(bytes) => bytes,
+            ByteSizeConfig::Kib(kib) => kib * 1024,
+            ByteSizeConfig::Mib(mib) => mib * 1024 * 1024,
+            ByteSizeConfig::Gib(gib) => gib * 1024 * 1024 * 1024,
         }
     }
 }

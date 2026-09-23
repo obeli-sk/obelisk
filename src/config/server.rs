@@ -4,8 +4,8 @@
 use self::log::{LoggingConfig, LoggingStyle};
 use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX, PathPrefixes};
 use crate::config::deployment::{
-    AllowedHostToml, ConfigName, DurationConfig, DurationConfigOptional, InflightSemaphore,
-    ValueOrUnlimited,
+    AllowedHostToml, ByteSizeConfig, ConfigName, DurationConfig, DurationConfigOptional,
+    InflightSemaphore, ValueOrUnlimited,
 };
 use crate::config::env_var::{
     StartupEnvVars, interpolate_env_vars_plaintext, interpolate_env_vars_secret,
@@ -14,6 +14,7 @@ use crate::config::env_var::{
 use crate::config::secret_registry::{
     PublicEnvToml, SecretExposureDigests, SecretRegistry, SecretsToml,
 };
+use anyhow::Context as _;
 use concepts::component_id::Digest;
 use concepts::persisted_value::DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES;
 use db_postgres::postgres_dao::{self, PostgresConfig};
@@ -23,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
@@ -92,50 +94,22 @@ pub(crate) struct ServerConfigToml {
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct V8ConfigToml {
-    /// Maximum number of resident native V8 workflows. Each workload limit is an independent
-    /// reservation; their sum bounds the isolates in this process.
-    #[serde(default = "default_v8_max_workflows")]
-    pub(crate) max_workflows: usize,
-    /// Maximum number of running native V8 activities.
-    #[serde(default = "default_v8_max_activities")]
-    pub(crate) max_activities: usize,
-    /// Maximum number of running native V8 webhook requests.
-    #[serde(default = "default_v8_max_webhooks")]
-    pub(crate) max_webhooks: usize,
-    /// Stack size in bytes for each native V8 isolate thread.
+    /// Stack size for each native V8 isolate thread. How many isolates there may be and how large
+    /// one isolate's heap may get are the `v8` cells of `[limits]`.
     #[serde(default = "default_v8_thread_stack_size")]
-    pub(crate) thread_stack_size: u64,
-    /// Maximum V8-managed heap size in bytes for each isolate.
-    #[serde(default = "default_v8_max_heap_size")]
-    pub(crate) max_heap_size: u64,
+    pub(crate) thread_stack_size: ByteSizeConfig,
 }
 
 impl Default for V8ConfigToml {
     fn default() -> Self {
         Self {
-            max_workflows: default_v8_max_workflows(),
-            max_activities: default_v8_max_activities(),
-            max_webhooks: default_v8_max_webhooks(),
             thread_stack_size: default_v8_thread_stack_size(),
-            max_heap_size: default_v8_max_heap_size(),
         }
     }
 }
 
-const fn default_v8_max_workflows() -> usize {
-    100
-}
-const fn default_v8_max_activities() -> usize {
-    16
-}
-const fn default_v8_max_webhooks() -> usize {
-    16
-}
-const fn default_v8_thread_stack_size() -> u64 {
-    4 * 1024 * 1024
-}
-const fn default_v8_max_heap_size() -> u64 {
-    256 * 1024 * 1024
+const fn default_v8_thread_stack_size() -> ByteSizeConfig {
+    ByteSizeConfig::Mib(4)
 }
 impl ServerConfigToml {
     pub(crate) fn resolve_env_vars(
@@ -196,6 +170,15 @@ pub(crate) struct LimitsToml {
     /// `max_persisted_value_size_bytes`.
     #[serde(default = "default_max_transport_message_size_bytes")]
     pub(crate) max_transport_message_size_bytes: u64,
+    /// Concurrency and per-slot memory of the activity runtimes.
+    #[serde(default)]
+    pub(crate) activities: ActivityCellsToml,
+    /// Concurrency and per-slot memory of the workflow runtimes.
+    #[serde(default)]
+    pub(crate) workflows: WorkflowCellsToml,
+    /// Concurrency and per-slot memory of the webhook runtimes.
+    #[serde(default)]
+    pub(crate) webhooks: WebhookCellsToml,
 }
 
 impl Default for LimitsToml {
@@ -204,8 +187,260 @@ impl Default for LimitsToml {
             max_persisted_value_size_bytes: DEFAULT_MAX_PERSISTED_VALUE_SIZE_BYTES,
             max_deployment_file_bytes: MaxDeploymentFileBytes::default(),
             max_transport_message_size_bytes: default_max_transport_message_size_bytes(),
+            activities: ActivityCellsToml::default(),
+            workflows: WorkflowCellsToml::default(),
+            webhooks: WebhookCellsToml::default(),
         }
     }
+}
+
+/// One `(workload, runtime)` cell: how many execution slots it grants and how large one slot may
+/// get. Both keys accept `"unlimited"`; an omitted key takes the cell's default.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CellToml {
+    #[serde(default)]
+    pub(crate) count: Option<InflightSemaphore>,
+    #[serde(default)]
+    pub(crate) memory: Option<ValueOrUnlimited<ByteSizeConfig>>,
+}
+
+/// A cell whose slot is an operating system process, so its memory is not wasmtime's business.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProcessCellToml {
+    #[serde(default)]
+    pub(crate) count: Option<InflightSemaphore>,
+}
+
+/// The activity runtimes are four different resources: a wasmtime instance, a V8 isolate with its
+/// own heap and thread, an external process, and an emulated machine. A VM storm must not crowd
+/// out plain exec activities, so each gets its own reservation. A VM cell is keyed by backend
+/// because the backend decides what a slot costs.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivityCellsToml {
+    /// Activities running as WASM components, including Boa JavaScript activities.
+    #[serde(default)]
+    pub(crate) wasm: CellToml,
+    /// Activities running on native V8.
+    #[serde(default)]
+    pub(crate) v8: CellToml,
+    /// `activity_exec` activities, each slot an operating system process.
+    #[serde(default)]
+    pub(crate) process: ProcessCellToml,
+    /// `activity_vm` activities on the Bochs backend.
+    #[serde(default)]
+    pub(crate) vm_bochs: CellToml,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkflowCellsToml {
+    /// Workflows running as WASM components, including Boa JavaScript workflows.
+    #[serde(default)]
+    pub(crate) wasm: CellToml,
+    /// Workflows running on native V8.
+    #[serde(default)]
+    pub(crate) v8: CellToml,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WebhookCellsToml {
+    /// Webhook endpoints running as WASM components, including Boa JavaScript endpoints.
+    #[serde(default)]
+    pub(crate) wasm: CellToml,
+    /// Webhook endpoints running on native V8.
+    #[serde(default)]
+    pub(crate) v8: CellToml,
+}
+
+const MIB: u64 = 1024 * 1024;
+const GIB: u64 = 1024 * MIB;
+
+/// One resolved `(workload, runtime)` cell. Its semaphore is shared by every executor of the cell,
+/// and for a native V8 cell it is the one `V8Executor` admits from.
+#[derive(Debug, Clone)]
+pub(crate) struct ConcurrencyCell {
+    semaphore: Arc<tokio::sync::Semaphore>,
+    /// `None` when the cell grants unlimited slots.
+    count: Option<usize>,
+    /// Memory one slot may hold; `None` when unbounded.
+    memory: Option<u64>,
+}
+
+impl ConcurrencyCell {
+    fn new(count: Option<usize>, memory: Option<u64>) -> Self {
+        Self {
+            semaphore: Arc::new(tokio::sync::Semaphore::new(
+                count.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
+            )),
+            count,
+            memory,
+        }
+    }
+
+    /// A cell that bounds nothing, for tests and direct callers.
+    #[cfg(test)]
+    pub(crate) fn unlimited() -> Self {
+        Self::new(None, None)
+    }
+
+    /// The executor's `task_limiter_cell`. `None` for an unlimited cell, which skips the
+    /// acquisition rather than taking a permit that can never be refused.
+    pub(crate) fn task_limiter(&self) -> Option<Arc<tokio::sync::Semaphore>> {
+        self.count.map(|_| self.semaphore.clone())
+    }
+
+    pub(crate) fn memory(&self) -> Option<u64> {
+        self.memory
+    }
+
+    fn v8(&self) -> Result<wasm_workers::v8_executor::V8Cell, anyhow::Error> {
+        let max_heap_size = self
+            .memory
+            .map(|memory| {
+                usize::try_from(memory).context("a native V8 cell's `memory` does not fit usize")
+            })
+            .transpose()?;
+        Ok(wasm_workers::v8_executor::V8Cell::new(
+            self.semaphore.clone(),
+            self.count.unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
+            max_heap_size,
+        ))
+    }
+}
+
+/// Every execution slot in the process is charged to exactly one of these. They are independent
+/// reservations with no process-wide total: their sum is the process bound.
+#[derive(Debug, Clone)]
+pub(crate) struct ConcurrencyCells {
+    pub(crate) activities_wasm: ConcurrencyCell,
+    pub(crate) activities_v8: ConcurrencyCell,
+    pub(crate) activities_process: ConcurrencyCell,
+    pub(crate) activities_vm_bochs: ConcurrencyCell,
+    pub(crate) workflows_wasm: ConcurrencyCell,
+    pub(crate) workflows_v8: ConcurrencyCell,
+    pub(crate) webhooks_wasm: ConcurrencyCell,
+    pub(crate) webhooks_v8: ConcurrencyCell,
+}
+
+/// The cell each kind of component charges to, with the JavaScript kinds resolved against the
+/// server-wide runtime mode once, so every configuration site just reads its own field.
+#[derive(Debug, Clone)]
+pub(crate) struct ComponentCells {
+    pub(crate) activities_wasm: ConcurrencyCell,
+    pub(crate) activities_js: ConcurrencyCell,
+    pub(crate) activities_process: ConcurrencyCell,
+    pub(crate) activities_vm: ConcurrencyCell,
+    pub(crate) workflows_wasm: ConcurrencyCell,
+    pub(crate) workflows_js: ConcurrencyCell,
+    pub(crate) webhooks_wasm: ConcurrencyCell,
+}
+
+impl ConcurrencyCells {
+    /// A Boa component is a WASM component, so its JavaScript source is irrelevant to what its
+    /// slot costs and it is charged to the wasm cell.
+    pub(crate) fn for_js_runtime(&self, native_v8: bool) -> ComponentCells {
+        ComponentCells {
+            activities_wasm: self.activities_wasm.clone(),
+            activities_js: if native_v8 {
+                self.activities_v8.clone()
+            } else {
+                self.activities_wasm.clone()
+            },
+            activities_process: self.activities_process.clone(),
+            activities_vm: self.activities_vm_bochs.clone(),
+            workflows_wasm: self.workflows_wasm.clone(),
+            workflows_js: if native_v8 {
+                self.workflows_v8.clone()
+            } else {
+                self.workflows_wasm.clone()
+            },
+            webhooks_wasm: self.webhooks_wasm.clone(),
+        }
+    }
+
+    pub(crate) fn v8_executor_config(
+        &self,
+        thread_stack_size: usize,
+    ) -> Result<wasm_workers::v8_executor::V8ExecutorConfig, anyhow::Error> {
+        Ok(wasm_workers::v8_executor::V8ExecutorConfig {
+            workflows: self.workflows_v8.v8()?,
+            activities: self.activities_v8.v8()?,
+            webhooks: self.webhooks_v8.v8()?,
+            thread_stack_size,
+        })
+    }
+}
+
+impl LimitsToml {
+    pub(crate) fn resolve_cells(&self) -> Result<ConcurrencyCells, anyhow::Error> {
+        Ok(ConcurrencyCells {
+            activities_wasm: self.activities.wasm.resolve("activities.wasm", 500, GIB)?,
+            activities_v8: self.activities.v8.resolve("activities.v8", 16, 256 * MIB)?,
+            activities_process: resolve_count(
+                "activities.process",
+                self.activities.process.count,
+                32,
+            )
+            .map(|count| ConcurrencyCell::new(count, None))?,
+            activities_vm_bochs: self
+                .activities
+                .vm_bochs
+                .resolve("activities.vm_bochs", 8, GIB)?,
+            workflows_wasm: self
+                .workflows
+                .wasm
+                .resolve("workflows.wasm", 500, 512 * MIB)?,
+            workflows_v8: self.workflows.v8.resolve("workflows.v8", 100, 256 * MIB)?,
+            webhooks_wasm: self
+                .webhooks
+                .wasm
+                .resolve("webhooks.wasm", 500, 512 * MIB)?,
+            webhooks_v8: self.webhooks.v8.resolve("webhooks.v8", 16, 256 * MIB)?,
+        })
+    }
+}
+
+impl CellToml {
+    fn resolve(
+        self,
+        cell: &str,
+        default_count: usize,
+        default_memory: u64,
+    ) -> Result<ConcurrencyCell, anyhow::Error> {
+        let count = resolve_count(cell, self.count, default_count)?;
+        let memory = match self.memory {
+            None => Some(default_memory),
+            Some(memory) => Option::<ByteSizeConfig>::from(memory).map(u64::from),
+        };
+        anyhow::ensure!(
+            memory != Some(0),
+            "`limits.{cell}.memory` must be greater than zero"
+        );
+        Ok(ConcurrencyCell::new(count, memory))
+    }
+}
+
+/// A cell granting zero slots would leave its workload permanently pending, so it is rejected
+/// rather than accepted as a way of switching a runtime off.
+fn resolve_count(
+    cell: &str,
+    count: Option<InflightSemaphore>,
+    default_count: usize,
+) -> Result<Option<usize>, anyhow::Error> {
+    let count = match count {
+        None => Some(default_count),
+        Some(InflightSemaphore::Unlimited(_)) => None,
+        Some(InflightSemaphore::Some(count)) => Some(usize::try_from(count).expect("usize >= u32")),
+    };
+    anyhow::ensure!(
+        count != Some(0),
+        "`limits.{cell}.count` must be greater than zero"
+    );
+    Ok(count)
 }
 
 const fn default_max_persisted_value_size_bytes() -> u64 {
@@ -472,10 +707,6 @@ pub(crate) struct WasmGlobalConfigToml {
     #[serde(default)]
     pub(crate) allocator_config: WasmtimeAllocatorConfig,
     #[serde(default)]
-    pub(crate) global_executor_instance_limiter: InflightSemaphore,
-    #[serde(default)]
-    pub(crate) global_webhook_instance_limiter: InflightSemaphore,
-    #[serde(default)]
     pub(crate) fuel: ValueOrUnlimited<u64>,
     #[serde(default)]
     pub(crate) build_semaphore: ValueOrUnlimited<u64>,
@@ -493,8 +724,6 @@ impl Default for WasmGlobalConfigToml {
             codegen_cache: CodegenCache::default(),
             cache_directory: Option::default(),
             allocator_config: WasmtimeAllocatorConfig::default(),
-            global_executor_instance_limiter: InflightSemaphore::default(),
-            global_webhook_instance_limiter: InflightSemaphore::default(),
             fuel: ValueOrUnlimited::default(),
             build_semaphore: ValueOrUnlimited::default(),
             parallel_compilation: default_parallel_compilation(),
@@ -1063,6 +1292,148 @@ pub(crate) const MAX_DEPLOYMENT_FILE_BYTES: u32 = 20 * 1024 * 1024; // 20MiB
 mod tests {
     use super::*;
     use crate::config::deployment::{MethodsInput, ReplaceIn};
+
+    mod limits {
+        use super::*;
+
+        fn cells(toml: &str) -> ConcurrencyCells {
+            toml::from_str::<ServerConfigToml>(toml)
+                .unwrap()
+                .limits
+                .resolve_cells()
+                .unwrap()
+        }
+
+        /// Exceeding the wasmtime pooling allocator's per-engine limit arrives as an
+        /// instantiation failure, which both workers classify as `FatalError::CannotInstantiate`:
+        /// a transient capacity problem would permanently fail an execution instead of leaving it
+        /// pending. Every wasm cell's default therefore stays below that limit, so saturation is
+        /// answered by backpressure.
+        #[test]
+        fn wasm_cell_defaults_must_stay_below_the_pooling_allocator_limit() {
+            /// wasmtime's `PoolingAllocationConfig` default on a 64-bit host, which obelisk
+            /// leaves unset for each of its engines.
+            const POOLING_TOTAL_COMPONENT_INSTANCES: usize = 1000;
+            let cells = cells("");
+            for (name, cell) in [
+                ("activities.wasm", &cells.activities_wasm),
+                ("workflows.wasm", &cells.workflows_wasm),
+                ("webhooks.wasm", &cells.webhooks_wasm),
+                ("activities.vm_bochs", &cells.activities_vm_bochs),
+            ] {
+                let count = cell.count.expect("a wasm cell must have a real default");
+                assert!(
+                    count < POOLING_TOTAL_COMPONENT_INSTANCES,
+                    "`{name}` default {count} must leave headroom below the pooling allocator"
+                );
+            }
+        }
+
+        #[test]
+        fn omitted_cells_must_take_their_defaults() {
+            let cells = cells("");
+            assert_eq!(Some(500), cells.activities_wasm.count);
+            assert_eq!(Some(GIB), cells.activities_wasm.memory);
+            assert_eq!(Some(32), cells.activities_process.count);
+            assert_eq!(None, cells.activities_process.memory);
+            assert_eq!(Some(100), cells.workflows_v8.count);
+            assert_eq!(Some(256 * MIB), cells.workflows_v8.memory);
+        }
+
+        #[test]
+        fn a_cell_must_accept_unlimited_on_either_key() {
+            let cells = cells(
+                r#"
+                [limits.activities.wasm]
+                count = "unlimited"
+                memory.mib = 64
+                [limits.workflows.wasm]
+                memory = "unlimited"
+                "#,
+            );
+            assert_eq!(None, cells.activities_wasm.count);
+            assert!(cells.activities_wasm.task_limiter().is_none());
+            assert_eq!(Some(64 * MIB), cells.activities_wasm.memory);
+            assert_eq!(Some(500), cells.workflows_wasm.count);
+            assert_eq!(None, cells.workflows_wasm.memory);
+        }
+
+        /// A cell granting zero slots would leave its workload pending forever.
+        #[test]
+        fn a_zero_cell_must_be_rejected() {
+            let err = toml::from_str::<ServerConfigToml>(
+                r"
+                [limits.activities.wasm]
+                count = 0
+                ",
+            )
+            .unwrap()
+            .limits
+            .resolve_cells()
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("limits.activities.wasm.count"),
+                "{err}"
+            );
+        }
+
+        /// The keys are a breaking rename, and `deny_unknown_fields` is what turns a config still
+        /// carrying the old ones into a load failure rather than silently lost limits.
+        #[test]
+        fn the_replaced_global_limiters_must_be_rejected() {
+            for old in [
+                "[wasm]\nglobal_executor_instance_limiter = 10",
+                "[wasm]\nglobal_webhook_instance_limiter = 10",
+                "[v8]\nmax_workflows = 10",
+                "[v8]\nmax_heap_size = 1024",
+            ] {
+                assert!(
+                    toml::from_str::<ServerConfigToml>(old).is_err(),
+                    "`{old}` must not load silently"
+                );
+            }
+        }
+
+        /// The cells shipped in `server-help.toml` must actually load: that file is what
+        /// `obelisk server generate-config` hands the operator, and a stale line in it is
+        /// documentation that cannot be caught by the rest of the suite.
+        #[test]
+        fn the_documented_cells_must_load() {
+            let documented = crate::config::config_holder::OBELISK_HELP_SERVER_TOML
+                .lines()
+                .skip_while(|line| !line.starts_with("# [limits.activities.wasm]"))
+                .take_while(|line| line.starts_with('#'))
+                .map(|line| line.trim_start_matches("# ").trim_start_matches('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                documented.contains("[limits.webhooks.v8]"),
+                "the documented cells must be found: {documented}"
+            );
+            let cells = cells(&documented);
+            assert_eq!(Some(500), cells.activities_wasm.count);
+            assert_eq!(Some(GIB), cells.activities_wasm.memory);
+            assert_eq!(Some(32), cells.activities_process.count);
+            assert_eq!(Some(8), cells.activities_vm_bochs.count);
+            assert_eq!(Some(100), cells.workflows_v8.count);
+            assert_eq!(Some(16), cells.webhooks_v8.count);
+            assert_eq!(Some(256 * MIB), cells.webhooks_v8.memory);
+        }
+
+        #[test]
+        fn a_byte_size_must_name_its_unit() {
+            assert!(
+                toml::from_str::<ServerConfigToml>(
+                    r"
+                    [limits.activities.wasm]
+                    memory = 1048576
+                    "
+                )
+                .is_err(),
+                "a bare integer must not be accepted as a byte size"
+            );
+        }
+    }
 
     mod webhooks {
         use super::*;

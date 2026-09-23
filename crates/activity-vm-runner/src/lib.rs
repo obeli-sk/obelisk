@@ -9,7 +9,9 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt as _;
 use wasm_workers::http_request_policy::HttpRequestPolicy;
+use wasm_workers::store_limits::StoreMemoryLimiter;
 use wasmtime::{Engine, Linker, Module, Store};
+use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder, p1, p2::pipe};
 
 mod http_bridge;
@@ -60,6 +62,7 @@ pub async fn execute(
     cancelled: Arc<AtomicBool>,
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
+    memory: Option<u64>,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     tracing::debug!("Preparing activity VM execution");
@@ -111,6 +114,7 @@ pub async fn execute(
             max_stderr_bytes,
             &cancelled,
             &activity_completed,
+            memory,
         )
     })
     .await?;
@@ -258,6 +262,13 @@ async fn log_available_guest_phases(
     }
 }
 
+/// The emulator's linear memory holds the guest's emulated RAM, so `activities.vm_bochs.memory`
+/// is enforced on this store like any other wasm slot.
+struct VmStore {
+    wasi: WasiP1Ctx,
+    memory_limiter: StoreMemoryLimiter,
+}
+
 #[expect(clippy::too_many_arguments)]
 fn run_module(
     engine: &Engine,
@@ -269,10 +280,11 @@ fn run_module(
     max_stderr_bytes: usize,
     cancelled: &Arc<AtomicBool>,
     activity_completed: &Arc<AtomicBool>,
+    memory: Option<u64>,
 ) -> anyhow::Result<VmOutput> {
     let started = Instant::now();
     let mut linker = Linker::new(engine);
-    p1::add_to_linker_sync(&mut linker, |ctx| ctx)?;
+    p1::add_to_linker_sync(&mut linker, |data: &mut VmStore| &mut data.wasi)?;
     let pre = linker.instantiate_pre(module)?;
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis(),
@@ -301,7 +313,14 @@ fn run_module(
                 )
             })?;
     }
-    let mut store = Store::new(engine, wasi.build_p1());
+    let mut store = Store::new(
+        engine,
+        VmStore {
+            wasi: wasi.build_p1(),
+            memory_limiter: StoreMemoryLimiter::new(memory),
+        },
+    );
+    store.limiter(|data| &mut data.memory_limiter);
     let cancelled_for_deadline = cancelled.clone();
     let activity_completed_for_deadline = activity_completed.clone();
     store.epoch_deadline_callback(move |_| {
@@ -380,6 +399,7 @@ mod tests {
             1024,
             &Arc::new(AtomicBool::new(false)),
             &Arc::new(AtomicBool::new(false)),
+            None,
         )
         .unwrap();
         assert_eq!(output.exit_code, 0);
@@ -414,6 +434,7 @@ mod tests {
             1024,
             &Arc::new(AtomicBool::new(false)),
             &activity_completed,
+            None,
         )
         .unwrap();
         signal_thread.join().unwrap();

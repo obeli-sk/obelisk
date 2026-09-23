@@ -90,6 +90,7 @@ test-programs-wasip3-activity-builder.workspace = true
 test-programs-wasip3-webhook-builder.workspace = true
 test-utils.workspace = true
 utils.workspace = true
+wat = "1"
 webhook-js-runtime-builder.workspace = true
 workflow-js-runtime-builder.workspace = true
 

@@ -46,6 +46,8 @@ pub struct ActivityConfig {
     pub secrets: Arc<dyn worker_common::SecretResolver>,
     /// The TOML config section type for error messages
     pub config_section_hint: ConfigSectionHint,
+    /// Total linear memory one instance may hold, from the cell's `memory`.
+    pub memory: Option<u64>,
 }
 
 #[derive(derive_more::Debug)]
@@ -237,20 +239,27 @@ impl ActivityWorker {
             });
         };
         let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
-        // Admission before any isolate state is built, so a refusal (only at shutdown) unlocks the
-        // execution instead of losing the work already done for it.
-        let admission = tokio::select! {
-            admission = self.v8_executor.admit(crate::v8_executor::V8Workload::Activity) => admission,
-            changed = execution_interrupt_watcher.changed() => {
-                let _ = changed;
-                Err(crate::v8_executor::V8ExecutorError::Closed)
-            }
-        };
-        let Ok(admission) = admission else {
-            return Err(WorkerError::ExecutionYielded {
-                version,
-                reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
-            });
+        // The executor reserved this slot before locking; acquiring again from the same cell
+        // would deadlock it at half its size.
+        let admission = if let Some(reservation) = ctx.instance_permit.clone() {
+            self.v8_executor.admit_reserved(reservation)
+        } else {
+            // Admission before any isolate state is built, so a refusal (only at shutdown) unlocks
+            // the execution instead of losing the work already done for it.
+            let admission = tokio::select! {
+                admission = self.v8_executor.admit(crate::v8_executor::V8Workload::Activity) => admission,
+                changed = execution_interrupt_watcher.changed() => {
+                    let _ = changed;
+                    Err(crate::v8_executor::V8ExecutorError::Closed)
+                }
+            };
+            let Ok(admission) = admission else {
+                return Err(WorkerError::ExecutionYielded {
+                    version,
+                    reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
+                });
+            };
+            admission
         };
         let cancellation_token = self
             .cancel_registry
@@ -294,7 +303,9 @@ impl ActivityWorker {
         };
         let params = ctx.params;
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
-        let max_heap_size = self.v8_executor.max_heap_size();
+        let max_heap_size = self
+            .v8_executor
+            .max_heap_size(crate::v8_executor::V8Workload::Activity);
         let mut task = tokio::spawn(async move {
             admission
                 .run(move || async move {
@@ -842,6 +853,7 @@ pub(crate) mod tests {
 
     fn activity_config(component_id: ComponentId) -> ActivityConfig {
         ActivityConfig {
+            memory: None,
             component_id,
             forward_stdout: None,
             forward_stderr: None,
@@ -868,6 +880,7 @@ pub(crate) mod tests {
             replace_in: hashbrown::HashSet::new(),
         }]);
         ActivityConfig {
+            memory: None,
             component_id,
             forward_stdout: None,
             forward_stderr: None,
@@ -961,7 +974,7 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id,
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,
@@ -1035,7 +1048,7 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,
@@ -1423,6 +1436,7 @@ pub(crate) mod tests {
                         retry_config: ComponentRetryConfig::ZERO,
                     },
                     execution_interrupt_watcher,
+                    instance_permit: None,
                 };
                 tokio::spawn(async move {
                     let res = fibo_worker.run(ctx).await;
@@ -1487,7 +1501,7 @@ pub(crate) mod tests {
             lock_expiry: LOCK_EXPIRY,
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -1603,6 +1617,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher,
+            instance_permit: None,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
@@ -1662,6 +1677,7 @@ pub(crate) mod tests {
                 retry_config: ComponentRetryConfig::ZERO,
             },
             execution_interrupt_watcher,
+            instance_permit: None,
         };
         let WorkerResult::Err(err) = worker.run(ctx).await else {
             panic!()
@@ -1718,7 +1734,7 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -1849,7 +1865,7 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -2007,7 +2023,7 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -2131,6 +2147,7 @@ pub(crate) mod tests {
                         )]),
                     ));
                     ActivityConfig {
+                        memory: None,
                         component_id,
                         forward_stdout: None,
                         forward_stderr: None,
@@ -2152,7 +2169,7 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             component_id: component_id.clone(),
-            task_limiter_global: None,
+            task_limiter_cell: None,
             task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
@@ -2254,6 +2271,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             TokioSleep,
             move |component_id| ActivityConfig {
+                memory: None,
                 component_id,
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
@@ -2332,6 +2350,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             TokioSleep,
             move |component_id| ActivityConfig {
+                memory: None,
                 component_id,
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),
@@ -2416,6 +2435,7 @@ pub(crate) mod tests {
             sim_clock.clone_box(),
             TokioSleep,
             move |component_id| ActivityConfig {
+                memory: None,
                 component_id,
                 forward_stdout: Some(StdOutputConfig::Stderr),
                 forward_stderr: Some(StdOutputConfig::Stderr),

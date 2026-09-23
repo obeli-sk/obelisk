@@ -435,6 +435,7 @@ name = "my_stub"
 }
 
 mod activity_exec {
+    use crate::config::server::ConcurrencyCell;
     use secrecy::{ExposeSecret as _, SecretString};
 
     use crate::config::deployment::tests::digest_of;
@@ -512,7 +513,7 @@ mod activity_exec {
                 inline_program(),
                 false,
                 &std::sync::Arc::new(SecretRegistry::empty()),
-                None,
+                ConcurrencyCell::unlimited(),
             )
             .unwrap();
         let secrets = verified.secrets.expect("declared secret name is carried");
@@ -529,7 +530,12 @@ mod activity_exec {
             SecretString::from("s3cret_value"),
         )]));
         let verified = config
-            .fetch_and_verify(inline_program(), false, &registry, None)
+            .fetch_and_verify(
+                inline_program(),
+                false,
+                &registry,
+                ConcurrencyCell::unlimited(),
+            )
             .unwrap();
         let secrets = verified.secrets.expect("secret must be declared");
         // Only the name is carried; the value is fetched on demand via the resolver.
@@ -569,7 +575,7 @@ mod activity_exec {
                 },
                 true,
                 &std::sync::Arc::new(SecretRegistry::empty()),
-                None,
+                ConcurrencyCell::unlimited(),
             )
             .unwrap();
         let oci_verified = oci
@@ -580,7 +586,7 @@ mod activity_exec {
                 },
                 true,
                 &std::sync::Arc::new(SecretRegistry::empty()),
-                None,
+                ConcurrencyCell::unlimited(),
             )
             .unwrap();
 

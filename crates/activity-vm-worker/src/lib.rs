@@ -34,6 +34,7 @@ pub struct ActivityVmWorkerCompiled {
     forward_stdout: Option<StdOutputConfig>,
     forward_stderr: Option<StdOutputConfig>,
     user_wasm_component: WasmComponent,
+    memory: Option<u64>,
 }
 
 impl ActivityVmWorkerCompiled {
@@ -55,6 +56,7 @@ impl ActivityVmWorkerCompiled {
         forward_stdout: Option<StdOutputConfig>,
         forward_stderr: Option<StdOutputConfig>,
         authored_component: Option<WasmComponent>,
+        memory: Option<u64>,
     ) -> anyhow::Result<Self> {
         let user_wasm_component = match authored_component {
             Some(component) => component,
@@ -82,6 +84,7 @@ impl ActivityVmWorkerCompiled {
             forward_stdout,
             forward_stderr,
             user_wasm_component,
+            memory,
         })
     }
 
@@ -131,6 +134,7 @@ impl ActivityVmWorkerCompiled {
             ),
             user_exports_noext: self.user_wasm_component.exported_functions(false).to_vec(),
             cancel_registry,
+            memory: self.memory,
         }
     }
 }
@@ -152,6 +156,7 @@ pub struct ActivityVmWorker {
     forward_stderr: Option<StdOutputConfigWithSender>,
     user_exports_noext: Vec<FunctionMetadata>,
     cancel_registry: CancelRegistry,
+    memory: Option<u64>,
 }
 
 #[async_trait]
@@ -223,6 +228,7 @@ impl Worker for ActivityVmWorker {
             cancelled.clone(),
             max_stdout,
             16 * 1024 * 1024,
+            self.memory,
         );
         tokio::pin!(execution);
         let cancellation = self

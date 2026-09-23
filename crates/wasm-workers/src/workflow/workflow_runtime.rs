@@ -43,6 +43,7 @@ pub(crate) trait WorkflowRuntime: Send + Sync {
         ffqn: &FunctionFqn,
         params: &Params,
         fuel: Option<u64>,
+        instance_permit: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
     ) -> Result<Box<dyn WorkflowInvocation>, RuntimePrepareError>;
 }
 
@@ -50,6 +51,7 @@ pub(crate) struct WasmtimeWorkflowRuntime {
     engine: Arc<Engine>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     instance_pre: InstancePre<WorkflowCtx>,
+    memory: Option<u64>,
 }
 
 impl WasmtimeWorkflowRuntime {
@@ -57,11 +59,13 @@ impl WasmtimeWorkflowRuntime {
         engine: Arc<Engine>,
         exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
         instance_pre: InstancePre<WorkflowCtx>,
+        memory: Option<u64>,
     ) -> Self {
         Self {
             engine,
             exported_ffqn_to_index,
             instance_pre,
+            memory,
         }
     }
 }
@@ -82,8 +86,11 @@ impl WorkflowRuntime for WasmtimeWorkflowRuntime {
         ffqn: &FunctionFqn,
         params: &Params,
         fuel: Option<u64>,
+        _instance_permit: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
     ) -> Result<Box<dyn WorkflowInvocation>, RuntimePrepareError> {
         let mut store = Store::new(&self.engine, workflow_ctx);
+        store.data_mut().memory_limiter = crate::store_limits::StoreMemoryLimiter::new(self.memory);
+        store.limiter(|ctx| &mut ctx.memory_limiter);
         if let Some(fuel) = fuel {
             store
                 .set_fuel(fuel)
