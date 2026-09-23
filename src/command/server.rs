@@ -192,8 +192,8 @@ use wasm_workers::registry::ComponentConfigRegistryRO;
 use wasm_workers::registry::ReplayWorker;
 use wasm_workers::registry::ReplayWorkerRegistry;
 use wasm_workers::registry::WitOrigin;
+use wasm_workers::v8_executor::V8Executor;
 use wasm_workers::v8_interrupt_ticker::V8InterruptTicker;
-use wasm_workers::v8_pool::V8Pool;
 use wasm_workers::webhook::webhook_registry::WebhookRegistry;
 use wasm_workers::webhook::webhook_trigger;
 use wasm_workers::webhook::webhook_trigger::MethodAwareRouter;
@@ -2274,7 +2274,7 @@ pub(crate) struct ServerVerified {
 #[derive(Clone)]
 struct ServerVerifiedLaunch {
     engines: Engines,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
     webhook_request_timeout: Duration,
     build_semaphore: Option<u64>,
     max_persisted_value_size_bytes: u64,
@@ -2306,17 +2306,15 @@ impl ServerVerified {
         debug!("Using server toml: {config:#?}");
         let v8_config = config.v8;
         let webhook_request_timeout = config.webhooks.request_timeout.into();
-        if v8_config.max_threads == 0
-            || v8_config.max_workflows == 0
+        if v8_config.max_workflows == 0
             || v8_config.max_activities == 0
             || v8_config.max_webhooks == 0
             || v8_config.thread_stack_size == 0
             || v8_config.max_heap_size == 0
         {
-            anyhow::bail!("V8 thread, workload, stack, and heap limits must be non-zero");
+            anyhow::bail!("V8 workload, stack, and heap limits must be non-zero");
         }
-        let v8_pool = V8Pool::new(wasm_workers::v8_pool::V8PoolConfig {
-            max_threads: v8_config.max_threads,
+        let v8_executor = V8Executor::new(wasm_workers::v8_executor::V8ExecutorConfig {
             max_workflows: v8_config.max_workflows,
             max_activities: v8_config.max_activities,
             max_webhooks: v8_config.max_webhooks,
@@ -2324,7 +2322,6 @@ impl ServerVerified {
                 .thread_stack_size
                 .try_into()
                 .context("v8.thread_stack_size does not fit usize")?,
-            idle_timeout: v8_config.idle_timeout.into(),
             max_heap_size: v8_config
                 .max_heap_size
                 .try_into()
@@ -2437,7 +2434,7 @@ impl ServerVerified {
         Ok(Self {
             launch: ServerVerifiedLaunch {
                 engines,
-                v8_pool,
+                v8_executor,
                 webhook_request_timeout,
                 build_semaphore,
                 max_persisted_value_size_bytes: config.limits.max_persisted_value_size_bytes,
@@ -2553,7 +2550,7 @@ impl ServerCompiledLinked {
             server_verified.workflow_js_runtime,
             server_verified.activity_js_runtime,
             server_verified.webhook_js_runtime,
-            server_verified.v8_pool,
+            server_verified.v8_executor,
             termination_watcher,
             suppress_linking_errors,
         )
@@ -4051,7 +4048,7 @@ impl ServerInit {
         info!("Server is shutting down");
 
         let ServerInit {
-            server_verified: _,
+            server_verified,
             deployment_ctx,
             db_pool,
             db_close,
@@ -4084,6 +4081,10 @@ impl ServerInit {
         )
         .await;
 
+        // Closing admission before the executors stop makes a worker that is waiting for V8
+        // capacity fail fast instead of queueing behind isolates that are about to be interrupted.
+        server_verified.launch.v8_executor.close();
+
         debug!("Shutdown: stopping executors");
         let executors = {
             let mut deployment_lock = deployment_ctx.write().await;
@@ -4103,6 +4104,14 @@ impl ServerInit {
                 .map(WorkerTasksHandle::close),
         )
         .await;
+        // Only webhook isolates can still be running here: they have no executor worker, so the
+        // join above did not cover them. Their connection tasks are dropped below.
+        debug!("Shutdown: waiting for native V8 webhook isolates");
+        server_verified
+            .launch
+            .v8_executor
+            .drain(wasm_workers::v8_executor::SHUTDOWN_GRACE)
+            .await;
         // Explicit drop to avoid the pattern match footgun.
         // Close everything that is a dependency of executors or workers.
         debug!("Shutdown: stopping runtime services");
@@ -5056,7 +5065,7 @@ async fn compile_and_link(
     workflow_js_runtime: WorkflowJsRuntime,
     activity_js_runtime: ActivityJsRuntime,
     webhook_js_runtime: WebhookJsRuntime,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
     termination_watcher: &mut watch::Receiver<()>,
     suppress_linking_errors: bool,
 ) -> Result<Linked, anyhow::Error> {
@@ -5178,12 +5187,12 @@ async fn compile_and_link(
             // No build_semaphore as the WASM was already compiled.
             let engines = engines.clone();
             let parent_span = parent_span.clone();
-            let v8_pool = v8_pool.clone();
+            let v8_executor = v8_executor.clone();
             let activity_js_runnable = activity_js_runnable.clone().expect("must have been filled above");
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "activity_js_compile", component_id = %activity_js.component_id());
                 span.in_scope(|| {
-                    prespawn_activity_js(activity_js, &engines, activity_js_runnable, activity_js_runtime, v8_pool).map(|(worker, component_config, frame_files)| {
+                    prespawn_activity_js(activity_js, &engines, activity_js_runnable, activity_js_runtime, v8_executor).map(|(worker, component_config, frame_files)| {
                         CompiledComponent::ActivityOrWorkflow {
                             worker,
                             component_config,
@@ -5301,7 +5310,7 @@ async fn compile_and_link(
             // No build_semaphore as the WASM was already compiled.
             let engines = engines.clone();
             let parent_span = parent_span.clone();
-            let v8_pool = v8_pool.clone();
+            let v8_executor = v8_executor.clone();
             let workflow_js_runnable = workflow_js_runnable.clone().expect("must have been filled above");
             tokio::task::spawn_blocking(move || {
                 let span = info_span!(parent: parent_span, "workflow_js_compile", component_id = %workflow_js.component_id());
@@ -5314,7 +5323,7 @@ async fn compile_and_link(
                         lock_extension_leeway,
                         workflows_max_replay_captured_writes,
                         workflow_js_runtime,
-                        v8_pool,
+                        v8_executor,
                     )
                         .map(|(worker, component_config, frame_files)| {
                             CompiledComponent::ActivityOrWorkflow {
@@ -5384,7 +5393,7 @@ async fn compile_and_link(
                     let build_semaphore = build_semaphore.clone();
                     let parent_span = parent_span.clone();
                     let global_http_config = global_http_config.clone();
-                    let v8_pool = v8_pool.clone();
+                    let v8_executor = v8_executor.clone();
                     let webhook_js_runnable = webhook_js_runnable.clone().expect("must have been filled above");
                     tokio::task::spawn_blocking(move || {
                         let _permit = build_semaphore.map(semaphore::Semaphore::acquire);
@@ -5416,7 +5425,7 @@ async fn compile_and_link(
                                 webhook_js_runnable
                             )?
                             .with_js_runtime(webhook_js_runtime)
-                            .with_v8_pool(v8_pool);
+                            .with_v8_executor(v8_executor);
                             Ok(CompiledComponent::Webhook {
                                 webhook_name,
                                 webhook_compiled,
@@ -5722,7 +5731,7 @@ fn prespawn_activity_js(
     engines: &Engines,
     runnable_component: RunnableComponent,
     runtime: ActivityJsRuntime,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = activity_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Activity);
@@ -5735,7 +5744,7 @@ fn prespawn_activity_js(
         Arc::new(TokioSleep),
     )
     .with_context(|| format!("cannot compile JS activity runtime for {component_id}"))?
-    .with_v8_pool(v8_pool);
+    .with_v8_executor(v8_executor);
 
     let wit_origin = if activity_js.user_wasm_component.is_some() {
         WitOrigin::Authored
@@ -6117,7 +6126,7 @@ fn prespawn_workflow_js(
     workflows_lock_extension_leeway: Duration,
     max_replay_captured_writes: usize,
     workflow_js_runtime: WorkflowJsRuntime,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
 ) -> Result<(WorkerCompiled, ComponentConfig, FrameFilesToSource), anyhow::Error> {
     let component_id = workflow_js.component_id().clone();
     assert!(component_id.component_type == ComponentType::Workflow);
@@ -6191,7 +6200,7 @@ fn prespawn_workflow_js(
         workflow_js.js_files,
         wit_origin,
         workflow_js_runtime,
-        v8_pool,
+        v8_executor,
     ))
 }
 
@@ -6225,7 +6234,7 @@ struct WorkflowJsWorkerCompiledWithConfig {
     workflows_lock_extension_leeway: Duration,
     replay_compiled: WorkflowJsWorkerCompiled,
     runtime: WorkflowJsRuntime,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
 }
 
 enum CompiledWorkerKind {
@@ -6412,7 +6421,7 @@ impl WorkerCompiled {
         js_files: std::collections::BTreeMap<String, String>,
         wit_origin: WitOrigin,
         runtime: WorkflowJsRuntime,
-        v8_pool: V8Pool,
+        v8_executor: V8Executor,
     ) -> (WorkerCompiled, ComponentConfig, FrameFilesToSource) {
         let frame_files = WorkflowJsConfigVerified::frame_sources(js_files);
         let component = ComponentConfig {
@@ -6433,7 +6442,7 @@ impl WorkerCompiled {
                         workflows_lock_extension_leeway,
                         replay_compiled,
                         runtime,
-                        v8_pool,
+                        v8_executor,
                     },
                 )),
                 exec_config,
@@ -6474,7 +6483,7 @@ impl WorkerCompiled {
                     let runtime = match workflow_js_compiled.runtime {
                         WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
                         WorkflowJsRuntime::V8 => {
-                            WorkflowJsRuntimeExt::V8(workflow_js_compiled.v8_pool)
+                            WorkflowJsRuntimeExt::V8(workflow_js_compiled.v8_executor)
                         }
                     };
                     LinkedWorkerKind::WorkflowJs(Box::new(WorkflowJsWorkerLinkedWithConfig {

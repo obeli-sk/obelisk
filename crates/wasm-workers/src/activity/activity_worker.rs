@@ -5,7 +5,7 @@ use crate::envvar::EnvVar;
 use crate::http_hooks::ConfigSectionHint;
 use crate::http_hooks::HttpHooks;
 use crate::std_output_stream::{StdOutputConfig, StdOutputConfigWithSender};
-use crate::v8_pool::V8Pool;
+use crate::v8_executor::V8Executor;
 use crate::{RunnableComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -62,7 +62,7 @@ pub struct ActivityWorkerCompiled {
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
     #[debug(skip)]
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
 }
 impl ActivityWorkerCompiled {
     pub fn new_with_config(
@@ -105,14 +105,14 @@ impl ActivityWorkerCompiled {
             sleep,
             exported_ffqn_to_index,
             config,
-            v8_pool: V8Pool::default(),
+            v8_executor: V8Executor::default(),
             instance_pre,
         })
     }
 
     #[must_use]
-    pub fn with_v8_pool(mut self, v8_pool: V8Pool) -> Self {
-        self.v8_pool = v8_pool;
+    pub fn with_v8_executor(mut self, v8_executor: V8Executor) -> Self {
+        self.v8_executor = v8_executor;
         self
     }
 
@@ -172,7 +172,7 @@ impl ActivityWorkerCompiled {
             sleep: self.sleep,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             config: self.config,
-            v8_pool: self.v8_pool,
+            v8_executor: self.v8_executor,
             cancel_registry,
             stdout,
             stderr,
@@ -190,7 +190,7 @@ pub struct ActivityWorker {
     sleep: Arc<dyn Sleep>,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     config: ActivityConfig,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
     cancel_registry: CancelRegistry,
     stdout: Option<StdOutputConfigWithSender>,
     stderr: Option<StdOutputConfigWithSender>,
@@ -236,10 +236,25 @@ impl ActivityWorker {
                 version,
             });
         };
+        let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
+        // Admission before any isolate state is built, so a refusal (only at shutdown) unlocks the
+        // execution instead of losing the work already done for it.
+        let admission = tokio::select! {
+            admission = self.v8_executor.admit(crate::v8_executor::V8Workload::Activity) => admission,
+            changed = execution_interrupt_watcher.changed() => {
+                let _ = changed;
+                Err(crate::v8_executor::V8ExecutorError::Closed)
+            }
+        };
+        let Ok(admission) = admission else {
+            return Err(WorkerError::ExecutionYielded {
+                version,
+                reason: executor::worker::ExecutionYieldReason::ExecutorClosing,
+            });
+        };
         let cancellation_token = self
             .cancel_registry
             .activity_obtain_cancellation_token(ctx.execution_id.clone());
-        let mut execution_interrupt_watcher = ctx.execution_interrupt_watcher.clone();
         let component_logger = ComponentLogger {
             span: ctx.worker_span.clone(),
             execution_id: ctx.execution_id.clone(),
@@ -279,11 +294,10 @@ impl ActivityWorker {
         };
         let params = ctx.params;
         let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
-        let v8_pool = self.v8_pool.clone();
-        let max_heap_size = v8_pool.max_heap_size();
+        let max_heap_size = self.v8_executor.max_heap_size();
         let mut task = tokio::spawn(async move {
-            v8_pool
-                .execute_for(crate::v8_pool::V8Workload::Activity, move || async move {
+            admission
+                .run(move || async move {
                     execute(
                         &entry_path,
                         &files,
@@ -304,7 +318,7 @@ impl ActivityWorker {
                     Result<SupportedFunctionReturnValue, NativeActivityFailure>,
                     NativeActivityState,
                 ),
-                crate::v8_pool::V8PoolError,
+                crate::v8_executor::V8ExecutorError,
             >,
             tokio::task::JoinError,
         >;

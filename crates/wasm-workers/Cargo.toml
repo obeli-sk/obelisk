@@ -61,6 +61,9 @@ semver.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
 
+[build-dependencies]
+deno_core.workspace = true
+
 [features]
 test = ["concepts/test", "executor/test"]
 

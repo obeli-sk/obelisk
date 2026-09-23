@@ -125,6 +125,10 @@ jobs:
           cache-on-failure: true
           key: pr-fix-${{ matrix.part }}
 
+      - name: Prepare V8
+        if: matrix.needs_rust_cache == 'true'
+        run: nix develop --command scripts/ci-prepare-v8.sh
+
       - name: Run fixer
         env:
           CI: true

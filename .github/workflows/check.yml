@@ -139,5 +139,8 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Prepare V8
+        run: nix develop --command scripts/ci-prepare-v8.sh
+
       - name: cargo clippy
         run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings

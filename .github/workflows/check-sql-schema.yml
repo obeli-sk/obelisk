@@ -36,9 +36,8 @@ jobs:
         with:
           pr-comment: false
 
-      # rusty_v8 stores its downloaded native archive outside Cargo's crate artifacts.
-      - name: Build V8 without kache
-        run: nix develop --command env RUSTC_WRAPPER= cargo build --package v8
+      - name: Prepare V8
+        run: nix develop --command scripts/ci-prepare-v8.sh
 
       - name: Build obelisk
         run: |

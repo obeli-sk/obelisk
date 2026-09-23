@@ -125,12 +125,12 @@
 ## Global native V8 configuration. These limits apply when native V8 is enabled with
 ## `OBELISK_UNSTABLE_V8=true`; Boa components compiled to WASM use the WASM limits above.
 # [v8]
-# max_threads = 128                # Maximum number of native V8 isolate threads in this process.
+## Each limit below is an independent reservation, so resident workflows can never occupy the
+## capacity reserved for activities or webhooks. Their sum bounds the isolates in this process.
 # max_workflows = 100              # Maximum number of resident native V8 workflows.
 # max_activities = 16              # Maximum number of running native V8 activities.
 # max_webhooks = 16                # Maximum number of running native V8 webhook requests.
-# thread_stack_size = 4194304      # Stack size in bytes for each native V8 worker thread.
-# idle_timeout.seconds = 60        # Retire a native V8 worker after this much idle time.
+# thread_stack_size = 4194304      # Stack size in bytes for each native V8 isolate thread.
 # max_heap_size = 268435456        # Maximum V8-managed heap size in bytes per isolate.
 
 ## Global Webhook Configuration

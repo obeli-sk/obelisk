@@ -244,7 +244,7 @@ pub struct WebhookEndpointCompiled {
     pub config: WebhookEndpointConfig,
     pub runnable_component: RunnableComponent,
     js_runtime: WebhookJsRuntime,
-    v8_pool: crate::v8_pool::V8Pool,
+    v8_executor: crate::v8_executor::V8Executor,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -268,7 +268,7 @@ impl WebhookEndpointCompiled {
             config,
             runnable_component,
             js_runtime: WebhookJsRuntime::BoaWasm,
-            v8_pool: crate::v8_pool::V8Pool::default(),
+            v8_executor: crate::v8_executor::V8Executor::default(),
         })
     }
 
@@ -279,8 +279,8 @@ impl WebhookEndpointCompiled {
     }
 
     #[must_use]
-    pub fn with_v8_pool(mut self, v8_pool: crate::v8_pool::V8Pool) -> Self {
-        self.v8_pool = v8_pool;
+    pub fn with_v8_executor(mut self, v8_executor: crate::v8_executor::V8Executor) -> Self {
+        self.v8_executor = v8_executor;
         self
     }
 
@@ -449,7 +449,7 @@ impl WebhookEndpointCompiled {
             resolved_imports_json,
             resolved_imports,
             js_runtime: self.js_runtime,
-            v8_pool: self.v8_pool,
+            v8_executor: self.v8_executor,
         })
     }
 }
@@ -465,7 +465,7 @@ pub struct WebhookEndpointInstanceLinked {
     resolved_imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
     js_runtime: WebhookJsRuntime,
     #[debug(skip)]
-    v8_pool: crate::v8_pool::V8Pool,
+    v8_executor: crate::v8_executor::V8Executor,
 }
 impl WebhookEndpointInstanceLinked {
     #[must_use]
@@ -495,7 +495,7 @@ impl WebhookEndpointInstanceLinked {
             }),
             config: self.config.clone(),
             js_runtime: self.js_runtime,
-            v8_pool: self.v8_pool.clone(),
+            v8_executor: self.v8_executor.clone(),
         }
     }
 }
@@ -512,7 +512,7 @@ pub struct WebhookEndpointInstance {
     logs_storage_config: Option<LogStrageConfig>,
     js_runtime: WebhookJsRuntime,
     #[debug(skip)]
-    v8_pool: crate::v8_pool::V8Pool,
+    v8_executor: crate::v8_executor::V8Executor,
 }
 
 pub struct MethodAwareRouter<T> {
@@ -2370,7 +2370,7 @@ impl RequestHandler {
                     found_instance.config.clone(),
                     instance_match.handler().resolved_imports.clone(),
                     http_request_guard,
-                    found_instance.v8_pool.clone(),
+                    found_instance.v8_executor.clone(),
                     request_deadline,
                 )
                 .await;
@@ -2491,7 +2491,7 @@ async fn handle_native_v8_request(
     config: Arc<WebhookEndpointConfig>,
     imports: std::collections::HashMap<IfcFqnName, Vec<crate::js_imports::NamedFnImport>>,
     http_request_guard: Option<OwnedSemaphorePermit>,
-    v8_pool: crate::v8_pool::V8Pool,
+    v8_executor: crate::v8_executor::V8Executor,
     request_deadline: tokio::time::Instant,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
     use crate::webhook::native_v8_webhook_runtime::{
@@ -2501,6 +2501,10 @@ async fn handle_native_v8_request(
         .js_config
         .clone()
         .expect("native V8 is only selected for JavaScript webhooks");
+    // Shed the load before collecting the request body, let alone spawning a thread.
+    let admission = v8_executor
+        .try_admit(crate::v8_executor::V8Workload::Webhook)
+        .map_err(|_| HandleRequestError::InstanceLimitReached)?;
     let (parts, body) = req.into_parts();
     let body = http_body_util::BodyExt::collect(body)
         .await
@@ -2565,12 +2569,12 @@ async fn handle_native_v8_request(
     let mut connection_drop_watcher = ctx.connection_drop_watcher.clone();
     let mut server_termination_watcher = ctx.server_termination_watcher.clone();
     let handle = tokio::runtime::Handle::current();
-    let max_heap_size = v8_pool.max_heap_size();
+    let max_heap_size = v8_executor.max_heap_size();
     let (isolate_tx, isolate_rx) = tokio::sync::oneshot::channel();
     let mut task = tokio::spawn(async move {
         let _http_request_guard = http_request_guard;
-        v8_pool
-            .try_execute_for(crate::v8_pool::V8Workload::Webhook, move || async move {
+        admission
+            .run(move || async move {
                 let result = execute(
                     &js_config,
                     &imports,
@@ -2609,10 +2613,7 @@ async fn handle_native_v8_request(
     let (result, ctx) = match end {
         End::Complete(result) => result
             .expect("native V8 webhook supervisor task panicked")
-            .map_err(|err| match err {
-                crate::v8_pool::V8PoolError::Overloaded => HandleRequestError::InstanceLimitReached,
-                other => HandleRequestError::ExecutionError(Box::new(other)),
-            })?,
+            .map_err(|err| HandleRequestError::ExecutionError(Box::new(err)))?,
         End::Interrupted => {
             if let Some(isolate) = &termination_guard.0 {
                 isolate.terminate_execution();
