@@ -153,7 +153,6 @@ impl ServerConfigToml {
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-#[expect(clippy::struct_field_names)]
 pub(crate) struct LimitsToml {
     /// Maximum compact JSON-encoded size of one newly persisted execution
     /// value. Each execution snapshots the effective positive value so config
