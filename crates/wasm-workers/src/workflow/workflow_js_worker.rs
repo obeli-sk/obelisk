@@ -250,7 +250,7 @@ pub struct WorkflowJsWorkerCompiled {
 #[derive(Clone)]
 pub enum WorkflowJsRuntimeExt {
     BoaWasm,
-    V8(crate::v8_pool::V8Pool),
+    V8(crate::v8_executor::V8Executor),
 }
 
 impl WorkflowJsWorkerCompiled {
@@ -364,13 +364,13 @@ impl WorkflowJsWorkerCompiled {
                     resolved_imports,
                 })
             }),
-            WorkflowJsRuntimeExt::V8(v8_pool) => {
+            WorkflowJsRuntimeExt::V8(v8_executor) => {
                 linked.with_runtime(Arc::new(NativeV8WorkflowRuntime::new(
                     self.js_entry_path.clone(),
                     self.js_files.clone(),
                     self.user_return_type.clone(),
                     resolved_imports,
-                    v8_pool,
+                    v8_executor,
                 )))
             }
         };
@@ -625,7 +625,7 @@ mod tests {
     use crate::cancellation_driver;
     use crate::engines::{EngineConfig, Engines};
     use crate::testing_fn_registry::TestingFnRegistry;
-    use crate::v8_pool::V8Pool;
+    use crate::v8_executor::V8Executor;
     use crate::workflow::deadline_tracker::{
         DeadlineTrackerFactory, DeadlineTrackerFactoryTokio, deadline_tracker_factory_test,
     };
@@ -811,7 +811,10 @@ mod tests {
         )
         .unwrap();
         let linked = js_compiled
-            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
+            .link_with_runtime_and_pool(
+                fn_registry,
+                WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            )
             .unwrap();
         linked.into_worker(
             deployment_id,
@@ -880,7 +883,10 @@ mod tests {
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
         let linked = js_compiled
-            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
+            .link_with_runtime_and_pool(
+                fn_registry,
+                WorkflowJsRuntimeExt::V8(V8Executor::default()),
+            )
             .unwrap();
 
         let (guard, db_pool, db_close) = db_tests::Database::Sqlite.set_up().await;
@@ -957,8 +963,10 @@ mod tests {
 
         let fn_registry: Arc<dyn FunctionRegistry> =
             TestingFnRegistry::new_from_components(Vec::new());
-        js_compiled
-            .link_with_runtime_and_pool(fn_registry, WorkflowJsRuntimeExt::V8(V8Pool::default()))
+        js_compiled.link_with_runtime_and_pool(
+            fn_registry,
+            WorkflowJsRuntimeExt::V8(V8Executor::default()),
+        )
     }
 
     fn make_worker_context(ffqn: FunctionFqn, params: &[String]) -> WorkerContext {
@@ -1276,7 +1284,7 @@ mod tests {
             db_pool,
             clock_fn,
             fn_registry,
-            WorkflowJsRuntimeExt::V8(V8Pool::default()),
+            WorkflowJsRuntimeExt::V8(V8Executor::default()),
             workflow_engine,
             deployment_id,
             join_next_blocking_strategy,
@@ -2622,7 +2630,7 @@ mod tests {
                 db_pool.clone(),
                 &sim_clock,
                 fn_registry.clone(),
-                WorkflowJsRuntimeExt::V8(V8Pool::default()),
+                WorkflowJsRuntimeExt::V8(V8Executor::default()),
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
@@ -2817,7 +2825,7 @@ mod tests {
                 db_pool.clone(),
                 &sim_clock,
                 fn_registry.clone(),
-                WorkflowJsRuntimeExt::V8(V8Pool::default()),
+                WorkflowJsRuntimeExt::V8(V8Executor::default()),
                 workflow_engine.clone(),
                 DEPLOYMENT_ID_DUMMY,
                 JoinNextBlockingStrategy::Interrupt,
@@ -3472,7 +3480,7 @@ mod tests {
             db_pool.clone(),
             &sim_clock,
             fn_registry,
-            WorkflowJsRuntimeExt::V8(V8Pool::default()),
+            WorkflowJsRuntimeExt::V8(V8Executor::default()),
             workflow_engine.clone(),
             DEPLOYMENT_ID_DUMMY,
             JoinNextBlockingStrategy::Interrupt,
@@ -4225,7 +4233,7 @@ mod tests {
                 db_pool.clone(),
                 sim_clock.clone_box().as_ref(),
                 fn_registry,
-                WorkflowJsRuntimeExt::V8(V8Pool::default()),
+                WorkflowJsRuntimeExt::V8(V8Executor::default()),
                 workflow_engine,
                 upgrade_deployment_id,
                 JoinNextBlockingStrategy::Interrupt,
@@ -6141,7 +6149,7 @@ mod tests {
             fn_registry,
             match runtime {
                 WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
-                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Pool::default()),
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
             },
             workflow_engine,
             DEPLOYMENT_ID_DUMMY,
@@ -6250,10 +6258,7 @@ mod tests {
         .await;
         let Ok(finished) = finished else {
             let version = db_connection.get(&execution_id).await.unwrap().next_version;
-            // The V8 host-op thread is wedged in `block_on`, so a normal panic would deadlock
-            // unwinding: `V8Pool::drop` joins that thread and never returns, leaving nextest
-            // to kill us at its 80s slow-timeout. Report and force-exit the (per-test) process
-            // instead so the failure surfaces immediately.
+            // The isolate thread is detached, so it cannot block this process from exiting.
             eprintln!(
                 "HANG REPRODUCED (runtime {runtime:?}): the direct tool call after cached \
                  Date.now() delays never persisted; workflow frozen at {version:?} \
@@ -6343,7 +6348,7 @@ mod tests {
             fn_registry,
             match runtime {
                 WorkflowJsRuntime::BoaWasm => WorkflowJsRuntimeExt::BoaWasm,
-                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Pool::default()),
+                WorkflowJsRuntime::V8 => WorkflowJsRuntimeExt::V8(V8Executor::default()),
             },
         )
         .unwrap()

@@ -4,7 +4,7 @@ use super::workflow_ctx::{NativeJoinNextTryError, WorkflowCtx};
 use super::workflow_runtime::{RuntimePrepareError, WorkflowInvocation, WorkflowRuntime};
 use super::workflow_worker::{CallFuncResult, RunError};
 use crate::js_imports::NamedFnImport;
-use crate::v8_pool::V8Pool;
+use crate::v8_executor::V8Executor;
 use async_trait::async_trait;
 use chrono::{TimeZone as _, Utc};
 use concepts::storage::{HistoryEventScheduleAt, LogLevel, Version};
@@ -29,7 +29,7 @@ pub(crate) struct NativeV8WorkflowRuntime {
     files: BTreeMap<String, String>,
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
 }
 
 impl NativeV8WorkflowRuntime {
@@ -38,14 +38,14 @@ impl NativeV8WorkflowRuntime {
         files: BTreeMap<String, String>,
         return_type: ReturnTypeExtendable,
         resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
-        v8_pool: V8Pool,
+        v8_executor: V8Executor,
     ) -> Self {
         Self {
             entry_path,
             files,
             return_type,
             resolved_imports,
-            v8_pool,
+            v8_executor,
         }
     }
 }
@@ -91,7 +91,7 @@ struct NativeV8Invocation {
     params: Params,
     return_type: ReturnTypeExtendable,
     resolved_imports: HashMap<IfcFqnName, Vec<NamedFnImport>>,
-    v8_pool: V8Pool,
+    v8_executor: V8Executor,
 }
 
 #[async_trait]
@@ -111,7 +111,7 @@ impl WorkflowRuntime for NativeV8WorkflowRuntime {
             params: params.clone(),
             return_type: self.return_type.clone(),
             resolved_imports: self.resolved_imports.clone(),
-            v8_pool: self.v8_pool.clone(),
+            v8_executor: self.v8_executor.clone(),
         }))
     }
 }
@@ -134,16 +134,33 @@ impl WorkflowInvocation for NativeV8Invocation {
             params,
             return_type,
             resolved_imports,
-            v8_pool,
+            v8_executor,
         } = *self;
         let handle = tokio::runtime::Handle::current();
-        let max_heap_size = v8_pool.max_heap_size();
+        let max_heap_size = v8_executor.max_heap_size();
+        // Admitted before the context is moved onto the isolate thread: admission only fails once
+        // the executor is closing, and then the run must be yielded with its context intact.
+        let admission = match v8_executor
+            .admit(crate::v8_executor::V8Workload::Workflow)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(_closed) => {
+                let err = super::workflow_ctx::WorkflowFunctionError::Interrupt(
+                    super::deadline_tracker::InterruptKind::ExecutorClosing,
+                );
+                return Err(RunError::WorkerPartialResult(
+                    err.into_worker_partial_result(workflow_ctx.version().clone()),
+                    Box::new(workflow_ctx),
+                ));
+            }
+        };
         // No outer `select!`/cancellation: the interrupt is delivered from within, exactly as
         // in the wasmtime runtime. A CPU-bound workflow is trapped by `v8_interrupt_callback`
         // via the epoch ticker; a workflow blocked in a host function observes the interrupt
         // through the deadline tracker (`check_preempt` / the `Await` join-next loop).
-        let (result, workflow_ctx) = v8_pool
-            .execute_for(crate::v8_pool::V8Workload::Workflow, move || async move {
+        let (result, workflow_ctx) = admission
+            .run(move || async move {
                 let mut workflow_ctx = workflow_ctx;
                 let result = execute(
                     ExecuteArgs {
@@ -161,7 +178,7 @@ impl WorkflowInvocation for NativeV8Invocation {
                 (result, workflow_ctx)
             })
             .await
-            .expect("native V8 workflow pool stopped");
+            .expect("native V8 workflow isolate stopped");
 
         match result {
             Ok(retval) => Ok((retval, workflow_ctx)),
@@ -617,6 +634,7 @@ async fn execute(
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_v8::init()],
         create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
+        startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
         ..Default::default()
     });
     let isolate = runtime.v8_isolate().thread_safe_handle();

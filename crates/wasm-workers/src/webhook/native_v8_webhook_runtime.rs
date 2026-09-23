@@ -297,6 +297,7 @@ pub(super) async fn execute(
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_webhook_v8::init()],
         create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
+        startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
         ..Default::default()
     });
     let isolate = runtime.v8_isolate().thread_safe_handle();

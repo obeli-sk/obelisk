@@ -209,6 +209,7 @@ pub(crate) async fn execute(
         module_loader: Some(loader.clone()),
         extensions: vec![obelisk_activity_v8::init()],
         create_params: Some(deno_core::v8::CreateParams::default().heap_limits(0, max_heap_size)),
+        startup_snapshot: Some(crate::v8_snapshot::STARTUP_SNAPSHOT),
         ..Default::default()
     });
     let isolate = runtime.v8_isolate().thread_safe_handle();
@@ -432,3 +433,41 @@ globalThis.fetch = async (input, options = {}) => {
   return new Response(data);
 };
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The snapshot carries `deno_core`'s bootstrap but none of our ops, so the isolate's external
+    /// reference table must still line up with it. Anything off there corrupts deserialization
+    /// instead of failing cleanly, so compare a snapshot isolate against a pristine one.
+    #[tokio::test]
+    async fn snapshot_isolate_must_behave_like_a_pristine_one() {
+        fn probe(startup_snapshot: Option<&'static [u8]>) -> String {
+            let mut runtime = JsRuntime::new(RuntimeOptions {
+                extensions: vec![obelisk_activity_v8::init()],
+                startup_snapshot,
+                ..Default::default()
+            });
+            runtime
+                .execute_script("obelisk:snapshot-probe", ACTIVITY_BOOTSTRAP)
+                .expect("bootstrap must evaluate");
+            let value = runtime
+                .execute_script(
+                    "obelisk:snapshot-probe",
+                    "JSON.stringify([new URL('http://a/b?c=1').search, new TextDecoder().decode(new TextEncoder().encode('ř')), Object.keys(Deno.core.ops).filter(op => op.startsWith('op_activity_')).sort()])",
+                )
+                .expect("probe must evaluate");
+            deno_core::scope!(scope, runtime);
+            let local = deno_core::v8::Local::new(scope, value);
+            local.to_rust_string_lossy(scope)
+        }
+
+        let snapshotted = probe(Some(crate::v8_snapshot::STARTUP_SNAPSHOT));
+        assert!(
+            snapshotted.contains("op_activity_hmac_sha256"),
+            "ops must be bound in a snapshot isolate: {snapshotted}"
+        );
+        assert_eq!(probe(None), snapshotted);
+    }
+}
