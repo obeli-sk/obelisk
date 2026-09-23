@@ -1,7 +1,0 @@
-export default function cpu_workflow() {
-    for (let i = 0; ; i++) {
-        if (i % 10000000 == 0) {
-            console.log(i);
-        }
-    }
-}
