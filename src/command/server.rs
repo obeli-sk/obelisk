@@ -1717,6 +1717,171 @@ pub(crate) fn create_engines(
     Ok(Engines::new(engine_config)?)
 }
 
+/// What to persist once the deployment has compiled and verified. Deferring activation past
+/// verification keeps a broken deployment from being marked active.
+enum DeploymentPersist {
+    AlreadyActive,
+    ActivateEnqueued,
+    Insert {
+        record: Box<DeploymentRecord>,
+        component_files: Vec<DeploymentComponentFileRecord>,
+    },
+}
+
+async fn resolve_startup_deployment(
+    db_pool: &dyn DbPool,
+    deployment: Option<LocalDeployment>,
+    description: Option<String>,
+    span: &Span,
+) -> Result<(DeploymentId, DeploymentResolved, DeploymentPersist), anyhow::Error> {
+    if let Some(deployment) = deployment {
+        // --deployment or `--deployment-empty` provided: prepare, insert+activate after verify.
+        let new_deployment_id = DeploymentId::generate();
+        span.record("deployment_id", tracing::field::display(&new_deployment_id));
+        let (record, component_files) = write_to_cas_prepare_deployment_record(
+            db_pool,
+            new_deployment_id,
+            deployment.processed_deployment_toml,
+            deployment.files,
+            description,
+        )
+        .await?;
+        // Same as if `DeploymentRecord` was in DB already.
+        let resolved = deployment_resolved_from_manifest(db_pool, &record.deployment_toml).await?;
+        Ok((
+            new_deployment_id,
+            resolved,
+            DeploymentPersist::Insert {
+                record: Box::new(record),
+                component_files,
+            },
+        ))
+    } else {
+        // No --deployment: pick up from the DB. An Enqueued deployment (queued for this
+        // restart) is activated only after it verifies; see the post-verify block below.
+        let conn = db_pool
+            .external_api_conn()
+            .await
+            .context("cannot get db connection for deployment lookup")?;
+        if let Some(record) = conn
+            .get_current_deployment()
+            .await
+            .context("cannot query current deployment")?
+        {
+            let resolved =
+                deployment_resolved_from_manifest(db_pool, &record.deployment_toml).await?;
+            span.record(
+                "deployment_id",
+                tracing::field::display(&record.deployment_id),
+            );
+            let persist = if record.status == DeploymentStatus::Enqueued {
+                info!("Verifying enqueued deployment before activation");
+                DeploymentPersist::ActivateEnqueued
+            } else {
+                info!("Using the currently active deployment");
+                DeploymentPersist::AlreadyActive
+            };
+            Ok((record.deployment_id, resolved, persist))
+        } else {
+            // empty db
+            let new_deployment_id = DeploymentId::generate();
+            span.record("deployment_id", tracing::field::display(&new_deployment_id));
+            info!("No deployment found in DB; starting with empty deployment");
+            let (record, component_files) = write_to_cas_prepare_deployment_record(
+                db_pool,
+                new_deployment_id,
+                String::new(),
+                Vec::new(),
+                None,
+            )
+            .await?;
+            Ok((
+                new_deployment_id,
+                DeploymentResolved::default(),
+                DeploymentPersist::Insert {
+                    record: Box::new(record),
+                    component_files,
+                },
+            ))
+        }
+    }
+}
+
+async fn persist_startup_deployment(
+    db_pool: &dyn DbPool,
+    deployment_id: DeploymentId,
+    persist: DeploymentPersist,
+    component_registry_ro: &ComponentConfigRegistryRO,
+) -> Result<(), anyhow::Error> {
+    match persist {
+        DeploymentPersist::AlreadyActive => {}
+        DeploymentPersist::ActivateEnqueued => {
+            let api_conn = db_pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment activation")?;
+            api_conn
+                .activate_deployment(deployment_id, chrono::Utc::now())
+                .await
+                .context("cannot activate enqueued deployment")?;
+            info!("Activated enqueued deployment");
+        }
+        DeploymentPersist::Insert {
+            record,
+            component_files,
+        } => {
+            let api_conn = db_pool
+                .external_api_conn()
+                .await
+                .context("cannot get db connection for deployment insertion")?;
+            let (component_metadata, deployment_components) =
+                build_component_metadata_records(deployment_id, component_registry_ro);
+            api_conn
+                .insert_deployment_with_components(
+                    *record,
+                    component_metadata,
+                    deployment_components,
+                    component_files,
+                )
+                .await
+                .context("cannot insert deployment")?;
+            api_conn
+                .activate_deployment(deployment_id, chrono::Utc::now())
+                .await
+                .context("cannot activate deployment")?;
+            info!("Activated new deployment");
+        }
+    }
+    Ok(())
+}
+
+/// Persists a `server.startup.failed` event so a failed start is visible to operators, who
+/// otherwise only see the process exit.
+async fn record_startup_failed<T>(
+    db_pool: &dyn DbPool,
+    stage: &str,
+    deployment_id: Option<DeploymentId>,
+    result: Result<T, anyhow::Error>,
+) -> Result<T, anyhow::Error> {
+    let Err(err) = result else {
+        return result;
+    };
+    let (error, error_truncated) = bounded_system_event_text(&format!("{err:#}"));
+    crate::server::system_event_writer::record(
+        db_pool,
+        concepts::storage::SystemEventCode::ServerStartupFailed,
+        None,
+        deployment_id,
+        serde_json::json!({
+            "stage": stage,
+            "error": error,
+            "error_truncated": error_truncated,
+        }),
+    )
+    .await;
+    Err(err)
+}
+
 #[instrument(skip_all, name = "init", fields(deployment_id))]
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn run_internal(
@@ -1789,91 +1954,20 @@ pub(crate) async fn run_internal(
         }
     };
     let span = Span::current();
-    // What to persist once the deployment has compiled and verified. Deferring activation past
-    // verification keeps a broken deployment from being marked active.
-    enum DeploymentPersist {
-        AlreadyActive,
-        ActivateEnqueued,
-        Insert {
-            record: Box<DeploymentRecord>,
-            component_files: Vec<DeploymentComponentFileRecord>,
-        },
-    }
-    let (active_deployment_id, deployment_resolved, persist) = if let Some(deployment) = deployment
-    {
-        // --deployment or `--deployment-empty` provided: prepare, insert+activate after verify.
-        let new_deployment_id = DeploymentId::generate();
-        span.record("deployment_id", tracing::field::display(&new_deployment_id));
-        let (record, component_files) = write_to_cas_prepare_deployment_record(
-            &*db_pool,
-            new_deployment_id,
-            deployment.processed_deployment_toml,
-            deployment.files,
-            description,
-        )
-        .await?;
-        // Same as if `DeploymentRecord` was in DB already.
-        let resolved =
-            deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
-        (
-            new_deployment_id,
-            resolved,
-            DeploymentPersist::Insert {
-                record: Box::new(record),
-                component_files,
-            },
-        )
-    } else {
-        // No --deployment: pick up from the DB. An Enqueued deployment (queued for this
-        // restart) is activated only after it verifies; see the post-verify block below.
-        let conn = db_pool
-            .external_api_conn()
-            .await
-            .context("cannot get db connection for deployment lookup")?;
-        if let Some(record) = conn
-            .get_current_deployment()
-            .await
-            .context("cannot query current deployment")?
-        {
-            let resolved =
-                deployment_resolved_from_manifest(&*db_pool, &record.deployment_toml).await?;
-            span.record(
-                "deployment_id",
-                tracing::field::display(&record.deployment_id),
-            );
-            let persist = if record.status == DeploymentStatus::Enqueued {
-                info!("Verifying enqueued deployment before activation");
-                DeploymentPersist::ActivateEnqueued
-            } else {
-                info!("Using the currently active deployment");
-                DeploymentPersist::AlreadyActive
-            };
-            (record.deployment_id, resolved, persist)
-        } else {
-            // empty db
-            let new_deployment_id = DeploymentId::generate();
-            span.record("deployment_id", tracing::field::display(&new_deployment_id));
-            info!("No deployment found in DB; starting with empty deployment");
-            let (record, component_files) = write_to_cas_prepare_deployment_record(
-                &*db_pool,
-                new_deployment_id,
-                String::new(),
-                Vec::new(),
-                None,
-            )
-            .await?;
-
-            (
-                new_deployment_id,
-                DeploymentResolved::default(),
-                DeploymentPersist::Insert {
-                    record: Box::new(record),
-                    component_files,
-                },
-            )
-        }
-    };
-    let engines = create_engines(&config, &prepared_dirs)?;
+    let (active_deployment_id, deployment_resolved, persist) = record_startup_failed(
+        db_pool.as_ref(),
+        "deployment_resolve",
+        None,
+        resolve_startup_deployment(db_pool.as_ref(), deployment, description, &span).await,
+    )
+    .await?;
+    let engines = record_startup_failed(
+        db_pool.as_ref(),
+        "engines",
+        Some(active_deployment_id),
+        create_engines(&config, &prepared_dirs),
+    )
+    .await?;
     if let Err(err) = config_prepass::preflight_runtime_config(
         &config.outbound_http.allowed_hosts,
         Some(&deployment_resolved),
@@ -1901,8 +1995,13 @@ pub(crate) async fn run_internal(
         .await;
         return Err(err.into());
     }
-    let server_verified =
-        server_verify(config, engines, secret_registry, params.js_runtime).await?;
+    let server_verified = record_startup_failed(
+        db_pool.as_ref(),
+        "server_verify",
+        Some(active_deployment_id),
+        server_verify(config, engines, secret_registry, params.js_runtime).await,
+    )
+    .await?;
     if let Err(err) = config_prepass::preflight(
         &server_verified,
         Some(&deployment_resolved),
@@ -1923,107 +2022,104 @@ pub(crate) async fn run_internal(
         .await;
         return Err(err.into());
     }
-    let cas: Arc<dyn Cas> = db_pool.cas_conn().await?.into();
-    let compiled_and_linked = Box::pin(deployment_verify_config_compile_link(
-        server_verified.clone(),
-        &prepared_dirs,
-        deployment_resolved,
-        cas,
-        active_deployment_id,
-        VerifyParams {
-            dir_params: PrepareDirsParams {
-                clean_cache: params.dir_params.clean_cache,
-                clean_codegen_cache: params.dir_params.clean_codegen_cache,
+    let cas: Arc<dyn Cas> = record_startup_failed(
+        db_pool.as_ref(),
+        "cas_open",
+        Some(active_deployment_id),
+        db_pool.cas_conn().await.map_err(anyhow::Error::from),
+    )
+    .await?
+    .into();
+    let compiled_and_linked = record_startup_failed(
+        db_pool.as_ref(),
+        "deployment_compile_link",
+        Some(active_deployment_id),
+        Box::pin(deployment_verify_config_compile_link(
+            server_verified.clone(),
+            &prepared_dirs,
+            deployment_resolved,
+            cas,
+            active_deployment_id,
+            VerifyParams {
+                dir_params: PrepareDirsParams {
+                    clean_cache: params.dir_params.clean_cache,
+                    clean_codegen_cache: params.dir_params.clean_codegen_cache,
+                },
+                runtime_config_availability: RuntimeConfigAvailability::Strict,
+                suppress_type_checking_errors: params.suppress_type_checking_errors,
+                suppress_linking_errors: false,
+                js_runtime: params.js_runtime,
             },
-            runtime_config_availability: RuntimeConfigAvailability::Strict,
-            suppress_type_checking_errors: params.suppress_type_checking_errors,
-            suppress_linking_errors: false,
-            js_runtime: params.js_runtime,
-        },
-        &mut termination_watcher,
-    ))
-    .instrument(span.clone())
+            &mut termination_watcher,
+        ))
+        .instrument(span.clone())
+        .await,
+    )
     .await?;
     // Persist only now that the deployment has compiled and verified, matching the submit path.
-    match persist {
-        DeploymentPersist::AlreadyActive => {}
-        DeploymentPersist::ActivateEnqueued => {
-            let api_conn = db_pool
-                .external_api_conn()
-                .await
-                .context("cannot get db connection for deployment activation")?;
-            api_conn
-                .activate_deployment(active_deployment_id, chrono::Utc::now())
-                .await
-                .context("cannot activate enqueued deployment")?;
-            info!("Activated enqueued deployment");
-        }
-        DeploymentPersist::Insert {
-            record,
-            component_files,
-        } => {
-            let api_conn = db_pool
-                .external_api_conn()
-                .await
-                .context("cannot get db connection for deployment insertion")?;
-            let (component_metadata, deployment_components) = build_component_metadata_records(
-                active_deployment_id,
-                &compiled_and_linked.component_registry_ro,
-            );
-            api_conn
-                .insert_deployment_with_components(
-                    *record,
-                    component_metadata,
-                    deployment_components,
-                    component_files,
-                )
-                .await
-                .context("cannot insert deployment")?;
-            api_conn
-                .activate_deployment(active_deployment_id, chrono::Utc::now())
-                .await
-                .context("cannot activate deployment")?;
-            info!("Activated new deployment");
-        }
-    }
+    record_startup_failed(
+        db_pool.as_ref(),
+        "deployment_activate",
+        Some(active_deployment_id),
+        persist_startup_deployment(
+            db_pool.as_ref(),
+            active_deployment_id,
+            persist,
+            &compiled_and_linked.component_registry_ro,
+        )
+        .await,
+    )
+    .await?;
 
     let cancel_registry = CancelRegistry::new();
     let subscription_interruption = database.get_subscription_interruption();
     let webhooks_wasm_cell = server_verified.component_cells.webhooks_wasm.task_limiter();
 
-    let server_init = spawn_tasks_and_threads(
-        server_verified,
-        active_deployment_id,
-        db_pool,
-        db_close,
-        compiled_and_linked,
-        webhooks_wasm_cell,
-        timers_watcher,
-        cancel_watcher,
-        maintenance_gc_config,
-        maintenance_gc,
-        &cancel_registry,
-        &termination_watcher,
-        prepared_dirs.clone(),
+    let server_init = record_startup_failed(
+        db_pool.as_ref(),
+        "spawn_tasks",
+        Some(active_deployment_id),
+        spawn_tasks_and_threads(
+            server_verified,
+            active_deployment_id,
+            db_pool.clone(),
+            db_close,
+            compiled_and_linked,
+            webhooks_wasm_cell,
+            timers_watcher,
+            cancel_watcher,
+            maintenance_gc_config,
+            maintenance_gc,
+            &cancel_registry,
+            &termination_watcher,
+            prepared_dirs.clone(),
+        )
+        .instrument(span)
+        .await,
     )
-    .instrument(span)
     .await?;
     let deployment_switch_manager = server_init.deployment_switch_manager.clone();
-    switch_deployment_inner(
-        deployment_switch_manager.clone(),
-        active_deployment_id,
-        SwitchDeploymentAction::Activate,
+    record_startup_failed(
+        db_pool.as_ref(),
+        "deployment_switch",
+        Some(active_deployment_id),
+        switch_deployment_inner(
+            deployment_switch_manager.clone(),
+            active_deployment_id,
+            SwitchDeploymentAction::Activate,
+        )
+        .instrument(info_span!("startup deployment manager no-op", %active_deployment_id))
+        .await
+        .map_err(|err| match err {
+            SwitchError::Busy => anyhow::anyhow!("deployment switch manager busy during startup"),
+            SwitchError::NotFound => {
+                anyhow::anyhow!("active deployment {active_deployment_id} not found during startup")
+            }
+            SwitchError::MissingRuntimeConfig(err) => err.into(),
+            SwitchError::Other(err) => err,
+        }),
     )
-    .instrument(info_span!("startup deployment manager no-op", %active_deployment_id))
-    .await
-    .map_err(|err| match err {
-        SwitchError::Busy => anyhow::anyhow!("deployment switch manager busy during startup"),
-        SwitchError::NotFound => {
-            anyhow::anyhow!("active deployment {active_deployment_id} not found during startup")
-        }
-        SwitchError::MissingRuntimeConfig(err) => err.into(),
-        SwitchError::Other(err) => err,
-    })?;
+    .await?;
     let grpc_server = Arc::new(GrpcServer::new(
         server_init.server_verified.clone(),
         server_init.db_pool.clone(),
@@ -5506,7 +5602,12 @@ async fn compile_and_link(
     let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
     let mut workers_linked = workers_compiled
         .into_iter()
-        .map(|worker| worker.link(&fn_registry))
+        .map(|worker| {
+            let component_id = worker.exec_config.component_id.clone();
+            worker
+                .link(&fn_registry)
+                .with_context(|| format!("cannot link {component_id}"))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     // Resolve cron target FFQNs, type-check params, and create WorkerLinked entries
     for cron in crons {
