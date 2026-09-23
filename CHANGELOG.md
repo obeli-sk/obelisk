@@ -34,8 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requests, 32 `activity_exec` processes and 8 `activity_vm` machines, with a per-slot memory
   bound of 1 GiB for activities and 512 MiB for workflows and webhooks. Second, a deployment that
   set the old global limiter must now decide a value per cell; there is no process-wide total,
-  because the sum of the cells is the process bound. A component's own `exec.instance_limiter` is
-  unchanged and applies inside its cell.
+  because the sum of the cells is the process bound.
 
   The cell's permit is now taken before the database lease rather than after, so a saturated
   executor leaves work pending instead of locking it and waiting with the lease running.
@@ -49,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the key (`memory.mib = 512`, `memory.gib = 1`, `memory.bytes = 1048576`), following
   `DurationConfig`. A bare integer is not accepted. `[v8].thread_stack_size` becomes
   `thread_stack_size.mib = 4`, and `[v8].max_heap_size` moves into each `v8` cell's `memory`.
+
+### Removed
+
+- *(deployment)* **Breaking:** removed `exec.instance_limiter`. It bounded one component's
+  concurrency in one process, so it was mostly reached for as a singleton lock, which it never
+  was: a second node runs its own limiter and both admit at the same time. Use the `[limits]`
+  cells to bound a process, and the execution log for exclusivity. A deployment still carrying
+  the key fails to load.
 
 ## [0.42.0-rc.3](https://github.com/obeli-sk/obelisk/compare/v0.42.0-rc.2...v0.42.0-rc.3)
 

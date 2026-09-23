@@ -342,7 +342,7 @@
       ]
     },
     "ByteSizeConfig": {
-      "description": "A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary, so a\nbare integer is deliberately not accepted: an unsuffixed number is what makes these fields\nunreadable and is how off-by-1000-versus-1024 mistakes happen.",
+      "description": "A byte size whose unit is part of the key, like [`DurationConfig`]. Units are binary and a\nbare integer is not accepted, so a configuration cannot silently mean something 1024x off.",
       "oneOf": [
         {
           "type": "object",

@@ -109,8 +109,7 @@
             "tick_sleep": {
               "milliseconds": 200
             },
-            "locking_strategy": null,
-            "instance_limiter": "unlimited"
+            "locking_strategy": null
           }
         },
         "max_retries": {
@@ -206,11 +205,6 @@
             }
           ],
           "default": null
-        },
-        "instance_limiter": {
-          "description": "Caps concurrent executions of this one component, inside the `(workload, runtime)` cell\nfrom `[limits]` that caps every component of that kind together. It can only narrow.",
-          "$ref": "#/$defs/InflightSemaphore",
-          "default": "unlimited"
         }
       },
       "additionalProperties": false
@@ -292,24 +286,6 @@
           "type": "string",
           "const": "auto"
         }
-      ]
-    },
-    "InflightSemaphore": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Unlimited"
-        },
-        {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      ]
-    },
-    "Unlimited": {
-      "type": "string",
-      "enum": [
-        "unlimited"
       ]
     },
     "ComponentStdOutputToml": {
@@ -638,8 +614,7 @@
             "tick_sleep": {
               "milliseconds": 200
             },
-            "locking_strategy": null,
-            "instance_limiter": "unlimited"
+            "locking_strategy": null
           }
         },
         "max_retries": {
@@ -762,8 +737,7 @@
             "tick_sleep": {
               "milliseconds": 200
             },
-            "locking_strategy": null,
-            "instance_limiter": "unlimited"
+            "locking_strategy": null
           }
         },
         "max_retries": {
@@ -893,8 +867,7 @@
             "tick_sleep": {
               "milliseconds": 200
             },
-            "locking_strategy": null,
-            "instance_limiter": "unlimited"
+            "locking_strategy": null
           }
         },
         "max_retries": {
@@ -1045,8 +1018,7 @@
             "tick_sleep": {
               "milliseconds": 200
             },
-            "locking_strategy": null,
-            "instance_limiter": "unlimited"
+            "locking_strategy": null
           }
         },
         "retry_exp_backoff": {
@@ -1203,8 +1175,7 @@
             "tick_sleep": {
               "milliseconds": 200
             },
-            "locking_strategy": null,
-            "instance_limiter": "unlimited"
+            "locking_strategy": null
           }
         },
         "retry_exp_backoff": {
@@ -1476,8 +1447,7 @@
             "tick_sleep": {
               "milliseconds": 200
             },
-            "locking_strategy": null,
-            "instance_limiter": "unlimited"
+            "locking_strategy": null
           }
         }
       },

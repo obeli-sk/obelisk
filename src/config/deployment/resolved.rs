@@ -9,9 +9,9 @@ use super::{
     AllowedHostToml, AuthoredFunctionInterfaceToml, BlockingStrategyConfigToml,
     ComponentBacktraceConfig, ComponentCommon, ComponentLocationToml, ComponentStdOutputToml,
     ConfigName, CronComponentConfigToml, DeploymentTomlValidated, DurationConfig, ExecConfigToml,
-    FunctionInterfaceToml, InflightSemaphore, InlineFunctionInterfaceToml, JsParamToml,
-    LockingStrategy, LogLevelToml, MethodsInput, NixCacheToml, ReplaceIn, ScriptLocationPathOrOci,
-    WebhookRoute, WebhookRouteDetail, sanitize_deployment_relative_path,
+    FunctionInterfaceToml, InlineFunctionInterfaceToml, JsParamToml, LockingStrategy, LogLevelToml,
+    MethodsInput, NixCacheToml, ReplaceIn, ScriptLocationPathOrOci, WebhookRoute,
+    WebhookRouteDetail, sanitize_deployment_relative_path,
 };
 use crate::command::server::{FrameFilesToSource, FrameSource};
 use crate::config::env_var::{
@@ -2509,7 +2509,6 @@ impl ExecConfigTomlExt for ExecConfigToml {
             locking_strategy: locking_strategy(self.locking_strategy, component_id.component_type)?,
             component_id,
             task_limiter_cell,
-            task_limiter_local: self.instance_limiter.as_semaphore(),
             executor_id: ExecutorId::generate(),
             retry_config,
         })
@@ -2607,20 +2606,6 @@ impl ComponentStdOutputTomlExt for ComponentStdOutputToml {
             ComponentStdOutputToml::Stdout => Some(StdOutputConfig::Stdout),
             ComponentStdOutputToml::Stderr => Some(StdOutputConfig::Stderr),
             ComponentStdOutputToml::Db => Some(StdOutputConfig::Db),
-        }
-    }
-}
-
-pub(crate) trait InflightSemaphoreExt {
-    fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>>;
-}
-impl InflightSemaphoreExt for InflightSemaphore {
-    fn as_semaphore(&self) -> Option<Arc<tokio::sync::Semaphore>> {
-        match self {
-            InflightSemaphore::Unlimited(_) => None,
-            InflightSemaphore::Some(permits) => Some(Arc::new(tokio::sync::Semaphore::new(
-                usize::try_from(*permits).expect("usize >= u32"),
-            ))),
         }
     }
 }

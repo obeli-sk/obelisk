@@ -38,7 +38,6 @@ pub struct ExecConfig {
     pub batch_size: u32,
     pub component_id: ComponentId,
     pub task_limiter_cell: Option<Arc<tokio::sync::Semaphore>>,
-    pub task_limiter_local: Option<Arc<tokio::sync::Semaphore>>,
     pub executor_id: ExecutorId,
     pub retry_config: ComponentRetryConfig,
     pub locking_strategy: LockingStrategy,
@@ -197,16 +196,9 @@ enum LockingStrategyHolder {
     Auto { ffqns: Arc<[FunctionFqn]> },
 }
 
-/// One slot in this executor's (workload, runtime) cell, plus the component's own
-/// `exec.instance_limiter`, which narrows the component within that cell.
-#[derive(Default)]
-struct TaskLimiterPermit {
-    /// Shared with the worker as `WorkerContext::instance_permit`, so a native V8 isolate runs
-    /// under this one slot instead of taking a second.
-    cell: Option<Arc<tokio::sync::OwnedSemaphorePermit>>,
-    #[expect(dead_code)] // Stored permits limit semaphores until dropped.
-    local: Option<tokio::sync::OwnedSemaphorePermit>,
-}
+/// One slot in this executor's (workload, runtime) cell, shared with the worker as
+/// `WorkerContext::instance_permit` so a native V8 isolate runs under it instead of taking a second.
+type TaskLimiterPermit = Option<Arc<tokio::sync::OwnedSemaphorePermit>>;
 
 impl ExecTask {
     #[cfg(feature = "test")]
@@ -379,45 +371,15 @@ impl ExecTask {
             usize::try_from(self.config.batch_size).expect("16 bit systems are unsupported"),
         );
         for _ in 0..self.config.batch_size {
-            match (
-                &self.config.task_limiter_cell,
-                &self.config.task_limiter_local,
-            ) {
-                (Some(cell), Some(local)) => {
-                    if let Ok(cell) = cell.clone().try_acquire_owned()
-                        && let Ok(local) = local.clone().try_acquire_owned()
-                    {
-                        locks.push(TaskLimiterPermit {
-                            cell: Some(Arc::new(cell)),
-                            local: Some(local),
-                        });
-                    } else {
-                        break;
-                    }
-                }
-                (Some(cell), None) => {
+            match &self.config.task_limiter_cell {
+                Some(cell) => {
                     if let Ok(cell) = cell.clone().try_acquire_owned() {
-                        locks.push(TaskLimiterPermit {
-                            cell: Some(Arc::new(cell)),
-                            local: None,
-                        });
+                        locks.push(Some(Arc::new(cell)));
                     } else {
                         break;
                     }
                 }
-                (None, Some(local)) => {
-                    if let Ok(local) = local.clone().try_acquire_owned() {
-                        locks.push(TaskLimiterPermit {
-                            cell: None,
-                            local: Some(local),
-                        });
-                    } else {
-                        break;
-                    }
-                }
-                (None, None) => {
-                    locks.push(TaskLimiterPermit::default());
-                }
+                None => locks.push(None),
             }
         }
         locks
@@ -546,8 +508,7 @@ impl ExecTask {
                     let worker_span2 = worker_span.clone();
                     let retry_config = self.config.retry_config;
                     async move {
-                        let instance_permit = permit.cell.clone();
-                        let _permit = permit;
+                        let instance_permit = permit;
                         let res = Self::run_worker(
                             component_type,
                             worker,
@@ -1441,7 +1402,6 @@ mod tests {
             tick_sleep: Duration::from_millis(100),
             component_id: ComponentId::dummy_activity(),
             task_limiter_cell: None,
-            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1497,7 +1457,6 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_cell: None,
-            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1577,7 +1536,6 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_cell: Some(cell),
-            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy: LockingStrategy::ByFfqns,
@@ -1704,7 +1662,6 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_cell: None,
-            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,
             locking_strategy,
@@ -1841,7 +1798,6 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_cell: None,
-            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config: ComponentRetryConfig::ZERO,
             locking_strategy,
@@ -1984,7 +1940,6 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter_cell: None,
-                task_limiter_local: None,
                 executor_id: parent_executor_id,
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy,
@@ -2077,7 +2032,6 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 component_id: ComponentId::dummy_activity(),
                 task_limiter_cell: None,
-                task_limiter_local: None,
                 executor_id: ExecutorId::generate(),
                 retry_config: ComponentRetryConfig::ZERO,
                 locking_strategy,
@@ -2204,7 +2158,6 @@ mod tests {
             tick_sleep: Duration::ZERO,
             component_id: ComponentId::dummy_activity(),
             task_limiter_cell: None,
-            task_limiter_local: None,
             executor_id: ExecutorId::generate(),
             retry_config,
             locking_strategy,

@@ -130,10 +130,6 @@ pub struct ExecConfigToml {
     pub tick_sleep: DurationConfig,
     #[serde(default)]
     pub locking_strategy: Option<LockingStrategy>,
-    /// Caps concurrent executions of this one component, inside the `(workload, runtime)` cell
-    /// from `[limits]` that caps every component of that kind together. It can only narrow.
-    #[serde(default)]
-    pub instance_limiter: InflightSemaphore,
 }
 
 impl Default for ExecConfigToml {
@@ -143,7 +139,6 @@ impl Default for ExecConfigToml {
             lock_expiry: default_lock_expiry(),
             tick_sleep: default_tick_sleep(),
             locking_strategy: None,
-            instance_limiter: InflightSemaphore::default(),
         }
     }
 }

@@ -232,8 +232,7 @@ max_persisted_value_size_bytes = 1048576
 # `count` is how many slots the cell grants, `memory` how much linear memory (for a native V8
 # cell, how much isolate heap) one slot may hold. Both accept "unlimited". The cells are
 # independent reservations, so no workload or runtime can starve another and there is no
-# process-wide total: the sum of the cells is the process bound. A component's own
-# `exec.instance_limiter` applies inside its cell and can only narrow it.
+# process-wide total: the sum of the cells is the process bound.
 # The wasm defaults are half of the wasmtime pooling allocator's own per-engine limit of 1000
 # instances, because exceeding that fails an execution permanently instead of leaving it pending.
 # The `v8` cells apply only when native V8 is enabled with `OBELISK_UNSTABLE_V8=true`; a Boa

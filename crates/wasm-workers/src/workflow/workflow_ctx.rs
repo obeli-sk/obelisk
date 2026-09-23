@@ -4546,7 +4546,6 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 component_id: ComponentId::dummy_workflow(),
                 task_limiter_cell: None,
-                task_limiter_local: None,
                 executor_id: ExecutorId::from_parts(
                     u64::try_from(sim_clock.now().timestamp_millis()).unwrap(),
                     next_u128(),
