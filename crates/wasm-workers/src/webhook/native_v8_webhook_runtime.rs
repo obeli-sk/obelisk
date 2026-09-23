@@ -7,7 +7,7 @@ use concepts::IfcFqnName;
 use deno_core::{
     JsRuntime, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, ResolutionKind,
-    RuntimeOptions, op2, resolve_import,
+    RuntimeOptions, op2, resolve_import, v8,
 };
 use deno_error::JsErrorBox;
 use hmac::{Hmac, Mac as _};
@@ -48,6 +48,8 @@ struct HostState {
     handle: tokio::runtime::Handle,
     env: HashMap<String, String>,
     panic: crate::v8_panic::V8PanicState,
+    /// Module specifier -> deployment-relative file name, for backtrace frames.
+    user_module_paths: HashMap<String, String>,
 }
 
 impl HostState {
@@ -199,16 +201,24 @@ async fn op_webhook_fetch_inner(
 #[op2]
 #[serde]
 fn op_webhook_host(
+    scope: &mut v8::PinScope,
     state: &mut OpState,
     #[serde] request: HostRequest,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let panic = state.borrow::<HostState>().panic.clone();
-    panic.catch(|| op_webhook_host_inner(state, request))
+    let host = state.borrow_mut::<HostState>();
+    let backtrace = if host.ctx().backtrace_persist {
+        crate::v8_backtrace::capture(scope, &host.user_module_paths)
+    } else {
+        None
+    };
+    panic.catch(|| op_webhook_host_inner(state, request, backtrace))
 }
 
 fn op_webhook_host_inner(
     state: &mut OpState,
     request: HostRequest,
+    backtrace: Option<concepts::storage::WasmBacktrace>,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let host = state.borrow_mut::<HostState>();
     // Capture the ctx as a `usize` so the spawned future is `Send`.
@@ -217,7 +227,7 @@ fn op_webhook_host_inner(
         // SAFETY: host calls are serialized by the isolate, and the ctx outlives this blocking
         // call (`execute` owns it until after the V8 runtime is dropped).
         let ctx = unsafe { &mut *(ctx as *mut WebhookEndpointCtx) };
-        dispatch_host(ctx, &request.op, &request.args).await
+        dispatch_host(ctx, &request.op, &request.args, backtrace).await
     };
     host.block_on(future)
 }
@@ -312,6 +322,7 @@ pub(super) async fn execute(
         handle,
         env,
         panic: panic.clone(),
+        user_module_paths: crate::v8_backtrace::user_module_paths(&loader.paths),
     });
     runtime
         .execute_script("obelisk:webhook-bootstrap", WEBHOOK_BOOTSTRAP)
@@ -407,6 +418,7 @@ async fn dispatch_host(
     ctx: &mut WebhookEndpointCtx,
     op: &str,
     args: &Value,
+    backtrace: Option<concepts::storage::WasmBacktrace>,
 ) -> Result<Value, JsErrorBox> {
     use types::obelisk::webhook::webhook_dynamic_support::{ExecutionId, Function};
     use types::obelisk::webhook::webhook_support::ExecutionId as SupportExecutionId;
@@ -425,7 +437,7 @@ async fn dispatch_host(
                         function_name,
                     },
                     params,
-                    native_backtrace(ctx, args),
+                    backtrace,
                 )
                 .await
                 .map_err(|err| JsErrorBox::generic(err.to_string()))?;
@@ -467,7 +479,7 @@ async fn dispatch_host(
                     function_name,
                 },
                 params,
-                native_backtrace(ctx, args),
+                backtrace,
             )
             .await
             .map_err(|err| JsErrorBox::generic(err.to_string()))?;
@@ -580,25 +592,6 @@ fn string_arg<'a>(args: &'a Value, name: &str) -> Result<&'a str, JsErrorBox> {
     args.get(name)
         .and_then(Value::as_str)
         .ok_or_else(|| JsErrorBox::type_error(format!("{name} must be a string")))
-}
-
-fn native_backtrace(
-    ctx: &WebhookEndpointCtx,
-    _args: &Value,
-) -> Option<concepts::storage::WasmBacktrace> {
-    ctx.backtrace_persist
-        .then(|| concepts::storage::WasmBacktrace {
-            frames: vec![concepts::storage::FrameInfo {
-                module: "native-v8".to_owned(),
-                func_name: "javascript".to_owned(),
-                symbols: vec![concepts::storage::FrameSymbol {
-                    func_name: None,
-                    file: Some("javascript".to_owned()),
-                    line: None,
-                    col: None,
-                }],
-            }],
-        })
 }
 
 fn split_target(target: &str) -> Result<(String, String), JsErrorBox> {

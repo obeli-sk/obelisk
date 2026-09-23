@@ -224,15 +224,9 @@ impl WorkflowCtx {
             .map(ToString::to_string)
     }
 
-    pub(crate) fn native_backtrace(&self) -> Option<storage::WasmBacktrace> {
+    /// Whether the native V8 runtime should capture a JS stack trace on each host call.
+    pub(crate) fn native_backtrace_enabled(&self) -> bool {
         self.should_capture_backtrace()
-            .then(|| storage::WasmBacktrace {
-                frames: vec![storage::FrameInfo {
-                    module: "native-v8".into(),
-                    func_name: "javascript".into(),
-                    symbols: Vec::new(),
-                }],
-            })
     }
 }
 
@@ -2615,6 +2609,7 @@ pub(crate) mod workflow_support {
         pub(crate) async fn native_join_set_create(
             &mut self,
             name: Option<String>,
+            backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<JoinSetId, WorkflowFunctionError> {
             let (name, kind) = match name {
                 Some(name) => (name, JoinSetKind::Named),
@@ -2623,7 +2618,6 @@ pub(crate) mod workflow_support {
                     JoinSetKind::Generated,
                 ),
             };
-            let backtrace = self.native_backtrace();
             self.persist_join_set_with_kind(name, kind, backtrace)
                 .await
                 .map_err(|err| match err {
@@ -2653,11 +2647,11 @@ pub(crate) mod workflow_support {
         pub(crate) async fn native_join_next_try(
             &mut self,
             join_set_id: JoinSetId,
+            backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<
             Result<Result<Option<String>, Option<String>>, super::NativeJoinNextTryError>,
             WorkflowFunctionError,
         > {
-            let backtrace = self.native_backtrace();
             self.join_next_try(join_set_id, backtrace)
                 .await
                 .map(|result| {
@@ -2676,8 +2670,8 @@ pub(crate) mod workflow_support {
             target_ffqn: FunctionFqn,
             params_json: String,
             schedule_at: HistoryEventScheduleAt,
+            backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<(), WorkflowFunctionError> {
-            let backtrace = self.native_backtrace();
             self.schedule_json(
                 execution_id,
                 target_ffqn,
@@ -2703,8 +2697,8 @@ pub(crate) mod workflow_support {
             &mut self,
             execution_id: String,
             retval: String,
+            backtrace: Option<storage::WasmBacktrace>,
         ) -> Result<(), WorkflowFunctionError> {
-            let backtrace = self.native_backtrace();
             self.stub_json(
                 typesTypes::execution::ExecutionId { id: execution_id },
                 retval,

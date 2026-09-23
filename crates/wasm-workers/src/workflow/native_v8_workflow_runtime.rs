@@ -15,7 +15,7 @@ use concepts::{
 use deno_core::{
     JsRuntime, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, OpState, PollEventLoopOptions,
-    ResolutionKind, RuntimeOptions, op2, resolve_import,
+    ResolutionKind, RuntimeOptions, op2, resolve_import, v8,
 };
 use deno_error::JsErrorBox;
 use serde_json::{Value, json};
@@ -228,6 +228,8 @@ struct HostState {
     join_sets: Vec<Option<JoinSetId>>,
     panic: crate::v8_panic::V8PanicState,
     panic_version: Option<Version>,
+    /// Module specifier -> deployment-relative file name, for backtrace frames.
+    user_module_paths: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -307,12 +309,19 @@ impl HostState {
 #[op2]
 #[serde]
 fn op_obelisk_host(
+    scope: &mut v8::PinScope,
     state: &mut OpState,
     #[serde] request: serde_json::Value,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let panic = state.borrow::<HostState>().panic.clone();
-    let version = state.borrow_mut::<HostState>().context().version().clone();
-    let result = panic.catch(|| op_obelisk_host_inner(state, request));
+    let host = state.borrow_mut::<HostState>();
+    let version = host.context().version().clone();
+    let backtrace = if host.context().native_backtrace_enabled() {
+        crate::v8_backtrace::capture(scope, &host.user_module_paths)
+    } else {
+        None
+    };
+    let result = panic.catch(|| op_obelisk_host_inner(state, request, backtrace));
     let host = state.borrow_mut::<HostState>();
     if panic.is_trap_pending() {
         host.panic_version.get_or_insert(version);
@@ -329,6 +338,7 @@ fn op_obelisk_host(
 fn op_obelisk_host_inner(
     state: &mut OpState,
     request: serde_json::Value,
+    backtrace: Option<concepts::storage::WasmBacktrace>,
 ) -> Result<serde_json::Value, JsErrorBox> {
     let op = request
         .get("op")
@@ -340,7 +350,6 @@ fn op_obelisk_host_inner(
         "executionIdCurrent" => Ok(json!(host.context().native_execution_id_current())),
         "executionIdGenerate" => {
             let id = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 handle
                     .block_on_ctx(ctx, move |ctx| ctx.execution_id_generate(backtrace))
                     .map_err(anyhow_to_workflow_error)
@@ -349,7 +358,6 @@ fn op_obelisk_host_inner(
         }
         "now" => {
             let datetime = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 handle
                     .block_on_ctx(ctx, move |ctx| {
                         ctx.sleep_named(HistoryEventScheduleAt::Now, None, backtrace)
@@ -366,7 +374,7 @@ fn op_obelisk_host_inner(
         "createJoinSet" => {
             let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
             let id = host.call(|ctx, handle| {
-                handle.block_on_ctx(ctx, move |ctx| ctx.native_join_set_create(name))
+                handle.block_on_ctx(ctx, move |ctx| ctx.native_join_set_create(name, backtrace))
             })?;
             let index = host.join_sets.len();
             host.join_sets.push(Some(id));
@@ -387,7 +395,6 @@ fn op_obelisk_host_inner(
             let params = serde_json::to_string(args.get("params").unwrap_or(&Value::Null))
                 .map_err(JsErrorBox::from_err)?;
             let outcome = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 handle
                     .block_on_ctx(ctx, move |ctx| ctx.call_json(target, params, backtrace))
                     .map_err(anyhow_to_workflow_error)?
@@ -412,7 +419,6 @@ fn op_obelisk_host_inner(
             let params = serde_json::to_string(args.get("params").unwrap_or(&Value::Null))
                 .map_err(JsErrorBox::from_err)?;
             let execution_id = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 handle
                     .block_on_ctx(ctx, move |ctx| {
                         ctx.submit_json(join_set_id, target, params, backtrace)
@@ -430,7 +436,6 @@ fn op_obelisk_host_inner(
             let join_set_id = join_set(host, &args)?;
             let schedule = schedule_arg(&args, "schedule")?;
             let delay_id = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 handle.block_on_ctx(ctx, move |ctx| {
                     ctx.submit_delay(join_set_id, schedule, backtrace)
                 })
@@ -440,7 +445,6 @@ fn op_obelisk_host_inner(
         "joinNext" => {
             let join_set_id = join_set(host, &args)?;
             let outcome = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 let join_set_id = join_set_id.clone();
                 handle.block_on_ctx(ctx, move |ctx| ctx.join_next(join_set_id, backtrace))
             })?;
@@ -458,7 +462,6 @@ fn op_obelisk_host_inner(
                 .parse::<FunctionFqn>()
                 .map_err(|err| JsErrorBox::type_error(format!("invalid function name: {err}")))?;
             let outcome = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 let join_set_id = join_set_id.clone();
                 handle.block_on_ctx(ctx, move |ctx| {
                     ctx.join_next_for(join_set_id, target, backtrace)
@@ -488,7 +491,9 @@ fn op_obelisk_host_inner(
             let join_set_id = join_set(host, &args)?;
             let outcome = host.call(|ctx, handle| {
                 let join_set_id = join_set_id.clone();
-                handle.block_on_ctx(ctx, move |ctx| ctx.native_join_next_try(join_set_id))
+                handle.block_on_ctx(ctx, move |ctx| {
+                    ctx.native_join_next_try(join_set_id, backtrace)
+                })
             })?;
             Ok(match outcome {
                 Ok(outcome) => {
@@ -503,7 +508,6 @@ fn op_obelisk_host_inner(
             let schedule = schedule_arg(&args, "schedule")?;
             let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
             let datetime = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 handle
                     .block_on_ctx(ctx, move |ctx| ctx.sleep_named(schedule, name, backtrace))
                     .map_err(anyhow_to_workflow_error)?
@@ -520,7 +524,6 @@ fn op_obelisk_host_inner(
             let max = u64_arg(&args, "max")?;
             let inclusive = op == "randomU64Inclusive";
             let value = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 let result = if inclusive {
                     handle.block_on_ctx(ctx, move |ctx| {
                         ctx.random_u64_inclusive(min, max, backtrace)
@@ -542,7 +545,6 @@ fn op_obelisk_host_inner(
                 .try_into()
                 .map_err(|_| JsErrorBox::range_error("max is too large"))?;
             let value = host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 handle
                     .block_on_ctx(ctx, move |ctx| ctx.random_string(min, max, backtrace))
                     .map_err(anyhow_to_workflow_error)
@@ -561,7 +563,7 @@ fn op_obelisk_host_inner(
             let schedule = schedule_arg(&args, "schedule")?;
             host.call(|ctx, handle| {
                 handle.block_on_ctx(ctx, move |ctx| {
-                    ctx.native_schedule_json(execution_id, target, params, schedule)
+                    ctx.native_schedule_json(execution_id, target, params, schedule, backtrace)
                 })
             })?;
             Ok(Value::Null)
@@ -570,7 +572,9 @@ fn op_obelisk_host_inner(
             let execution_id = string_arg(&args, "executionId")?.to_owned();
             let retval = string_arg(&args, "resultJson")?.to_owned();
             host.call(|ctx, handle| {
-                handle.block_on_ctx(ctx, move |ctx| ctx.native_stub_json(execution_id, retval))
+                handle.block_on_ctx(ctx, move |ctx| {
+                    ctx.native_stub_json(execution_id, retval, backtrace)
+                })
             })?;
             Ok(Value::Null)
         }
@@ -582,7 +586,6 @@ fn op_obelisk_host_inner(
                 .and_then(Option::take)
                 .ok_or_else(|| JsErrorBox::generic("join set is closed"))?;
             host.call(|ctx, handle| {
-                let backtrace = ctx.native_backtrace();
                 // `join_set_close` borrows the id, so own it inside the future (it is dropped
                 // after this call anyway).
                 handle
@@ -662,6 +665,7 @@ async fn execute(
         join_sets: Vec::new(),
         panic: panic.clone(),
         panic_version: None,
+        user_module_paths: loader.user_module_paths(),
     });
     // Register with the interrupt ticker for the duration of JS execution. `interrupt_data`
     // is declared before the guard so it outlives it; combined with the fact that the guard
@@ -793,6 +797,10 @@ impl InMemoryModuleLoader {
 
     fn specifier_for_path(&self, path: &str) -> Option<&ModuleSpecifier> {
         self.paths.get(path)
+    }
+
+    fn user_module_paths(&self) -> HashMap<String, String> {
+        crate::v8_backtrace::user_module_paths(&self.paths)
     }
 }
 
