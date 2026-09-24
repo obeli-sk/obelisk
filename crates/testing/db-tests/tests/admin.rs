@@ -175,6 +175,77 @@ async fn system_events_are_filtered_paginated_and_collected(database: Database) 
 #[expand_enum_database]
 #[rstest]
 #[tokio::test]
+async fn system_events_are_filtered_by_created_at_range(database: Database) {
+    set_up();
+    let (_guard, db_pool, db_close) = database.set_up().await;
+    let admin = db_pool.admin_conn().await.unwrap();
+    let base = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        .unwrap()
+        .to_utc();
+    let offsets = [
+        Duration::zero(),
+        Duration::milliseconds(500),
+        Duration::seconds(1),
+        Duration::milliseconds(1_250),
+    ];
+    let mut ids = Vec::new();
+    for offset in offsets {
+        let mut event = SystemEvent::new(
+            SystemEventCode::MaintenanceGcFailed,
+            None,
+            None,
+            serde_json::json!({}),
+        )
+        .unwrap();
+        event.event_id = SystemEventId::from_parts(
+            u64::try_from((base + offset).timestamp_millis()).unwrap(),
+            u128::MAX,
+        );
+        ids.push(event.event_id);
+        admin.append_system_event(event).await.unwrap();
+    }
+    let list = |created_from, created_to| {
+        let admin = &admin;
+        async move {
+            let mut ids = admin
+                .list_system_events(SystemEventFilter {
+                    created_from,
+                    created_to,
+                    limit: 100,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|event| event.event_id)
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        }
+    };
+    assert_eq!(
+        list(Some(base + Duration::milliseconds(500)), None).await,
+        ids[1..]
+    );
+    assert_eq!(
+        list(None, Some(base + Duration::seconds(1))).await,
+        ids[..2]
+    );
+    assert_eq!(
+        list(
+            Some(base + Duration::milliseconds(500)),
+            Some(base + Duration::milliseconds(1_250))
+        )
+        .await,
+        ids[1..3]
+    );
+    drop(admin);
+    db_close.close().await;
+}
+
+#[expand_enum_database]
+#[rstest]
+#[tokio::test]
 async fn http_policy_event_ids_resolve_server_configuration(database: Database) {
     set_up();
     let (_guard, db_pool, db_close) = database.set_up().await;

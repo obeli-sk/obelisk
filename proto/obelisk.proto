@@ -1402,6 +1402,10 @@ message ListSystemEventsRequest {
     optional string before_event_id = 4;
     uint32 limit = 5;
     optional string node_run_id = 6;
+    // Inclusive lower bound of `created_at`, millisecond precision.
+    optional google.protobuf.Timestamp created_from = 7;
+    // Exclusive upper bound of `created_at`, millisecond precision.
+    optional google.protobuf.Timestamp created_to = 8;
 }
 message ListSystemEventsResponse {
     repeated SystemEvent events = 1;

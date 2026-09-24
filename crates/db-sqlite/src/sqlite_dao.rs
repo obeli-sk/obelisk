@@ -6,7 +6,7 @@ use concepts::{
     ExecutionId, FunctionFqn, JoinSetId, StrVariant, SupportedFunctionReturnValue,
     cas::{Cas, CasError},
     component_id::{ComponentDigest, Digest},
-    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId},
+    prefixed_ulid::{DelayId, DeploymentId, ExecutionIdDerived, ExecutorId, RunId, SystemEventId},
     storage::{
         AppendBatchResponse, AppendDelayResponseOutcome, AppendEventsToExecution, AppendRequest,
         AppendResponse, AppendResponseToExecution, BacktraceFilter, BacktraceInfo,
@@ -5697,12 +5697,14 @@ impl DbAdmin for SqlitePool {
                      WHERE (?1 IS NULL OR event_id = ?1) AND (?2 IS NULL OR node_run_id = ?2)
                        AND (?3 IS NULL OR level = ?3) AND (?4 IS NULL OR code = ?4)
                        AND (?5 IS NULL OR deployment_id = ?5) AND (?6 IS NULL OR event_id < ?6)
+                       AND (?8 IS NULL OR event_id >= ?8) AND (?9 IS NULL OR event_id < ?9)
                      ORDER BY event_id DESC LIMIT ?7"
                 )?;
                 let rows = statement.query_map(rusqlite::params![
                     filter.event_id.map(|id| id.to_string()), filter.node_run_id.map(|id| id.to_string()), filter.level.map(SystemEventLevel::as_str), filter.code,
                     filter.deployment_id.map(|id| id.to_string()), filter.before_event_id.map(|id| id.to_string()),
-                    i64::from(filter.limit.clamp(1, 1000))
+                    i64::from(filter.limit.clamp(1, 1000)),
+                    filter.created_from.map(|at| SystemEventId::min_at(at).to_string()), filter.created_to.map(|at| SystemEventId::min_at(at).to_string())
                 ], |row| {
                     let level: String = row.get(3)?;
                     let details: String = row.get(7)?;

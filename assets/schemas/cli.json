@@ -1084,6 +1084,14 @@
                   "name": "--code"
                 },
                 {
+                  "name": "--from",
+                  "help": "Only show events created at or after this RFC 3339 time"
+                },
+                {
+                  "name": "--to",
+                  "help": "Only show events created before this RFC 3339 time"
+                },
+                {
                   "name": "--limit"
                 },
                 {

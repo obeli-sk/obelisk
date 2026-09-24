@@ -224,6 +224,8 @@ impl args::Admin {
                 node_run_id,
                 level,
                 code,
+                from,
+                to,
                 limit,
                 json,
                 api_url,
@@ -235,6 +237,8 @@ impl args::Admin {
                             ("node_run_id", node_run_id.map(|id| id.to_string())),
                             ("level", level),
                             ("code", code),
+                            ("created_from", from.map(|at| at.to_rfc3339())),
+                            ("created_to", to.map(|at| at.to_rfc3339())),
                         ])
                         .query(&[("limit", limit)])
                         .header(ACCEPT, "application/json"),

@@ -2032,6 +2032,15 @@ fn cleanup_to_grpc(result: storage::CleanupResult) -> grpc_gen::CleanupResponse 
     }
 }
 
+fn timestamp_to_datetime(
+    timestamp: prost_wkt_types::Timestamp,
+) -> Result<DateTime<Utc>, tonic::Status> {
+    u32::try_from(timestamp.nanos)
+        .ok()
+        .and_then(|nanos| DateTime::from_timestamp(timestamp.seconds, nanos))
+        .ok_or_else(|| tonic::Status::invalid_argument("timestamp out of range"))
+}
+
 #[tonic::async_trait]
 impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
     async fn get_system_event(
@@ -2128,6 +2137,11 @@ impl grpc_gen::admin_repository_server::AdminRepository for GrpcServer {
                     .map(|id| id.parse::<SystemEventId>())
                     .transpose()
                     .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?,
+                created_from: request
+                    .created_from
+                    .map(timestamp_to_datetime)
+                    .transpose()?,
+                created_to: request.created_to.map(timestamp_to_datetime).transpose()?,
                 limit,
             })
             .await
