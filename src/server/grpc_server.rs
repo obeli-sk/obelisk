@@ -62,6 +62,7 @@ use grpc::grpc_mapping::convert_length;
 use grpc::grpc_mapping::db_error_read_to_status;
 use grpc::grpc_mapping::db_error_write_to_status;
 use grpc::grpc_mapping::from_execution_event_to_grpc;
+use grpc::grpc_mapping::timestamp_to_datetime;
 use grpc_gen::ExecutionSummary;
 use serde::Deserialize;
 use serde::Serialize;
@@ -2030,15 +2031,6 @@ fn cleanup_to_grpc(result: storage::CleanupResult) -> grpc_gen::CleanupResponse 
         blocked_by_execution_reference: result.blocked_by_execution_reference,
         has_more: result.has_more,
     }
-}
-
-fn timestamp_to_datetime(
-    timestamp: prost_wkt_types::Timestamp,
-) -> Result<DateTime<Utc>, tonic::Status> {
-    u32::try_from(timestamp.nanos)
-        .ok()
-        .and_then(|nanos| DateTime::from_timestamp(timestamp.seconds, nanos))
-        .ok_or_else(|| tonic::Status::invalid_argument("timestamp out of range"))
 }
 
 #[tonic::async_trait]

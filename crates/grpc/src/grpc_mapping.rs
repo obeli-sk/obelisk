@@ -1,5 +1,5 @@
 use crate::grpc_gen::{self, execution_event::history_event, result_kind};
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use concepts::{
     ComponentId, ComponentRetryConfig, ComponentType, ExecutionFailureKind, ExecutionId,
     ExecutionMetadata, FinishedExecutionFailure, FunctionFqn, StrVariant,
@@ -532,6 +532,15 @@ pub fn convert_length(l: u32) -> Result<std::num::NonZeroU16, tonic::Status> {
         .ok_or_else(|| tonic::Status::invalid_argument("`length` must be a non-zero u16"))
 }
 
+pub fn timestamp_to_datetime(
+    timestamp: prost_wkt_types::Timestamp,
+) -> Result<DateTime<Utc>, tonic::Status> {
+    u32::try_from(timestamp.nanos)
+        .ok()
+        .and_then(|nanos| DateTime::from_timestamp(timestamp.seconds, nanos))
+        .ok_or_else(|| tonic::Status::invalid_argument("timestamp out of range"))
+}
+
 impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPagination {
     type Error = tonic::Status;
 
@@ -560,7 +569,7 @@ impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPag
                     cursor: Some(InnerCursor::CreatedAt(timestamp)),
                 }) => ExecutionListPagination::CreatedBy(Pagination::NewerThan {
                     length: convert_length(length)?,
-                    cursor: Some(timestamp.into()),
+                    cursor: Some(timestamp_to_datetime(timestamp)?),
                     including_cursor,
                 }),
                 _ => ExecutionListPagination::CreatedBy(Pagination::NewerThan {
@@ -585,7 +594,7 @@ impl TryFrom<grpc_gen::list_executions_request::Pagination> for ExecutionListPag
                     cursor: Some(InnerCursor::CreatedAt(timestamp)),
                 }) => ExecutionListPagination::CreatedBy(Pagination::OlderThan {
                     length: convert_length(length)?,
-                    cursor: Some(timestamp.into()),
+                    cursor: Some(timestamp_to_datetime(timestamp)?),
                     including_cursor,
                 }),
                 _ => ExecutionListPagination::CreatedBy(Pagination::OlderThan {
@@ -764,9 +773,11 @@ fn schedule_at_from_grpc(
         grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::Now(_) => {
             Ok(HistoryEventScheduleAt::Now)
         }
-        grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::At(at) => Ok(
-            HistoryEventScheduleAt::At(at.at.argument_must_exist("scheduled_at.at")?.into()),
-        ),
+        grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::At(at) => {
+            Ok(HistoryEventScheduleAt::At(timestamp_to_datetime(
+                at.at.argument_must_exist("scheduled_at.at")?,
+            )?))
+        }
         grpc_gen::execution_event::history_event::schedule::scheduled_at::Variant::In(r#in) => {
             let duration = r#in
                 .r#in
@@ -790,7 +801,7 @@ fn delay_schedule_at_from_grpc(
             Ok(HistoryEventScheduleAt::Now)
         }
         grpc_gen::execution_event::history_event::join_set_request::delay_request::scheduled_at::Variant::At(at) => Ok(
-            HistoryEventScheduleAt::At(at.at.argument_must_exist("scheduled_at.at")?.into()),
+            HistoryEventScheduleAt::At(timestamp_to_datetime(at.at.argument_must_exist("scheduled_at.at")?)?),
         ),
         grpc_gen::execution_event::history_event::join_set_request::delay_request::scheduled_at::Variant::In(r#in) => {
             let duration = r#in
@@ -810,7 +821,7 @@ fn delay_schedule_at_from_grpc(
 fn http_client_trace_from_grpc(
     value: grpc_gen::HttpClientTrace,
 ) -> Result<HttpClientTrace, tonic::Status> {
-    let finished_at = value.finished_at.map(Into::into);
+    let finished_at = value.finished_at.map(timestamp_to_datetime).transpose()?;
     let status = match value.result {
         Some(grpc_gen::http_client_trace::Result::Status(status)) => {
             Some(Ok(u16::try_from(status).map_err(|_| {
@@ -836,7 +847,7 @@ fn http_client_trace_from_grpc(
     };
     Ok(HttpClientTrace {
         req: concepts::storage::http_client_trace::RequestTrace {
-            sent_at: value.sent_at.argument_must_exist("sent_at")?.into(),
+            sent_at: timestamp_to_datetime(value.sent_at.argument_must_exist("sent_at")?)?,
             uri: value.uri,
             method: value.method,
         },
@@ -1107,10 +1118,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                     ffqn,
                     params,
                     parent,
-                    scheduled_at: created
-                        .scheduled_at
-                        .argument_must_exist("scheduled_at")?
-                        .into(),
+                    scheduled_at: timestamp_to_datetime(
+                        created.scheduled_at.argument_must_exist("scheduled_at")?,
+                    )?,
                     component_id: created
                         .component_id
                         .argument_must_exist("component_id")?
@@ -1139,10 +1149,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
                 run_id: RunId::from_str(&locked.run_id).map_err(|err| {
                     tonic::Status::invalid_argument(format!("run_id cannot be parsed - {err}"))
                 })?,
-                lock_expires_at: locked
-                    .lock_expires_at
-                    .argument_must_exist("lock_expires_at")?
-                    .into(),
+                lock_expires_at: timestamp_to_datetime(
+                    locked.lock_expires_at.argument_must_exist("lock_expires_at")?,
+                )?,
                 retry_config: locked
                     .retry_config
                     .argument_must_exist("retry_config")?
@@ -1150,10 +1159,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
             }),
             grpc_gen::execution_event::Event::Unlocked(unlocked) => {
                 ExecutionRequest::Unlocked(Unlocked {
-                    unlocked_at: unlocked
-                        .backoff_expires_at
-                        .argument_must_exist("backoff_expires_at")?
-                        .into(),
+                    unlocked_at: timestamp_to_datetime(
+                        unlocked.backoff_expires_at.argument_must_exist("backoff_expires_at")?,
+                    )?,
                     reason: StrVariant::from(unlocked.reason),
                 })
             }
@@ -1190,10 +1198,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
             }
             grpc_gen::execution_event::Event::TemporarilyFailed(failed) => {
                 ExecutionRequest::TemporarilyFailed {
-                    backoff_expires_at: failed
-                        .backoff_expires_at
-                        .argument_must_exist("backoff_expires_at")?
-                        .into(),
+                    backoff_expires_at: timestamp_to_datetime(
+                        failed.backoff_expires_at.argument_must_exist("backoff_expires_at")?,
+                    )?,
                     reason: StrVariant::from(failed.reason),
                     detail: failed.detail,
                     http_client_traces: optional_http_client_traces_from_grpc(
@@ -1203,10 +1210,9 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
             }
             grpc_gen::execution_event::Event::TemporarilyTimedOut(timed_out) => {
                 ExecutionRequest::TemporarilyTimedOut {
-                    backoff_expires_at: timed_out
-                        .backoff_expires_at
-                        .argument_must_exist("backoff_expires_at")?
-                        .into(),
+                    backoff_expires_at: timestamp_to_datetime(
+                        timed_out.backoff_expires_at.argument_must_exist("backoff_expires_at")?,
+                    )?,
                     http_client_traces: optional_http_client_traces_from_grpc(
                         timed_out.http_client_traces,
                     )?,
@@ -1231,7 +1237,7 @@ impl TryFrom<grpc_gen::ExecutionEvent> for ExecutionEvent {
         };
 
         Ok(ExecutionEvent {
-            created_at: value.created_at.argument_must_exist("created_at")?.into(),
+            created_at: timestamp_to_datetime(value.created_at.argument_must_exist("created_at")?)?,
             event,
             backtrace_id: value.backtrace_id.map(Version::new),
             version: Version::new(value.version),
@@ -1300,7 +1306,7 @@ fn history_event_from_grpc(
                 history_event::join_set_request::JoinSetRequest::DelayRequest(delay) => {
                     JoinSetRequest::DelayRequest {
                         delay_id: delay.delay_id.argument_must_exist("delay_id")?.try_into()?,
-                        expires_at: delay.expires_at.argument_must_exist("expires_at")?.into(),
+                        expires_at: timestamp_to_datetime(delay.expires_at.argument_must_exist("expires_at")?)?,
                         schedule_at: delay_schedule_at_from_grpc(
                             delay.scheduled_at.argument_must_exist("scheduled_at")?,
                         )?,
@@ -1377,10 +1383,9 @@ fn history_event_from_grpc(
         },
         history_event::Event::JoinNext(join_next) => HistoryEvent::JoinNext {
             join_set_id: join_next.join_set_id.argument_must_exist("join_set_id")?.try_into()?,
-            run_expires_at: join_next
-                .run_expires_at
-                .argument_must_exist("run_expires_at")?
-                .into(),
+            run_expires_at: timestamp_to_datetime(
+                join_next.run_expires_at.argument_must_exist("run_expires_at")?,
+            )?,
             requested_ffqn: join_next.function.map(TryInto::try_into).transpose()?,
             closing: join_next.closing,
         },
@@ -2117,7 +2122,7 @@ impl TryFrom<grpc_gen::CreateExecutionRequest> for CreateRequest {
             }
         };
         Ok(CreateRequest {
-            created_at: value.created_at.argument_must_exist("created_at")?.into(),
+            created_at: timestamp_to_datetime(value.created_at.argument_must_exist("created_at")?)?,
             execution_id: value
                 .execution_id
                 .argument_must_exist("execution_id")?
@@ -2125,10 +2130,9 @@ impl TryFrom<grpc_gen::CreateExecutionRequest> for CreateRequest {
             ffqn,
             params,
             parent,
-            scheduled_at: value
-                .scheduled_at
-                .argument_must_exist("scheduled_at")?
-                .into(),
+            scheduled_at: timestamp_to_datetime(
+                value.scheduled_at.argument_must_exist("scheduled_at")?,
+            )?,
             component_id: value
                 .component_id
                 .argument_must_exist("component_id")?
@@ -2460,6 +2464,68 @@ pub fn captured_write_from_grpc(
 mod tests {
     use super::*;
     use concepts::Params;
+
+    #[test]
+    fn invalid_grpc_dates_return_invalid_argument() {
+        use grpc_gen::list_executions_request::{
+            Cursor, NewerThan, Pagination as GrpcPagination, cursor::Cursor as CursorValue,
+        };
+
+        for timestamp in [
+            prost_wkt_types::Timestamp {
+                seconds: i64::MAX,
+                nanos: 0,
+            },
+            prost_wkt_types::Timestamp {
+                seconds: 0,
+                nanos: -1,
+            },
+            prost_wkt_types::Timestamp {
+                seconds: 0,
+                nanos: 1_000_000_000,
+            },
+        ] {
+            let pagination = GrpcPagination::NewerThan(NewerThan {
+                length: 10,
+                cursor: Some(Cursor {
+                    cursor: Some(CursorValue::CreatedAt(timestamp)),
+                }),
+                including_cursor: false,
+            });
+            assert_eq!(
+                ExecutionListPagination::try_from(pagination)
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        let event = ExecutionEvent {
+            created_at: DateTime::UNIX_EPOCH,
+            event: ExecutionRequest::Created(Created {
+                ffqn: FunctionFqn::new_static("ns:pkg/ifc", "fn"),
+                params: Params::empty(),
+                parent: None,
+                scheduled_at: DateTime::UNIX_EPOCH,
+                component_id: ComponentId::dummy_activity(),
+                deployment_id: DeploymentId::from_parts(0, 0),
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_by: None,
+                max_persisted_value_size_bytes: 64,
+            }),
+            backtrace_id: None,
+            version: Version::new(0),
+        };
+        let mut grpc = from_execution_event_to_grpc(event);
+        grpc.created_at = Some(prost_wkt_types::Timestamp {
+            seconds: i64::MAX,
+            nanos: 0,
+        });
+        assert_eq!(
+            ExecutionEvent::try_from(grpc).unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+    }
 
     #[test]
     fn legacy_grpc_created_event_with_zero_limit_is_unlimited() {
