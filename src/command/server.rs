@@ -136,8 +136,10 @@ use grpc::extractor::accept_trace;
 use grpc::grpc_gen;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use secrecy::ExposeSecret as _;
 use secrecy::SecretString;
+use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -806,7 +808,7 @@ pub(crate) async fn verify(
         };
 
     let (config_holder, config, secret_registry) = if fix
-        && let Some(server_config_path) = config_holder.config_source.as_deref()
+        && let Some(app_config_path) = config_holder.app_source.as_deref()
     {
         let mut unregistered_secrets = config_prepass::SecretFindings::default();
         let mut undeclared_public_env = BTreeSet::new();
@@ -834,7 +836,7 @@ pub(crate) async fn verify(
         }
         if !unregistered_secrets.unregistered.is_empty() || !undeclared_public_env.is_empty() {
             config_prepass::fix_server_runtime_config_scaffolds(
-                server_config_path,
+                app_config_path,
                 &undeclared_public_env,
                 &unregistered_secrets,
             )
@@ -842,7 +844,7 @@ pub(crate) async fn verify(
 
             warn!(
                 "Scaffolded runtime configuration in {}: public_env={undeclared_public_env:?}, secrets={:?}",
-                server_config_path.display(),
+                app_config_path.display(),
                 unregistered_secrets.unregistered,
             );
             // Reload server config
@@ -854,6 +856,7 @@ pub(crate) async fn verify(
                 js_runtime: _,
             } = prepare_server_startup(
                 config_holder.config_source,
+                config_holder.app_source,
                 EnvVarSecretsCleanup::Noop,
                 verify_params.runtime_config_availability,
             )?;
@@ -866,13 +869,13 @@ pub(crate) async fn verify(
     };
 
     let (config_holder, config, secret_registry) = if fix
-        && let (Some(server_config_path), Some(deployment_path)) = (
-            config_holder.config_source.as_deref(),
+        && let (Some(app_config_path), Some(deployment_path)) = (
+            config_holder.app_source.as_deref(),
             deployment_path_for_fix.as_deref(),
         ) {
         let outputs =
             generate_secret_config_digests(deployment_path, None, secret_registry.clone()).await?;
-        fix_server_secret_config_digests(server_config_path, &outputs).await?;
+        fix_server_secret_config_digests(app_config_path, &outputs).await?;
         let ServerStartup {
             config_holder,
             config,
@@ -881,6 +884,7 @@ pub(crate) async fn verify(
             js_runtime: _,
         } = prepare_server_startup(
             config_holder.config_source,
+            config_holder.app_source,
             EnvVarSecretsCleanup::Noop,
             verify_params.runtime_config_availability,
         )?;
@@ -915,7 +919,7 @@ pub(crate) async fn verify(
         None
     };
     let can_suggest_fix = !fix
-        && config_holder.config_source.is_some()
+        && config_holder.app_source.is_some()
         && deployment_opt
             .as_ref()
             .is_some_and(|deployment| deployment.source_path.is_some());
@@ -936,7 +940,7 @@ pub(crate) async fn verify(
     )
     .map_err(|err| {
         if can_suggest_fix {
-            anyhow::anyhow!("{err}\nRun again with `--fix` to update server.toml.")
+            anyhow::anyhow!("{err}\nRun again with `--fix` to update app.toml.")
         } else {
             err.into()
         }
@@ -957,7 +961,7 @@ pub(crate) async fn verify(
         if can_suggest_fix
             && let config_prepass::PreflightError::MissingRuntimeConfig(config_err) = &err
         {
-            anyhow::anyhow!("{config_err}\nRun again with `--fix` to update server.toml.")
+            anyhow::anyhow!("{config_err}\nRun again with `--fix` to update app.toml.")
         } else {
             err.into()
         }
@@ -1954,6 +1958,26 @@ pub(crate) async fn run_internal(
             (db_pool, db_close)
         }
     };
+    let recorded_app_name = db_pool
+        .admin_conn()
+        .await?
+        .get_or_set_app_name(&path_prefixes.app_name)
+        .await?;
+    anyhow::ensure!(
+        recorded_app_name == path_prefixes.app_name,
+        "database belongs to app `{recorded_app_name}`, but current app name is `{}`",
+        path_prefixes.app_name
+    );
+    if path_prefixes.app_name == "default" {
+        crate::server::system_event_writer::record(
+            db_pool.as_ref(),
+            concepts::storage::SystemEventCode::AppNameDefault,
+            None,
+            None,
+            serde_json::json!({"app_name": "default"}),
+        )
+        .await;
+    }
     let span = Span::current();
     let (active_deployment_id, deployment_resolved, persist) = record_startup_failed(
         db_pool.as_ref(),
@@ -2337,6 +2361,8 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 
 #[derive(Clone)]
 pub(crate) struct ServerVerified {
+    app_name: String,
+    app_config_digest: Option<String>,
     launch: ServerVerifiedLaunch,
     allowed_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
@@ -2357,7 +2383,7 @@ pub(crate) struct ServerVerified {
     /// `config_prepass::preflight` can report unregistered secret names before they are
     /// dropped by resolution, and locate its per-entry advisories in `source_path`.
     server_outbound_allowed_hosts: Vec<AllowedHostToml>,
-    /// Path to the server.toml the config was loaded from, if any. Used by the pre-pass to
+    /// Path to the app.toml the policy was loaded from, if any. Used by the pre-pass to
     /// annotate `[[outbound_http.allowed_host]]` advisories with their source line.
     source_path: Option<PathBuf>,
     /// Operator-owned secret registry, resolved before the runtime started. Carried
@@ -2481,7 +2507,7 @@ impl ServerVerified {
         let source_path = config.source_path.clone();
         let (server_hosts, _advisories) =
             resolve_allowed_hosts(config.outbound_http.allowed_hosts, false, &secret_registry)
-                .context("invalid server.toml `[[outbound_http.allowed_host]]` entry")?;
+                .context("invalid app.toml `[[outbound_http.allowed_host]]` entry")?;
         let global_http_config = GlobalHttpConfig::from(server_hosts);
         let (server_policy_hash, server_policy) =
             wasm_workers::http_request_policy::audit_http_policy(global_http_config.entries());
@@ -2513,6 +2539,8 @@ impl ServerVerified {
         let environment_audit = secret_registry.environment_audit();
 
         Ok(Self {
+            app_name: config.app_name.clone(),
+            app_config_digest: config.app_config_digest.clone(),
             launch: ServerVerifiedLaunch {
                 engines,
                 v8_executor,
@@ -3854,20 +3882,44 @@ async fn record_secret_exposure_audits(
     Ok(())
 }
 
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ServerConfigurationAuditV2 {
+    format: ServerConfigurationFormatV2,
+    obelisk_version: String,
+    app_config_digest: Option<String>,
+    environment: serde_json::Value,
+    deployment_security: DeploymentSecurityAuditV2,
+}
+
+#[derive(Serialize, JsonSchema)]
+enum ServerConfigurationFormatV2 {
+    #[serde(rename = "obelisk-server-configuration-v2")]
+    V2,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DeploymentSecurityAuditV2 {
+    exec: serde_json::Value,
+    http: serde_json::Value,
+}
+
 async fn record_server_configuration_audit(
     db_pool: &dyn DbPool,
     server_verified: &ServerVerified,
     maintenance_gc_config: GarbageCollectionTomlConfig,
 ) -> Option<SystemEventId> {
-    let snapshot = serde_json::json!({
-        "format": "obelisk-server-configuration-v1",
-        "obelisk_version": PKG_VERSION,
-        "environment": server_verified.environment_audit,
-        "deployment_security": {
-            "exec": audit_exec_activities(&server_verified.allowed_exec_activities),
-            "http": server_verified.server_http_policy_audit,
+    let snapshot = ServerConfigurationAuditV2 {
+        format: ServerConfigurationFormatV2::V2,
+        obelisk_version: PKG_VERSION.to_owned(),
+        app_config_digest: server_verified.app_config_digest.clone(),
+        environment: server_verified.environment_audit.clone(),
+        deployment_security: DeploymentSecurityAuditV2 {
+            exec: audit_exec_activities(&server_verified.allowed_exec_activities),
+            http: server_verified.server_http_policy_audit.clone(),
         },
-    });
+    };
     let bytes = serde_json::to_vec(&snapshot).expect("server configuration audit must encode");
     let digest = concepts::cas::content_digest(&bytes);
     crate::server::system_event_writer::record_with_cas(
@@ -3877,6 +3929,8 @@ async fn record_server_configuration_audit(
         None,
         serde_json::json!({
             "obelisk_version": PKG_VERSION,
+            "app_name": server_verified.app_name,
+            "app_config_digest": server_verified.app_config_digest,
             "maintenance": {
                 "gc": maintenance_gc_config,
             },
@@ -6777,7 +6831,6 @@ mod tests {
                 AllowedHostToml, MethodsInput, MethodsInputStar, ReplaceIn, ScriptLocationResolved,
             },
             secret_registry::SecretRegistry,
-            server::ServerConfigToml,
         },
     };
     use concepts::{ComponentId, FunctionFqn, prefixed_ulid::DeploymentId};
@@ -6935,7 +6988,7 @@ mod tests {
         use crate::config::deployment::SecretRef;
         use std::io::Write as _;
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write!(file, "[secrets]\nEXISTING = {{ env = \"EXISTING_SRC\" }}\n").unwrap();
+        write!(file, "[secrets]\nEXISTING = {{}}\n").unwrap();
         let path = file.path();
 
         let public_env =
@@ -6954,27 +7007,18 @@ mod tests {
             .unwrap();
 
         let after = std::fs::read_to_string(path).unwrap();
-        assert!(
-            after.contains("EXISTING = { env = \"EXISTING_SRC\" }"),
-            "{after}"
-        );
+        assert!(after.contains("EXISTING = {}"), "{after}");
         assert!(
             after.contains("allowed = [\"PUBLIC_A\", \"PUBLIC_B\"]"),
             "{after}"
         );
         assert!(after.find("SECRET_A").unwrap() < after.find("SECRET_B").unwrap());
-        assert!(
-            after.contains("SECRET_A = { env = \"SECRET_A\" }"),
-            "{after}"
-        );
-        assert!(
-            after.contains("SECRET_B = { env = \"SECRET_B\", optional = true }"),
-            "{after}"
-        );
+        assert!(after.contains("SECRET_A = {}"), "{after}");
+        assert!(after.contains("SECRET_B = { optional = true }"), "{after}");
     }
 
     /// Missing replacements from several components are gathered into one report,
-    /// so the operator can add every allowlist entry to server.toml in a single edit.
+    /// so the operator can add every allowlist entry to app.toml in a single edit.
     #[test]
     fn strict_outbound_http_replacement_error_collects_all_components() {
         let entry = |secret: &str| AllowedHostToml {
@@ -7348,7 +7392,7 @@ mod tests {
         let new: concepts::component_id::SecretExposureDigest =
             "sha256:1111111111111111111111111111111111111111111111111111111111111111".parse()?;
         let server_toml = format!(
-            "[allowed_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ env = \"TOKEN\", exposed_to = {{ worker = \"{old}\" }} }}\n"
+            "[allowed_exec_activities]\nworker = \"{old}\"\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = \"{old}\" }} }}\n"
         );
         tokio::fs::write(&server_config_path, server_toml).await?;
         fix_server_secret_config_digests(
@@ -7362,7 +7406,7 @@ mod tests {
         )
         .await?;
         let fixed = tokio::fs::read_to_string(&server_config_path).await?;
-        let config = toml::from_str::<ServerConfigToml>(&fixed)?;
+        let config = toml::from_str::<crate::config::app::AppConfigToml>(&fixed)?;
         assert_eq!(config.allowed_exec_activities["worker"].iter().count(), 2);
         assert!(config.allowed_exec_activities["worker"].contains(&new));
         assert!(config.secrets["TOKEN"].exposed_to["worker"].contains(&new));

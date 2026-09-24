@@ -26,63 +26,15 @@
 ## If set, the server will fail to start if the binary version doesn't match.
 # obelisk-version = 0.1
 
-## Operator-owned secret registry. Maps a logical secret name to its source and optional
-## plaintext exposure grants. At startup, before the runtime starts, each
-## env-backed secret is read into memory and its source variable is removed from the process
-## environment, so no deployment or worker thread can read it. Deployments reference these
-## names (never the raw env var) in component `exposed_secrets` and
-## `allowed_host.secrets`;
-## they cannot interpolate a registered secret via `${...}`.
-# [secrets]
-# OPENAI_KEY     = { env = "OPENAI_API_KEY" }   # logical name may differ from the source
-# DB_PASSWORD    = { env = "DB_PASSWORD" }
-## `optional = true` lets the source variable be unset; the secret is then absent, and only
-## deployment references marked `optional = true` accept it. An empty value is still present.
-# GITHUB_TOKEN   = { env = "GITHUB_TOKEN", optional = true }
-## Exposed plaintext must be authorized for the component's generated digest.
-## Add `exposed_secrets` to deployment.toml, run
-## `obelisk generate secret-config-digest -d deployment.toml`, then copy the
-## generated `[secrets.<name>.exposed_to]` entry here. Do not use `[public_env]` for credentials.
-# [secrets.DB_PASSWORD.exposed_to]
-# migration = "sha256:..."
-
-## Operator-owned allowlist of process environment variables available to deployments.
-## Variables not listed here cannot be referenced by deployment.toml. Missing allowed
-## variables do not affect server startup; deployment.toml controls whether they are required.
-# [public_env]
-# allowed = ["OBELISK_PUBLIC_REGION"]
-
-## Exec activities run host processes outside the WASM sandbox and are denied by default.
-## Allow reviewed executable and exposed-secret configurations by component name.
-## Values may be one digest or an array for overlapping deployments. Generate entries with
-## `obelisk generate secret-config-digest -d deployment.toml`.
+## Exec activities are off by default. Set `exec_activities = "on"` to allow any
+## app-reviewed exec activity (startup warns), or define a platform allowlist below.
+## Every app.toml allowed_exec_activities entry must be present in this set.
+# exec_activities = "on"
 # [allowed_exec_activities]
-# greet = "sha256:..."
-
-## Global outbound HTTP policy. Component-originated requests must be allowed by both
-## this operator-owned allowlist and the component's deployment.toml `allowed_host` entry.
-## If no `[[outbound_http.allowed_host]]` entries are defined, all component outbound
-## HTTP is denied. To migrate, copy the deployment entries here, then narrow them.
-##
-## Entries use the same fields as deployment.toml:
-## - `pattern` matches scheme, host, and port. HTTPS and its default port are implied.
-## - `methods = "*"` allows all methods; a list restricts them.
-## - `request_url_regex` optionally matches `METHOD URL` without query parameters.
-## - `secrets` names entries from `[secrets]`.
-## - `replace_in` allows each named secret in "headers", "params", and/or "body".
-##
-## A destination must match an entry in both files. A secret placeholder is replaced
-## at a request location only when matching entries in both files list that exact
-## secret and replacement target.
-# [[outbound_http.allowed_host]]
-# pattern = "api.openai.com"
-# methods = ["POST"]
-# request_url_regex = "^POST https://api\\.openai\\.com/v1/"
-# secrets = ["OPENAI_KEY"]
-# replace_in = ["headers"]
+# worker = "sha256:..."
 
 ## SQLite configuration (enabled by default)
-# database.sqlite.directory = "${DATA_DIR}/obelisk-sqlite" # Path to sqlite directory. Supports path prefixes.
+# database.sqlite.directory = "${DATA_DIR}/apps/${APP_NAME}/sqlite" # Named app default; `default` retains the legacy path.
 ## Customize PRAGMA statements.
 ## Defaults are in `crates/db-sqlite/src/sqlite_dao.rs`.
 # database.sqlite.pragma = { "cache_size" = "3000" }

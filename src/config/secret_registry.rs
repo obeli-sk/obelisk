@@ -1,4 +1,4 @@
-//! Operator-owned secret registry built from `server.toml`.
+//! App-owned secret registry built from `app.toml`.
 
 use crate::command::server::RuntimeConfigAvailability;
 use crate::config::env_var::StartupEnvVars;
@@ -73,7 +73,9 @@ impl Serialize for SecretExposureDigests {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SecretConfigToml {
-    /// Read the secret from a process environment variable at startup.
+    /// Internal source override used by older tests; app.toml always uses the secret name.
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) env: String,
     /// Allow `env` to be unset; the secret is then absent and only optional references accept it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -96,7 +98,7 @@ pub(crate) struct PublicEnvToml {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PublicEnvViolation {
     #[error(
-        "environment variable `{0}` is not declared in server.toml `[public_env].allowed`; add it, or remove the deployment reference:\n\n[public_env]\nallowed = [\"{0}\"]"
+        "environment variable `{0}` is not declared in app.toml `[public_env].allowed`; add it, or remove the deployment reference:\n\n[public_env]\nallowed = [\"{0}\"]"
     )]
     Undeclared(String),
     #[error(
@@ -292,6 +294,11 @@ impl SecretRegistry {
                 optional,
                 exposed_to,
             } = config;
+            let env = if env.is_empty() {
+                logical_name.clone()
+            } else {
+                env
+            };
             let present = env_vars.lookup(&env).is_some()
                 || was_legacy_token_wiped.is_some_and(|_| env == API_TOKEN_LEGACY);
             secret_audit.insert(

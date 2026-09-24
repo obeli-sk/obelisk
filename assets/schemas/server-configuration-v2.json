@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerConfigurationAuditV2",
+  "type": "object",
+  "properties": {
+    "format": {
+      "$ref": "#/$defs/ServerConfigurationFormatV2"
+    },
+    "obelisk_version": {
+      "type": "string"
+    },
+    "app_config_digest": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "environment": true,
+    "deployment_security": {
+      "$ref": "#/$defs/DeploymentSecurityAuditV2"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "obelisk_version",
+    "environment",
+    "deployment_security"
+  ],
+  "$defs": {
+    "ServerConfigurationFormatV2": {
+      "type": "string",
+      "enum": [
+        "obelisk-server-configuration-v2"
+      ]
+    },
+    "DeploymentSecurityAuditV2": {
+      "type": "object",
+      "properties": {
+        "exec": true,
+        "http": true
+      },
+      "additionalProperties": false,
+      "required": [
+        "exec",
+        "http"
+      ]
+    }
+  }
+}

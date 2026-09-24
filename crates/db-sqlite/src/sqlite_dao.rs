@@ -5646,6 +5646,26 @@ impl SqlitePool {
 
 #[async_trait]
 impl DbAdmin for SqlitePool {
+    async fn get_or_set_app_name(&self, app_name: &str) -> Result<String, DbErrorWrite> {
+        let app_name = app_name.to_owned();
+        self.transaction(
+            move |tx| {
+                tx.execute(
+                    "INSERT OR IGNORE INTO t_app_identity (singleton, app_name) VALUES (1, ?1)",
+                    [&app_name],
+                )?;
+                tx.query_row(
+                    "SELECT app_name FROM t_app_identity WHERE singleton = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            },
+            TxType::Other,
+            "get_or_set_app_name",
+        )
+        .await
+    }
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.transaction(
             move |tx| {
@@ -6993,11 +7013,22 @@ mod tests {
     use concepts::{
         ComponentId, FunctionFqn, Params,
         prefixed_ulid::{DEPLOYMENT_ID_DUMMY, EXECUTION_ID_DUMMY},
-        storage::{CreateRequest, DbErrorWrite, DbErrorWriteNonRetriable, DbPoolCloseable},
+        storage::{
+            CreateRequest, DbAdmin, DbErrorWrite, DbErrorWriteNonRetriable, DbPoolCloseable,
+        },
     };
     use rusqlite::named_params;
 
     const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("ns:pkg/ifc", "fn");
+
+    #[tokio::test]
+    async fn app_name_is_bound_to_database() -> Result<(), DbErrorWrite> {
+        let (pool, _guard) = sqlite_pool().await;
+        assert_eq!(pool.get_or_set_app_name("first").await?, "first");
+        assert_eq!(pool.get_or_set_app_name("second").await?, "first");
+        pool.close().await;
+        Ok(())
+    }
 
     #[tokio::test]
     async fn failing_ltx_should_be_rolled_back() -> Result<(), DbErrorWrite> {

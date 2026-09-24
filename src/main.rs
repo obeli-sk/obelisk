@@ -25,7 +25,7 @@ use client::ClientStartup;
 use config::config_holder::ConfigHolder;
 use config::env_var::StartupEnvVars;
 use config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
-use config::server::ServerConfigToml;
+use config::server::{ExecActivitiesMode, ServerConfigToml};
 use directories::{BaseDirs, ProjectDirs};
 use std::future::Future;
 use std::path::PathBuf;
@@ -46,6 +46,7 @@ fn main() -> Result<(), anyhow::Error> {
     let future: CommandFuture = match command {
         Subcommand::Server(Server::Run {
             server_config,
+            app_config,
             clean_sqlite_directory,
             clean_cache,
             clean_codegen_cache,
@@ -64,6 +65,7 @@ fn main() -> Result<(), anyhow::Error> {
                 js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
+                app_config,
                 EnvVarSecretsCleanup::Wipe,
                 RuntimeConfigAvailability::Strict,
             )?;
@@ -102,6 +104,7 @@ fn main() -> Result<(), anyhow::Error> {
 
         Subcommand::Server(Server::Verify(VerifyArgs {
             server_config,
+            app_config,
             allow_unavailable_runtime_config,
             clean_cache,
             clean_codegen_cache,
@@ -123,6 +126,7 @@ fn main() -> Result<(), anyhow::Error> {
                 js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
+                app_config,
                 EnvVarSecretsCleanup::Noop,
                 runtime_config_availability,
             )?;
@@ -155,6 +159,7 @@ fn main() -> Result<(), anyhow::Error> {
                 clean_cache,
                 clean_codegen_cache,
                 server_config,
+                app_config,
                 deployment,
                 allow_unavailable_runtime_config,
                 suppress_type_checking_errors,
@@ -173,6 +178,7 @@ fn main() -> Result<(), anyhow::Error> {
                 js_runtime,
             } = prepare_server_startup(
                 server_config.clone(),
+                app_config,
                 EnvVarSecretsCleanup::Noop,
                 runtime_config_availability,
             )?;
@@ -255,6 +261,7 @@ struct ServerStartup {
 /// before the runtime starts.
 fn prepare_server_startup(
     server_config: Option<PathBuf>,
+    app_config: Option<PathBuf>,
     env_var_cleanup: EnvVarSecretsCleanup,
     runtime_config_availability: RuntimeConfigAvailability,
 ) -> anyhow::Result<ServerStartup> {
@@ -264,7 +271,8 @@ fn prepare_server_startup(
             runtime_config_availability,
         );
     }
-    let config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?;
+    let mut config_holder = ConfigHolder::new(project_dirs(), BaseDirs::new(), server_config)?
+        .with_app_source(app_config)?;
     // backcompat: 0.41 exposed OBELISK__API__TOKEN as api.token; remove after 0.43.
     let legacy_env = std::env::var(API_TOKEN_LEGACY).ok();
     if legacy_env.is_some() {
@@ -273,6 +281,15 @@ fn prepare_server_startup(
         unsafe { std::env::remove_var(API_TOKEN_LEGACY) };
     }
     let mut config = config_holder.load_config()?;
+    let mut app = config_holder.load_app_config()?;
+    config_holder.path_prefixes.app_name = app.effective_name()?;
+    let app_config_digest = app.digest()?;
+    tracing::info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
+    if config_holder.path_prefixes.app_name == "default" {
+        eprintln!(
+            "warning: app_name is `default`; named apps get separate default SQLite databases"
+        );
+    }
     let env_vars = StartupEnvVars::capture();
     let js_runtime = if env_vars
         .lookup("OBELISK_UNSTABLE_V8")
@@ -284,6 +301,41 @@ fn prepare_server_startup(
         crate::command::server::JsRuntimeMode::BoaWasm
     };
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
+    app.resolve_env_vars(&env_vars)?;
+    anyhow::ensure!(
+        config.exec_activities != ExecActivitiesMode::On
+            || config.allowed_exec_activities.is_empty(),
+        "server.toml cannot combine `exec_activities = \"on\"` with `[allowed_exec_activities]`"
+    );
+    match config.exec_activities {
+        ExecActivitiesMode::Off if config.allowed_exec_activities.is_empty() => {
+            anyhow::ensure!(
+                app.allowed_exec_activities.is_empty(),
+                "app.toml allows exec activities, but server.toml has exec activities off"
+            );
+        }
+        ExecActivitiesMode::Off => {
+            for (name, digests) in &app.allowed_exec_activities {
+                let server_digests = config.allowed_exec_activities.get(name);
+                anyhow::ensure!(
+                    digests.iter().all(
+                        |digest| server_digests.is_some_and(|allowed| allowed.contains(digest))
+                    ),
+                    "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
+                );
+            }
+        }
+        ExecActivitiesMode::On => eprintln!(
+            "server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
+        ),
+    }
+    config.secrets = app.secrets;
+    config.public_env = app.public_env;
+    config.allowed_exec_activities = app.allowed_exec_activities;
+    config.outbound_http = app.outbound_http;
+    config.source_path = config_holder.app_source.clone();
+    config.app_name = config_holder.path_prefixes.app_name.clone();
+    config.app_config_digest = Some(app_config_digest);
 
     let legacy_api_token = legacy_env.filter(|token| !token.is_empty()).map(|token| {
         eprintln!(

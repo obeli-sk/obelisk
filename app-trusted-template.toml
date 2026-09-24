@@ -1,0 +1,5 @@
+# TRUSTED: single-party app policy. Review before using with untrusted deployments.
+
+[[outbound_http.allowed_host]]
+pattern = "*://*:*"
+methods = "*"

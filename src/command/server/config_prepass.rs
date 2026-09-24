@@ -35,7 +35,7 @@ impl fmt::Display for MissingRuntimeConfigError {
         let mut findings = Vec::new();
         if !self.public_env.is_empty() {
             findings.push(format!(
-                "environment variable(s) `{}` not declared in server.toml `[public_env].allowed`",
+                "environment variable(s) `{}` not declared in app.toml `[public_env].allowed`",
                 self.public_env
                     .iter()
                     .cloned()
@@ -45,7 +45,7 @@ impl fmt::Display for MissingRuntimeConfigError {
         }
         if !self.secrets.is_empty() {
             findings.push(format!(
-                "secret(s) `{}` not registered in server.toml `[secrets]`",
+                "secret(s) `{}` not registered in app.toml `[secrets]`",
                 self.secrets
                     .iter()
                     .cloned()
@@ -61,7 +61,7 @@ impl fmt::Display for MissingRuntimeConfigError {
             )?;
             write!(
                 formatter,
-                ". Add them to server.toml, or remove the references:\n\n{}",
+                ". Add them to app.toml, or remove the references:\n\n{}",
                 self.scaffold_snippet()
             )?;
         }
@@ -71,7 +71,7 @@ impl fmt::Display for MissingRuntimeConfigError {
             }
             write!(
                 formatter,
-                "configuration requires optional secret(s) `{}` whose server.toml `[secrets]` \
+                "configuration requires optional secret(s) `{}` whose app.toml `[secrets]` \
                  environment variables are unset. Set them and restart the server, or mark every \
                  reference to them in the component `optional = true`",
                 self.unset_secrets
@@ -282,7 +282,7 @@ impl LocatedWarnings {
         }
         if !unencrypted_secret_warnings.is_empty() {
             warn!(
-                "Effective server.toml outbound HTTP allowlist permits secrets for potentially \
+                "Effective app.toml outbound HTTP allowlist permits secrets for potentially \
                  unencrypted hosts:\n- {}",
                 unencrypted_secret_warnings.join("\n- ")
             );
@@ -290,7 +290,7 @@ impl LocatedWarnings {
     }
 }
 
-/// Run the outbound-HTTP allowlist pre-pass over the server config and, when present, the
+/// Run the outbound-HTTP allowlist pre-pass over the app config and, when present, the
 /// deployment. Fatal categories bail under strict availability, warn when unavailable runtime
 /// config is allowed (activation re-checks strictly).
 pub(super) fn preflight(
@@ -548,7 +548,7 @@ pub(super) fn collect_deployment_secrets(
     }
 }
 
-/// Record every secret the server.toml `[[outbound_http.allowed_host]]` `entries` reference.
+/// Record every secret the app.toml `[[outbound_http.allowed_host]]` `entries` reference.
 pub(super) fn collect_server_allowed_host_secrets(
     entries: &[AllowedHostToml],
     secret_registry: &SecretRegistry,
@@ -587,7 +587,7 @@ fn runtime_config_scaffold_snippet(
 
 fn secret_scaffold(name: &str, optional: bool) -> toml_edit::InlineTable {
     let mut inline = toml_edit::InlineTable::new();
-    inline.insert("env", name.into());
+    let _ = name;
     if optional {
         inline.insert("optional", true.into());
     }
@@ -750,10 +750,10 @@ pub(super) fn report_missing_outbound_http_secret_replacements(
         }
     }
     let message = format!(
-        "the deployment requests {count} outbound HTTP secret replacement(s) that no server.toml \
+        "the deployment requests {count} outbound HTTP secret replacement(s) that no app.toml \
          `[[outbound_http.allowed_host]]` entry authorizes:\n\
          {details}\n\
-         After review, add these allowlist entries to server.toml:\n\n\
+         After review, add these allowlist entries to app.toml:\n\n\
          {server}\n\
          The corresponding deployment.toml entries are:\n\n\
          {deployment}",
@@ -863,10 +863,10 @@ pub(super) fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboun
     }
     warn!(
         "{count} outbound HTTP destination(s) the deployment allows are not covered by any \
-         server.toml `[[outbound_http.allowed_host]]` allowlist entry; requests to them will be \
+         app.toml `[[outbound_http.allowed_host]]` allowlist entry; requests to them will be \
          denied at runtime:\n\
          {details}\n\
-         After review, add these allowlist entries to server.toml:\n\n\
+         After review, add these allowlist entries to app.toml:\n\n\
          {snippets}",
         count = uncovered.len(),
         snippets = snippets.join("\n"),
@@ -885,10 +885,10 @@ pub(super) async fn fix_server_runtime_config_scaffolds(
     }
     let source = tokio::fs::read_to_string(server_config_path)
         .await
-        .with_context(|| format!("cannot read server config {server_config_path:?}"))?;
+        .with_context(|| format!("cannot read app config {server_config_path:?}"))?;
     let mut doc = source
         .parse::<DocumentMut>()
-        .context("cannot parse server config as TOML")?;
+        .context("cannot parse app config as TOML")?;
 
     if !public_env.is_empty() {
         let allowed = doc
@@ -896,11 +896,11 @@ pub(super) async fn fix_server_runtime_config_scaffolds(
             .entry("public_env")
             .or_insert_with(|| Item::Table(Table::new()))
             .as_table_mut()
-            .context("`public_env` in server config is not a table")?
+            .context("`public_env` in app config is not a table")?
             .entry("allowed")
             .or_insert_with(|| value(toml_edit::Array::new()))
             .as_array_mut()
-            .context("`public_env.allowed` in server config is not an array")?;
+            .context("`public_env.allowed` in app config is not an array")?;
         for name in public_env {
             if !allowed.iter().any(|item| item.as_str() == Some(name)) {
                 allowed.push(name.as_str());
@@ -914,7 +914,7 @@ pub(super) async fn fix_server_runtime_config_scaffolds(
             .entry("secrets")
             .or_insert_with(|| Item::Table(Table::new()))
             .as_table_mut()
-            .context("`secrets` in server config is not a table")?;
+            .context("`secrets` in app config is not a table")?;
         for (name, all_optional) in &secrets.unregistered {
             if !table.contains_key(name) {
                 table.insert(name, value(secret_scaffold(name, *all_optional)));
@@ -924,7 +924,7 @@ pub(super) async fn fix_server_runtime_config_scaffolds(
 
     tokio::fs::write(server_config_path, doc.to_string())
         .await
-        .with_context(|| format!("cannot write fixed server config {server_config_path:?}"))?;
+        .with_context(|| format!("cannot write fixed app config {server_config_path:?}"))?;
     Ok(())
 }
 
@@ -1023,7 +1023,7 @@ mod tests {
             replace_in: Vec::new(),
         };
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("server.toml");
+        let path = dir.path().join("app.toml");
         // Write the block from the same entry so its fingerprint matches on both sides.
         std::fs::write(
             &path,
@@ -1041,6 +1041,6 @@ mod tests {
         let (message, locations) = warnings.by_message.iter().next().expect("one advisory");
         assert!(message.contains("has no `methods`"), "{message}");
         let location = locations.iter().next().expect("one location");
-        assert!(location.ends_with("server.toml:2"), "{location}");
+        assert!(location.ends_with("app.toml:2"), "{location}");
     }
 }

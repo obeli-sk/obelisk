@@ -1,6 +1,7 @@
 use concepts::ContentDigest;
 use std::path::{Path, PathBuf};
 
+pub(crate) mod app;
 pub(crate) mod config_holder;
 pub(crate) mod deployment;
 pub(crate) mod env_var;

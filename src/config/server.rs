@@ -32,6 +32,12 @@ use std::time::Duration;
 pub(crate) struct ServerConfigToml {
     #[serde(skip)]
     #[schemars(skip)]
+    pub(crate) app_name: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) app_config_digest: Option<String>,
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) source_path: Option<PathBuf>,
     #[cfg(feature = "tokio-console")]
     #[serde(skip)]
@@ -45,10 +51,12 @@ pub(crate) struct ServerConfigToml {
     /// the tokio runtime starts. Deployments reference these names in
     /// component `exposed_secrets` and
     /// `allowed_host[].secrets`; they cannot interpolate them.
-    #[serde(default)]
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) secrets: SecretsToml,
     /// Operator-owned allowlist of process environment variables that deployments may read.
-    #[serde(default)]
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) public_env: PublicEnvToml,
     /// Permit deployments to run host processes through `activity_exec`, keyed by
     /// component name and the accepted secret exposure digest set.
@@ -56,8 +64,11 @@ pub(crate) struct ServerConfigToml {
     pub(crate) allowed_exec_activities: AllowExecActivities,
     /// Operator-owned allowlist for component-originated HTTP requests.
     /// An empty allowlist denies every outbound request.
-    #[serde(default)]
+    #[serde(skip)]
+    #[schemars(skip)]
     pub(crate) outbound_http: OutboundHttpToml,
+    #[serde(default)]
+    pub(crate) exec_activities: ExecActivitiesMode,
     #[serde(default)]
     pub(crate) limits: LimitsToml,
     #[serde(default)]
@@ -140,12 +151,6 @@ impl ServerConfigToml {
         }
         if let Some(directory) = &mut self.wasm_global_config.codegen_cache.directory {
             *directory = path_prefixes.resolve_server_path(directory, env_vars)?;
-        }
-        for allowed_host in &mut self.outbound_http.allowed_hosts {
-            allowed_host.pattern = interpolate_startup_env_vars(&allowed_host.pattern, env_vars)?;
-            if let Some(regex) = &mut allowed_host.request_url_regex {
-                *regex = interpolate_startup_env_vars(regex, env_vars)?;
-            }
         }
         Ok(())
     }
@@ -450,7 +455,7 @@ const fn default_max_transport_message_size_bytes() -> u64 {
     crate::api::DEFAULT_MAX_TRANSPORT_MESSAGE_SIZE_BYTES as u64
 }
 
-#[derive(Debug, Default, Deserialize, JsonSchema, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OutboundHttpToml {
     /// Global outbound HTTP entries use the same grammar as deployment
@@ -472,6 +477,14 @@ impl Default for MaxDeploymentFileBytes {
 
 /// Exec activity policy: component name -> reviewed secret exposure digests.
 pub(crate) type AllowExecActivities = BTreeMap<String, SecretExposureDigests>;
+
+#[derive(Debug, Default, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExecActivitiesMode {
+    #[default]
+    Off,
+    On,
+}
 
 pub(crate) fn audit_exec_activities(entries: &AllowExecActivities) -> serde_json::Value {
     serde_json::json!({
@@ -631,13 +644,19 @@ impl SqliteConfigToml {
         path_prefixes: &PathPrefixes,
         secret_registry: &SecretRegistry,
     ) -> Result<PathBuf, anyhow::Error> {
-        let sqlite_file = self.directory.as_deref().unwrap_or_else(|| {
+        // backcompat: 0.41 used one SQLite directory for unnamed apps.
+        let default_dir = if path_prefixes.app_name == "default" {
             if path_prefixes.project_dirs.is_some() {
-                DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS
+                DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS.to_owned()
             } else {
-                DEFAULT_SQLITE_DIR
+                DEFAULT_SQLITE_DIR.to_owned()
             }
-        });
+        } else if path_prefixes.project_dirs.is_some() {
+            format!("${{DATA_DIR}}/apps/{}/sqlite", path_prefixes.app_name)
+        } else {
+            format!("apps/{}/sqlite", path_prefixes.app_name)
+        };
+        let sqlite_file = self.directory.as_deref().unwrap_or(&default_dir);
         path_prefixes
             .server_config_replace_path_prefix_mkdir(sqlite_file, secret_registry)
             .await
@@ -1474,11 +1493,11 @@ mod tests {
         use super::*;
 
         #[test]
-        fn server_allowlist_uses_deployment_allowed_host_shape() {
-            let config: ServerConfigToml = toml::from_str(
+        fn app_allowlist_uses_deployment_allowed_host_shape() {
+            let config: crate::config::app::AppConfigToml = toml::from_str(
                 r#"
                 [secrets]
-                API_KEY = { env = "API_KEY_SOURCE" }
+                API_KEY = {}
 
                 [[outbound_http.allowed_host]]
                 pattern = "api.example.com"
@@ -1501,8 +1520,8 @@ mod tests {
         }
 
         #[test]
-        fn omitted_server_allowlist_is_empty() {
-            let config: ServerConfigToml = toml::from_str("").unwrap();
+        fn omitted_app_allowlist_is_empty() {
+            let config: crate::config::app::AppConfigToml = toml::from_str("").unwrap();
             assert!(config.outbound_http.allowed_hosts.is_empty());
         }
     }

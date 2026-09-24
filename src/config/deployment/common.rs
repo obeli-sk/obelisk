@@ -292,7 +292,7 @@ fn serialize_star<S: serde::Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error>
     s.serialize_str("*")
 }
 
-/// A reference to a secret registered in server.toml `[secrets]`.
+/// A reference to a secret registered in app.toml `[secrets]`.
 /// Either `"NAME"` (required) or `{ name = "NAME", optional = true }`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
 #[serde(from = "SecretRefToml", into = "SecretRefToml")]
@@ -395,7 +395,7 @@ pub struct AllowedHostToml {
     /// Env var values are interpreted as regex syntax; use regex-escaped values when precision matters.
     /// Omit to allow all paths accepted by the host and method restrictions.
     pub request_url_regex: Option<String>,
-    /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
+    /// Registered secret names (from the app-owned `app.toml` `[secrets]`
     /// table) to make available for placeholder injection into requests to this host.
     /// Each name is exposed to the guest as an env var holding a random placeholder,
     /// swapped for the real value in `replace_in` locations before the request leaves.

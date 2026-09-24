@@ -3017,7 +3017,7 @@ pub struct ActivityExecComponentConfigResolved {
     pub logs_store_min_level: LogLevelToml,
     pub env_vars: Vec<EnvVarConfig>,
     pub max_output_bytes: u64,
-    /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
+    /// Registered secret names (from the app-owned `app.toml` `[secrets]`
     /// table) to expose to the script in the stdin JSON `secrets` object.
     pub exposed_secrets: Vec<SecretRef>,
     pub params_via_stdin: bool,
