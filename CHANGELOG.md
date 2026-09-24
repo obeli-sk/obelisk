@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- *(cli)* **Breaking:** renamed `obelisk deployment get` to `obelisk deployment pull`.
+
 - *(server)* **Breaking:** `[wasm].global_executor_instance_limiter` and
   `[wasm].global_webhook_instance_limiter` are replaced by a table of per-workload, per-runtime
   cells under `[limits]`: `[limits.activities.{wasm,v8,process,vm_bochs}]`,

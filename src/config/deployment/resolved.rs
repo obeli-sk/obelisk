@@ -1917,7 +1917,7 @@ async fn resolve_function_interface(
 /// Reject deployments where two deployment-owned source files (inline/owned scripts and
 /// recreated workflow/webhook backtrace sources) would be written to the same `file_name`
 /// with differing content. Such a deployment hashes and runs fine, but could never be
-/// retrieved with `deployment get`, which writes every owned source to disk at its
+/// retrieved with `deployment pull`, which writes every owned source to disk at its
 /// `file_name` and refuses to clobber. Identical re-uses of a name are allowed (they dedupe
 /// to a single file). This surfaces the failure at submit time rather than on a later round-trip.
 pub(crate) fn validate_owned_source_file_names(
@@ -1925,7 +1925,7 @@ pub(crate) fn validate_owned_source_file_names(
 ) -> anyhow::Result<()> {
     // Compare by content digest: scripts carry inline content (hashed here), backtrace
     // sources already carry their CAS digest. Differing digests at the same `file_name` are
-    // the collision `deployment get` cannot round-trip.
+    // the collision `deployment pull` cannot round-trip.
     fn digest_of(content: &str) -> ContentDigest {
         ContentDigest(Digest(Sha256::digest(content.as_bytes()).into()))
     }
@@ -1939,7 +1939,7 @@ pub(crate) fn validate_owned_source_file_names(
                 existing == *digest,
                 "two deployment-owned source files would be written to `{file_name}`; rename \
                  one of the colliding scripts or backtrace sources so the deployment can be \
-                 retrieved with `deployment get`"
+                 retrieved with `deployment pull`"
             );
         }
         Ok(())

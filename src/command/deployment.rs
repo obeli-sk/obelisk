@@ -154,7 +154,7 @@ impl args::Deployment {
                 let deployment_toml = dep.deployment_toml;
 
                 if let Some(file) = file {
-                    // Normalize the requested path the same way `get` writes it, so a
+                    // Normalize the requested path the same way `pull` writes it, so a
                     // `./scripts/x` or `scripts//x` still matches the stored ref path.
                     let rel = sanitize_deployment_relative_path(&file)
                         .with_context(|| format!("invalid source path `{file}`"))?;
@@ -178,7 +178,7 @@ impl args::Deployment {
                 Ok(())
             }
 
-            args::Deployment::Get {
+            args::Deployment::Pull {
                 id,
                 output,
                 force,
