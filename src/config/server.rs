@@ -483,24 +483,46 @@ pub(crate) enum PlatformExecActivities {
 
 impl<'de> Deserialize<'de> for PlatformExecActivities {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Input {
-            Bool(bool),
-            Wildcard(String),
-            Allowlist(AllowExecActivities),
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = PlatformExecActivities;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("false, \"*\", or a component/digest allowlist")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                if value {
+                    Err(E::custom("use `\"*\"` to allow all exec activities"))
+                } else {
+                    Ok(PlatformExecActivities::Disabled)
+                }
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                if value == "*" {
+                    Ok(PlatformExecActivities::All)
+                } else {
+                    Err(E::custom(format!(
+                        "invalid exec allowance `{value}`; expected `\"*\"`"
+                    )))
+                }
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut entries = AllowExecActivities::new();
+                while let Some((name, digests)) = map.next_entry()? {
+                    entries.insert(name, digests);
+                }
+                Ok(PlatformExecActivities::Allowlist(entries))
+            }
         }
-        match Input::deserialize(deserializer)? {
-            Input::Bool(false) => Ok(Self::Disabled),
-            Input::Wildcard(value) if value == "*" => Ok(Self::All),
-            Input::Allowlist(entries) => Ok(Self::Allowlist(entries)),
-            Input::Bool(true) => Err(serde::de::Error::custom(
-                "use `\"*\"` to allow all exec activities",
-            )),
-            Input::Wildcard(value) => Err(serde::de::Error::custom(format!(
-                "invalid exec allowance `{value}`; expected `\"*\"`"
-            ))),
-        }
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 
@@ -1595,6 +1617,19 @@ mod tests {
             assert!(
                 matches!(reviewed.platform_exec_activities, PlatformExecActivities::Allowlist(ref entries) if entries.contains_key("worker"))
             );
+            let next_digest = DIGEST.replace("ab", "cd");
+            let allowlist_toml =
+                format!("[allowed_exec_activities]\nworker = ['{DIGEST}', '{next_digest}']");
+            let reviewed: ServerConfigToml = toml::from_str(&allowlist_toml).unwrap();
+            assert!(
+                matches!(reviewed.platform_exec_activities, PlatformExecActivities::Allowlist(ref entries) if entries["worker"].iter().count() == 2)
+            );
+            let app_toml = format!(
+                "{allowlist_toml}\n[secrets]\nTOKEN = {{ exposed_to = {{ worker = ['{DIGEST}', '{next_digest}'] }} }}"
+            );
+            let app: crate::config::app::AppConfigToml = toml::from_str(&app_toml).unwrap();
+            assert_eq!(app.allowed_exec_activities["worker"].iter().count(), 2);
+            assert_eq!(app.secrets["TOKEN"].exposed_to["worker"].iter().count(), 2);
             assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = true").is_err());
             assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = 'all'").is_err());
         }

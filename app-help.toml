@@ -15,7 +15,7 @@
 # [public_env]
 # allowed = ["REGION"]
 
-## App-reviewed exec components. The platform must also enable or allow them.
+## App-reviewed exec components. Use a digest array during migrations; the platform must cover each digest.
 # [allowed_exec_activities]
 # worker = "sha256:..."
 

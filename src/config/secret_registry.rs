@@ -52,25 +52,40 @@ impl SecretExposureDigests {
 
 impl<'de> Deserialize<'de> for SecretExposureDigests {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum OneOrMany {
-            One(SecretExposureDigest),
-            Many(Vec<SecretExposureDigest>),
-        }
-        let values = match OneOrMany::deserialize(deserializer)? {
-            OneOrMany::One(value) => vec![value],
-            OneOrMany::Many(values) => values,
-        };
-        let mut seen = HashSet::new();
-        for value in &values {
-            if !seen.insert(value.clone()) {
-                return Err(serde::de::Error::custom(format!(
-                    "duplicate secret exposure digest `{value}`"
-                )));
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SecretExposureDigests;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a secret exposure digest or an array of digests")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(SecretExposureDigests(vec![
+                    value.parse().map_err(E::custom)?,
+                ]))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut values = Vec::new();
+                let mut seen = HashSet::new();
+                while let Some(value) = sequence.next_element::<SecretExposureDigest>()? {
+                    if !seen.insert(value.clone()) {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate secret exposure digest `{value}`"
+                        )));
+                    }
+                    values.push(value);
+                }
+                Ok(SecretExposureDigests(values))
             }
         }
-        Ok(Self(values))
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 

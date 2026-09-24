@@ -29,7 +29,7 @@
 ## Exec activities are off by default, equivalent to `allowed_exec_activities = false`.
 ## Set `allowed_exec_activities = "*"` to allow any app-reviewed exec activity
 ## (startup warns), or define a platform component/digest allowlist below.
-## Every app.toml allowed_exec_activities entry must be present in this set.
+## Every app.toml allowed_exec_activities digest must be present here; arrays support migrations.
 # allowed_exec_activities = "*"
 # [allowed_exec_activities]
 # worker = "sha256:..."
