@@ -1492,7 +1492,7 @@ mod tests {
 
             let entry = &config.outbound_http.allowed_hosts[0];
             assert_eq!(entry.pattern, "api.example.com");
-            assert_eq!(entry.secrets, ["API_KEY"]);
+            assert_eq!(entry.secrets, ["API_KEY".into()]);
             assert!(matches!(
                 entry.methods,
                 Some(MethodsInput::List(ref methods)) if methods.as_slice() == ["POST"]

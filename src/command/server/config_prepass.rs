@@ -5,7 +5,7 @@
 
 use super::RuntimeConfigAvailability;
 use crate::config::deployment::{
-    AllowedHostToml, ConfigName, DeploymentResolved, MethodsInput, ReplaceIn,
+    AllowedHostToml, ConfigName, DeploymentResolved, MethodsInput, ReplaceIn, SecretRef,
     allowed_host_fingerprint, resolve_allowed_hosts,
 };
 use crate::config::env_var::collect_env_var_references;
@@ -24,6 +24,10 @@ use wasm_workers::http_request_policy::{GlobalHttpConfig, ReplacementLocation};
 pub(crate) struct MissingRuntimeConfigError {
     pub(crate) public_env: BTreeSet<String>,
     pub(crate) secrets: BTreeSet<String>,
+    /// Subset of `secrets` whose every reference is optional, scaffolded as `optional = true`.
+    pub(crate) optional_secrets: BTreeSet<String>,
+    /// Registered as optional and unset at startup, yet referenced as required.
+    pub(crate) unset_secrets: BTreeSet<String>,
 }
 
 impl fmt::Display for MissingRuntimeConfigError {
@@ -49,28 +53,101 @@ impl fmt::Display for MissingRuntimeConfigError {
                     .join("`, `")
             ));
         }
-        write!(
-            formatter,
-            "configuration references {}",
-            findings.join(" and ")
-        )?;
-        write!(
-            formatter,
-            ". Add them to server.toml, or remove the references:\n\n{}",
-            self.scaffold_snippet()
-        )
+        if !findings.is_empty() {
+            write!(
+                formatter,
+                "configuration references {}",
+                findings.join(" and ")
+            )?;
+            write!(
+                formatter,
+                ". Add them to server.toml, or remove the references:\n\n{}",
+                self.scaffold_snippet()
+            )?;
+        }
+        if !self.unset_secrets.is_empty() {
+            if !findings.is_empty() {
+                writeln!(formatter)?;
+            }
+            write!(
+                formatter,
+                "configuration requires optional secret(s) `{}` whose server.toml `[secrets]` \
+                 environment variables are unset. Set them and restart the server, or mark every \
+                 reference to them in the component `optional = true`",
+                self.unset_secrets
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("`, `")
+            )?;
+        }
+        Ok(())
     }
 }
 
 impl std::error::Error for MissingRuntimeConfigError {}
 
 impl MissingRuntimeConfigError {
+    fn new(public_env: &BTreeSet<String>, secrets: &SecretFindings) -> Self {
+        Self {
+            public_env: public_env.clone(),
+            secrets: secrets.unregistered.keys().cloned().collect(),
+            optional_secrets: secrets.unregistered_optional().cloned().collect(),
+            unset_secrets: secrets.unset.clone(),
+        }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
-        self.public_env.is_empty() && self.secrets.is_empty()
+        self.public_env.is_empty() && self.secrets.is_empty() && self.unset_secrets.is_empty()
     }
 
     pub(crate) fn scaffold_snippet(&self) -> String {
-        runtime_config_scaffold_snippet(&self.public_env, &self.secrets)
+        runtime_config_scaffold_snippet(&self.public_env, &self.secrets, &self.optional_secrets)
+    }
+}
+
+/// Secret references the server cannot satisfy, collected across the server and deployment.
+#[derive(Debug, Default)]
+pub(crate) struct SecretFindings {
+    /// Unregistered secret name -> whether every reference to it is optional.
+    pub(crate) unregistered: BTreeMap<String, bool>,
+    /// Registered as optional and unset at startup, yet referenced as required.
+    pub(crate) unset: BTreeSet<String>,
+}
+
+impl SecretFindings {
+    /// Record a component reference: it must be registered, and present unless optional.
+    pub(crate) fn record(&mut self, secret: &SecretRef, secret_registry: &SecretRegistry) {
+        if !secret_registry.is_registered(&secret.name) {
+            self.record_unregistered(secret);
+        } else if !secret.optional && secret_registry.is_absent(&secret.name) {
+            self.unset.insert(secret.name.clone());
+        }
+    }
+
+    /// Record a server allowlist reference, which only authorizes and so needs no value.
+    fn record_registration(&mut self, secret: &SecretRef, secret_registry: &SecretRegistry) {
+        if !secret_registry.is_registered(&secret.name) {
+            self.record_unregistered(secret);
+        }
+    }
+
+    fn record_unregistered(&mut self, secret: &SecretRef) {
+        let all_optional = self.unregistered.entry(secret.name.clone()).or_insert(true);
+        *all_optional &= secret.optional;
+    }
+
+    fn unregistered_optional(&self) -> impl Iterator<Item = &String> {
+        self.unregistered
+            .iter()
+            .filter_map(|(name, all_optional)| all_optional.then_some(name))
+    }
+
+    pub(crate) fn extend(&mut self, other: SecretFindings) {
+        for (name, all_optional) in other.unregistered {
+            *self.unregistered.entry(name).or_insert(true) &= all_optional;
+        }
+        self.unset.extend(other.unset);
     }
 }
 
@@ -243,17 +320,17 @@ pub(super) fn preflight(
     );
 
     // The server's own unregistered secrets are always fatal; the deployment's follow availability.
-    let mut server_unregistered = BTreeSet::new();
-    collect_unregistered_allowed_host_secrets(
+    let mut server_secrets = SecretFindings::default();
+    collect_server_allowed_host_secrets(
         &server_verified.server_outbound_allowed_hosts,
         secret_registry,
-        &mut server_unregistered,
+        &mut server_secrets,
     );
 
     let server_replacements = global_secret_replacements(global_http_config);
     let mut missing_replacements = Vec::new();
     let mut uncovered_hosts = Vec::new();
-    let mut unregistered = BTreeSet::new();
+    let mut secrets = SecretFindings::default();
     let mut undeclared_public_env = BTreeSet::new();
     collect_unregistered_public_env_from_allowed_hosts(
         &server_verified.server_outbound_allowed_hosts,
@@ -285,7 +362,6 @@ pub(super) fn preflight(
                 ignore_missing_env_vars,
                 &mut uncovered_hosts,
             );
-            collect_unregistered_allowed_host_secrets(hosts, secret_registry, &mut unregistered);
         };
         for activity in &deployment.activities_wasm {
             check(
@@ -310,22 +386,15 @@ pub(super) fn preflight(
         for webhook in &deployment.webhooks_js {
             check("webhook_endpoint_js", &webhook.name, &webhook.allowed_hosts);
         }
-        // Exec activities reference secrets directly (exposed on stdin), not via `allowed_host`.
-        for exec in &deployment.activities_exec {
-            for name in &exec.exposed_secrets {
-                if secret_registry.secret_lookup(name).is_none() {
-                    unregistered.insert(name.clone());
-                }
-            }
-        }
+        collect_deployment_secrets(deployment, secret_registry, &mut secrets);
     }
 
     // Emit informational warnings before any fatal report, so every finding is seen.
     warnings.emit();
     report_uncovered_outbound_http_hosts(&uncovered_hosts);
 
-    unregistered.extend(server_unregistered);
-    report_missing_runtime_config(&undeclared_public_env, &unregistered, availability)?;
+    secrets.extend(server_secrets);
+    report_missing_runtime_config(&undeclared_public_env, &secrets, availability)?;
     report_missing_outbound_http_secret_replacements(&missing_replacements, availability)?;
     Ok(())
 }
@@ -402,21 +471,21 @@ pub(super) fn preflight_runtime_config(
     availability: RuntimeConfigAvailability,
 ) -> Result<(), MissingRuntimeConfigError> {
     let mut public_env = BTreeSet::new();
-    let mut secrets = BTreeSet::new();
+    let mut secrets = SecretFindings::default();
     collect_unregistered_public_env_from_allowed_hosts(
         server_allowed_hosts,
         secret_registry,
         &mut public_env,
     );
-    collect_unregistered_allowed_host_secrets(server_allowed_hosts, secret_registry, &mut secrets);
+    collect_server_allowed_host_secrets(server_allowed_hosts, secret_registry, &mut secrets);
     if let Some(deployment) = deployment {
         collect_deployment_unregistered_public_env(deployment, secret_registry, &mut public_env);
-        collect_deployment_unregistered_secrets(deployment, secret_registry, &mut secrets);
+        collect_deployment_secrets(deployment, secret_registry, &mut secrets);
     }
     report_missing_runtime_config(&public_env, &secrets, availability)
 }
 
-/// Every component's outbound HTTP `allowed_hosts`; used by `collect_deployment_unregistered_secrets`.
+/// Every component's outbound HTTP `allowed_hosts`; used by `collect_deployment_secrets`.
 pub(super) fn deployment_allowed_host_lists(
     deployment: &DeploymentResolved,
 ) -> Vec<&[AllowedHostToml]> {
@@ -429,80 +498,71 @@ pub(super) fn deployment_allowed_host_lists(
     lists
 }
 
-/// Append every unregistered secret a deployment references onto `unregistered`: both
-/// `allowed_host` entries and exec-activity `secrets`. Keeps `--fix` in sync with `preflight`.
-pub(super) fn collect_deployment_unregistered_secrets(
+/// Record every secret a deployment references, through `allowed_host` entries and
+/// `exposed_secrets`. Keeps `--fix` in sync with `preflight`.
+pub(super) fn collect_deployment_secrets(
     deployment: &DeploymentResolved,
     secret_registry: &SecretRegistry,
-    unregistered: &mut BTreeSet<String>,
+    findings: &mut SecretFindings,
 ) {
-    for hosts in deployment_allowed_host_lists(deployment) {
-        collect_unregistered_allowed_host_secrets(hosts, secret_registry, unregistered);
-    }
-    for exec in &deployment.activities_exec {
-        for name in &exec.exposed_secrets {
-            if secret_registry.secret_lookup(name).is_none() {
-                unregistered.insert(name.clone());
-            }
-        }
-    }
-    for vm in &deployment.activities_vm {
-        for name in &vm.exposed_secrets {
-            if secret_registry.secret_lookup(name).is_none() {
-                unregistered.insert(name.clone());
-            }
-        }
-    }
-    for names in deployment
+    let host_secrets = deployment_allowed_host_lists(deployment)
+        .into_iter()
+        .flatten()
+        .flat_map(|entry| &entry.secrets);
+    let exposed_secrets = deployment
         .activities_wasm
         .iter()
-        .map(|component| &component.exposed_secrets)
+        .flat_map(|component| &component.exposed_secrets)
         .chain(
             deployment
                 .activities_js
                 .iter()
-                .map(|component| &component.exposed_secrets),
+                .flat_map(|component| &component.exposed_secrets),
+        )
+        .chain(
+            deployment
+                .activities_exec
+                .iter()
+                .flat_map(|component| &component.exposed_secrets),
+        )
+        .chain(
+            deployment
+                .activities_vm
+                .iter()
+                .flat_map(|component| &component.exposed_secrets),
         )
         .chain(
             deployment
                 .webhooks_wasm
                 .iter()
-                .map(|component| &component.exposed_secrets),
+                .flat_map(|component| &component.exposed_secrets),
         )
         .chain(
             deployment
                 .webhooks_js
                 .iter()
-                .map(|component| &component.exposed_secrets),
-        )
-    {
-        for name in names {
-            if secret_registry.secret_lookup(name).is_none() {
-                unregistered.insert(name.clone());
-            }
-        }
+                .flat_map(|component| &component.exposed_secrets),
+        );
+    for secret in host_secrets.chain(exposed_secrets) {
+        findings.record(secret, secret_registry);
     }
 }
 
-/// Append every secret name in `allowed_host` `entries` the operator registry does not know onto
-/// `unregistered`. See `collect_deployment_unregistered_secrets` for the deployment-wide collector.
-pub(super) fn collect_unregistered_allowed_host_secrets(
+/// Record every secret the server.toml `[[outbound_http.allowed_host]]` `entries` reference.
+pub(super) fn collect_server_allowed_host_secrets(
     entries: &[AllowedHostToml],
     secret_registry: &SecretRegistry,
-    unregistered: &mut BTreeSet<String>,
+    findings: &mut SecretFindings,
 ) {
-    for entry in entries {
-        for secret in &entry.secrets {
-            if secret_registry.secret_lookup(secret).is_none() {
-                unregistered.insert(secret.clone());
-            }
-        }
+    for secret in entries.iter().flat_map(|entry| &entry.secrets) {
+        findings.record_registration(secret, secret_registry);
     }
 }
 
-pub(crate) fn runtime_config_scaffold_snippet(
+fn runtime_config_scaffold_snippet(
     public_env: &BTreeSet<String>,
     secrets: &BTreeSet<String>,
+    optional_secrets: &BTreeSet<String>,
 ) -> String {
     let mut doc = DocumentMut::new();
     if !public_env.is_empty() {
@@ -515,25 +575,32 @@ pub(crate) fn runtime_config_scaffold_snippet(
     if !secrets.is_empty() {
         let mut table = Table::new();
         for name in secrets {
-            let mut inline = toml_edit::InlineTable::new();
-            inline.insert("env", name.as_str().into());
-            table.insert(name, value(inline));
+            table.insert(
+                name,
+                value(secret_scaffold(name, optional_secrets.contains(name))),
+            );
         }
         doc["secrets"] = Item::Table(table);
     }
     doc.to_string()
 }
 
-/// Emit one finding containing every undeclared public env var and unregistered secret.
+fn secret_scaffold(name: &str, optional: bool) -> toml_edit::InlineTable {
+    let mut inline = toml_edit::InlineTable::new();
+    inline.insert("env", name.into());
+    if optional {
+        inline.insert("optional", true.into());
+    }
+    inline
+}
+
+/// Emit one finding containing every undeclared public env var and unsatisfied secret.
 pub(super) fn report_missing_runtime_config(
     public_env: &BTreeSet<String>,
-    secrets: &BTreeSet<String>,
+    secrets: &SecretFindings,
     availability: RuntimeConfigAvailability,
 ) -> Result<(), MissingRuntimeConfigError> {
-    let error = MissingRuntimeConfigError {
-        public_env: public_env.clone(),
-        secrets: secrets.clone(),
-    };
+    let error = MissingRuntimeConfigError::new(public_env, secrets);
     if error.is_empty() {
         return Ok(());
     }
@@ -586,11 +653,11 @@ fn replacement_target_name(replace_in: ReplaceIn) -> &'static str {
 fn allowed_host_snippet(
     section: &str,
     entry: &AllowedHostToml,
-    secret: &str,
+    secret: &SecretRef,
     replace_in: ReplaceIn,
 ) -> String {
     let mut entry = entry.clone();
-    entry.secrets = vec![secret.to_string()];
+    entry.secrets = vec![secret.clone()];
     entry.replace_in = vec![replace_in];
     let body = toml::to_string(&entry).expect("AllowedHostToml must serialize to TOML");
     format!("[[{section}.allowed_host]]\n{body}")
@@ -602,7 +669,7 @@ pub(super) struct MissingSecretReplacement {
     component_section: &'static str,
     component_name: ConfigName,
     entry: AllowedHostToml,
-    secret: String,
+    secret: SecretRef,
     replace_in: ReplaceIn,
 }
 
@@ -623,11 +690,11 @@ pub(super) fn collect_outbound_http_secret_replacements(
             continue;
         }
         for secret in &entry.secrets {
-            if secret_registry.secret_lookup(secret).is_none() {
+            if !secret_registry.is_registered(&secret.name) {
                 continue;
             }
             for replace_in in &entry.replace_in {
-                let requested_replacement = (secret.as_str(), replacement_target(*replace_in));
+                let requested_replacement = (secret.name.as_str(), replacement_target(*replace_in));
                 if server_replacements.contains(&requested_replacement) {
                     continue;
                 }
@@ -663,12 +730,16 @@ pub(super) fn report_missing_outbound_http_secret_replacements(
              `{secret}` in `{target}`",
             name = m.component_name,
             section = m.component_section,
-            secret = m.secret,
+            secret = m.secret.name,
             target = replacement_target_name(m.replace_in),
         );
         // Multiple components may request the same entry; list each unique snippet once.
-        let server_snippet =
-            allowed_host_snippet("outbound_http", &m.entry, &m.secret, m.replace_in);
+        let server_snippet = allowed_host_snippet(
+            "outbound_http",
+            &m.entry,
+            &SecretRef::required(m.secret.name.as_str()),
+            m.replace_in,
+        );
         if !server_snippets.contains(&server_snippet) {
             server_snippets.push(server_snippet);
         }
@@ -802,13 +873,14 @@ pub(super) fn report_uncovered_outbound_http_hosts(uncovered: &[UncoveredOutboun
     );
 }
 
-/// Append a `[secrets]` scaffold entry `X = { env = "X" }` for each name.
+/// Append a `[secrets]` scaffold entry for each unregistered secret, `optional` when every
+/// reference is. Existing entries are never modified.
 pub(super) async fn fix_server_runtime_config_scaffolds(
     server_config_path: &Path,
     public_env: &BTreeSet<String>,
-    secrets: &BTreeSet<String>,
+    secrets: &SecretFindings,
 ) -> Result<(), anyhow::Error> {
-    if public_env.is_empty() && secrets.is_empty() {
+    if public_env.is_empty() && secrets.unregistered.is_empty() {
         return Ok(());
     }
     let source = tokio::fs::read_to_string(server_config_path)
@@ -836,18 +908,16 @@ pub(super) async fn fix_server_runtime_config_scaffolds(
         }
     }
 
-    if !secrets.is_empty() {
+    if !secrets.unregistered.is_empty() {
         let table = doc
             .as_table_mut()
             .entry("secrets")
             .or_insert_with(|| Item::Table(Table::new()))
             .as_table_mut()
             .context("`secrets` in server config is not a table")?;
-        for name in secrets {
+        for (name, all_optional) in &secrets.unregistered {
             if !table.contains_key(name) {
-                let mut inline = toml_edit::InlineTable::new();
-                inline.insert("env", name.as_str().into());
-                table.insert(name, value(inline));
+                table.insert(name, value(secret_scaffold(name, *all_optional)));
             }
         }
     }
@@ -878,6 +948,67 @@ mod tests {
             undeclared.into_iter().collect::<Vec<_>>(),
             ["VAR_A", "VAR_B", "VAR_C", "VAR_D"]
         );
+    }
+
+    /// A secret the server marks optional and leaves unset satisfies only optional references.
+    #[test]
+    fn required_reference_to_unset_optional_secret_fails_verification() {
+        use crate::config::env_var::StartupEnvVars;
+        use crate::config::secret_registry::{
+            EnvVarSecretsCleanup, PublicEnvToml, SecretConfigToml, SecretsToml,
+        };
+        const NAME: &str = "GITHUB_TOKEN";
+        let mut secrets = SecretsToml::new();
+        secrets.insert(
+            NAME.to_string(),
+            SecretConfigToml {
+                env: "OBELISK_TEST_DEFINITELY_UNSET_5F2B".to_string(),
+                optional: true,
+                exposed_to: BTreeMap::new(),
+            },
+        );
+        let registry = SecretRegistry::resolve(
+            secrets,
+            PublicEnvToml::default(),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            None,
+            &StartupEnvVars::capture(),
+        )
+        .expect("an unset optional source does not fail startup");
+        let no_public_env = BTreeSet::new();
+
+        let mut findings = SecretFindings::default();
+        findings.record(
+            &SecretRef {
+                name: NAME.to_string(),
+                optional: true,
+            },
+            &registry,
+        );
+        report_missing_runtime_config(&no_public_env, &findings, RuntimeConfigAvailability::Strict)
+            .expect("optional reference accepts an absent secret");
+
+        findings.record(&SecretRef::required(NAME), &registry);
+        let err = report_missing_runtime_config(
+            &no_public_env,
+            &findings,
+            RuntimeConfigAvailability::Strict,
+        )
+        .unwrap_err();
+        assert_eq!(err.unset_secrets, BTreeSet::from([NAME.to_string()]));
+        assert!(err.secrets.is_empty());
+        let message = err.to_string();
+        assert!(
+            message.contains("restart the server") && message.contains("optional = true"),
+            "{message}"
+        );
+        report_missing_runtime_config(
+            &no_public_env,
+            &findings,
+            RuntimeConfigAvailability::AllowUnavailable,
+        )
+        .expect("unavailable runtime config downgrades the finding to a warning");
     }
 
     /// A resolver advisory is joined to its `[[*.allowed_host]]` block and annotated with `path:line`.

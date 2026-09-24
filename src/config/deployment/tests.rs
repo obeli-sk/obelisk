@@ -39,7 +39,7 @@ replace_in = ["headers"]
     assert_eq!(name.as_str(), "fetch");
     assert_eq!(activity.store_paths.len(), 1);
     assert!(activity.nixos_cache.enabled);
-    assert_eq!(activity.allowed_hosts[0].secrets, ["API_TOKEN"]);
+    assert_eq!(activity.allowed_hosts[0].secrets, ["API_TOKEN".into()]);
 }
 
 #[test]
@@ -104,6 +104,77 @@ store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-tool"]
 
     let result = deployment.validate(std::path::Path::new("."));
     assert!(matches!(result, Err(error) if error.to_string().contains("exactly one")));
+}
+
+#[test]
+fn optional_secret_references_parse_and_serialize_back() {
+    let deployment: DeploymentToml = toml::from_str(
+        r##"
+[[activity_vm]]
+name = "aws"
+ffqn = "testing:vm/aws.run"
+content = "#!/bin/sh\necho null"
+store_paths = ["/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-aws"]
+exposed_secrets = ["AWS_KEY", { name = "AWS_SESSION_TOKEN", optional = true }]
+
+[[activity_vm.allowed_host]]
+pattern = "https://api.github.com"
+methods = ["GET"]
+secrets = [{ name = "GITHUB_TOKEN", optional = true }]
+replace_in = ["headers"]
+"##,
+    )
+    .unwrap();
+    let serialized = toml::to_string(&deployment).unwrap();
+    // Required references keep the plain-string shape, so stored manifests are unchanged.
+    assert!(
+        serialized.contains(
+            r#"exposed_secrets = ["AWS_KEY", { name = "AWS_SESSION_TOKEN", optional = true }]"#
+        ),
+        "{serialized}"
+    );
+    let validated = deployment.validate(std::path::Path::new(".")).unwrap();
+    let (activity, _) = &validated.activities_vm[0];
+    assert_eq!(
+        activity.exposed_secrets,
+        [
+            SecretRef::required("AWS_KEY"),
+            SecretRef {
+                name: "AWS_SESSION_TOKEN".to_string(),
+                optional: true,
+            },
+        ]
+    );
+    assert!(activity.allowed_hosts[0].secrets[0].optional);
+}
+
+#[test]
+fn disagreeing_secret_optionality_within_component_is_rejected() {
+    let deployment: DeploymentToml = toml::from_str(
+        r#"
+[[activity_js]]
+name = "mount_apps"
+ffqn = "testing:js/mount.run"
+content = "export default function run() {}"
+exposed_secrets = ["GITHUB_TOKEN"]
+
+[[activity_js.allowed_host]]
+pattern = "https://api.github.com"
+methods = ["GET"]
+secrets = [{ name = "GITHUB_TOKEN", optional = true }]
+replace_in = ["headers"]
+"#,
+    )
+    .unwrap();
+    let err = deployment
+        .validate(std::path::Path::new("."))
+        .err()
+        .expect("disagreeing optionality must be rejected")
+        .to_string();
+    assert!(
+        err.contains("`mount_apps`") && err.contains("`GITHUB_TOKEN`"),
+        "{err}"
+    );
 }
 
 mod blocking_strategy {
@@ -464,7 +535,7 @@ mod activity_exec {
             logs_store_min_level: LogLevelToml::default(),
             env_vars: vec![],
             max_output_bytes: default_max_output_bytes(),
-            exposed_secrets: vec!["MY_SECRET".to_string()],
+            exposed_secrets: vec!["MY_SECRET".into()],
             params_via_stdin: false,
         }
     }

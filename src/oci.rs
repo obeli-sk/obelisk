@@ -82,7 +82,7 @@ pub enum ComponentMetadataAnnotation {
         return_type: Option<String>,
         max_output_bytes: u64,
         #[serde(default)]
-        exposed_secrets: Vec<String>,
+        exposed_secrets: Vec<crate::config::deployment::SecretRef>,
         #[serde(default)]
         params_via_stdin: bool,
     },

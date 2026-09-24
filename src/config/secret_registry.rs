@@ -75,6 +75,9 @@ impl Serialize for SecretExposureDigests {
 pub(crate) struct SecretConfigToml {
     /// Read the secret from a process environment variable at startup.
     pub(crate) env: String,
+    /// Allow `env` to be unset; the secret is then absent and only optional references accept it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) optional: bool,
     #[serde(default)]
     pub(crate) exposed_to: BTreeMap<String, SecretExposureDigests>,
 }
@@ -106,6 +109,8 @@ pub(crate) enum PublicEnvViolation {
 pub(crate) struct SecretRegistry {
     /// Logical secret name -> resolved value.
     values: HashMap<String, SecretString>,
+    /// Optional secrets whose source was unset at startup.
+    absent: HashSet<String>,
     /// Used to reject `public_env_lookup`, contains both logical and `env` names.
     sensitive: HashSet<String>,
     /// Process environment variable names that deployments may read.
@@ -127,6 +132,7 @@ impl SecretRegistry {
     pub(crate) fn empty() -> Self {
         SecretRegistry {
             values: HashMap::default(),
+            absent: HashSet::default(),
             sensitive: HashSet::default(),
             public_allowed: HashSet::default(),
             public_values: HashMap::default(),
@@ -183,8 +189,18 @@ impl SecretRegistry {
         self
     }
 
+    /// `None` when the secret is unregistered or registered as optional and absent.
     pub(crate) fn secret_lookup(&self, name: &str) -> Option<SecretString> {
         self.values.get(name).cloned()
+    }
+
+    pub(crate) fn is_registered(&self, name: &str) -> bool {
+        self.values.contains_key(name) || self.absent.contains(name)
+    }
+
+    /// Registered as optional and its source was unset at startup.
+    pub(crate) fn is_absent(&self, name: &str) -> bool {
+        self.absent.contains(name)
     }
 
     pub(crate) fn environment_audit(&self) -> serde_json::Value {
@@ -201,6 +217,7 @@ impl SecretRegistry {
         let sensitive = values.keys().cloned().collect();
         Self {
             values,
+            absent: HashSet::default(),
             sensitive,
             public_allowed: HashSet::default(),
             public_values: HashMap::default(),
@@ -261,6 +278,7 @@ impl SecretRegistry {
         env_vars: &StartupEnvVars,
     ) -> anyhow::Result<Self> {
         let mut values = HashMap::new();
+        let mut absent = HashSet::new();
 
         // Always sensitive, even when the operator did not register them as secrets.
         let mut sensitive = HashSet::from([API_TOKEN_LEGACY.to_string(), API_TOKEN.to_string()]);
@@ -269,28 +287,34 @@ impl SecretRegistry {
         let mut secret_audit = std::collections::BTreeMap::new();
         let mut exposure_grants = HashMap::new();
         for (logical_name, config) in secrets {
-            let SecretConfigToml { env, exposed_to } = config;
+            let SecretConfigToml {
+                env,
+                optional,
+                exposed_to,
+            } = config;
             let present = env_vars.lookup(&env).is_some()
                 || was_legacy_token_wiped.is_some_and(|_| env == API_TOKEN_LEGACY);
             secret_audit.insert(
                 logical_name.clone(),
                 serde_json::json!({
                     "present": present,
+                    "optional": optional,
                     "exposed_to": exposed_to,
                 }),
             );
-            let value = if let Some(value) = env_vars.lookup(&env) {
-                SecretString::from(value)
+            if let Some(value) = env_vars.lookup(&env) {
+                values.insert(logical_name.clone(), SecretString::from(value));
             } else if let Some(value) = was_legacy_token_wiped
                 && env == API_TOKEN_LEGACY
             {
                 // backcompat: avoid failing here if [[secrets]] contains the token and it was wiped already.
-                value.clone()
+                values.insert(logical_name.clone(), value.clone());
+            } else if optional {
+                absent.insert(logical_name.clone());
             } else {
                 missing_env_vars.insert(env.clone());
-                SecretString::from(String::new())
-            };
-            values.insert(logical_name.clone(), value);
+                values.insert(logical_name.clone(), SecretString::from(String::new()));
+            }
             exposure_grants.insert(logical_name.clone(), exposed_to);
             sensitive.insert(env);
             sensitive.insert(logical_name);
@@ -319,6 +343,7 @@ impl SecretRegistry {
             .collect();
         Ok(Self {
             values,
+            absent,
             sensitive,
             public_allowed,
             public_values,
@@ -420,6 +445,7 @@ mod tests {
             "LOGICAL".to_string(),
             SecretConfigToml {
                 env: SRC.to_string(),
+                optional: false,
                 exposed_to: BTreeMap::new(),
             },
         );
@@ -444,7 +470,7 @@ mod tests {
             serde_json::json!({
                 "public_env": {},
                 "secrets": {
-                    "LOGICAL": {"present": true, "exposed_to": {}},
+                    "LOGICAL": {"present": true, "optional": false, "exposed_to": {}},
                 },
             })
         );
@@ -471,6 +497,7 @@ mod tests {
             "LOGICAL".to_string(),
             SecretConfigToml {
                 env: "OBELISK_TEST_DEFINITELY_UNSET_2B9C".to_string(),
+                optional: false,
                 exposed_to: BTreeMap::new(),
             },
         );
@@ -489,6 +516,48 @@ mod tests {
             err.contains("OBELISK_TEST_DEFINITELY_UNSET_2B9C"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn unset_optional_source_is_absent_not_empty() {
+        const OPTIONAL: &str = "OBELISK_TEST_OPTIONAL_UNSET_5E1A";
+        const EMPTY: &str = "OBELISK_TEST_OPTIONAL_EMPTY_5E1A";
+        // SAFETY: test-only, unique var name, no concurrent access.
+        unsafe { std::env::set_var(EMPTY, "") };
+        let env_vars = StartupEnvVars::capture();
+        let mut secrets = SecretsToml::new();
+        for name in [OPTIONAL, EMPTY] {
+            secrets.insert(
+                name.to_string(),
+                SecretConfigToml {
+                    env: name.to_string(),
+                    optional: true,
+                    exposed_to: BTreeMap::new(),
+                },
+            );
+        }
+        let registry = SecretRegistry::resolve(
+            secrets,
+            PublicEnvToml::default(),
+            EnvVarSecretsCleanup::Noop,
+            RuntimeConfigAvailability::Strict,
+            None,
+            &env_vars,
+        )
+        .unwrap();
+
+        assert!(registry.is_registered(OPTIONAL));
+        assert!(registry.is_absent(OPTIONAL));
+        assert!(registry.secret_lookup(OPTIONAL).is_none());
+        // An empty value is present.
+        assert!(!registry.is_absent(EMPTY));
+        assert_eq!(registry.secret_lookup(EMPTY).unwrap().expose_secret(), "");
+        assert_eq!(
+            registry.environment_audit()["secrets"][OPTIONAL],
+            serde_json::json!({"present": false, "optional": true, "exposed_to": {}})
+        );
+        // SAFETY: test-only, unique var name, no concurrent access.
+        unsafe { std::env::remove_var(EMPTY) };
     }
 
     #[test]

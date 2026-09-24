@@ -3358,6 +3358,13 @@
           "error": {
             "type": "string"
           },
+          "optional_secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Subset of `secrets` whose every reference is optional."
+          },
           "public_env": {
             "type": "array",
             "items": {
@@ -3369,6 +3376,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "unset_secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Registered as optional and unset, yet referenced as required."
           }
         }
       },

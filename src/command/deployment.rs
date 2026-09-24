@@ -436,12 +436,13 @@ async fn submit_attempt(
             "missing_runtime_config" | "unregistered_secrets"
         )
     {
-        let public_env = detail.public_env.into_iter().collect();
-        let secrets = detail.secrets.into_iter().collect();
-        bail!(
-            "deployment references missing server runtime configuration. Ask the server operator to update server.toml, or remove the references:\n\n{}",
-            crate::command::server::runtime_config_scaffold_snippet(&public_env, &secrets)
-        );
+        let missing = crate::command::server::MissingRuntimeConfigError {
+            public_env: detail.public_env.into_iter().collect(),
+            secrets: detail.secrets.into_iter().collect(),
+            optional_secrets: detail.optional_secrets.into_iter().collect(),
+            unset_secrets: detail.unset_secrets.into_iter().collect(),
+        };
+        bail!("deployment rejected by the server: {missing}");
     }
     bail!(
         "server returned {status}: {}",

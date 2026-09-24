@@ -36,6 +36,9 @@
 # [secrets]
 # OPENAI_KEY     = { env = "OPENAI_API_KEY" }   # logical name may differ from the source
 # DB_PASSWORD    = { env = "DB_PASSWORD" }
+## `optional = true` lets the source variable be unset; the secret is then absent, and only
+## deployment references marked `optional = true` accept it. An empty value is still present.
+# GITHUB_TOKEN   = { env = "GITHUB_TOKEN", optional = true }
 ## Exposed plaintext must be authorized for the component's generated digest.
 ## Add `exposed_secrets` to deployment.toml, run
 ## `obelisk generate secret-config-digest -d deployment.toml`, then copy the

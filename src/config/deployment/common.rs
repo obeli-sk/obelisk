@@ -292,6 +292,91 @@ fn serialize_star<S: serde::Serializer>(_: &(), s: S) -> Result<S::Ok, S::Error>
     s.serialize_str("*")
 }
 
+/// A reference to a secret registered in server.toml `[secrets]`.
+/// Either `"NAME"` (required) or `{ name = "NAME", optional = true }`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
+#[serde(from = "SecretRefToml", into = "SecretRefToml")]
+#[schemars(with = "SecretRefToml")]
+pub struct SecretRef {
+    pub name: String,
+    /// The component runs without the secret when the server leaves it unset.
+    pub optional: bool,
+}
+
+impl SecretRef {
+    #[must_use]
+    pub fn required(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            optional: false,
+        }
+    }
+}
+
+impl From<&str> for SecretRef {
+    fn from(name: &str) -> Self {
+        Self::required(name)
+    }
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+enum SecretRefToml {
+    Name(String),
+    Table(SecretRefTableToml),
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SecretRefTableToml {
+    name: String,
+    #[serde(default)]
+    optional: bool,
+}
+
+impl From<SecretRefToml> for SecretRef {
+    fn from(value: SecretRefToml) -> Self {
+        match value {
+            SecretRefToml::Name(name) => Self::required(name),
+            SecretRefToml::Table(SecretRefTableToml { name, optional }) => Self { name, optional },
+        }
+    }
+}
+
+impl From<SecretRef> for SecretRefToml {
+    fn from(SecretRef { name, optional }: SecretRef) -> Self {
+        if optional {
+            Self::Table(SecretRefTableToml { name, optional })
+        } else {
+            Self::Name(name)
+        }
+    }
+}
+
+/// Names of `secrets`, in order.
+pub(crate) fn secret_names(secrets: &[SecretRef]) -> Vec<String> {
+    secrets.iter().map(|secret| secret.name.clone()).collect()
+}
+
+/// Reject a component referencing the same secret as both required and optional.
+pub(crate) fn validate_secret_optionality<'a>(
+    component: &str,
+    references: impl IntoIterator<Item = &'a SecretRef>,
+) -> anyhow::Result<()> {
+    let mut seen = hashbrown::HashMap::new();
+    for secret in references {
+        if let Some(optional) = seen.insert(secret.name.as_str(), secret.optional) {
+            anyhow::ensure!(
+                optional == secret.optional,
+                "component `{component}` references secret `{}` as both required and optional; \
+                 mark every reference `optional = true` or none of them",
+                secret.name
+            );
+        }
+    }
+    Ok(())
+}
+
 /// An allowed outgoing HTTP host with optional method restrictions and secrets.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -315,7 +400,7 @@ pub struct AllowedHostToml {
     /// Each name is exposed to the guest as an env var holding a random placeholder,
     /// swapped for the real value in `replace_in` locations before the request leaves.
     #[serde(default)]
-    pub secrets: Vec<String>,
+    pub secrets: Vec<SecretRef>,
     /// Where in the request to perform placeholder replacement:
     /// - `headers` searches textual header values, including placeholders within larger values.
     /// - `params` searches URL query parameter values.

@@ -6,10 +6,10 @@
 use super::{
     AllowedHostToml, BlockingStrategyConfigToml, ComponentCommon, ComponentLocationToml,
     ComponentStdOutputToml, ConfigName, DeploymentResolved, DurationConfig, ExecConfigToml,
-    JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, WebhookRoute, default_external_server_name,
-    default_lock_extension, default_lock_extension_leeway, default_max_output_bytes,
-    default_max_retries, default_retry_exp_backoff, resolve_local_refs,
-    sanitize_deployment_relative_path,
+    JsParamToml, LogLevelToml, OCI_SCHEMA_PREFIX, SecretRef, WebhookRoute,
+    default_external_server_name, default_lock_extension, default_lock_extension_leeway,
+    default_max_output_bytes, default_max_retries, default_retry_exp_backoff, resolve_local_refs,
+    sanitize_deployment_relative_path, validate_secret_optionality,
 };
 use crate::args::TomlComponentType;
 use crate::config::env_var::EnvVarConfig;
@@ -239,6 +239,41 @@ impl DeploymentToml {
                 bail!("duplicate component name `{name}` in deployment");
             }
         }
+
+        fn refs<'a>(
+            hosts: &'a [AllowedHostToml],
+            exposed: &'a [SecretRef],
+        ) -> impl Iterator<Item = &'a SecretRef> {
+            hosts.iter().flat_map(|host| &host.secrets).chain(exposed)
+        }
+        for c in &self.activities_wasm {
+            validate_secret_optionality(
+                c.common.name.as_str(),
+                refs(&c.allowed_hosts, &c.exposed_secrets),
+            )?;
+        }
+        for (c, name) in &activities_js {
+            validate_secret_optionality(name.as_str(), refs(&c.allowed_hosts, &c.exposed_secrets))?;
+        }
+        for (c, name) in &activities_exec {
+            validate_secret_optionality(name.as_str(), &c.exposed_secrets)?;
+        }
+        for (c, name) in &activities_vm {
+            validate_secret_optionality(name.as_str(), refs(&c.allowed_hosts, &c.exposed_secrets))?;
+        }
+        for c in &self.webhooks_wasm {
+            validate_secret_optionality(
+                c.common.name.as_str(),
+                refs(&c.allowed_hosts, &c.exposed_secrets),
+            )?;
+        }
+        for c in &self.webhooks_js {
+            validate_secret_optionality(
+                c.name.as_str(),
+                refs(&c.allowed_hosts, &c.exposed_secrets),
+            )?;
+        }
+
         Ok(DeploymentTomlValidated {
             activities_exec,
             activities_vm,
@@ -616,7 +651,7 @@ pub(crate) struct ActivityJsComponentConfigToml {
     pub(crate) env_vars: Vec<EnvVarConfig>,
     /// Registered secrets exposed to the component as environment variables.
     #[serde(default)]
-    pub(crate) exposed_secrets: Vec<String>,
+    pub(crate) exposed_secrets: Vec<SecretRef>,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
     #[serde(default, rename = "allowed_host")]
     pub(crate) allowed_hosts: Vec<AllowedHostToml>,
@@ -684,7 +719,7 @@ pub(crate) struct ActivityVmComponentConfigToml {
     /// Registered secrets exposed to the guest as environment variables.
     /// Every process inside the VM can read and inherit these values.
     #[serde(default)]
-    pub(crate) exposed_secrets: Vec<String>,
+    pub(crate) exposed_secrets: Vec<SecretRef>,
     /// Pass parameters in the stdin JSON `params` array instead of command-line arguments.
     #[serde(default)]
     pub(crate) params_via_stdin: bool,
@@ -754,7 +789,7 @@ pub(crate) struct ActivityExecComponentConfigToml {
     /// Registered secret names (from the operator-owned `server.toml` `[secrets]`
     /// table) to expose to the script in the stdin JSON `secrets` object.
     #[serde(default)]
-    pub(crate) exposed_secrets: Vec<String>,
+    pub(crate) exposed_secrets: Vec<SecretRef>,
     /// Pass parameters to the program via the stdin JSON `params` array instead
     /// of argv. Use this for large payloads that would exceed the `execve` argument-size
     /// limit. Defaults to `false` (parameters passed as command-line arguments).
@@ -877,7 +912,7 @@ pub(crate) struct WebhookWasmComponentConfigToml {
     pub(crate) env_vars: Vec<EnvVarConfig>,
     /// Registered secrets exposed to the component as environment variables.
     #[serde(default)]
-    pub(crate) exposed_secrets: Vec<String>,
+    pub(crate) exposed_secrets: Vec<SecretRef>,
     #[serde(default)]
     pub(crate) backtrace: ComponentBacktraceConfig,
     /// Capture and persist backtraces for requests handled by this webhook.
@@ -925,7 +960,7 @@ pub(crate) struct WebhookJsComponentConfigToml {
     pub(crate) env_vars: Vec<EnvVarConfig>,
     /// Registered secrets exposed to the component as environment variables.
     #[serde(default)]
-    pub(crate) exposed_secrets: Vec<String>,
+    pub(crate) exposed_secrets: Vec<SecretRef>,
     /// Capture and persist backtraces for requests handled by this webhook.
     #[serde(default)]
     pub(crate) backtrace_persist: bool,
@@ -960,7 +995,7 @@ pub struct ActivityWasmComponentConfigToml {
     pub env_vars: Vec<EnvVarConfig>,
     /// Registered secrets exposed to the component as environment variables.
     #[serde(default)]
-    pub exposed_secrets: Vec<String>,
+    pub exposed_secrets: Vec<SecretRef>,
     #[serde(default)]
     pub logs_store_min_level: LogLevelToml,
     /// Allowed outgoing HTTP hosts with optional method restrictions and secrets.
