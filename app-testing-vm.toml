@@ -1,3 +1,5 @@
+app_name = "testing-vm"
+
 [[outbound_http.allowed_host]]
 pattern = "*://*:*"
 methods = ["GET"]

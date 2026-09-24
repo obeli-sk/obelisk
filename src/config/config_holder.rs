@@ -21,8 +21,6 @@ pub(crate) const OBELISK_HELP_DEPLOYMENT_TOML: &str = include_str!("../../deploy
 
 /// Leading `~/`, expanded to the user's home directory. Not `${}` interpolation syntax.
 const HOME_DIR_PREFIX: &str = "~/";
-// Default-path building blocks referencing the synthetic `${DATA_DIR}` / `${CACHE_DIR}` variables.
-pub(crate) const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 pub(crate) const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
 
 #[derive(Clone)]
@@ -176,7 +174,7 @@ impl ConfigHolder {
             app_source: None,
             path_prefixes: PathPrefixes {
                 server_config_dir,
-                app_name: "default".to_owned(),
+                app_name: String::new(),
                 project_dirs,
                 base_dirs,
             },

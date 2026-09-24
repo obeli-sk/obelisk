@@ -71,7 +71,7 @@ impl AppConfigToml {
         let name = std::env::var("OBELISK_APP_NAME")
             .ok()
             .or_else(|| self.app_name.clone())
-            .unwrap_or_else(|| "default".to_string());
+            .context("app name is required: set `app_name` in app.toml or `OBELISK_APP_NAME`")?;
         ensure!(
             name.len() <= 63
                 && !name.is_empty()

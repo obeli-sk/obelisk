@@ -39,7 +39,7 @@
             },
             {
               "name": "--app-config",
-              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used",
+              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
               }
@@ -96,7 +96,7 @@
             },
             {
               "name": "--app-config",
-              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used",
+              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
               }
@@ -900,7 +900,7 @@
             },
             {
               "name": "--app-config",
-              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used",
+              "help": "Path to app policy (app.toml). If omitted, built-in defaults are used; set `OBELISK_APP_NAME`",
               "accepts": {
                 "path": true
               }

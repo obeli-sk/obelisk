@@ -1,4 +1,5 @@
 # TRUSTED: single-party app policy. Review before using with untrusted deployments.
+# Set app_name here or OBELISK_APP_NAME before starting the server.
 
 [[outbound_http.allowed_host]]
 pattern = "*://*:*"

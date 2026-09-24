@@ -1,5 +1,5 @@
 ## App policy. Pass this file explicitly with --app-config.
-## A named app gets a separate default SQLite database.
+## Set an app name before starting the server; it selects the default SQLite directory.
 # app_name = "my-app"
 
 ## Registered secrets read same-named environment variables at startup.

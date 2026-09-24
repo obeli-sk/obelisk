@@ -285,11 +285,6 @@ fn prepare_server_startup(
     config_holder.path_prefixes.app_name = app.effective_name()?;
     let app_config_digest = app.digest()?;
     tracing::info!(app_name = %config_holder.path_prefixes.app_name, %app_config_digest, "Loaded app policy");
-    if config_holder.path_prefixes.app_name == "default" {
-        eprintln!(
-            "warning: app_name is `default`; named apps get separate default SQLite databases"
-        );
-    }
     let env_vars = StartupEnvVars::capture();
     let js_runtime = if env_vars
         .lookup("OBELISK_UNSTABLE_V8")

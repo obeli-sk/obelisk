@@ -80,29 +80,32 @@ cargo binstall obelisk
 ```sh
 # Use host's network. Ports 8080 (web) and 5005 (grpc) will be bound to 127.0.0.1
 mkdir config
-docker run getobelisk/obelisk generate config > config/obelisk.toml
+docker run getobelisk/obelisk generate server-config > config/server.toml
 docker run \
-  --net=host
+  --net=host \
+  -e OBELISK_APP_NAME=example-app \
   -v $(pwd)/config:/config \
   getobelisk/obelisk \
-  server run --config /config/obelisk.toml
+  server run --server-config /config/server.toml
 
 # Forward ports explicitly
 docker run \
   -p 8080:8080 -e 'OBELISK__webui__listening_addr=0.0.0.0:8080' \
   -p 5005:5005 -e 'OBELISK__api__listening_addr=0.0.0.0:5005' \
+  -e OBELISK_APP_NAME=example-app \
   -v $(pwd)/config:/config \
   getobelisk/obelisk \
-  server run --config /config/obelisk.toml
+  server run --server-config /config/server.toml
 
 # Share the cache directory from host
 docker run --net=host \
   -u $(id -u):$(id -g) \
   -v $(pwd)/config:/config \
+  -e OBELISK_APP_NAME=example-app \
   -e 'OBELISK__WASM__CACHE_DIRECTORY=/cache/obelisk/wasm' \
   -v ~/.cache/obelisk/wasm:/cache/obelisk/wasm \
   getobelisk/obelisk \
-  server run --config /config/obelisk.toml
+  server run --server-config /config/server.toml
 ```
 
 ### From Source
@@ -143,7 +146,7 @@ Check out the [Getting Started Guide](https://obeli.sk/docs/latest/js/getting-st
 
 ### Start the Server
 ```sh
-obelisk server run --deployment deployment-testing-wasm-oci.toml
+OBELISK_APP_NAME=example-app obelisk server run --deployment deployment-testing-wasm-oci.toml
 ```
 
 ### Linux VM activity MVP
@@ -165,7 +168,7 @@ export POSTGRES_USER="postgres"
 export POSTGRES_PASSWORD="postgres"
 export POSTGRES_DATABASE="obelisk"
 
-obelisk server run --server-config server-postgres.toml --deployment deployment-testing-wasm-oci.toml
+OBELISK_APP_NAME=example-app obelisk server run --server-config server-postgres.toml --deployment deployment-testing-wasm-oci.toml
 ```
 
 ### [CLI Usage](https://obeli.sk/docs/latest/cli/)

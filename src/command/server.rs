@@ -1958,16 +1958,6 @@ pub(crate) async fn run_internal(
             (db_pool, db_close)
         }
     };
-    if path_prefixes.app_name == "default" {
-        crate::server::system_event_writer::record(
-            db_pool.as_ref(),
-            concepts::storage::SystemEventCode::AppNameDefault,
-            None,
-            None,
-            serde_json::json!({"app_name": "default"}),
-        )
-        .await;
-    }
     let span = Span::current();
     let (active_deployment_id, deployment_resolved, persist) = record_startup_failed(
         db_pool.as_ref(),

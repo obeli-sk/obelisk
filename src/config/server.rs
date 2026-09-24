@@ -2,7 +2,7 @@
 //! globals, watchers, allocator, and telemetry. Orthogonal to the deployment manifest.
 
 use self::log::{LoggingConfig, LoggingStyle};
-use crate::config::config_holder::{CACHE_DIR_PREFIX, DATA_DIR_PREFIX, PathPrefixes};
+use crate::config::config_holder::{CACHE_DIR_PREFIX, PathPrefixes};
 use crate::config::deployment::{
     AllowedHostToml, ByteSizeConfig, ConfigName, DurationConfig, DurationConfigOptional,
     InflightSemaphore, ValueOrUnlimited,
@@ -700,14 +700,7 @@ impl SqliteConfigToml {
         path_prefixes: &PathPrefixes,
         secret_registry: &SecretRegistry,
     ) -> Result<PathBuf, anyhow::Error> {
-        // backcompat: 0.41 used one SQLite directory for unnamed apps.
-        let default_dir = if path_prefixes.app_name == "default" {
-            if path_prefixes.project_dirs.is_some() {
-                DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS.to_owned()
-            } else {
-                DEFAULT_SQLITE_DIR.to_owned()
-            }
-        } else if path_prefixes.project_dirs.is_some() {
+        let default_dir = if path_prefixes.project_dirs.is_some() {
             format!("${{DATA_DIR}}/apps/{}/sqlite", path_prefixes.app_name)
         } else {
             format!("apps/{}/sqlite", path_prefixes.app_name)
@@ -1350,9 +1343,6 @@ pub(crate) struct HttpServer {
 
 // Default on-disk locations and size limits for the server's data/cache directories.
 
-const DEFAULT_SQLITE_DIR_IF_PROJECT_DIRS: &str =
-    const_format::formatcp!("{}obelisk-sqlite", DATA_DIR_PREFIX);
-const DEFAULT_SQLITE_DIR: &str = "obelisk-sqlite";
 pub(crate) const SQLITE_FILE_NAME: &str = "obelisk.sqlite";
 const DEFAULT_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}wasm", CACHE_DIR_PREFIX);

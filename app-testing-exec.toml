@@ -1,3 +1,5 @@
+app_name = "testing-exec"
+
 [public_env]
 allowed = ["PATH"]
 

@@ -1519,7 +1519,6 @@ pub struct SystemEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemEventCode {
-    AppNameDefault,
     ServerConfigurationResolved,
     ServerStartupCompleted,
     ServerStartupFailed,
@@ -1551,7 +1550,6 @@ impl SystemEventCode {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::AppNameDefault => "app.name.default",
             Self::ServerConfigurationResolved => "server.configuration.resolved",
             Self::ServerStartupCompleted => "server.startup.completed",
             Self::ServerStartupFailed => "server.startup.failed",
@@ -1584,7 +1582,6 @@ impl SystemEventCode {
     pub fn level(self) -> SystemEventLevel {
         match self {
             Self::ServerStartupFailed => SystemEventLevel::Error,
-            Self::AppNameDefault => SystemEventLevel::Warning,
             Self::DeploymentSubmitFailed
             | Self::DeploymentSwitchFailed
             | Self::OutboundHttpDenied
@@ -1599,9 +1596,6 @@ impl SystemEventCode {
     #[must_use]
     pub fn message(self) -> &'static str {
         match self {
-            Self::AppNameDefault => {
-                "App name is default; unrelated projects can share one database"
-            }
             Self::ServerConfigurationResolved => "Server configuration resolved",
             Self::ServerStartupCompleted => "Server startup completed",
             Self::ServerStartupFailed => "Server startup failed",

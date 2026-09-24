@@ -1,3 +1,5 @@
+app_name = "testing-js"
+
 [[outbound_http.allowed_host]]
 pattern = "api.ipify.org"
 methods = ["GET"]

@@ -44,7 +44,7 @@ api.enabled = false
 webui.enabled = false
 database.sqlite.directory = "$WORK/sqlite-db"
 EOF
-obelisk server verify -s "$WORK/sqlite.toml" -d "$WORK/empty-deploy.toml"
+OBELISK_APP_NAME=schema-dump obelisk server verify -s "$WORK/sqlite.toml" -d "$WORK/empty-deploy.toml"
 {
   echo "$HEADER"
   echo
@@ -66,7 +66,7 @@ password = ""
 db_name = "obelisk"
 provision_policy = "auto"
 EOF
-obelisk server verify -s "$WORK/postgres.toml" -d "$WORK/empty-deploy.toml"
+OBELISK_APP_NAME=schema-dump obelisk server verify -s "$WORK/postgres.toml" -d "$WORK/empty-deploy.toml"
 {
   echo "$HEADER"
   # Drop lines that vary per run (\restrict nonce) or per tool version (dump-version
