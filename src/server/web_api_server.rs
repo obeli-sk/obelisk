@@ -4471,6 +4471,12 @@ pub(crate) mod deployment {
         #[serde(default)]
         pub public_env: Vec<String>,
         pub secrets: Vec<String>,
+        /// Subset of `secrets` whose every reference is optional.
+        #[serde(default)]
+        pub optional_secrets: Vec<String>,
+        /// Registered as optional and unset, yet referenced as required.
+        #[serde(default)]
+        pub unset_secrets: Vec<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -4730,6 +4736,8 @@ pub(crate) mod deployment {
                             error: "missing_runtime_config".to_string(),
                             public_env: missing.public_env.into_iter().collect(),
                             secrets: missing.secrets.into_iter().collect(),
+                            optional_secrets: missing.optional_secrets.into_iter().collect(),
+                            unset_secrets: missing.unset_secrets.into_iter().collect(),
                         },
                     ),
                     AcceptHeader::Text => HttpResponse {

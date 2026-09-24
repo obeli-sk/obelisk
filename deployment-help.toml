@@ -96,7 +96,9 @@
 ## - "body" replaces every placeholder occurrence only when the body is valid UTF-8 and
 ##   `Content-Type` is textual: `text/*`, JSON, or `application/x-www-form-urlencoded`.
 ## Default is empty (no replacement).
-# secrets = ["OPENAI_API_KEY"]
+## A secret the component can run without is listed as `{ name = "...", optional = true }`;
+## when the server leaves it unset, no placeholder env var is set.
+# secrets = ["OPENAI_API_KEY", { name = "GITHUB_TOKEN", optional = true }]
 # replace_in = ["headers"]
 
 ### JavaScript Activity components configuration
@@ -231,7 +233,8 @@
 # params_via_stdin = false
 ### Explicitly exposed secrets become guest environment variables. Every process inside
 ### the VM can read and inherit them. Prefer allowed_host placeholders when possible.
-# exposed_secrets = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+### An optional secret the server leaves unset is not set in the guest.
+# exposed_secrets = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", { name = "AWS_SESSION_TOKEN", optional = true }]
 # store_paths = [
 #   "/nix/store/2ndah67h0z5m31v2wkdmg2md4380ggr5-bash-interactive-5.3p15",
 #   "/nix/store/cp8qnyl8i0s62g3a1465i258mf5bcr6k-curl-8.22.0-bin",

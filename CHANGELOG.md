@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an already-returned streaming response body. The default is 30 seconds.
 - *(server)* The server now logs its node run ID as soon as logging is configured, so console
   output can be matched with the system events of that particular start.
+- *(server, deployment)* Added optional secrets. A `[secrets]` entry with `optional = true` may
+  leave its source variable unset, making the secret absent instead of failing startup. Components
+  reference it as `{ name = "X", optional = true }` in `exposed_secrets` or
+  `allowed_host.secrets`; an absent secret gets no placeholder, environment variable or stdin
+  key. A required reference to an absent secret fails deployment verification, and references
+  within one component must agree on optionality. `--fix` scaffolds `optional = true` when every
+  reference is optional.
 
 ### Changed
 

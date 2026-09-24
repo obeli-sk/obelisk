@@ -2673,6 +2673,11 @@ fn missing_runtime_config_status(
     missing: crate::command::server::MissingRuntimeConfigError,
 ) -> tonic::Status {
     use prost::Message as _;
+    let message = if missing.unset_secrets.is_empty() {
+        "deployment references runtime configuration that is not declared by the server".to_owned()
+    } else {
+        missing.to_string()
+    };
     let detail = grpc_gen::SubmitDeploymentErrorDetail {
         unregistered_secrets: missing.secrets.into_iter().collect(),
         undeclared_public_env: missing.public_env.into_iter().collect(),
@@ -2680,7 +2685,7 @@ fn missing_runtime_config_status(
     };
     tonic::Status::with_details(
         tonic::Code::FailedPrecondition,
-        "deployment references runtime configuration that is not declared by the server",
+        message,
         detail.encode_to_vec().into(),
     )
 }

@@ -188,15 +188,11 @@ impl Worker for ActivityVmWorker {
         .map_err(|error| cannot_instantiate("cannot build VM HTTP policy", error, &version))?;
         let mut env = self.env.clone();
         env.extend(placeholders);
+        // Verification rejects absent required secrets, so a missing one is an absent optional.
         for name in &self.exposed_secrets {
-            let value = resolver.secret_lookup(name).ok_or_else(|| {
-                cannot_instantiate(
-                    "cannot expose VM secret",
-                    anyhow::anyhow!("secret `{name}` is not available"),
-                    &version,
-                )
-            })?;
-            env.insert(name.clone(), value.expose_secret().to_owned());
+            if let Some(value) = resolver.secret_lookup(name) {
+                env.insert(name.clone(), value.expose_secret().to_owned());
+            }
         }
 
         let mut guest_args = self.guest_args.clone();

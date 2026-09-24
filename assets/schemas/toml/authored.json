@@ -143,7 +143,7 @@
           "description": "Registered secrets exposed to the component as environment variables.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SecretRef"
           },
           "default": []
         },
@@ -321,6 +321,33 @@
         }
       ]
     },
+    "SecretRef": {
+      "description": "A reference to a secret registered in server.toml `[secrets]`.\nEither `\"NAME\"` (required) or `{ name = \"NAME\", optional = true }`.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SecretRefTableToml"
+        }
+      ]
+    },
+    "SecretRefTableToml": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
     "LogLevelToml": {
       "type": "string",
       "enum": [
@@ -362,7 +389,7 @@
           "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SecretRef"
           },
           "default": []
         },
@@ -652,7 +679,7 @@
           "description": "Registered secrets exposed to the component as environment variables.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SecretRef"
           },
           "default": []
         },
@@ -782,7 +809,7 @@
           "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to expose to the script in the stdin JSON `secrets` object.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SecretRef"
           },
           "default": []
         },
@@ -905,7 +932,7 @@
           "description": "Registered secrets exposed to the guest as environment variables.\nEvery process inside the VM can read and inherit these values.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SecretRef"
           },
           "default": []
         },
@@ -1261,7 +1288,7 @@
           "description": "Registered secrets exposed to the component as environment variables.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SecretRef"
           },
           "default": []
         },
@@ -1394,7 +1421,7 @@
           "description": "Registered secrets exposed to the component as environment variables.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SecretRef"
           },
           "default": []
         },

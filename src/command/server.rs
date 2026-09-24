@@ -120,7 +120,7 @@ use concepts::storage::{ComponentMetadataRecord, DeploymentRecord, DeploymentSta
 use concepts::time::ClockFn;
 use concepts::time::Now;
 use concepts::time::TokioSleep;
-pub(crate) use config_prepass::{MissingRuntimeConfigError, runtime_config_scaffold_snippet};
+pub(crate) use config_prepass::MissingRuntimeConfigError;
 use db_postgres::postgres_dao::PostgresPool;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::BaseDirs;
@@ -808,9 +808,9 @@ pub(crate) async fn verify(
     let (config_holder, config, secret_registry) = if fix
         && let Some(server_config_path) = config_holder.config_source.as_deref()
     {
-        let mut unregistered_secrets = BTreeSet::new();
+        let mut unregistered_secrets = config_prepass::SecretFindings::default();
         let mut undeclared_public_env = BTreeSet::new();
-        config_prepass::collect_unregistered_allowed_host_secrets(
+        config_prepass::collect_server_allowed_host_secrets(
             &config.outbound_http.allowed_hosts,
             &secret_registry,
             &mut unregistered_secrets,
@@ -821,7 +821,7 @@ pub(crate) async fn verify(
             &mut undeclared_public_env,
         );
         if let Some(deployment) = deployment_opt.as_ref() {
-            config_prepass::collect_deployment_unregistered_secrets(
+            config_prepass::collect_deployment_secrets(
                 deployment,
                 &secret_registry,
                 &mut unregistered_secrets,
@@ -832,7 +832,7 @@ pub(crate) async fn verify(
                 &mut undeclared_public_env,
             );
         }
-        if !unregistered_secrets.is_empty() || !undeclared_public_env.is_empty() {
+        if !unregistered_secrets.unregistered.is_empty() || !undeclared_public_env.is_empty() {
             config_prepass::fix_server_runtime_config_scaffolds(
                 server_config_path,
                 &undeclared_public_env,
@@ -841,8 +841,9 @@ pub(crate) async fn verify(
             .await?;
 
             warn!(
-                "Scaffolded runtime configuration in {}: public_env={undeclared_public_env:?}, secrets={unregistered_secrets:?}",
-                server_config_path.display()
+                "Scaffolded runtime configuration in {}: public_env={undeclared_public_env:?}, secrets={:?}",
+                server_config_path.display(),
+                unregistered_secrets.unregistered,
             );
             // Reload server config
             let ServerStartup {
@@ -6825,7 +6826,7 @@ mod tests {
             pattern: "api.example.com".to_string(),
             methods: Some(MethodsInput::Star(MethodsInputStar::default())),
             request_url_regex: None,
-            secrets: vec!["API_KEY".to_string()],
+            secrets: vec!["API_KEY".into()],
             replace_in: vec![ReplaceIn::Headers],
         };
         let component_name = crate::config::deployment::ConfigName::new("caller".into()).unwrap();
@@ -6862,21 +6863,21 @@ mod tests {
     #[test]
     fn unregistered_secrets_collect_all_in_typed_error() {
         use crate::command::server::config_prepass::{
-            collect_unregistered_allowed_host_secrets, report_missing_runtime_config,
+            SecretFindings, collect_server_allowed_host_secrets, report_missing_runtime_config,
         };
         let entry = |secret: &str| AllowedHostToml {
             pattern: "api.example.com".to_string(),
             methods: Some(MethodsInput::Star(MethodsInputStar::default())),
             request_url_regex: None,
-            secrets: vec![secret.to_string()],
+            secrets: vec![secret.into()],
             replace_in: vec![ReplaceIn::Headers],
         };
         let secret_registry = SecretRegistry::from_test_values([(
             "KNOWN".to_string(),
             secrecy::SecretString::from("v"),
         )]);
-        let mut unregistered = std::collections::BTreeSet::new();
-        collect_unregistered_allowed_host_secrets(
+        let mut unregistered = SecretFindings::default();
+        collect_server_allowed_host_secrets(
             &[entry("MISSING_B"), entry("KNOWN"), entry("MISSING_A")],
             &secret_registry,
             &mut unregistered,
@@ -6909,9 +6910,13 @@ mod tests {
     /// not a fatal error (activation re-checks strictly).
     #[test]
     fn unregistered_secrets_downgrade_to_warning_when_unavailable_allowed() {
-        use crate::command::server::config_prepass::report_missing_runtime_config;
-        let mut unregistered = std::collections::BTreeSet::new();
-        unregistered.insert("MISSING".to_string());
+        use crate::command::server::config_prepass::{
+            SecretFindings, report_missing_runtime_config,
+        };
+        let mut unregistered = SecretFindings::default();
+        unregistered
+            .unregistered
+            .insert("MISSING".to_string(), false);
         report_missing_runtime_config(
             &std::collections::BTreeSet::new(),
             &unregistered,
@@ -6920,10 +6925,14 @@ mod tests {
         .expect("unavailable runtime config downgrades unregistered secrets to a warning");
     }
 
-    /// `--fix` appends sorted public environment and secret scaffolds.
+    /// `--fix` appends sorted public environment and secret scaffolds, marking a secret
+    /// optional only when every reference to it is optional.
     #[tokio::test]
     async fn fix_server_runtime_config_scaffolds_appends_missing_sorted() {
-        use crate::command::server::config_prepass::fix_server_runtime_config_scaffolds;
+        use crate::command::server::config_prepass::{
+            SecretFindings, fix_server_runtime_config_scaffolds,
+        };
+        use crate::config::deployment::SecretRef;
         use std::io::Write as _;
         let mut file = tempfile::NamedTempFile::new().unwrap();
         write!(file, "[secrets]\nEXISTING = {{ env = \"EXISTING_SRC\" }}\n").unwrap();
@@ -6931,8 +6940,15 @@ mod tests {
 
         let public_env =
             std::collections::BTreeSet::from(["PUBLIC_B".to_string(), "PUBLIC_A".to_string()]);
-        let secrets =
-            std::collections::BTreeSet::from(["SECRET_B".to_string(), "SECRET_A".to_string()]);
+        let optional = |name: &str| SecretRef {
+            name: name.to_string(),
+            optional: true,
+        };
+        let registry = SecretRegistry::empty();
+        let mut secrets = SecretFindings::default();
+        secrets.record(&optional("SECRET_B"), &registry);
+        secrets.record(&optional("SECRET_A"), &registry);
+        secrets.record(&"SECRET_A".into(), &registry);
         fix_server_runtime_config_scaffolds(path, &public_env, &secrets)
             .await
             .unwrap();
@@ -6947,6 +6963,14 @@ mod tests {
             "{after}"
         );
         assert!(after.find("SECRET_A").unwrap() < after.find("SECRET_B").unwrap());
+        assert!(
+            after.contains("SECRET_A = { env = \"SECRET_A\" }"),
+            "{after}"
+        );
+        assert!(
+            after.contains("SECRET_B = { env = \"SECRET_B\", optional = true }"),
+            "{after}"
+        );
     }
 
     /// Missing replacements from several components are gathered into one report,
@@ -6957,7 +6981,7 @@ mod tests {
             pattern: "api.example.com".to_string(),
             methods: Some(MethodsInput::Star(MethodsInputStar::default())),
             request_url_regex: None,
-            secrets: vec![secret.to_string()],
+            secrets: vec![secret.into()],
             replace_in: vec![ReplaceIn::Headers],
         };
         let activity_name = crate::config::deployment::ConfigName::new("caller".into()).unwrap();
@@ -7366,7 +7390,7 @@ mod tests {
                 ScriptLocationResolved::Content { content, .. } => {
                     crate::config::deployment::exec_secret_exposure_digest(
                         &compute_content_digest(content.as_bytes()),
-                        &activity.exposed_secrets,
+                        &crate::config::deployment::secret_names(&activity.exposed_secrets),
                     )
                     .unwrap()
                 }

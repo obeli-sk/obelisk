@@ -545,7 +545,7 @@ fn build_component_table(
         if !exposed_secrets.is_empty() {
             let mut arr = toml_edit::Array::new();
             for s in exposed_secrets {
-                arr.push(s.clone());
+                arr.push(secret_ref_value(s));
             }
             t["exposed_secrets"] = Item::Value(toml_edit::Value::Array(arr));
         }
@@ -645,7 +645,7 @@ fn build_component_table(
             if !host.secrets.is_empty() {
                 let mut secret_array = toml_edit::Array::new();
                 for s in &host.secrets {
-                    secret_array.push(s.clone());
+                    secret_array.push(secret_ref_value(s));
                 }
                 host_table["secrets"] = Item::Value(toml_edit::Value::Array(secret_array));
             }
@@ -712,6 +712,17 @@ fn write_lock_expiry(t: &mut toml_edit::Table, duration: DurationConfig) {
     exec_tbl.set_dotted(true);
     exec_tbl.insert("lock_expiry", Item::Table(lock_expiry_tbl));
     t.insert("exec", Item::Table(exec_tbl));
+}
+
+fn secret_ref_value(secret: &crate::config::deployment::SecretRef) -> toml_edit::Value {
+    if secret.optional {
+        let mut table = toml_edit::InlineTable::new();
+        table.insert("name", secret.name.as_str().into());
+        table.insert("optional", true.into());
+        toml_edit::Value::InlineTable(table)
+    } else {
+        secret.name.as_str().into()
+    }
 }
 
 fn serialize_methods_input(methods: &crate::config::deployment::MethodsInput) -> toml_edit::Item {
@@ -794,7 +805,7 @@ mod tests {
                     "POST".to_string(),
                 ])),
                 request_url_regex: Some("^GET https://api\\.example\\.com/v1".to_string()),
-                secrets: vec!["API_KEY".to_string()],
+                secrets: vec!["API_KEY".into()],
                 replace_in: vec![ReplaceIn::Headers],
             }],
             lock_duration: Some(DurationConfig::Seconds(5)),
@@ -831,7 +842,7 @@ mod tests {
         assert_eq!(act.env_vars.len(), 2);
         assert_eq!(act.allowed_hosts.len(), 1);
         assert_eq!(act.allowed_hosts[0].pattern, "api.example.com");
-        assert_eq!(act.allowed_hosts[0].secrets, vec!["API_KEY".to_string()]);
+        assert_eq!(act.allowed_hosts[0].secrets, vec!["API_KEY".into()]);
         // exec.lock_expiry.seconds = 5
         assert!(matches!(act.exec.lock_expiry, DurationConfig::Seconds(5)));
     }
