@@ -287,7 +287,7 @@
           ]
         },
         "secrets": {
-          "description": "Registered secret names (from the operator-owned `server.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
+          "description": "Registered secret names (from the app-owned `app.toml` `[secrets]`\ntable) to make available for placeholder injection into requests to this host.\nEach name is exposed to the guest as an env var holding a random placeholder,\nswapped for the real value in `replace_in` locations before the request leaves.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/SecretRef"
@@ -328,7 +328,7 @@
       "type": "null"
     },
     "SecretRef": {
-      "description": "A reference to a secret registered in server.toml `[secrets]`.\nEither `\"NAME\"` (required) or `{ name = \"NAME\", optional = true }`.",
+      "description": "A reference to a secret registered in app.toml `[secrets]`.\nEither `\"NAME\"` (required) or `{ name = \"NAME\", optional = true }`.",
       "anyOf": [
         {
           "type": "string"
