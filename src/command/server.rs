@@ -1958,16 +1958,6 @@ pub(crate) async fn run_internal(
             (db_pool, db_close)
         }
     };
-    let recorded_app_name = db_pool
-        .admin_conn()
-        .await?
-        .get_or_set_app_name(&path_prefixes.app_name)
-        .await?;
-    anyhow::ensure!(
-        recorded_app_name == path_prefixes.app_name,
-        "database belongs to app `{recorded_app_name}`, but current app name is `{}`",
-        path_prefixes.app_name
-    );
     if path_prefixes.app_name == "default" {
         crate::server::system_event_writer::record(
             db_pool.as_ref(),

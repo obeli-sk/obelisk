@@ -5973,19 +5973,6 @@ async fn delete_deployment_tx(
 
 #[async_trait]
 impl DbAdmin for PostgresConnection {
-    async fn get_or_set_app_name(&self, app_name: &str) -> Result<String, DbErrorWrite> {
-        let mut client = self.client.lock().await;
-        let tx = client.transaction().await?;
-        tx.execute("INSERT INTO t_app_identity (singleton, app_name) VALUES (1, $1) ON CONFLICT (singleton) DO NOTHING", &[&app_name]).await?;
-        let row = tx
-            .query_one(
-                "SELECT app_name FROM t_app_identity WHERE singleton = 1",
-                &[],
-            )
-            .await?;
-        tx.commit().await?;
-        Ok(row.get(0))
-    }
     async fn append_system_event(&self, event: SystemEvent) -> Result<(), DbErrorWrite> {
         self.client.lock().await.execute(
             "INSERT INTO t_system_event (event_id, node_run_id, created_at, level, code, execution_id, deployment_id, details, dedupe_key, cas_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (code, deployment_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING",
