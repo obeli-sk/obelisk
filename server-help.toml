@@ -26,10 +26,11 @@
 ## If set, the server will fail to start if the binary version doesn't match.
 # obelisk-version = 0.1
 
-## Exec activities are off by default. Set `exec_activities = "on"` to allow any
-## app-reviewed exec activity (startup warns), or define a platform allowlist below.
+## Exec activities are off by default, equivalent to `allowed_exec_activities = false`.
+## Set `allowed_exec_activities = "*"` to allow any app-reviewed exec activity
+## (startup warns), or define a platform component/digest allowlist below.
 ## Every app.toml allowed_exec_activities entry must be present in this set.
-# exec_activities = "on"
+# allowed_exec_activities = "*"
 # [allowed_exec_activities]
 # worker = "sha256:..."
 

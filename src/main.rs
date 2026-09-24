@@ -25,7 +25,7 @@ use client::ClientStartup;
 use config::config_holder::ConfigHolder;
 use config::env_var::StartupEnvVars;
 use config::secret_registry::{PublicEnvToml, SecretRegistry, SecretsToml};
-use config::server::{ExecActivitiesMode, ServerConfigToml};
+use config::server::{PlatformExecActivities, ServerConfigToml};
 use directories::{BaseDirs, ProjectDirs};
 use std::future::Future;
 use std::path::PathBuf;
@@ -302,33 +302,31 @@ fn prepare_server_startup(
     };
     config.resolve_env_vars(&config_holder.path_prefixes, &env_vars)?;
     app.resolve_env_vars(&env_vars)?;
-    anyhow::ensure!(
-        config.exec_activities.is_none() || config.allowed_exec_activities.is_empty(),
-        "server.toml cannot combine `exec_activities` with `[allowed_exec_activities]`"
-    );
-    if config.exec_activities == Some(ExecActivitiesMode::On) {
-        eprintln!(
-            "warning: server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
-        );
-    } else if config.allowed_exec_activities.is_empty() {
-        anyhow::ensure!(
-            app.allowed_exec_activities.is_empty(),
-            "app.toml allows exec activities, but server.toml has exec activities off"
-        );
-    } else {
-        for (name, digests) in &app.allowed_exec_activities {
-            let server_digests = config.allowed_exec_activities.get(name);
+    match &config.platform_exec_activities {
+        PlatformExecActivities::Disabled => {
             anyhow::ensure!(
-                digests
-                    .iter()
-                    .all(|digest| server_digests.is_some_and(|allowed| allowed.contains(digest))),
-                "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
+                app.allowed_exec_activities.is_empty(),
+                "app.toml allows exec activities, but server.toml has exec activities off"
             );
+        }
+        PlatformExecActivities::All => eprintln!(
+            "warning: server.toml enables unrestricted platform exec activity allowance; app.toml still controls deployments"
+        ),
+        PlatformExecActivities::Allowlist(platform) => {
+            for (name, digests) in &app.allowed_exec_activities {
+                let platform_digests = platform.get(name);
+                anyhow::ensure!(
+                    digests
+                        .iter()
+                        .all(|digest| platform_digests
+                            .is_some_and(|allowed| allowed.contains(digest))),
+                    "app.toml `[allowed_exec_activities].{name}` is not covered by server.toml `[allowed_exec_activities]`"
+                );
+            }
         }
     }
     config.secrets = app.secrets;
     config.public_env = app.public_env;
-    config.platform_allowed_exec_activities = config.allowed_exec_activities.clone();
     config.allowed_exec_activities = app.allowed_exec_activities;
     config.outbound_http = app.outbound_http;
     config.source_path.clone_from(&config_holder.app_source);
@@ -403,13 +401,15 @@ mod app_policy_tests {
         )
         .unwrap();
         assert!(load().is_ok());
-        std::fs::write(
-            &server,
-            format!("exec_activities = 'off'\n[allowed_exec_activities]\nworker = '{digest}'\n"),
-        )
-        .unwrap();
-        assert!(load().err().unwrap().to_string().contains("cannot combine"));
-        std::fs::write(&server, "exec_activities = 'on'\n").unwrap();
+        std::fs::write(&server, "allowed_exec_activities = false\n").unwrap();
+        assert!(
+            load()
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("exec activities off")
+        );
+        std::fs::write(&server, "allowed_exec_activities = '*'\n").unwrap();
         assert!(load().is_ok());
     }
 }

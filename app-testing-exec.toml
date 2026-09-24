@@ -1,3 +1,6 @@
+[public_env]
+allowed = ["PATH"]
+
 [allowed_exec_activities]
 "exec-stream.stream-test" = "sha256:f2790bee4e20e256384255387d5150676a24014df96ef6803ff55d04acd8ca9b"
 "exec-greet.greet-include" = "sha256:e280e2c202954ef2a8ac1a688d0b64495c659cc576983f13fe250c09864b97fa"

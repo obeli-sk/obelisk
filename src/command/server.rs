@@ -139,10 +139,10 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use secrecy::ExposeSecret as _;
 use secrecy::SecretString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::future::Future;
 use std::path::Path;
@@ -2363,8 +2363,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 pub(crate) struct ServerVerified {
     app_name: String,
     app_config_digest: Option<String>,
-    exec_platform_mode: Option<crate::config::server::ExecActivitiesMode>,
-    platform_allowed_exec_activities: AllowExecActivities,
+    platform_exec_activities: crate::config::server::PlatformExecActivities,
     launch: ServerVerifiedLaunch,
     allowed_exec_activities: AllowExecActivities,
     http_servers: Vec<HttpServer>,
@@ -2543,8 +2542,7 @@ impl ServerVerified {
         Ok(Self {
             app_name: config.app_name.clone(),
             app_config_digest: config.app_config_digest.clone(),
-            exec_platform_mode: config.exec_activities,
-            platform_allowed_exec_activities: config.platform_allowed_exec_activities.clone(),
+            platform_exec_activities: config.platform_exec_activities.clone(),
             launch: ServerVerifiedLaunch {
                 engines,
                 v8_executor,
@@ -3892,7 +3890,7 @@ pub(crate) struct ServerConfigurationAuditV2 {
     format: ServerConfigurationFormatV2,
     obelisk_version: String,
     app_config_digest: Option<String>,
-    environment: serde_json::Value,
+    environment: EnvironmentAuditV2,
     deployment_security: DeploymentSecurityAuditV2,
 }
 
@@ -3905,8 +3903,93 @@ enum ServerConfigurationFormatV2 {
 #[derive(Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DeploymentSecurityAuditV2 {
-    exec: serde_json::Value,
-    http: serde_json::Value,
+    exec: ExecSecurityAuditV2,
+    http: HttpSecurityAuditV2,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct EnvironmentAuditV2 {
+    public_env: BTreeMap<String, bool>,
+    secrets: BTreeMap<String, SecretEnvironmentAuditV2>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SecretEnvironmentAuditV2 {
+    present: bool,
+    optional: bool,
+    exposed_to: BTreeMap<String, AuditDigestSetV2>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum AuditDigestSetV2 {
+    One(String),
+    Many(Vec<String>),
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExecSecurityAuditV2 {
+    platform_mode: ExecPlatformModeAuditV2,
+    platform_allowlist: Option<ExecAllowlistAuditV2>,
+    app_allowlist: ExecAllowlistAuditV2,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExecPlatformModeAuditV2 {
+    Off,
+    All,
+    Allowlist,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExecAllowlistAuditV2 {
+    mode: ExecAllowlistModeAuditV2,
+    entries: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExecAllowlistModeAuditV2 {
+    Deny,
+    Allowlist,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct HttpSecurityAuditV2 {
+    format: HttpPolicyFormatAuditV2,
+    server_policy_hash: String,
+    server_policy: Vec<AllowedHostAuditV2>,
+    webui_server_policy_hash: Option<String>,
+    webui_server_policy: Option<Vec<AllowedHostAuditV2>>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+enum HttpPolicyFormatAuditV2 {
+    #[serde(rename = "obelisk-http-policy-v1")]
+    V1,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct AllowedHostAuditV2 {
+    pattern: String,
+    methods: AuditMethodsV2,
+    request_url_regex: Option<String>,
+    secrets: Vec<String>,
+    replace_in: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum AuditMethodsV2 {
+    All(String),
+    Restricted(Vec<String>),
 }
 
 async fn record_server_configuration_audit(
@@ -3918,19 +4001,24 @@ async fn record_server_configuration_audit(
         format: ServerConfigurationFormatV2::V2,
         obelisk_version: PKG_VERSION.to_owned(),
         app_config_digest: server_verified.app_config_digest.clone(),
-        environment: server_verified.environment_audit.clone(),
+        environment: serde_json::from_value(server_verified.environment_audit.clone())
+            .expect("environment audit must match its canonical schema"),
         deployment_security: DeploymentSecurityAuditV2 {
-            exec: serde_json::json!({
-                "platform_mode": match server_verified.exec_platform_mode {
-                    Some(crate::config::server::ExecActivitiesMode::On) => "on",
-                    Some(crate::config::server::ExecActivitiesMode::Off) => "off",
-                    None if server_verified.platform_allowed_exec_activities.is_empty() => "off",
-                    None => "allowlist",
+            exec: serde_json::from_value(serde_json::json!({
+                "platform_mode": match &server_verified.platform_exec_activities {
+                    crate::config::server::PlatformExecActivities::Disabled => "off",
+                    crate::config::server::PlatformExecActivities::All => "all",
+                    crate::config::server::PlatformExecActivities::Allowlist(_) => "allowlist",
                 },
-                "platform_allowlist": audit_exec_activities(&server_verified.platform_allowed_exec_activities),
+                "platform_allowlist": match &server_verified.platform_exec_activities {
+                    crate::config::server::PlatformExecActivities::Allowlist(entries) => Some(audit_exec_activities(entries)),
+                    _ => None,
+                },
                 "app_allowlist": audit_exec_activities(&server_verified.allowed_exec_activities),
-            }),
-            http: server_verified.server_http_policy_audit.clone(),
+            }))
+            .expect("exec audit must match its canonical schema"),
+            http: serde_json::from_value(server_verified.server_http_policy_audit.clone())
+                .expect("HTTP audit must match its canonical schema"),
         },
     };
     let bytes = serde_json::to_vec(&snapshot).expect("server configuration audit must encode");
@@ -7231,8 +7319,14 @@ mod tests {
         let project_dirs = crate::project_dirs();
         let base_dirs = BaseDirs::new();
         let config_holder =
-            ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?;
-        let config = config_holder.load_config()?;
+            ConfigHolder::new(project_dirs, base_dirs, Some(workspace.join(server_toml)))?
+                .with_app_source(Some(workspace.join("app-testing-wasm.toml")))?;
+        let mut config = config_holder.load_config()?;
+        let app = config_holder.load_app_config()?;
+        config.secrets = app.secrets;
+        config.public_env = app.public_env;
+        config.allowed_exec_activities = app.allowed_exec_activities;
+        config.outbound_http = app.outbound_http;
 
         let fixture = crate::command::test_support::target_aware_deployment_fixture(
             &workspace,
@@ -7436,8 +7530,12 @@ mod tests {
             crate::project_dirs(),
             BaseDirs::new(),
             Some(workspace.join("server-testing-exec.toml")),
-        )?;
+        )?
+        .with_app_source(Some(workspace.join("app-testing-exec.toml")))?;
         let mut config = config_holder.load_config()?;
+        let app = config_holder.load_app_config()?;
+        config.public_env = app.public_env;
+        config.allowed_exec_activities = app.allowed_exec_activities;
         let (deployment, cas) =
             resolve_deployment_offline(&workspace.join("deployment-testing-exec.toml")).await?;
         let digests = deployment

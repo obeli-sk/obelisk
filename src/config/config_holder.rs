@@ -299,14 +299,17 @@ mod tests {
     use super::{OBELISK_TRUSTED_APP_TOML, OBELISK_TRUSTED_SERVER_TOML, ServerConfigToml};
     use crate::config::app::AppConfigToml;
     use crate::config::deployment::MethodsInput;
-    use crate::config::server::ExecActivitiesMode;
+    use crate::config::server::PlatformExecActivities;
 
     #[test]
     fn trusted_templates_split_platform_and_app_policy() {
         let config: ServerConfigToml = toml::from_str(OBELISK_TRUSTED_SERVER_TOML).unwrap();
         let app: AppConfigToml = toml::from_str(OBELISK_TRUSTED_APP_TOML).unwrap();
 
-        assert_eq!(config.exec_activities, Some(ExecActivitiesMode::On));
+        assert!(matches!(
+            config.platform_exec_activities,
+            PlatformExecActivities::All
+        ));
         assert!(config.allowed_exec_activities.is_empty());
         assert!(app.secrets.is_empty());
         let [host] = app.outbound_http.allowed_hosts.as_slice() else {

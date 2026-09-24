@@ -26,7 +26,7 @@
     "allowed_exec_activities": {
       "type": "object",
       "additionalProperties": {
-        "type": "string"
+        "$ref": "#/$defs/SecretExposureDigests"
       },
       "default": {}
     },
@@ -50,12 +50,25 @@
         "exposed_to": {
           "type": "object",
           "additionalProperties": {
-            "type": "string"
+            "$ref": "#/$defs/SecretExposureDigests"
           },
           "default": {}
         }
       },
       "additionalProperties": false
+    },
+    "SecretExposureDigests": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
     },
     "PublicEnvToml": {
       "description": "Public environment variables that deployments may read.",

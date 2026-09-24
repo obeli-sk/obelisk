@@ -45,33 +45,25 @@ pub(crate) struct ServerConfigToml {
     pub(crate) tokio_console_enabled: bool,
     #[serde(default, rename = "obelisk-version")]
     pub(crate) obelisk_version: Option<String>,
-    /// Operator-owned secret registry. Maps a logical secret name to a source
-    /// (currently only `{ env = "VAR" }`). Env-backed secrets are resolved and
-    /// their source variables wiped from the process environment at startup, before
-    /// the tokio runtime starts. Deployments reference these names in
-    /// component `exposed_secrets` and
-    /// `allowed_host[].secrets`; they cannot interpolate them.
+    /// App-owned secret registry supplied after app.toml is loaded.
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) secrets: SecretsToml,
-    /// Operator-owned allowlist of process environment variables that deployments may read.
+    /// App-owned public environment allowance supplied after app.toml is loaded.
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) public_env: PublicEnvToml,
-    /// Permit deployments to run host processes through `activity_exec`, keyed by
-    /// component name and the accepted secret exposure digest set.
-    #[serde(default)]
-    pub(crate) allowed_exec_activities: AllowExecActivities,
+    /// App-reviewed exec components used by the runtime after startup validation.
     #[serde(skip)]
     #[schemars(skip)]
-    pub(crate) platform_allowed_exec_activities: AllowExecActivities,
-    /// Operator-owned allowlist for component-originated HTTP requests.
-    /// An empty allowlist denies every outbound request.
+    pub(crate) allowed_exec_activities: AllowExecActivities,
+    /// Platform exec gate: `false` (default), `"*"`, or a reviewed component/digest set.
+    #[serde(default, rename = "allowed_exec_activities")]
+    pub(crate) platform_exec_activities: PlatformExecActivities,
+    /// App-owned outbound HTTP allowance supplied after app.toml is loaded.
     #[serde(skip)]
     #[schemars(skip)]
     pub(crate) outbound_http: OutboundHttpToml,
-    #[serde(default)]
-    pub(crate) exec_activities: Option<ExecActivitiesMode>,
     #[serde(default)]
     pub(crate) limits: LimitsToml,
     #[serde(default)]
@@ -481,11 +473,51 @@ impl Default for MaxDeploymentFileBytes {
 /// Exec activity policy: component name -> reviewed secret exposure digests.
 pub(crate) type AllowExecActivities = BTreeMap<String, SecretExposureDigests>;
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ExecActivitiesMode {
-    Off,
-    On,
+#[derive(Debug, Default, Clone)]
+pub(crate) enum PlatformExecActivities {
+    #[default]
+    Disabled,
+    All,
+    Allowlist(AllowExecActivities),
+}
+
+impl<'de> Deserialize<'de> for PlatformExecActivities {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Input {
+            Bool(bool),
+            Wildcard(String),
+            Allowlist(AllowExecActivities),
+        }
+        match Input::deserialize(deserializer)? {
+            Input::Bool(false) => Ok(Self::Disabled),
+            Input::Wildcard(value) if value == "*" => Ok(Self::All),
+            Input::Allowlist(entries) => Ok(Self::Allowlist(entries)),
+            Input::Bool(true) => Err(serde::de::Error::custom(
+                "use `\"*\"` to allow all exec activities",
+            )),
+            Input::Wildcard(value) => Err(serde::de::Error::custom(format!(
+                "invalid exec allowance `{value}`; expected `\"*\"`"
+            ))),
+        }
+    }
+}
+
+impl JsonSchema for PlatformExecActivities {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "PlatformExecActivities".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "oneOf": [
+                { "const": false },
+                { "const": "*" },
+                generator.subschema_for::<AllowExecActivities>()
+            ]
+        })
+    }
 }
 
 pub(crate) fn audit_exec_activities(entries: &AllowExecActivities) -> serde_json::Value {
@@ -1539,6 +1571,33 @@ mod tests {
 
         const DIGEST: &str =
             "sha256:abababababababababababababababababababababababababababababababab";
+
+        #[test]
+        fn platform_gate_accepts_false_wildcard_or_reviewed_entries() {
+            let default: ServerConfigToml = toml::from_str("").unwrap();
+            assert!(matches!(
+                default.platform_exec_activities,
+                PlatformExecActivities::Disabled
+            ));
+            let disabled: ServerConfigToml =
+                toml::from_str("allowed_exec_activities = false").unwrap();
+            assert!(matches!(
+                disabled.platform_exec_activities,
+                PlatformExecActivities::Disabled
+            ));
+            let all: ServerConfigToml = toml::from_str("allowed_exec_activities = '*' ").unwrap();
+            assert!(matches!(
+                all.platform_exec_activities,
+                PlatformExecActivities::All
+            ));
+            let reviewed: ServerConfigToml =
+                toml::from_str(&format!("[allowed_exec_activities]\nworker = '{DIGEST}'")).unwrap();
+            assert!(
+                matches!(reviewed.platform_exec_activities, PlatformExecActivities::Allowlist(ref entries) if entries.contains_key("worker"))
+            );
+            assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = true").is_err());
+            assert!(toml::from_str::<ServerConfigToml>("allowed_exec_activities = 'all'").is_err());
+        }
 
         #[test]
         fn deserialize_scalar_or_list_map() {

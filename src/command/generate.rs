@@ -289,7 +289,10 @@ async fn split_config(server_path: &Path, app_path: Option<&Path>) -> anyhow::Re
             app.as_table_mut().insert(key, item);
         }
     }
-    if let Some(item) = server.get("allowed_exec_activities") {
+    if let Some(item) = server
+        .get("allowed_exec_activities")
+        .filter(|item| item.as_table_like().is_some())
+    {
         app.as_table_mut()
             .insert("allowed_exec_activities", item.clone());
     }

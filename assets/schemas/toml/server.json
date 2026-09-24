@@ -11,22 +11,8 @@
       "default": null
     },
     "allowed_exec_activities": {
-      "description": "Permit deployments to run host processes through `activity_exec`, keyed by\ncomponent name and the accepted secret exposure digest set.",
-      "type": "object",
-      "additionalProperties": {
-        "type": "string"
-      },
-      "default": {}
-    },
-    "exec_activities": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/ExecActivitiesMode"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "description": "Platform exec gate: `false` (default), `\"*\"`, or a reviewed component/digest set.",
+      "$ref": "#/$defs/PlatformExecActivities"
     },
     "limits": {
       "$ref": "#/$defs/LimitsToml"
@@ -86,11 +72,33 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "ExecActivitiesMode": {
-      "type": "string",
-      "enum": [
-        "off",
-        "on"
+    "PlatformExecActivities": {
+      "oneOf": [
+        {
+          "const": false
+        },
+        {
+          "const": "*"
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SecretExposureDigests"
+          }
+        }
+      ]
+    },
+    "SecretExposureDigests": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       ]
     },
     "LimitsToml": {

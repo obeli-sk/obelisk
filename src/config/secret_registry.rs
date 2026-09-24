@@ -17,9 +17,23 @@ use worker_common::SecretResolver;
 pub(crate) const API_TOKEN: &str = "OBELISK_API_TOKEN";
 pub(crate) const API_TOKEN_LEGACY: &str = "OBELISK__API__TOKEN";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
-#[schemars(with = "String")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SecretExposureDigests(Vec<SecretExposureDigest>);
+
+impl JsonSchema for SecretExposureDigests {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SecretExposureDigests".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "anyOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string" } }
+            ]
+        })
+    }
+}
 
 impl SecretExposureDigests {
     #[cfg(test)]
